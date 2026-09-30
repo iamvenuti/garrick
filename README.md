@@ -10,6 +10,10 @@ You've let AI into your code. Your client work still lives in chat tabs, a notes
 
 Garrick puts it in plain folders on your own disk, and gives any assistant the rules to run them.
 
+[![Asked to prep for a meeting with a supplier both clients use, the assistant checks the wall between them and leaves the other client's call out of the brief.](docs/assets/demo-wall.gif)](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4)
+
+*The wall at work: two walled clients, one shared supplier, and a brief that holds back what the other client said. [Watch the 84-second video](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) (with [captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)).*
+
 - **Walls between clients.** Every conversation goes into one memory, because that is how you hold them. Walls you declare decide where that memory may be used, and a check before every commit stops one client's names, or words lifted from its meetings, reaching another client's work.
 - **Any assistant.** Claude Code or Codex today. The rules are files in the workspace, not settings in one vendor's app, so switching costs you nothing.
 - **Built to be spoken to.** Open a thread, file a meeting, close the day, by voice. Names are ones you can say aloud, and short answers come back when you're listening.

@@ -1,0 +1,69 @@
+From: Dana Whitlock <dana.whitlock@acmecorp.example>
+To: Sam Rivera <sam@riveraadvisory.example>
+Cc: Owen Pike <owen.pike@acmecorp.example>
+Date: Mon, 28 Sep 2026 09:12:00 +0200
+Subject: Pallet forecast by quarter
+Message-ID: <20260928091200.4471@acmecorp.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============6767698651360156138=="
+
+--===============6767698651360156138==
+Content-Type: multipart/alternative;
+ boundary="===============5979315235862222132=="
+
+--===============5979315235862222132==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Sam,
+
+As promised, our pallet forecast by quarter for the next year. Owen pulled it
+from the plan last week; the file is attached.
+
+  Fourth quarter 2026: 1,050
+  First quarter 2027: 980
+  Second quarter 2027: 1,120
+  Third quarter 2027: 1,240
+
+Only the third quarter clears twelve hundred. I won't sign a commitment we
+miss three quarters out of four. Can the brief show what the three percent
+is worth if we commit to a thousand instead?
+
+Still Friday the 2nd for the brief, please.
+
+Dana
+
+--===============5979315235862222132==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body>
+<p>Sam,</p>
+<p>As promised, our pallet forecast by quarter for the next year. Owen pulled=
+ it from the plan last week; the file is attached.</p>
+<table>
+<tr><td>Fourth quarter 2026</td><td>1,050</td></tr>
+<tr><td>First quarter 2027</td><td>980</td></tr>
+<tr><td>Second quarter 2027</td><td>1,120</td></tr>
+<tr><td>Third quarter 2027</td><td>1,240</td></tr>
+</table>
+<p>Only the third quarter clears twelve hundred. I won&#39;t sign a commitmen=
+t we miss three quarters out of four. Can the brief show what the three perce=
+nt is worth if we commit to a thousand instead?</p>
+<p>Still Friday the 2nd for the brief, please.</p>
+<p>Dana</p>
+</body></html>
+
+--===============5979315235862222132==--
+
+--===============6767698651360156138==
+Content-Type: text/csv
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="acme-pallet-forecast.csv"
+MIME-Version: 1.0
+
+cXVhcnRlcixwYWxsZXRzCjIwMjYgZm91cnRoLDEwNTAKMjAyNyBmaXJzdCw5ODAKMjAyNyBzZWNv
+bmQsMTEyMAoyMDI3IHRoaXJkLDEyNDAK
+
+--===============6767698651360156138==--

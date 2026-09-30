@@ -1,0 +1,32 @@
+{
+  "owner": {
+    "name": "Sam Rivera",
+    "description": "Independent advisor on supply chains and market entry, working for a handful of mid-sized manufacturers."
+  },
+  "zones": [
+    {"name": "Work", "holds": "Client engagements and the practice itself"},
+    {"name": "Personal", "holds": "Home, health, money and travel"}
+  ],
+  "parties": [
+    {"name": "Acme Corp", "what": "Client. Supply-chain review", "zone": "Work", "tag": "acme", "domains": ["acmecorp.example"]},
+    {"name": "Birch & Co", "what": "Client. Market-entry advice; competes with Acme", "zone": "Work", "tag": "birch", "domains": ["birchco.example"]},
+    {"name": "Cobalt Freight", "what": "Freight carrier. Talks to Acme and to Birch, separately", "zone": "Work", "tag": "cobalt", "domains": ["cobaltfreight.example"]},
+    {"name": "Lark & Sons", "what": "Builder. Kitchen refit and roof repair at home", "zone": "Personal", "tag": "lark", "domains": ["larkandsons.example"]}
+  ],
+  "walls": [
+    {"between": "acme", "and": "birch", "why": "Competitors, and both are clients"}
+  ],
+  "people": [
+    {"name": "Dana Whitlock", "party": "acme", "role": "Head of procurement; sponsor of the review"},
+    {"name": "Owen Pike", "party": "acme", "role": "Logistics manager"},
+    {"name": "Theo Marsh", "party": "birch", "role": "Managing partner"},
+    {"name": "Iris Bell", "party": "birch", "role": "Head of strategy; runs the entry project day to day"},
+    {"name": "Marta Quill", "party": "cobalt", "role": "Account director; handles both Acme and Birch"},
+    {"name": "Ray Lark", "party": "lark", "role": "Owner; runs the kitchen job himself"}
+  ],
+  "aliases": [
+    {"heard": "birch and co, birchen co", "means": "Birch & Co"},
+    {"heard": "dana whitlaw", "means": "Dana Whitlock"},
+    {"heard": "lark and sons, larks", "means": "Lark & Sons"}
+  ]
+}

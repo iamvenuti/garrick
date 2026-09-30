@@ -1,0 +1,24 @@
+name: The wall check refused something it should allow
+description: A false positive from check.py or the pre-commit hook.
+labels: [wall-check, false-positive]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is for refusals that were wrong. If the check let something through that it should have stopped, do not open an issue: report it privately (see SECURITY.md).
+
+        Rebuild the case with invented names before you paste anything.
+  - type: textarea
+    id: refused
+    attributes:
+      label: What was refused
+      description: The finding check.py printed, and the file it pointed at, with invented names.
+    validations:
+      required: true
+  - type: textarea
+    id: why-fine
+    attributes:
+      label: Why it should pass
+      description: For example, a public fact about a walled party, or a common phrase that happens to match.
+    validations:
+      required: true

@@ -1,0 +1,21 @@
+Acme Corp: supply-chain review kick-off
+Wednesday 2 September 2026, 10:00 to 10:40. Video call.
+Speakers: Sam Rivera, Dana Whitlock, Owen Pike
+
+Sam Rivera: Thanks, both. I'd like to leave today with the scope pinned down and a date for the first thing you'll see.
+Dana Whitlock: Good. Let me be blunt about what I want. I don't want a slide deck. I want a list of what breaks us.
+Sam Rivera: Understood. So a map of your tier-one suppliers, and tier two where we can see it, with the single points of failure marked.
+Dana Whitlock: For the pump line first. That's sixty percent of revenue.
+Owen Pike: I can pull the supplier list out of the ERP. It'll be messy, there are duplicates from the old system.
+Sam Rivera: Messy is fine. When can I have it?
+Owen Pike: Friday. The fourth.
+Dana Whitlock: The second thing is freight. Our contract with Cobalt Freight renews on the thirty-first of October, and they've already hinted at an increase.
+Sam Rivera: Do you know how much?
+Dana Whitlock: Nothing on paper. Marta Quill, their account director, said "high single digits" on the phone.
+Sam Rivera: Then I'd like to be in the room when they put a number on it. I'll draft an options brief before the renewal: stay, renegotiate, or split the volume.
+Dana Whitlock: Fine. I'll set up a call with Marta for mid-September.
+Owen Pike: Worth knowing, most of what we ship with Cobalt goes on their southern lanes. We barely touch the northern one.
+Sam Rivera: Noted. So: supplier map first, by the eleventh. Freight brief before the renewal, first draft by the eighteenth.
+Dana Whitlock: The eleventh works. Send it to me and copy Owen.
+Sam Rivera: And I'll keep this review to supply chain and freight. What you charge your own customers is out of scope unless you ask.
+Dana Whitlock: Agreed. That's a different fight.

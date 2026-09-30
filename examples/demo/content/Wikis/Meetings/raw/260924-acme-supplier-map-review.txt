@@ -1,0 +1,17 @@
+Acme Corp: supplier map review
+Thursday 24 September 2026, 09:30 to 10:15. Acme's plant, meeting room two.
+Speakers: Dana Whitlock, Owen Pike, Sam Rivera
+
+Sam Rivera: The map is the one I sent on the eleventh, with Owen's corrections. Three parts on the pump line come from a single supplier: seal kits, motor housings and the control boards.
+Dana Whitlock: Which one hurts most if it stops?
+Sam Rivera: Seal kits. No stock beyond two weeks, and every pump needs one.
+Dana Whitlock: Then seal kits first. If they stop, we stop.
+Owen Pike: There's a second maker we used years ago. I can ask them for a quote.
+Sam Rivera: By when?
+Owen Pike: The ninth of October.
+Dana Whitlock: The housings and the boards can wait for the second pass. I want one fixed properly, not three half-fixed.
+Sam Rivera: Agreed. I'll fold Owen's quote into a second version of the map when it comes.
+Dana Whitlock: And the freight brief. Where is it?
+Sam Rivera: Drafted. I'm waiting on Cobalt's written offer to finish the numbers.
+Dana Whitlock: I haven't seen it either. I want your brief by Friday the second whether Marta has written or not. The renewal won't wait.
+Sam Rivera: Friday the second. You'll have it.

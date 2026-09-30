@@ -1,0 +1,7 @@
+* text=auto
+
+# Keep the language bar about the code, not the demo content or the slides.
+docs/** linguist-documentation
+presentation/** linguist-documentation
+examples/demo/content/** linguist-documentation
+*.vtt linguist-documentation

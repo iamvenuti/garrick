@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Garrick: introduction</title>
+
+<!-- Web fonts: the one thing in this file that needs the network.
+     Everything else (CSS, JS, markup) is inline and self-contained. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=DM+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+/* ==========================================================================
+   THEME
+   Garrick's own palette: navy for the bookend statements, cream for the
+   working slides, terracotta and peach as the only accents. Change these
+   nine variables and the whole deck restyles.
+   ========================================================================== */
+:root {
+  --navy: #1E2833;
+  --cream: #ECE4D3;
+  --cream-card: #F5F0E6;
+  --terracotta: #B24A22;
+  --terracotta-dark: #A8431E;
+  --peach: #F0A882;
+  --hairline: #D6CAB2;
+  --ink-muted: #4A5360;
+  --ink-faint: #5F6773;
+  --cream-muted: #C9CFD6;
+  --cream-faint: #9AA3AD;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'DM Sans', Arial, sans-serif;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --stage-bg: #12181F;
+  --slide-bg: var(--cream);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   FIXED 16:9 STAGE — MANDATORY BASE (viewport-base.css, included in full)
+   Slides are authored at 1920×1080 and the whole stage scales as one unit.
+   Do not edit this block when restyling; it is the mechanism, not the look.
+   ========================================================================== */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--stage-bg, #000);
+}
+
+.deck-viewport {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--stage-bg, #000);
+}
+
+.deck-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  transform-origin: 0 0;
+  background: var(--slide-bg, #fff);
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  display: block;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--slide-bg, #fff);
+}
+
+.slide.active,
+.slide.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.deck-controls {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 1000;
+}
+
+@media print {
+  @page {
+    size: 1920px 1080px;
+    margin: 0;
+  }
+  html,
+  body {
+    width: 1920px;
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+  .deck-viewport {
+    position: static;
+    overflow: visible;
+    background: #fff;
+  }
+  .deck-stage {
+    position: static;
+    width: auto;
+    height: auto;
+    transform: none !important;
+    background: none;
+  }
+  .slide {
+    position: relative;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    width: 1920px;
+    height: 1080px;
+    break-after: page;
+    page-break-after: always;
+  }
+  .slide:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .deck-controls {
+    display: none !important;
+  }
+  /* Print/export shows every slide at once as its own page, so entrance
+     animation state (tied to the single "current" slide on screen) is
+     irrelevant here — force every slide's content to its settled state. */
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  /* Chrome that only makes sense on an interactive screen. */
+  .notes-panel,
+  .edit-hotzone,
+  .edit-toggle,
+  .edit-saved-flag {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.2s !important;
+  }
+}
+
+/* ==========================================================================
+   SLIDE SKELETON
+   Two backgrounds only: navy for the statements that bookend the argument,
+   cream for the working slides that build it. Padding and type scale are
+   fixed at the 1920×1080 authoring size, per the fixed-stage rule above.
+   ========================================================================== */
+.slide {
+  padding: 120px 128px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.slide--cream { background: var(--cream); color: var(--navy); }
+.slide--navy  { background: var(--navy);  color: var(--cream-card); }
+
+.kicker {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+.slide--cream .kicker { color: var(--terracotta-dark); }
+.slide--navy  .kicker { color: var(--peach); }
+
+h1.deck-title, h2.slide-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  line-height: 1.08;
+}
+h2.slide-title { font-size: 72px; max-width: 1500px; }
+
+.slide-body {
+  font-size: 32px;
+  line-height: 1.45;
+  max-width: 1360px;
+}
+.slide--cream .slide-body { color: var(--ink-muted); }
+.slide--navy  .slide-body { color: var(--cream-muted); }
+
+.slide-body--tight { max-width: 1200px; }
+
+.folio {
+  position: absolute;
+  left: 128px;
+  bottom: 56px;
+  width: 1200px;
+  font-size: 22px;
+}
+.slide--cream .folio { color: var(--ink-faint); }
+.slide--navy  .folio { color: var(--cream-faint); }
+
+/* Reusable card, used wherever the slide breaks into two or three panels */
+.card {
+  background: var(--cream-card);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.card h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 40px;
+  color: var(--navy);
+}
+.card p {
+  font-size: 27px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.card .card-eyebrow {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--terracotta);
+}
+
+/* Speaker notes travel with the slide but never render on it — only the
+   notes panel (toggled with N) reads their text. */
+.slide .notes { display: none; }
+
+.row { display: flex; gap: 40px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; }
+
+code.snippet {
+  display: inline-block;
+  font-family: 'DM Sans', monospace;
+  font-size: 26px;
+  background: var(--navy);
+  color: var(--peach);
+  padding: 20px 28px;
+  border-radius: 10px;
+  letter-spacing: 0.2px;
+}
+
+/* Cover slide: single big serif word, set the way a title page is set */
+.slide--cover {
+  justify-content: flex-end;
+  gap: 36px;
+}
+.slide--cover h1.deck-title { font-size: 220px; letter-spacing: -2px; }
+.slide--cover .subtitle { font-size: 40px; color: var(--cream-muted); max-width: 1300px; line-height: 1.35; }
+.slide--cover .byline { font-size: 24px; color: var(--cream-faint); }
+
+/* Statement slides: the claim, the wall, the autonomy line, the close.
+   Big centered serif sentence, nothing else competing for attention. */
+.slide--statement {
+  justify-content: center;
+  align-items: flex-start;
+  gap: 44px;
+}
+.slide--statement .statement {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 92px;
+  line-height: 1.16;
+  max-width: 1560px;
+}
+.slide--statement .statement-sub {
+  font-size: 34px;
+  color: var(--cream-muted);
+  max-width: 1200px;
+  line-height: 1.4;
+}
+
+/* Wall divider used on the Acme / Birch slide */
+.wall {
+  width: 6px;
+  align-self: stretch;
+  background: repeating-linear-gradient(
+    to bottom, var(--terracotta) 0 14px, transparent 14px 26px
+  );
+  border-radius: 3px;
+}
+
+/* ==========================================================================
+   ENTRANCE ANIMATION
+   One staggered reveal per slide on arrival. Nothing after that.
+   ========================================================================== */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s var(--ease-out-expo), transform 0.6s var(--ease-out-expo);
+}
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+.slide.visible .reveal:nth-child(1) { transition-delay: 0.05s; }
+.slide.visible .reveal:nth-child(2) { transition-delay: 0.15s; }
+.slide.visible .reveal:nth-child(3) { transition-delay: 0.25s; }
+.slide.visible .reveal:nth-child(4) { transition-delay: 0.35s; }
+.slide.visible .reveal:nth-child(5) { transition-delay: 0.45s; }
+
+/* ==========================================================================
+   DECK CHROME — counter, dots, keyboard hint, notes panel, edit toggle.
+   All fixed to the real viewport, outside the scaled 1920×1080 stage,
+   per the fixed-stage rule (§6 of viewport-base.css above).
+   ========================================================================== */
+.deck-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-family: var(--font-body);
+  color: var(--cream-card);
+  background: rgba(30, 40, 51, 0.82);
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+  backdrop-filter: blur(6px);
+}
+.deck-counter { font-variant-numeric: tabular-nums; opacity: 0.85; }
+.deck-dots { display: flex; gap: 8px; }
+.deck-dots button {
+  width: 8px; height: 8px; border-radius: 50%;
+  border: none; padding: 0; cursor: pointer;
+  background: rgba(245, 240, 230, 0.35);
+  transition: background 0.2s, transform 0.2s;
+}
+.deck-dots button.is-current { background: var(--peach); transform: scale(1.3); }
+.kbd-hint { opacity: 0.75; }
+
+.notes-panel {
+  position: fixed;
+  left: 24px;
+  bottom: 74px;
+  max-width: 640px;
+  background: rgba(18, 24, 31, 0.94);
+  color: var(--cream-card);
+  border: 1px solid rgba(240, 168, 130, 0.35);
+  border-radius: 14px;
+  padding: 22px 26px;
+  font-size: 17px;
+  line-height: 1.5;
+  z-index: 1001;
+}
+.notes-panel[hidden] { display: none; }
+.notes-panel__label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--peach);
+  margin-bottom: 8px;
+}
+
+.edit-hotzone {
+  position: fixed; top: 0; left: 0;
+  width: 80px; height: 80px;
+  z-index: 10000;
+  cursor: pointer;
+}
+.edit-toggle {
+  position: fixed; top: 16px; left: 16px;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(240, 168, 130, 0.5);
+  background: rgba(18, 24, 31, 0.9);
+  color: var(--peach);
+  font-size: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 10001;
+  cursor: pointer;
+}
+.edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
+.edit-toggle.active { background: var(--terracotta); color: var(--cream-card); }
+
+body.editing .editable {
+  outline: 1px dashed var(--terracotta);
+  outline-offset: 4px;
+  cursor: text;
+}
+.edit-saved-flag {
+  position: fixed; top: 16px; left: 64px;
+  font-size: 13px; color: var(--peach);
+  background: rgba(18, 24, 31, 0.9);
+  padding: 6px 12px; border-radius: 8px;
+  opacity: 0; transition: opacity 0.4s ease;
+  z-index: 10001; pointer-events: none;
+}
+.edit-saved-flag.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="deck-viewport">
+  <main class="deck-stage" id="deckStage">
+
+    <!-- ============================================================
+         1. COVER
+         ============================================================ -->
+    <section class="slide slide--navy slide--cover active" data-title="Garrick">
+      <p class="kicker reveal">For people who hold other people's confidences</p>
+      <h1 class="deck-title reveal editable" data-edit-id="cover-title">Garrick</h1>
+      <p class="subtitle reveal editable" data-edit-id="cover-sub">A workspace, run by an AI assistant you talk to, living in files you already own.</p>
+      <p class="byline reveal">Marco Venuti</p>
+      <aside class="notes">Open by naming who's in the room: advisors, consultants, analysts, anyone juggling more than one client's version of events. Garrick is the name; what it protects is the point.</aside>
+    </section>
+
+    <!-- ============================================================
+         2. THE PROBLEM (antagonist)
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="You already juggle things you can't afford to mix">
+      <p class="kicker reveal">The tab you already have open</p>
+      <h2 class="slide-title reveal editable" data-edit-id="problem-title">You already juggle things you can't afford to mix</h2>
+      <p class="slide-body reveal editable" data-edit-id="problem-body-1">A client tells you something in confidence. An hour later you're drafting a note for a different client, in the same chat window, with the same assistant that has remembered everything you've said all week. It's convenient, right up until it isn't.</p>
+      <p class="slide-body reveal editable" data-edit-id="problem-body-2" style="color:var(--terracotta-dark); font-weight:600;">Nothing in that chat knows that one of those two is a wall, not just a change of subject.</p>
+      <p class="folio">Garrick</p>
+      <aside class="notes">Let the discomfort sit for a second before offering the fix. This is the case for a general AI chat tool. It's genuinely strong, which is why the next slides have to earn the alternative.</aside>
+    </section>
+
+    <!-- ============================================================
+         3. THE CLAIM (statement)
+         ============================================================ -->
+    <section class="slide slide--navy slide--statement" data-title="The claim">
+      <p class="kicker reveal">The idea, in one line</p>
+      <p class="statement reveal editable" data-edit-id="claim-statement">It remembers who told you what, and never repeats it to the wrong party.</p>
+      <p class="statement-sub reveal">That's the whole idea. Everything that follows exists to make it true.</p>
+      <aside class="notes">Say this one slowly. Everything after it is mechanism, not more argument.</aside>
+    </section>
+
+    <!-- ============================================================
+         4. PLAIN FOLDERS
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Everything is plain folders, on your own disk">
+      <p class="kicker reveal">Where it lives</p>
+      <h2 class="slide-title reveal editable" data-edit-id="folders-title">Everything is plain folders, on your own disk</h2>
+      <div class="row reveal" style="flex:1; align-items:stretch;">
+        <p class="slide-body" style="flex:1.1;">
+          Notes, projects, meeting history: it's all files, under git, in a folder you already know how to open. Nothing sits behind a login that only a vendor can see into. If you can read a text file, you can read the entire workspace.
+        </p>
+        <div class="card" style="flex:0.9; font-family:'DM Sans', monospace; gap:6px;">
+          <p class="card-eyebrow" style="font-family:var(--font-body);">On disk, not in a cloud</p>
+          <p style="font-size:24px; line-height:1.7; color:var(--navy);">~/Garrick/<br>&nbsp;&nbsp;Zones/Work/Acme Corp/<br>&nbsp;&nbsp;Zones/Personal/<br>&nbsp;&nbsp;Wikis/Meetings/<br>&nbsp;&nbsp;Wikis/Knowledge/<br>&nbsp;&nbsp;System/rules.md</p>
+        </div>
+      </div>
+      <p class="folio">Garrick</p>
+      <aside class="notes">If this is a screen-share, actually open the folder in Finder here. Nothing sells "plain files" like watching one get opened.</aside>
+    </section>
+
+    <!-- ============================================================
+         5. HARNESS INDEPENDENCE
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="The assistant is the replaceable part">
+      <p class="kicker reveal">Who reads it</p>
+      <h2 class="slide-title reveal editable" data-edit-id="harness-title">The assistant is the replaceable part</h2>
+      <p class="slide-body reveal editable" data-edit-id="harness-body">The workspace doesn't belong to one AI product. Any assistant that can read a plain file named <code class="snippet" style="font-size:28px; padding:6px 14px;">AGENTS.md</code> can run it. Swap the assistant and you keep the workspace, the history and the memory exactly as they were.</p>
+      <div class="row reveal" style="gap:24px;">
+        <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Claude Code</h3><p>Runs it today.</p></div>
+        <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Codex</h3><p>Runs it today.</p></div>
+        <div class="card" style="flex:1; align-items:center; text-align:center; border-style:dashed;"><h3 style="font-size:32px;">Whatever's next</h3><p>Reads the same file, runs the same workspace.</p></div>
+      </div>
+      <p class="folio">Garrick</p>
+      <aside class="notes">Name-drop nothing you can't stand behind two years from now. That's the whole point of this slide.</aside>
+    </section>
+
+    <!-- ============================================================
+         6. TRY IT WITHOUT TOUCHING YOUR SETUP
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Try it in a folder that isn't your real one">
+      <p class="kicker reveal">Before you trust it with anything real</p>
+      <h2 class="slide-title reveal editable" data-edit-id="try-title">Try it in a folder that isn't your real one</h2>
+      <div class="grid-3 reveal">
+        <div class="card"><p class="card-eyebrow">1</p><h3 style="font-size:32px;">A new folder</h3><p>Point the installer at an empty folder that isn't your real workspace.</p></div>
+        <div class="card"><p class="card-eyebrow">2</p><h3 style="font-size:32px;">Nothing else changes</h3><p>Nothing is written to your home configuration or any account you already use.</p></div>
+        <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Delete it, it's gone</h3><p>Don't like it? Remove the folder. There's nothing else to undo.</p></div>
+      </div>
+      <code class="snippet reveal">python3 install.py --config examples/acme.json --target ~/Garrick-demo</code>
+      <aside class="notes">Good moment to actually run this line, live, if it's a guided session: the risk-free part lands harder demonstrated than described.</aside>
+    </section>
+
+    <!-- ============================================================
+         7. ONE MEMORY, WALLED USE — load-bearing slide
+         ============================================================ -->
+    <section class="slide slide--navy slide--statement" data-title="One memory, walled use">
+      <p class="kicker reveal">The rule everything else serves</p>
+      <p class="statement reveal editable" data-edit-id="walled-statement">One memory, walled use.</p>
+      <p class="statement-sub reveal editable" data-edit-id="walled-sub">Every conversation goes into the same memory, because that's how you actually hold them, all in one head. The walls stand where that memory gets <em>used</em>, not where it's stored: what one client told you cannot reach the page you write for another.</p>
+      <aside class="notes">Slow down here more than anywhere else in the deck. If this doesn't land, nothing after it matters. It's the reason to build this instead of using a folder of chat exports.</aside>
+    </section>
+
+    <!-- ============================================================
+         8. ZONE / PROJECT / THREAD
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Zone. Project. Thread.">
+      <p class="kicker reveal">The shape underneath</p>
+      <h2 class="slide-title reveal editable" data-edit-id="zpt-title">Zone. Project. Thread.</h2>
+      <div class="grid-3 reveal" style="flex:1;">
+        <div class="card"><p class="card-eyebrow">Zone</p><h3>The separate sides of your working life</h3><p>Work and Personal, say. Each its own folder, its own history, its own backup.</p></div>
+        <div class="card"><p class="card-eyebrow">Project</p><h3>One per client or undertaking</h3><p>Everything for that engagement lives in one place, reachable in one hop.</p></div>
+        <div class="card"><p class="card-eyebrow">Thread</p><h3>One line of work inside it</h3><p>With a single place that says where it stands, so you can pick it back up cold.</p></div>
+      </div>
+      <p class="folio">Garrick</p>
+      <aside class="notes">Three levels, no more, ever. Say it like you'd say a phone number: zone, project, thread.</aside>
+    </section>
+
+    <!-- ============================================================
+         9. THE WALL IN ACTION — Acme / Birch
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Acme Corp and Birch and Co never meet on the page">
+      <p class="kicker reveal">The wall, not the metaphor</p>
+      <h2 class="slide-title reveal editable" data-edit-id="wall-title">Acme Corp and Birch &amp; Co never meet on the page</h2>
+      <div class="row reveal" style="flex:1; align-items:stretch; gap:32px;">
+        <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Acme Corp</h3><p>Supply-chain review. A conversation with their head of procurement, filed the day it happened.</p></div>
+        <div class="wall"></div>
+        <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Birch &amp; Co</h3><p>Market-entry advice, and a direct competitor of Acme's.</p></div>
+      </div>
+      <p class="slide-body reveal" style="font-size:28px;">Both live in the same zone. Both meetings sit in the same memory. A wall stands between them anyway, declared once and checked automatically, so a paper written for one never carries a sentence that came from the other.</p>
+      <aside class="notes">This is the concrete version of the previous slide. If anyone's eyes glazed at "walled use," this is where it clicks.</aside>
+    </section>
+
+    <!-- ============================================================
+         10. RESUME POINT + WRAP HABIT
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="One resume point per thread">
+      <p class="kicker reveal">Picking it back up</p>
+      <h2 class="slide-title reveal editable" data-edit-id="resume-title">One resume point per thread</h2>
+      <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
+        <p class="slide-body" style="flex:1.1;">Every thread carries a block that says what's done, what the live artifact is, what happens next and who it's waiting on. Closing a session properly (the wrap habit) is what keeps that block true two months later, when you've forgotten everything else about it.</p>
+        <div class="card" style="flex:0.9; background:var(--navy); border-color:var(--navy);">
+          <p class="card-eyebrow" style="color:var(--peach);">Resume here</p>
+          <p style="color:var(--cream-card); font-size:24px; line-height:1.6;">Live artifact: the pricing draft<br>Next: send to Dana for sign-off<br>Waiting on: Acme, since Tuesday</p>
+        </div>
+      </div>
+      <p class="folio">Garrick</p>
+      <aside class="notes">This is the habit that makes the whole workspace forgiving of a two-month gap, which is most working lives, most of the time.</aside>
+    </section>
+
+    <!-- ============================================================
+         11. BUILT TO BE SPOKEN TO
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Built to be spoken to">
+      <p class="kicker reveal">How you actually use it</p>
+      <h2 class="slide-title reveal editable" data-edit-id="voice-title">Built to be spoken to</h2>
+      <p class="slide-body reveal editable" data-edit-id="voice-body">Names you can say out loud, with no dates or codes buried in them. Say "open Acme, pricing" and it tells you where you left off, in a couple of sentences, not a wall of text. When it mishears a name, it checks against your own list before it guesses.</p>
+      <p class="folio">Garrick</p>
+      <aside class="notes">If this is a live demo, this is the slide to actually say a command out loud on, not just describe it.</aside>
+    </section>
+
+    <!-- ============================================================
+         12. YOU KEEP THE DECISIONS (statement)
+         ============================================================ -->
+    <section class="slide slide--navy slide--statement" data-title="Nothing leaves the machine without you">
+      <p class="kicker reveal">What it never does alone</p>
+      <p class="statement reveal editable" data-edit-id="decisions-statement">Nothing leaves the machine without you.</p>
+      <p class="statement-sub reveal editable" data-edit-id="decisions-sub">It can draft the email. It cannot send it. Anything that leaves your machine (a message, a shared file, a publish) waits for you to say go, every time. Yes once is not yes next time.</p>
+      <aside class="notes">This is the slide that answers the fear underneath the whole pitch: that an assistant with this much memory might act on it without asking.</aside>
+    </section>
+
+    <!-- ============================================================
+         13. CHECKS ITSELF
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="A workspace that checks itself">
+      <p class="kicker reveal">Keeping it honest</p>
+      <h2 class="slide-title reveal editable" data-edit-id="check-title">A workspace that checks itself</h2>
+      <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
+        <p class="slide-body" style="flex:1.1;">A rule that a machine can check gets a check, added in the same commit as the rule itself. Run it any time and it answers in plain language: a thread with no resume point, a wall that was declared but never wired in.</p>
+        <div class="card" style="flex:0.9; font-family:'DM Sans', monospace;">
+          <p class="card-eyebrow" style="font-family:var(--font-body);">$ python3 System/tools/check.py</p>
+          <p style="font-size:24px; line-height:1.7; color:var(--navy);">✓ every zone is its own repository<br>✓ every open thread has a resume point<br>⚠ Birch &amp; Co: wall not yet declared</p>
+        </div>
+      </div>
+      <p class="folio">Garrick</p>
+      <aside class="notes">The warning line is invented for the slide, but it's exactly the shape of thing the real check catches; say so if asked.</aside>
+    </section>
+
+    <!-- ============================================================
+         14. CORE VS EXTRAS
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="What's core, and what's an optional extra">
+      <p class="kicker reveal">What you actually need</p>
+      <h2 class="slide-title reveal editable" data-edit-id="core-title">What's core, and what's an optional extra</h2>
+      <div class="grid-2 reveal" style="flex:1;">
+        <div class="card">
+          <p class="card-eyebrow">Core: this is Garrick</p>
+          <p>The folders and the rules that govern them. The two memories: meetings, and the published material you study. Zone, project, thread. The self-check.</p>
+        </div>
+        <div class="card" style="border-style:dashed;">
+          <p class="card-eyebrow">Optional: swap or skip</p>
+          <p>A note browser like Obsidian. A way to run several agents at once, like cmux. A recorder for meetings. Email aliases for intake.</p>
+        </div>
+      </div>
+      <p class="slide-body reveal" style="font-size:26px;">None of the extras are load-bearing. Remove any one of them and the workspace still keeps its promise.</p>
+      <aside class="notes">Naming the extras out loud pre-empts the question "do I need Obsidian for this" before it gets asked.</aside>
+    </section>
+
+    <!-- ============================================================
+         15. CLOSE
+         ============================================================ -->
+    <section class="slide slide--navy slide--statement" data-title="Start with one folder">
+      <p class="kicker reveal">Yours to open</p>
+      <p class="statement reveal editable" data-edit-id="close-statement">Start with one folder.</p>
+      <p class="statement-sub reveal editable" data-edit-id="close-sub">Copy it, point an assistant at it, and start talking. The rules travel with the files; there's nothing else to install.</p>
+      <p class="byline reveal" style="margin-top:20px;">Garrick · MIT licence · Marco Venuti</p>
+      <aside class="notes">End here, not on a roadmap. The point of this whole deck is that it's ready now, not that it will be someday.</aside>
+    </section>
+
+  </main>
+</div>
+
+<!-- Deck chrome: counter, dot navigation, keyboard hint — all outside the
+     scaled stage so they stay a fixed size regardless of window size. -->
+<div class="deck-controls">
+  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">15</span></span>
+  <span class="deck-dots" id="deckDots"></span>
+  <span class="kbd-hint">→ / space next · ← previous · N notes · E edit</span>
+</div>
+
+<div class="notes-panel" id="notesPanel" hidden>
+  <div class="notes-panel__label">Speaker notes</div>
+  <div class="notes-panel__text" id="notesText"></div>
+</div>
+
+<div class="edit-hotzone" id="editHotzone"></div>
+<button class="edit-toggle" id="editToggle" title="Edit mode (E)">&#9998;</button>
+<div class="edit-saved-flag" id="editSavedFlag">Saved locally</div>
+
+<script>
+/* ==========================================================================
+   SLIDE PRESENTATION CONTROLLER
+   Handles: fixed-stage scaling, keyboard/wheel/touch navigation, the dot
+   rail, the speaker-notes panel, and the (very) small inline-edit affordance.
+   Nothing here depends on a network connection.
+   ========================================================================== */
+class SlidePresentation {
+  constructor() {
+    this.stage = document.getElementById('deckStage');
+    this.slides = Array.from(document.querySelectorAll('.slide'));
+    this.total = this.slides.length;
+    this.current = 0;
+
+    document.getElementById('slideTotal').textContent = this.total;
+    this.buildDots();
+    this.setupStageScale();
+    this.setupKeyboardNav();
+    this.setupWheelNav();
+    this.setupTouchNav();
+    this.setupNotesPanel();
+    this.setupEditMode();
+    this.restoreEdits();
+
+    this.showSlide(0);
+  }
+
+  /* ---- 1920x1080 stage scaled uniformly to the real window ---- */
+  setupStageScale() {
+    const scale = () => {
+      const factor = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      const x = (window.innerWidth - 1920 * factor) / 2;
+      const y = (window.innerHeight - 1080 * factor) / 2;
+      this.stage.style.transform = `translate(${x}px, ${y}px) scale(${factor})`;
+    };
+    scale();
+    window.addEventListener('resize', scale);
+  }
+
+  showSlide(index) {
+    this.current = Math.max(0, Math.min(index, this.total - 1));
+    this.slides.forEach((slide, i) => {
+      const isCurrent = i === this.current;
+      slide.classList.toggle('active', isCurrent);
+      slide.classList.toggle('visible', isCurrent);
+    });
+    document.getElementById('slideCurrent').textContent = this.current + 1;
+    this.updateDots();
+    this.updateNotes();
+  }
+
+  next() { this.showSlide(this.current + 1); }
+  prev() { this.showSlide(this.current - 1); }
+
+  /* ---- keyboard: arrows, space, page up/down, home/end ---- */
+  setupKeyboardNav() {
+    document.addEventListener('keydown', (e) => {
+      const editingText = document.activeElement &&
+        document.activeElement.getAttribute('contenteditable') === 'true';
+      if (editingText) return; // don't steal keystrokes while typing a slide edit
+
+      switch (e.key) {
+        case 'ArrowRight':
+        case ' ':
+        case 'PageDown':
+          e.preventDefault(); this.next(); break;
+        case 'ArrowLeft':
+        case 'PageUp':
+          e.preventDefault(); this.prev(); break;
+        case 'Home':
+          e.preventDefault(); this.showSlide(0); break;
+        case 'End':
+          e.preventDefault(); this.showSlide(this.total - 1); break;
+        case 'n':
+        case 'N':
+          this.toggleNotes(); break;
+        case 'e':
+        case 'E':
+          this.toggleEditMode(); break;
+      }
+    });
+  }
+
+  /* ---- mouse wheel, throttled so one gesture = one slide ---- */
+  setupWheelNav() {
+    let locked = false;
+    window.addEventListener('wheel', (e) => {
+      if (locked) return;
+      if (Math.abs(e.deltaY) < 12) return;
+      locked = true;
+      if (e.deltaY > 0) this.next(); else this.prev();
+      setTimeout(() => { locked = false; }, 550);
+    }, { passive: true });
+  }
+
+  /* ---- touch swipe ---- */
+  setupTouchNav() {
+    let startX = null;
+    window.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; }, { passive: true });
+    window.addEventListener('touchend', (e) => {
+      if (startX === null) return;
+      const dx = e.changedTouches[0].clientX - startX;
+      if (Math.abs(dx) > 60) { dx < 0 ? this.next() : this.prev(); }
+      startX = null;
+    }, { passive: true });
+  }
+
+  /* ---- dot rail, click to jump ---- */
+  buildDots() {
+    const wrap = document.getElementById('deckDots');
+    this.slides.forEach((_, i) => {
+      const b = document.createElement('button');
+      b.setAttribute('aria-label', `Slide ${i + 1}`);
+      b.addEventListener('click', () => this.showSlide(i));
+      wrap.appendChild(b);
+    });
+    this.dots = Array.from(wrap.children);
+  }
+  updateDots() {
+    this.dots.forEach((d, i) => d.classList.toggle('is-current', i === this.current));
+  }
+
+  /* ---- speaker notes: each slide carries an <aside class="notes"> ---- */
+  setupNotesPanel() {
+    this.notesPanel = document.getElementById('notesPanel');
+    this.notesText = document.getElementById('notesText');
+  }
+  toggleNotes() {
+    const willShow = this.notesPanel.hasAttribute('hidden');
+    if (willShow) this.notesPanel.removeAttribute('hidden');
+    else this.notesPanel.setAttribute('hidden', '');
+  }
+  updateNotes() {
+    const aside = this.slides[this.current].querySelector('.notes');
+    this.notesText.textContent = aside ? aside.textContent.trim() : '(no notes for this slide)';
+  }
+
+  /* ---- inline edit mode: a light touch, not a full editor.
+     Toggles contenteditable on the current deck's .editable elements and
+     persists text to localStorage, so a presenter can fix a typo mid-talk
+     without reopening the file. Wrapped in try/catch: private windows and
+     locked-down browsers can refuse localStorage entirely. ---- */
+  setupEditMode() {
+    this.editing = false;
+    this.toggleBtn = document.getElementById('editToggle');
+    this.hotzone = document.getElementById('editHotzone');
+    this.savedFlag = document.getElementById('editSavedFlag');
+
+    let hideTimeout = null;
+    const show = () => { clearTimeout(hideTimeout); this.toggleBtn.classList.add('show'); };
+    const scheduleHide = () => {
+      hideTimeout = setTimeout(() => {
+        if (!this.editing) this.toggleBtn.classList.remove('show');
+      }, 400);
+    };
+    this.hotzone.addEventListener('mouseenter', show);
+    this.hotzone.addEventListener('mouseleave', scheduleHide);
+    this.toggleBtn.addEventListener('mouseenter', show);
+    this.toggleBtn.addEventListener('mouseleave', scheduleHide);
+    this.hotzone.addEventListener('click', () => this.toggleEditMode());
+    this.toggleBtn.addEventListener('click', () => this.toggleEditMode());
+
+    document.querySelectorAll('.editable').forEach((el) => {
+      el.addEventListener('input', () => this.saveEdit(el));
+    });
+  }
+
+  toggleEditMode() {
+    this.editing = !this.editing;
+    document.body.classList.toggle('editing', this.editing);
+    this.toggleBtn.classList.toggle('active', this.editing);
+    document.querySelectorAll('.editable').forEach((el) => {
+      el.setAttribute('contenteditable', this.editing ? 'true' : 'false');
+    });
+  }
+
+  saveEdit(el) {
+    try {
+      const id = el.getAttribute('data-edit-id');
+      if (!id) return;
+      localStorage.setItem('garrick-deck:' + id, el.innerHTML);
+      this.savedFlag.classList.add('show');
+      clearTimeout(this._savedTimer);
+      this._savedTimer = setTimeout(() => this.savedFlag.classList.remove('show'), 900);
+    } catch (err) {
+      /* storage unavailable (private window, locked-down profile) — edits
+         still work for the current viewing, they just won't persist */
+    }
+  }
+
+  restoreEdits() {
+    try {
+      document.querySelectorAll('.editable').forEach((el) => {
+        const id = el.getAttribute('data-edit-id');
+        if (!id) return;
+        const saved = localStorage.getItem('garrick-deck:' + id);
+        if (saved !== null) el.innerHTML = saved;
+      });
+    } catch (err) {
+      /* same as above: fail quietly, deck still renders its authored text */
+    }
+  }
+}
+
+new SlidePresentation();
+</script>
+</body>
+</html>

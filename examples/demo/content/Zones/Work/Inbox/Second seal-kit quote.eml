@@ -1,0 +1,36 @@
+From: Owen Pike <owen.pike@acmecorp.example>
+To: Sam Rivera <sam@riveraadvisory.example>
+Cc: Dana Whitlock <dana.whitlock@acmecorp.example>
+Date: Mon, 28 Sep 2026 11:30:00 +0200
+Subject: Second seal-kit quote
+Message-ID: <20260928113000.5582@acmecorp.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============seal-kit-quote-0928=="
+
+--===============seal-kit-quote-0928==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Sam,
+
+The second maker came back early. Both seal-kit quotes are side by side in
+the attached sheet.
+
+Ansel is cheaper per kit, but their lead time is six weeks against Keld's
+three, and they want a minimum order of two thousand. With two weeks of
+stock on hand, I don't see how we switch before the spring without a bridge
+order from Keld.
+
+Owen
+
+--===============seal-kit-quote-0928==
+Content-Type: text/csv
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Seal kit quotes.csv"
+MIME-Version: 1.0
+
+bWFrZXIscGFydCx1bml0X3ByaWNlX2V1cixsZWFkX3RpbWVfd2Vla3MsbWluaW11bV9vcmRlcgpL
+ZWxkIFNlYWxzLHNlYWwga2l0LDQuMTAsMyw1MDAKQW5zZWwgR2Fza2V0cyxzZWFsIGtpdCwzLjg1
+LDYsMjAwMAo=
+
+--===============seal-kit-quote-0928==--

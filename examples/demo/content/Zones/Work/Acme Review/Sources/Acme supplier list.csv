@@ -1,0 +1,11 @@
+supplier,part,category,tier,single_source,annual_spend_eur,notes
+Halden Castings,motor housing,metal,1,yes,410000,only approved source since 2021
+Keld Seals,seal kit,rubber,1,yes,186000,two weeks of stock on hand
+Orrin Electronics,control board,electronics,1,yes,352000,
+Quarn Steel,shaft blank,metal,1,no,220000,second source Tarn Metals
+Tarn Metals,shaft blank,metal,1,no,95000,
+Vesper Fasteners,fastener set,hardware,1,no,48000,
+Keld Seals,o-ring pack,rubber,1,no,21000,also from Pryor Rubber
+Pryor Rubber,o-ring pack,rubber,1,no,17000,
+Halden Castings,pump casing,metal,1,no,390000,second source Brenn Foundry
+Brenn Foundry,pump casing,metal,1,no,140000,

@@ -1,0 +1,25 @@
+{
+  "owner": {
+    "name": "Sam Rivera",
+    "description": "Independent advisor on supply chains and market entry, working for a handful of mid-sized manufacturers."
+  },
+  "zones": [
+    {"name": "Work", "holds": "Client engagements and the practice itself"},
+    {"name": "Personal", "holds": "Home, health, money and travel"}
+  ],
+  "parties": [
+    {"name": "Acme Corp", "what": "Client. Supply-chain review", "zone": "Work", "tag": "acme", "domains": ["acmecorp.example"]},
+    {"name": "Birch & Co", "what": "Client. Market-entry advice; competes with Acme", "zone": "Work", "tag": "birch", "domains": ["birchco.example"]}
+  ],
+  "walls": [
+    {"between": "acme", "and": "birch", "why": "Competitors, and both are clients"}
+  ],
+  "people": [
+    {"name": "Dana Whitlock", "party": "acme", "role": "Head of procurement; sponsor of the review"},
+    {"name": "Theo Marsh", "party": "birch", "role": "Managing partner"}
+  ],
+  "aliases": [
+    {"heard": "birch and co, birchen co", "means": "Birch & Co"},
+    {"heard": "dana whitlaw", "means": "Dana Whitlock"}
+  ]
+}

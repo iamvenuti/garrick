@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: macOS, Python ${{ matrix.python }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "system" is /usr/bin/python3 from the Command Line Tools: 3.9, what most users have.
+        python: ["system", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        if: matrix.python != 'system'
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Pick the interpreter
+        run: |
+          if [ "${{ matrix.python }}" = system ]; then py=/usr/bin/python3; else py=python; fi
+          echo "PY=$py" >> "$GITHUB_ENV"
+          "$py" --version
+      - name: Run the suite
+        env:
+          # Comma-separated real names that must never appear. Empty on forks: the test skips.
+          GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
+        run: $PY -m unittest discover -s tests

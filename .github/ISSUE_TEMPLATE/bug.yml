@@ -1,0 +1,36 @@
+name: Something broke
+description: The installer, a skill, scaffold.py or check.py did the wrong thing.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use invented names (Acme, Birch) in everything you paste. Never paste a real client's names, notes or transcripts into an issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead. Paste the exact error.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to make it happen again
+      description: Ideally starting from the demo workspace (python3 examples/demo/build.py --target ~/Garrick-demo).
+    validations:
+      required: true
+  - type: dropdown
+    id: assistant
+    attributes:
+      label: Assistant
+      options: [Claude Code, Codex, Both, Not relevant]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `python3 --version`, `git --version`, and `claude --version` or `codex --version`.
+    validations:
+      required: true

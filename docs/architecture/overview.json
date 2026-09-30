@@ -1,0 +1,378 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Garrick at a glance",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "cloud": {
+          "label": "Way in"
+        },
+        "database": {
+          "label": "Memory"
+        },
+        "backend": {
+          "label": "Project"
+        },
+        "security": {
+          "label": "Rules"
+        },
+        "frontend": {
+          "label": "Your assistant"
+        },
+        "external": {
+          "label": "Optional tool"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "in",
+        "label": "Ways in",
+        "focus": [
+          "mail",
+          "files",
+          "recordings",
+          "sort",
+          "meetings",
+          "knowledge",
+          "acme"
+        ],
+        "note": "Recordings always become conversations. Mail and files are filed where they belong."
+      },
+      {
+        "id": "talk",
+        "label": "Talking to your assistant",
+        "focus": [
+          "assistant",
+          "rules",
+          "cmux",
+          "phone"
+        ],
+        "note": "You talk to your assistant at your desk or away from it. It reads the rules first, then works across everything."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "recordings",
+      "type": "cloud",
+      "label": "Recordings",
+      "sublabel": "a recorder, as text",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "mail",
+      "type": "cloud",
+      "label": "Mail",
+      "sublabel": "saved or forwarded",
+      "pos": [
+        760,
+        40
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "files",
+      "type": "cloud",
+      "label": "Files you drop in",
+      "sublabel": "documents, articles",
+      "pos": [
+        280,
+        40
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "sort",
+      "type": "frontend",
+      "label": "Filed where it belongs",
+      "sublabel": "your assistant sorts it",
+      "pos": [
+        520,
+        40
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "meetings",
+      "type": "database",
+      "label": "Meetings",
+      "sublabel": "every conversation",
+      "pos": [
+        40,
+        220
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "acme",
+      "type": "backend",
+      "label": "Acme",
+      "sublabel": "a client project",
+      "pos": [
+        280,
+        220
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "birch",
+      "type": "backend",
+      "label": "Birch",
+      "sublabel": "a client project",
+      "pos": [
+        520,
+        220
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "knowledge",
+      "type": "database",
+      "label": "Knowledge",
+      "sublabel": "what you read",
+      "pos": [
+        760,
+        220
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "rules",
+      "type": "security",
+      "label": "Rules",
+      "sublabel": "what goes where, who never mixes",
+      "pos": [
+        1000,
+        220
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "obsidian",
+      "type": "external",
+      "label": "Obsidian",
+      "sublabel": "optional: browse it all",
+      "pos": [
+        40,
+        420
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "cmux",
+      "type": "external",
+      "label": "cmux",
+      "sublabel": "optional",
+      "pos": [
+        330,
+        420
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "assistant",
+      "type": "frontend",
+      "label": "Your assistant",
+      "sublabel": "Claude Code or Codex",
+      "pos": [
+        640,
+        420
+      ],
+      "size": [
+        180,
+        70
+      ]
+    },
+    {
+      "id": "phone",
+      "type": "external",
+      "label": "Phone",
+      "sublabel": "optional",
+      "pos": [
+        950,
+        420
+      ],
+      "size": [
+        180,
+        70
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Ways in",
+      "wraps": [
+        "recordings",
+        "files",
+        "sort",
+        "mail"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "The workspace: run by your assistant, browsed in Obsidian",
+      "wraps": [
+        "meetings",
+        "acme",
+        "birch",
+        "knowledge"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Work zone",
+      "wraps": [
+        "acme",
+        "birch"
+      ],
+      "pad": 14
+    },
+    {
+      "kind": "region",
+      "label": "Tools around it",
+      "wraps": [
+        "obsidian",
+        "cmux",
+        "assistant",
+        "phone"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "rec",
+      "from": "recordings",
+      "to": "meetings",
+      "label": "always a conversation",
+      "labelAt": [
+        130,
+        165
+      ]
+    },
+    {
+      "id": "mail-in",
+      "from": "mail",
+      "to": "sort"
+    },
+    {
+      "id": "files-in",
+      "from": "files",
+      "to": "sort"
+    },
+    {
+      "id": "to-meetings",
+      "from": "sort",
+      "to": "meetings",
+      "label": "a conversation",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "to-work",
+      "from": "sort",
+      "to": "acme",
+      "label": "for a project",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "to-knowledge",
+      "from": "sort",
+      "to": "knowledge",
+      "label": "to read",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "reads-rules",
+      "from": "assistant",
+      "to": "rules",
+      "label": "reads the rules first",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "talk-here",
+      "from": "cmux",
+      "to": "assistant",
+      "label": "talk to it here",
+      "variant": "dashed"
+    },
+    {
+      "id": "talk-away",
+      "from": "phone",
+      "to": "assistant",
+      "label": "away from your desk",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ways in",
+      "items": [
+        "Recordings always become conversations",
+        "Mail and files go where they belong: a conversation, a project, or something to read"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "One memory, walled use",
+      "items": [
+        "Everything is remembered in one place",
+        "One client's words never reach another client's work"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Tools around it",
+      "items": [
+        "You talk to your assistant in cmux or on your phone; it follows the rules and does the work across everything",
+        "Obsidian lets you browse and read all of it; cmux, Obsidian and a phone are optional"
+      ]
+    }
+  ]
+}

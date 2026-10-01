@@ -46,17 +46,20 @@ The installer asks its questions one at a time. [Getting started](getting-starte
 
 ## 5. Open your workspace in the Claude app
 
-1. Click the **Code** tab at the top of the Claude window.
-2. Choose **Local**. It runs Claude on your Mac with your own files. The other choices run somewhere else and don't see your workspace.
-3. Click **Select folder** and choose your `Garrick` folder in your home folder. Choose the whole folder, not a zone inside it: the rules and skills live at its top.
-4. In the mode selector next to the send button, choose **Accept edits**. Claude then writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
-5. Type `what's open` and send it.
+![The Claude app's Code view, with the four things to click marked in red: the Code icon at the top, New in the sidebar, then Local and the Garrick folder above the box where you type.](assets/desktop-code-tab.png)
+
+1. Click the **Code** icon, `</>`, at the top of the Claude window. The speech-bubble icon beside it is ordinary chat, which can't see your files.
+2. Click **+ New** at the top of the left sidebar. The choices below can only be made before a session's first message, so always start from New.
+3. Above the box where you type, click the first button and choose **Local**. It runs Claude on your Mac with your own files. The other choices run somewhere else and don't see your workspace.
+4. Click the folder button beside it and choose your `Garrick` folder (Command, Shift and H jumps to your home folder). Choose the whole folder, not a zone inside it: the rules and skills live at its top. The button then reads **Garrick**, as in the picture.
+5. Below the box, next to the microphone, click the mode and choose **Accept edits**. Claude then writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
+6. Type `what's open` and press Return.
 
 Two things to leave alone. Don't turn on "Allow bypass permissions mode" in Settings, which lets Claude run anything without asking. And if the app suggests creating a `CLAUDE.md`, don't: Garrick's instructions live in `AGENTS.md`, and a `CLAUDE.md` in the folder makes Claude stop reading them.
 
 ## 6. Turn on dictation
 
-Garrick is built to be spoken to. In System Settings, open Keyboard, turn on Dictation, and choose a shortcut. Dictation works in any text box, the Claude app included: press the shortcut, speak, and send.
+Garrick is built to be spoken to. In the Claude app, click the microphone below the box where you type, speak, and send. To speak anywhere else, Terminal included, turn on the Mac's own dictation: in System Settings, open Keyboard, turn on Dictation, and choose a shortcut.
 
 ## 7. Install Obsidian (optional)
 

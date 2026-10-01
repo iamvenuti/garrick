@@ -6,7 +6,7 @@
 
 An operating system for knowledge work, run by the AI assistant you already use.
 
-You've let AI into your code. Your client work still lives in chat tabs, a notes app and your head.
+Your work comes from many directions: customers, partners under NDA, suppliers, internal projects. Each one trusted you with something, and each has its own rules about who may know it. Today that work lives in chat tabs, a notes app and your head.
 
 Garrick puts it in plain folders on your own disk, and gives any assistant the rules to run them.
 
@@ -14,14 +14,19 @@ Garrick puts it in plain folders on your own disk, and gives any assistant the r
 
 *The wall at work: two walled clients, one shared supplier, and a brief that holds back what the other client said. [Watch the 84-second video](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) (with [captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)).*
 
-- **Walls between clients.** Every conversation goes into one memory, because that is how you hold them. Walls you declare decide where that memory may be used, and a check before every commit stops one client's names, or words lifted from its meetings, reaching another client's work.
-- **Any assistant.** Claude Code or Codex today. The rules are files in the workspace, not settings in one vendor's app, so switching costs you nothing.
-- **Built to be spoken to.** Open a thread, file a meeting, close the day, by voice. Names are ones you can say aloud, and short answers come back when you're listening.
-- **Yours.** Markdown under git. Try it in a folder you can delete; your existing setup stays as it is.
+- **Walls between whoever trusted you.** Customers, partners, clients and internal projects each sit behind their own wall. Every conversation goes into one memory, because that is how you hold them. The walls decide where that memory may be used, and a check before every commit stops one party's names, or words lifted from its meetings, reaching another's work.
+- **Two memories.** Meetings keeps who said what, and when. Knowledge keeps what you've read: reports, articles, research. Both are there for any work the walls allow.
+- **Private by design.** Markdown under git, on your own disk. Your record never lives in an AI assistant's memory, so changing AI assistant or account loses nothing. Try it in a folder you can delete; your existing setup stays as it is.
+- **Any assistant.** Claude Code or Codex today. The rules are files in the workspace, not settings in one vendor's app.
+- **Built to be spoken to.** Open a thread, file a meeting, close the day, by voice.
 
 ![Garrick at a glance: mail, recordings and files come in; your assistant files them into the Meetings and Knowledge memories or a client project, following the rules; you talk to it in cmux or on your phone, and browse everything in Obsidian.](docs/architecture/overview.png)
 
 An [interactive version](docs/architecture/overview.html) walks through it step by step; download it and open it in a browser.
+
+## Who it's for
+
+Anyone who holds confidences from more than one source: an advisor with several clients, an account manager with competing customers, a corporate manager working under several NDAs, anyone on internal projects that aren't for everyone. At work, run it with the assistant and account your employer approves. Your files stay on your disk, but what the assistant reads still goes to its provider.
 
 ## Try it
 

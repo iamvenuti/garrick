@@ -31,7 +31,7 @@ Download Claude from [claude.com/download](https://claude.com/download), open th
 
 ## 3. Set Claude up for private work (once)
 
-Your workspace will hold your clients' material, so check this before your first session. In the Claude app, open **Settings**, then **Privacy**, and turn **Help improve Claude** off. With it on, Anthropic may use your chats and coding sessions, Garrick sessions included, to train future models. The same setting covers the app, the website and Claude Code in Terminal, because it belongs to your account.
+Your workspace will hold material other people trusted you with, so check this before your first session. In the Claude app, open **Settings**, then **Privacy**, and turn **Help improve Claude** off. With it on, Anthropic may use your chats and coding sessions, Garrick sessions included, to train future models. The same setting covers the app, the website and Claude Code in Terminal, because it belongs to your account.
 
 ## 4. Get Garrick and install it
 
@@ -74,7 +74,7 @@ A filter keeps that mail out of your Gmail inbox and gives it a label:
 4. Tick **Skip the Inbox (Archive it)** and **Apply the label**, then choose **New label** and name it `Garrick/Work`.
 5. Click **Create filter**.
 
-Repeat for each zone, for example `you+personal@gmail.com` with the label `Garrick/Personal`. For mail from one client, you can use their tag instead: `you+acme@gmail.com` tells Garrick the mail is Acme's.
+Repeat for each zone, for example `you+personal@gmail.com` with the label `Garrick/Personal`. For mail from one customer, partner or client, you can use their tag instead: `you+acme@gmail.com` tells Garrick the mail is Acme's.
 
 The label collects the mail to be filed, so only mail you routed there can reach your workspace. [Ways in](extras/ways-in.md) has three ways to get labelled mail into a zone's `Inbox/` folder, and which accounts each one works with.
 

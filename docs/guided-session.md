@@ -26,7 +26,7 @@ Check that you have, before the call ([First steps](first-steps.md) sets each on
 - **The model.** Zones, projects, threads, one memory with walled use, and one resume point per thread. [Principles](principles.md) covers the same ground if you want to read ahead.
 - **The install.** You run `python3 install.py` and answer each question yourself, with the worksheet open beside it.
 - **A tour.** `AGENTS.md`, then `System/rules.md`, then `System/context.md`, now filled in with your own zones and parties.
-- **Your first project.** Your own first client or undertaking, not an invented one, created by asking the assistant in plain language.
+- **Your first project.** Your own first client, customer, partner or internal project, not an invented one, created by asking the assistant in plain language.
 - **Open and wrap.** You open a thread, tell the assistant where the work stands, wrap it, and hear it read back. This is the habit everything else depends on.
 - **The check.** `python3 System/tools/check.py`: a clean pass, a problem made on purpose, and a clean pass again.
 - **The two memories.** Where a transcript or an email goes to be filed later.

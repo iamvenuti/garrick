@@ -2,7 +2,7 @@
 
 This page is for you if you have never used Terminal. It gets your Mac ready for Garrick in about 30 minutes, most of it waiting for downloads.
 
-There are two ways to talk to Garrick. The **Claude desktop app** is the easier one: after you've installed Garrick, you work in a normal app window, and you need Terminal only once. The **terminal route** is for people who already live in Terminal and is at the end of this page. Both run the same Claude Code and read the same workspace.
+There are two ways to talk to Garrick. The **Claude desktop app** is the easier one: after you've installed Garrick, you work in a normal app window, and you need Terminal only once. The **terminal route** is for people who already live in Terminal and is at the end of this page. Both run the same Claude Code and read the same workspace. If you use ChatGPT rather than Claude, Garrick works with Codex too: see [Using Codex instead](#using-codex-instead).
 
 You need a Mac on macOS 13 or later, and a paid Claude plan (Pro or above). The free plan doesn't include Claude Code.
 
@@ -80,6 +80,21 @@ A filter keeps that mail out of your Gmail inbox and gives it a label:
 Repeat for each zone, for example `you+personal@gmail.com` with the label `Garrick/Personal`. For mail from one customer, partner or client, you can use their tag instead: `you+acme@gmail.com` tells Garrick the mail is Acme's.
 
 The label collects the mail to be filed, so only mail you routed there can reach your workspace. [Ways in](extras/ways-in.md) has three ways to get labelled mail into a zone's `Inbox/` folder, and which accounts each one works with.
+
+## Using Codex instead
+
+Codex lives inside the ChatGPT desktop app, for Macs with Apple silicon, and comes with every ChatGPT plan. Download the app from [learn.chatgpt.com/docs/app](https://learn.chatgpt.com/docs/app) and sign in. Steps 1, 4, 6, 7 and 8 above stay the same; these replace steps 2, 3 and 5.
+
+**Set it up for private work (once).** In ChatGPT, open **Settings**, then **Data Controls**, and turn **Improve the model for everyone** off. On a personal plan it covers Codex as well. Codex's own settings have a separate switch about training on full environments: turn that off too.
+
+![The Codex mode of the ChatGPT app, creating a project: Codex chosen at the top of the sidebar, the project named Garrick, and the Garrick folder added as its source folder on this computer.](assets/codex-app-project.png)
+
+1. At the top of the sidebar, click the mode name and choose **Codex**.
+2. Above the box where you type, click **Choose project** and create a new project.
+3. Name it `Garrick`. Under **Source folders**, click **Add folder** and choose your `Garrick` folder, the whole folder, not a zone inside it. Leave **This computer** selected: it runs on your Mac with your own files.
+4. Click **Create project**.
+5. The setting below the box (**Approve for me** in the picture) decides what Codex does without asking. Choose a stricter one if you'd rather approve each step.
+6. Type `what's open` and press Return.
 
 ## The terminal route
 

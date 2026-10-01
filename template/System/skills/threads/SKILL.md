@@ -164,7 +164,8 @@ per wrap: the one named, and nothing else.
    Keep all five rows; a row that does not apply says "none" or "nobody". The
    next action is one action. Anything more goes to `Todo.md` (step 7).
    **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
-   end the moment it needs a change.
+   end the moment it needs a change. Every path and link in the block must lead
+   to something that exists now; `check.py` warns about one that does not.
 6. **Add a dated entry** directly below the `---` rule, above the earlier
    entries, so the newest is first:
    ```markdown

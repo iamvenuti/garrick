@@ -67,6 +67,7 @@ CHECKS = [
     ("names", "Names"),
     ("projects", "Projects"),
     ("threads", "Threads"),
+    ("resume", "Resume points"),
     ("deliverables", "Deliverables"),
     ("meetings", "Meeting pages"),
     ("walls", "Walls"),
@@ -86,6 +87,7 @@ EAR_GROUP = {
     "names": "{n} names are hard to say or sound alike",
     "projects": "{n} things need fixing in project hub notes",
     "threads": "{n} things need fixing in thread notes",
+    "resume": "{n} resume points name files that are not there",
     "deliverables": "{n} deliverables lack their date",
     "meetings": "{n} things need fixing on meeting pages",
     "walls": "the walls were crossed in {n} places",
@@ -581,6 +583,67 @@ def check_threads(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "threads", r,
                                    "`party` %s differs from the project's %s" % (", ".join(sorted(ttags)), ", ".join(sorted(ptags))),
                                    "Thread %s names a different party from its project" % spoken))
+    return out
+
+
+RESUME_END_RE = re.compile(r"^(#{1,3} |---\s*$)")
+TICK_RE = re.compile(r"`([^`\n]+)`")
+PATHLIKE_RE = re.compile(r"^[\w./~ ()&',+-]+(\.[A-Za-z0-9]{1,5}|/)$")
+COMMAND_RE = re.compile(r"^(python3?|bash|sh|node|open|cd|git|gh)\s")
+
+
+def resume_block(text: str) -> List[str]:
+    """The lines of a note's `### Resume here` block, up to the next heading or rule."""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "### resume here"), -1)
+    if start < 0:
+        return []
+    out = []
+    for line in lines[start + 1:]:
+        if RESUME_END_RE.match(line.strip()):
+            break
+        out.append(line)
+    return out
+
+
+def check_resume(ws: Workspace) -> List[Finding]:
+    """A resume point is the signpost a cold resume follows first. Every link
+    and file path in a live thread's Resume here block must still lead
+    somewhere: a deliverable renamed or moved shows here the day it happens,
+    not when someone opens the thread months later. Placeholders, commands,
+    web addresses and anything on another machine are not paths."""
+    out = []
+    files = [p for p in walk_files(ws.root)]
+    for project, _ in ws.projects:
+        for thread in visible_dirs(project / "Threads"):
+            note = thread / (thread.name + ".md")
+            text = read_text(note) if note.is_file() else None
+            if not text or str(parse_frontmatter(note).get("status") or "").strip().lower() == "done":
+                continue
+            spoken = "%s, %s" % (project.name, thread.name)
+            for line in resume_block(text):
+                for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
+                    target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
+                    if not target or target.startswith("<") or "://" in target:
+                        continue
+                    if not resolve(ws, note, target, files):
+                        out.append(Finding(WARNING, "resume", rel(ws, note),
+                                           "Resume here links [[%s]], which leads nowhere" % target,
+                                           "Thread %s points at a note that is not there" % spoken))
+                for m in TICK_RE.finditer(line):
+                    path = m.group(1).strip()
+                    if (path.startswith(("<", "/tmp/", "/private/", "/var/")) or "://" in path or "*" in path
+                            or COMMAND_RE.match(path) or not PATHLIKE_RE.match(path) or "/" not in path.rstrip("/")):
+                        continue
+                    if path.startswith(("~", "/")):
+                        found = Path(path).expanduser().exists()
+                    else:
+                        bases = [thread, project, project.parent, ws.root]
+                        found = any((b / path).exists() for b in bases)
+                    if not found:
+                        out.append(Finding(WARNING, "resume", rel(ws, note),
+                                           "Resume here names `%s`, which is not there" % path,
+                                           "Thread %s names a file that is not there" % spoken))
     return out
 
 
@@ -1286,7 +1349,7 @@ def check_raw(ws: Workspace) -> List[Finding]:
 
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_names,
-    check_projects, check_threads, check_deliverables, check_meetings, check_walls,
+    check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_walls,
     check_sources, check_inbox, check_knowledge, check_raw,
 ]
 

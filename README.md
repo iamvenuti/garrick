@@ -81,7 +81,7 @@ Download the [interactive diagram](docs/architecture/overview.html) and open it 
 
 Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
 
-[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access and scheduled jobs. Add one when it solves a problem you have; none is required for the first session.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page. Add one when it solves a problem you have; none is required for the first session.
 
 ## Status and documentation
 

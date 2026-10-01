@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  An example launchd job: rebuild the status page every evening at 23:30.
+  It calls no assistant. Copy it to ~/Library/LaunchAgents/, replace every
+  &lt;you&gt; (written that way because this is XML) with your macOS user name;
+  launchd does not expand ~. Then load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.status.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.status`.
+  It needs System/jobs/ as well as System/status/: job.py gives the run a
+  log, a heartbeat and a lock, and the page then shows its own job too.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.status</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>status</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/status/status.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>23</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+</dict>
+</plist>

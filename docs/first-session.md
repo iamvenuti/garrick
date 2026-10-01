@@ -2,6 +2,14 @@
 
 The aim is to leave with a brief you can use and a next action you can find tomorrow. Use either the desktop app or your terminal assistant, opened on your **own Garrick workspace**. No Obsidian, cmux, mail connection or recorder is needed.
 
+## Optional: let it interview you first
+
+If you would rather be asked than decide where to start, say:
+
+> Interview me.
+
+The assistant asks one question at a time: what you do and for whom, whose confidences you hold and which of them must never meet in writing, the five things you do every week, who you owe something right now, where your files live today, and what you keep forgetting. It pushes back on vague answers and keeps a record in `System/interviews/` as it goes. Say "stop" when you have said enough. It then proposes parties, walls, projects, first threads and open actions, lists what it still does not know, and sets up only what you say yes to. Allow twenty minutes. Afterwards, pick one of the projects it made for step 1.
+
 ## 1. Pick one piece of work
 
 Choose a real project and one question you need answered. Keep the first session small. For example:

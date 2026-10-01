@@ -258,6 +258,39 @@ class TestThreads(CheckCase):
         self.assertFinds("threads", "warning", "differs")
 
 
+class TestResume(CheckCase):
+    def resume(self, row):
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\n| | |\n|---|---|\n| Live artifact | %s |\n" % row)
+
+    def test_pass(self):
+        self.resume("`Deliverables/260301 - Pricing memo.md` and [[Pricing]]")
+        self.assertClean("resume")
+
+    def test_moved_file(self):
+        self.resume("`Deliverables/260301 - Pricing memo-v2.md`")
+        self.assertFinds("resume", "warning", "is not there")
+
+    def test_dangling_link(self):
+        self.resume("[[Pricing deck]]")
+        self.assertFinds("resume", "warning", "leads nowhere")
+
+    def test_not_paths(self):
+        self.resume("`<path, and what it is>`, `python3 tools/build.py`, `/tmp/scratch/x.md`, `https://example.com/a.md`")
+        self.assertClean("resume")
+
+    def test_done_thread_is_not_checked(self):
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(thread_note("Acme Review", "Pricing", status="done").replace(
+            "### Outcome", "### Resume here\n\n`Deliverables/gone.md`\n\n### Outcome"))
+        self.assertClean("resume")
+
+    def test_only_the_resume_block(self):
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\n---\n\n**2 March 2026.** Drafted `Deliverables/old draft.md`, since replaced.\n")
+        self.assertClean("resume")
+
+
 class TestDeliverables(CheckCase):
     def test_pass(self):
         self.assertClean("deliverables")

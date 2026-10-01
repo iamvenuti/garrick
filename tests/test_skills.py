@@ -38,8 +38,9 @@ class SkillsTest(unittest.TestCase):
     def skills(self):
         return sorted(p.parent for p in SKILLS.glob("*/SKILL.md"))
 
-    def test_the_four_skills(self):
-        self.assertEqual(["intake", "knowledge", "meetings", "threads"], [p.name for p in self.skills()])
+    def test_the_skills(self):
+        self.assertEqual(["intake", "interview", "knowledge", "meetings", "threads"],
+                         [p.name for p in self.skills()])
 
     def test_every_skill_names_itself(self):
         for skill in self.skills():
@@ -70,8 +71,18 @@ class SkillsTest(unittest.TestCase):
         rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
         self.assertIn("## Ways in", rules)
 
+    def test_interview_asks_first_and_builds_on_a_yes(self):
+        text = (SKILLS / "interview" / "SKILL.md").read_text(encoding="utf-8")
+        for needle in ("one question at a time", "Whose confidences you hold", "System/interviews/",
+                       "## Proposal", "What I still don't know", "## On a yes", "Never push",
+                       "never guesses a wall", "who and what kind"):
+            self.assertIn(needle.lower(), text.lower(), needle)
+        self.assertEqual({"interview me", "get to know me", "ask me about my work",
+                          "help me set up my workspace", "where do i start"}, triggers(SKILLS / "interview"))
+
     def test_no_dashes_in_the_new_prose(self):
-        for path in (SKILLS / "intake" / "SKILL.md", REPO / "template" / "System" / "rules.md"):
+        for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
+                     REPO / "template" / "System" / "rules.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
             self.assertNotIn("–", text, path)

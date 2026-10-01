@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  An example launchd job: the what's-open brief for the Work zone, every
+  morning at 06:30. Copy it to ~/Library/LaunchAgents/, replace every &lt;you&gt;
+  (written that way because this is XML) with your macOS user name;
+  launchd does not expand ~. Then load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.whats-open`.
+  PATH must include the folder your assistant's command is installed in.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.whats-open</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>whats-open</string>
+    <string>--agent</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/whats_open.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--zone</string>
+    <string>Work</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GARRICK_HARNESS</key>
+    <string>claude</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+</dict>
+</plist>

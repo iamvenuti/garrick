@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- The `interview` skill: "interview me" opens with questions one at a time, including whose confidences you hold and which must never meet, keeps a record in `System/interviews/`, then proposes parties, walls, projects, threads and open actions and sets up only what you accept. Offered as an optional first step of the first session.
+- `extras/jobs/`, optional and outside core: an assistant on a schedule. One runner for Claude or Codex, picked by `GARRICK_HARNESS`, with tiers instead of model names; a wrapper with log, heartbeat, lock, watchdog, sign-in check and idle alarm; a ledger of every call with daily, hourly and cost caps; a deny profile so an unattended Claude cannot send, share, delete or edit `System/`, loaded with user and project settings only; and an example job, a "what's open" brief per zone, with a launchd plist.
+
+- `extras/status/`, optional and outside core: a status page. One self-contained HTML file with every live thread by zone and how long since it moved, what the check finds, open actions, what is waiting in the inboxes, and, with the jobs extra, a fourteen-day strip per job and the spend against its caps. Names, parties, dates and counts only, never what a note says; written outside the workspace; links open the files, or Obsidian with `--obsidian VAULT`; nothing from the network. With a launchd plist for a nightly rebuild.
+- `check.py` warns when a link or a file path in a live thread's Resume here block leads nowhere, so a deliverable renamed or moved shows up in the next check, not in the next cold resume.
+
 ### Changed
 
 - Separate desktop and terminal onboarding routes, with a shared first session that files one conversation, produces a brief and verifies resuming from a fresh chat.

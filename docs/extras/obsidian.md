@@ -12,7 +12,7 @@ Open any folder in the workspace as its own vault, since Obsidian doesn't care a
 - Just `Wikis/`, if you mainly want to browse Meetings and Knowledge and keep zone work separate.
 - A single zone folder, if that's the only side of your work you want visible day to day.
 
-Wikilinks such as `[[wiki/people/dana-whitlock]]` resolve within whichever vault you opened, the same shortest-path rule Obsidian always uses. If you open the root as one vault, a link from a project note into `Wikis/Meetings/wiki/sources/` resolves normally, since it's all one vault as far as Obsidian is concerned. `check.py` resolves links the same way, to catch a project note that links to a meeting a wall should have kept out. It does not report links that lead nowhere; Obsidian shows those as unresolved.
+Wikilinks such as `[[wiki/people/dana-whitlock]]` resolve within whichever vault you opened, the same shortest-path rule Obsidian always uses. If you open the root as one vault, a link from a project note into `Wikis/Meetings/wiki/sources/` resolves normally, since it's all one vault as far as Obsidian is concerned. `check.py` resolves links the same way, to catch a project note that links to a meeting a wall should have kept out. It reports a link that leads nowhere only inside a thread's Resume here block, where a broken link is a broken resume point and many people never open Obsidian to see it; everywhere else, Obsidian shows those as unresolved.
 
 ## What it adds
 

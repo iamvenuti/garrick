@@ -1,50 +1,61 @@
-# First steps: setting up your Mac
+# Desktop first steps
 
-This page is for you if you have never used Terminal. It gets your Mac ready for Garrick in about 30 minutes, most of it waiting for downloads.
+Use Garrick in a normal app window. Choose **Claude's desktop app in Code mode** or **Codex in the ChatGPT desktop app**. After installation, you ask the assistant to manage the files and run Garrick's tools. You do not need Obsidian, cmux or a mail connection.
 
-There are two ways to talk to Garrick. The **Claude desktop app** is the easier one: after you've installed Garrick, you work in a normal app window, and you need Terminal only once. The **terminal route** is for people who already live in Terminal and is at the end of this page. Both run the same Claude Code and read the same workspace. If you use ChatGPT rather than Claude, Garrick works with Codex too: see [Using Codex instead](#using-codex-instead).
+Allow about 30 minutes to prepare the Mac, longer if downloads or account setup take time. Then follow [Your first useful session](first-session.md) to turn one conversation into a brief and a saved next action. A [guided session](guided-session.md) combines setup and that first piece of work in up to two hours.
 
-You need a Mac on macOS 13 or later, and a paid Claude plan (Pro or above). The free plan doesn't include Claude Code.
+Comfortable in Terminal? [Terminal setup](terminal-setup.md) gives you a route without a provider's desktop app.
 
-## 1. Install git and Python
+## 1. Choose one assistant
 
-Garrick keeps your work under git and runs a few small Python tools. Both come with Apple's command line tools, which you install from Terminal.
+| Use | What to open |
+|---|---|
+| Claude | The [Claude desktop app](https://claude.com/download), with access to its Code tab. A plan with Claude Code access is required. |
+| Codex | The [ChatGPT desktop app](https://learn.chatgpt.com/docs/app), switched to Codex, with Codex enabled for your account and workspace. |
 
-Open Terminal: press Command and Space together, type `Terminal`, and press Return. To run a command from this page, copy it, click in the Terminal window, paste with Command and V, and press Return.
+Install only the one you want to use. For employer material, use an approved account and assistant. The workspace stays on your Mac; material the assistant reads goes to its provider. Check the app's current Mac requirements and account access before proceeding.
+
+## 2. Prepare git and Python
+
+Garrick uses these to save history and run its checks. This is the part done in Terminal, with help if wanted.
+
+Open Terminal: press Command and Space, type `Terminal`, and press Return. Copy this command into it and press Return:
 
 ```sh
 xcode-select --install
 ```
 
-A window asks whether to install the command line developer tools. Click Install and accept the licence. It takes 5 to 15 minutes. If Terminal says they are already installed, skip ahead. To check:
+Accept the installation prompt and let it finish. If the tools are already installed, continue. Check them with:
 
 ```sh
 git --version
 python3 --version
 ```
 
-Each prints a version number. Python needs to be 3.9 or later.
+Both should print a version. Python must be 3.9 or later.
 
-## 2. Install the Claude app
+## 3. Download and install Garrick
 
-Download Claude from [claude.com/download](https://claude.com/download), open the file, and drag Claude into Applications. Open it and sign in with the account that has your paid plan.
+On the [Garrick repository page](https://github.com/iamvenuti/garrick), choose **Code**, then **Download ZIP**. Open the ZIP in Downloads. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
 
-## 3. Set Claude up for private work (once)
-
-Your workspace will hold material other people trusted you with, so check this before your first session. In the Claude app, open **Settings**, then **Privacy**, and turn **Help improve Claude** off. With it on, Anthropic may use your chats and coding sessions, Garrick sessions included, to train future models. The same setting covers the app, the website and Claude Code in Terminal, because it belongs to your account.
-
-## 4. Get Garrick and install it
-
-On the Garrick repository page, click **Code**, then **Download ZIP**. Double-click the ZIP in Downloads to unzip it. Then, in Terminal:
+For self-guided setup, run these commands in Terminal. If Finder gave the downloaded folder a different name, type `cd ` and drag that folder into Terminal to supply its path.
 
 ```sh
 cd ~/Downloads/garrick-main
 python3 install.py
 ```
 
-The installer asks its questions one at a time. [Getting started](getting-started.md) explains each one, and a [guided session](guided-session.md) walks you through it with someone beside you. Your workspace goes into `~/Garrick`, so you can delete the ZIP and the unzipped folder afterwards. This is the last time you need Terminal.
+Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones and parties you need for your first project; you can add more through the assistant later. A wall is an explicit pair of parties whose information must stay apart. Two folders alone do not create one. [Getting started](getting-started.md#install) explains the questions.
 
-## 5. Open your workspace in the Claude app
+You can close Terminal when installation finishes. The assistant can run the tools for everyday work, asking you to approve commands according to your app settings.
+
+## 4. Open the workspace in your app
+
+Follow just the section for the assistant you chose. Select the **installed workspace**, normally `~/Garrick`, rather than the downloaded `garrick-main` source folder.
+
+### Using Claude
+
+Open Claude and sign in. Under **Settings > Privacy**, review **Help improve Claude** and turn it off before using confidential material on a personal account. This controls training use; it does not make the assistant run offline. See [Claude's desktop guide](https://code.claude.com/docs/en/desktop) for current app behaviour.
 
 ![The Claude app's Code view, with the four things to click marked in red: the Code icon at the top, New in the sidebar, then Local and the Garrick folder above the box where you type.](assets/desktop-code-tab.png)
 
@@ -53,37 +64,14 @@ The installer asks its questions one at a time. [Getting started](getting-starte
 3. Above the box where you type, click the first button and choose **Local**. It runs Claude on your Mac with your own files. The other choices run somewhere else and don't see your workspace.
 4. Click the folder button beside it and choose your `Garrick` folder (Command, Shift and H jumps to your home folder). Choose the whole folder, not a zone inside it: the rules and skills live at its top. The button then reads **Garrick**, as in the picture.
 5. Below the box, next to the microphone, click the mode and choose **Accept edits**. Claude then writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
-6. Type `what's open` and press Return.
+6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
 
 Two things to leave alone. Don't turn on "Allow bypass permissions mode" in Settings, which lets Claude run anything without asking. And if the app suggests creating a `CLAUDE.md`, don't: Garrick's instructions live in `AGENTS.md`, and a `CLAUDE.md` in the folder makes Claude stop reading them.
 
-## 6. Turn on dictation
 
-Garrick is built to be spoken to. In the Claude app, click the microphone below the box where you type, speak, and send. To speak anywhere else, Terminal included, turn on the Mac's own dictation: in System Settings, open Keyboard, turn on Dictation, and choose a shortcut.
+### Using Codex instead
 
-## 7. Install Obsidian (optional)
-
-Obsidian is a free app for reading your workspace as linked notes, and it has a phone app too. Garrick works without it. Download it from [obsidian.md](https://obsidian.md) and drag it into Applications, then choose "Open folder as vault" and pick your `Garrick` folder. [Obsidian](extras/obsidian.md) says which folder suits you best.
-
-## 8. Route your mail (Gmail)
-
-Garrick files mail you choose, not your whole mailbox. Every Gmail address already accepts a plus address with nothing to set up: mail to `you+work@gmail.com` arrives at `you@gmail.com`. Use one plus address per zone, and forward or copy to it only the mail you want filed.
-
-A filter keeps that mail out of your Gmail inbox and gives it a label:
-
-1. In Gmail on the web, click the settings icon beside the search bar ("Show search options").
-2. In **To**, type `you+work@gmail.com`, with your own address.
-3. Click **Create filter**.
-4. Tick **Skip the Inbox (Archive it)** and **Apply the label**, then choose **New label** and name it `Garrick/Work`.
-5. Click **Create filter**.
-
-Repeat for each zone, for example `you+personal@gmail.com` with the label `Garrick/Personal`. For mail from one customer, partner or client, you can use their tag instead: `you+acme@gmail.com` tells Garrick the mail is Acme's.
-
-The label collects the mail to be filed, so only mail you routed there can reach your workspace. [Ways in](extras/ways-in.md) has three ways to get labelled mail into a zone's `Inbox/` folder, and which accounts each one works with.
-
-## Using Codex instead
-
-Codex lives inside the ChatGPT desktop app, for Macs with Apple silicon, and comes with every ChatGPT plan. Download the app from [learn.chatgpt.com/docs/app](https://learn.chatgpt.com/docs/app) and sign in. Steps 1, 4, 6, 7 and 8 above stay the same; these replace steps 2, 3 and 5.
+Open the ChatGPT desktop app and sign in to the account and workspace you chose. Use [OpenAI's app guide](https://learn.chatgpt.com/docs/app) if its labels differ from the screenshot.
 
 **Set it up for private work (once).** In ChatGPT, open **Settings**, then **Data Controls**, and turn **Improve the model for everyone** off. On a personal plan it covers Codex as well. Codex's own settings have a separate switch about training on full environments: turn that off too.
 
@@ -94,30 +82,24 @@ Codex lives inside the ChatGPT desktop app, for Macs with Apple silicon, and com
 3. Name it `Garrick`. Under **Source folders**, click **Add folder** and choose your `Garrick` folder, the whole folder, not a zone inside it. Leave **This computer** selected: it runs on your Mac with your own files.
 4. Click **Create project**.
 5. The setting below the box (**Approve for me** in the picture) decides what Codex does without asking. Choose a stricter one if you'd rather approve each step.
-6. Type `what's open` and press Return.
+6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
 
-## The terminal route
 
-Instead of step 2, install Claude Code in Terminal:
+## 5. Do one useful piece of work
 
-```sh
-curl -fsSL https://claude.ai/install.sh | bash
-```
+Follow [Your first useful session](first-session.md). Create one project, file a short conversation and ask for a brief. Finish by saying “wrap it”, then open a fresh chat in the same folder and ask what comes next.
 
-Close the Terminal window, open a new one, and check it with `claude --version`. This installer keeps Claude Code up to date on its own. If you already use Homebrew, `brew install --cask claude-code obsidian` installs both apps instead, but a Claude Code installed that way doesn't update itself: run `brew upgrade claude-code` now and then.
+A blank workspace will have nothing useful to say to “what's open” until you create that first project. A few typed call notes are enough; connecting your inbox can wait.
 
-Instead of step 5, start each session from your workspace:
+## 6. Add voice or another convenience later
 
-```sh
-cd ~/Garrick
-claude
-```
+Type or use dictation first. In Claude, the microphone lets you dictate a prompt. In Codex, use **Start voice chat** if offered by your account and app. Voice chat and dictation are different: dictation enters text; a voice chat also lets you hear replies. [OpenAI's voice guide](https://learn.chatgpt.com/docs/features/voice) describes availability. Mac dictation is available under **System Settings > Keyboard > Dictation**.
 
-The first time, Claude Code opens your browser to sign in, then asks whether you trust the files in this folder: answer yes. It asks before each change. Press Shift and Tab to switch to accepting edits. Step 3 applies unchanged.
+Once the workflow works at your desk, [phone access](extras/phone-access.md) can let you ask about your work while the laptop stays at home. [Extras](extras/index.md) also covers browsing in Obsidian and selected-mail intake. None is part of this initial setup.
 
 ## If something goes wrong
 
-- **The Code tab asks you to upgrade:** your account is on the free plan. Claude Code needs Pro or above.
-- **Claude doesn't seem to know your zones or projects:** check that you selected the `Garrick` folder itself, not a folder inside it, and that there is no `CLAUDE.md` in it.
-- **`command not found` in Terminal after installing something:** close Terminal completely (Command and Q), open it again, and retry.
-- **Terminal asks for a password and nothing appears as you type:** that is normal. Type your Mac password and press Return.
+- **The assistant cannot see your work:** check the selected folder. It must be the installed Garrick workspace and the session must run on this computer.
+- **Claude does not follow the workspace instructions:** check for a `CLAUDE.md` inside or above the workspace. Ask the assistant to run the workspace check; do not remove an existing file without understanding what uses it.
+- **The Code or Codex mode is unavailable:** check the current plan and workspace access with the provider or your administrator.
+- **A command fails:** copy its error into your app or show it to the facilitator. Do not repeat installation into a partly created workspace without checking it first.

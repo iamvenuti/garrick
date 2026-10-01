@@ -1,5 +1,7 @@
 # Claude Code and Codex
 
+Choose the interface separately from the workspace: [desktop apps](first-steps.md) for a guided start, or [CLI tools](terminal-setup.md) for terminal users. Obsidian and cmux are optional. A provider desktop app is not needed for local CLI work; [Codex remote voice on iPhone](extras/phone-access.md) uses the ChatGPT desktop host.
+
 Garrick is written for both. No rule, template or skill names either one. The harness-specific pieces are two symlinks per repository and one warning about `CLAUDE.md` files, described below.
 
 ## The entry point
@@ -22,4 +24,4 @@ Claude Code looks for skills in `.claude/skills`, and Codex in `.agents/skills`,
 
 ## What this buys you
 
-Nothing in `System/rules.md`, `System/context.md`, the templates, or the skills refers to either assistant by name. The three-level hierarchy, the wall checks, the resume points, none of it is implemented as a Claude Code feature or a Codex feature; all of it is plain files and a few Python scripts that don't care which one is reading them. Moving from one to the other, or running both against the same workspace on different days, costs nothing beyond opening a different terminal.
+Nothing in `System/rules.md`, `System/context.md`, the templates, or the skills refers to either assistant by name. The three-level hierarchy, the wall checks, the resume points, none of it is implemented as a Claude Code feature or a Codex feature; all of it is plain files and a few Python scripts that don't care which one is reading them. Moving from one to the other, or running both against the same workspace on different days, preserves the files and local git history. App settings, permissions and private chat history belong to each assistant separately; check instruction and skill loading when switching.

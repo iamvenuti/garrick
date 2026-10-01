@@ -443,7 +443,7 @@ body.editing .editable {
       <h1 class="deck-title reveal editable" data-edit-id="cover-title">Garrick</h1>
       <p class="subtitle reveal editable" data-edit-id="cover-sub">A workspace, run by an AI assistant you talk to, living in files you already own.</p>
       <p class="byline reveal">Marco Venuti</p>
-      <aside class="notes">Open by naming who's in the room: anyone holding confidences from more than one source: advisors and consultants, account and partner managers, analysts, people on internal projects that aren't for everyone. Garrick is the name; what it protects is the point.</aside>
+      <aside class="notes">Open by naming who's in the room: anyone holding confidences from more than one source: advisors and consultants, account and partner managers, analysts, people on internal projects that aren't for everyone. Lead with picking up work from a saved record. Introduce declared boundaries with their limits.</aside>
     </section>
 
     <!-- ============================================================
@@ -463,8 +463,8 @@ body.editing .editable {
          ============================================================ -->
     <section class="slide slide--navy slide--statement" data-title="The claim">
       <p class="kicker reveal">The idea, in one line</p>
-      <p class="statement reveal editable" data-edit-id="claim-statement">It remembers who told you what, and never repeats it to the wrong party.</p>
-      <p class="statement-sub reveal">That's the whole idea. Everything that follows exists to make it true.</p>
+      <p class="statement reveal editable" data-edit-id="claim-statement">Pick up where you left off, from a record you own.</p>
+      <p class="statement-sub reveal">Keep decisions and sources with the work. Give the assistant explicit rules for using them.</p>
       <aside class="notes">Say this one slowly. Everything after it is mechanism, not more argument.</aside>
     </section>
 
@@ -476,10 +476,10 @@ body.editing .editable {
       <h2 class="slide-title reveal editable" data-edit-id="folders-title">Everything is plain folders, on your own disk</h2>
       <div class="row reveal" style="flex:1; align-items:stretch;">
         <p class="slide-body" style="flex:1.1;">
-          Notes, projects, meeting history: it's all files, under git, in a folder you already know how to open. Nothing sits behind a login that only a vendor can see into. If you can read a text file, you can read the entire workspace.
+          Notes, projects, meeting history: it's all files, under git, in a folder you already know how to open. You can read the record in a text editor. Content the assistant reads still goes to its provider.
         </p>
         <div class="card" style="flex:0.9; font-family:'DM Sans', monospace; gap:6px;">
-          <p class="card-eyebrow" style="font-family:var(--font-body);">On disk, not in a cloud</p>
+          <p class="card-eyebrow" style="font-family:var(--font-body);">Your workspace on disk</p>
           <p style="font-size:24px; line-height:1.7; color:var(--navy);">~/Garrick/<br>&nbsp;&nbsp;Zones/Work/Acme Corp/<br>&nbsp;&nbsp;Zones/Personal/<br>&nbsp;&nbsp;Wikis/Meetings/<br>&nbsp;&nbsp;Wikis/Knowledge/<br>&nbsp;&nbsp;System/rules.md</p>
         </div>
       </div>
@@ -493,11 +493,11 @@ body.editing .editable {
     <section class="slide slide--cream" data-title="The assistant is the replaceable part">
       <p class="kicker reveal">Who reads it</p>
       <h2 class="slide-title reveal editable" data-edit-id="harness-title">The assistant is the replaceable part</h2>
-      <p class="slide-body reveal editable" data-edit-id="harness-body">The workspace doesn't belong to one AI product. Any assistant that can read a plain file named <code class="snippet" style="font-size:28px; padding:6px 14px;">AGENTS.md</code> can run it. Swap the assistant and you keep the workspace, the history and the memory exactly as they were.</p>
+      <p class="slide-body reveal editable" data-edit-id="harness-body">The workspace doesn't belong to one AI product. An assistant needs to read the instructions in <code class="snippet" style="font-size:28px; padding:6px 14px;">AGENTS.md</code> and run the workspace tools. Switch between supported assistants and keep the saved files and local history.</p>
       <div class="row reveal" style="gap:24px;">
         <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Claude Code</h3><p>Runs it today.</p></div>
         <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Codex</h3><p>Runs it today.</p></div>
-        <div class="card" style="flex:1; align-items:center; text-align:center; border-style:dashed;"><h3 style="font-size:32px;">Whatever's next</h3><p>Reads the same file, runs the same workspace.</p></div>
+        <div class="card" style="flex:1; align-items:center; text-align:center; border-style:dashed;"><h3 style="font-size:32px;">Whatever's next</h3><p>Check instruction and tool support first.</p></div>
       </div>
       <p class="folio">Garrick</p>
       <aside class="notes">Name-drop nothing you can't stand behind two years from now. That's the whole point of this slide.</aside>
@@ -514,7 +514,7 @@ body.editing .editable {
         <div class="card"><p class="card-eyebrow">2</p><h3 style="font-size:32px;">Nothing else changes</h3><p>Nothing is written to your home configuration or any account you already use.</p></div>
         <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Delete it, it's gone</h3><p>Don't like it? Remove the folder. There's nothing else to undo.</p></div>
       </div>
-      <code class="snippet reveal">python3 install.py --config examples/acme.json --target ~/Garrick-demo</code>
+      <code class="snippet reveal">python3 examples/demo/build.py --target ~/Garrick-demo</code>
       <aside class="notes">Good moment to actually run this line, live, if it's a guided session: the risk-free part lands harder demonstrated than described.</aside>
     </section>
 
@@ -524,7 +524,7 @@ body.editing .editable {
     <section class="slide slide--navy slide--statement" data-title="One memory, walled use">
       <p class="kicker reveal">The rule everything else serves</p>
       <p class="statement reveal editable" data-edit-id="walled-statement">One memory, walled use.</p>
-      <p class="statement-sub reveal editable" data-edit-id="walled-sub">Every conversation goes into the same memory, because that's how you actually hold them, all in one head. The walls stand where that memory gets <em>used</em>, not where it's stored: what one client told you cannot reach the page you write for another.</p>
+      <p class="statement-sub reveal editable" data-edit-id="walled-sub">Conversations carry their sources and parties. You declare which party pairs must stay apart. The assistant applies those rules before using a conversation for a project. Checks catch some mistakes before a commit.</p>
       <aside class="notes">Slow down here more than anywhere else in the deck. If this doesn't land, nothing after it matters. It's the reason to build this instead of using a folder of chat exports.</aside>
     </section>
 
@@ -546,15 +546,15 @@ body.editing .editable {
     <!-- ============================================================
          9. THE WALL IN ACTION — Acme / Birch
          ============================================================ -->
-    <section class="slide slide--cream" data-title="Acme Corp and Birch and Co never meet on the page">
+    <section class="slide slide--cream" data-title="A declared boundary between Acme and Birch">
       <p class="kicker reveal">The wall, not the metaphor</p>
-      <h2 class="slide-title reveal editable" data-edit-id="wall-title">Acme Corp and Birch &amp; Co never meet on the page</h2>
+      <h2 class="slide-title reveal editable" data-edit-id="wall-title">A declared boundary between Acme and Birch</h2>
       <div class="row reveal" style="flex:1; align-items:stretch; gap:32px;">
         <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Acme Corp</h3><p>Supply-chain review. A conversation with their head of procurement, filed the day it happened.</p></div>
         <div class="wall"></div>
         <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Birch &amp; Co</h3><p>Market-entry advice, and a direct competitor of Acme's.</p></div>
       </div>
-      <p class="slide-body reveal" style="font-size:28px;">Both live in the same zone. Both meetings sit in the same memory. A wall stands between them anyway, declared once and checked automatically, so a paper written for one never carries a sentence that came from the other.</p>
+      <p class="slide-body reveal" style="font-size:28px;">You declare the Acme/Birch wall. The assistant should exclude the other side’s material. The commit check catches names, links and copied wording in supported text. Paraphrases and exported documents still need review.</p>
       <aside class="notes">This is the concrete version of the previous slide. If anyone's eyes glazed at "walled use," this is where it clicks.</aside>
     </section>
 
@@ -589,10 +589,10 @@ body.editing .editable {
     <!-- ============================================================
          12. YOU KEEP THE DECISIONS (statement)
          ============================================================ -->
-    <section class="slide slide--navy slide--statement" data-title="Nothing leaves the machine without you">
+    <section class="slide slide--navy slide--statement" data-title="You approve what gets shared">
       <p class="kicker reveal">What it never does alone</p>
-      <p class="statement reveal editable" data-edit-id="decisions-statement">Nothing leaves the machine without you.</p>
-      <p class="statement-sub reveal editable" data-edit-id="decisions-sub">It can draft the email. It cannot send it. Anything that leaves your machine (a message, a shared file, a publish) waits for you to say go, every time. Yes once is not yes next time.</p>
+      <p class="statement reveal editable" data-edit-id="decisions-statement">You approve what gets shared.</p>
+      <p class="statement-sub reveal editable" data-edit-id="decisions-sub">The rules tell the assistant to ask before sending or publishing. Its app permissions control what it can execute. Material it reads is processed by its provider, even though the workspace is on your disk.</p>
       <aside class="notes">This is the slide that answers the fear underneath the whole pitch: that an assistant with this much memory might act on it without asking.</aside>
     </section>
 
@@ -603,34 +603,34 @@ body.editing .editable {
       <p class="kicker reveal">Keeping it honest</p>
       <h2 class="slide-title reveal editable" data-edit-id="check-title">A workspace that checks itself</h2>
       <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
-        <p class="slide-body" style="flex:1.1;">A rule that a machine can check gets a check, added in the same commit as the rule itself. Run it any time and it answers in plain language: a thread with no resume point, a wall that was declared but never wired in.</p>
+        <p class="slide-body" style="flex:1.1;">A rule that a machine can check gets a check, added in the same commit as the rule itself. Run it any time and it answers in plain language: a missing resume point, or a project note that links across a declared wall.</p>
         <div class="card" style="flex:0.9; font-family:'DM Sans', monospace;">
           <p class="card-eyebrow" style="font-family:var(--font-body);">$ python3 System/tools/check.py</p>
-          <p style="font-size:24px; line-height:1.7; color:var(--navy);">✓ every zone is its own repository<br>✓ every open thread has a resume point<br>⚠ Birch &amp; Co: wall not yet declared</p>
+          <p style="font-size:24px; line-height:1.7; color:var(--navy);">✓ every zone is its own repository<br>✓ every open thread has a resume point<br>⚠ Project note links across a declared wall</p>
         </div>
       </div>
       <p class="folio">Garrick</p>
-      <aside class="notes">The warning line is invented for the slide, but it's exactly the shape of thing the real check catches; say so if asked.</aside>
+      <aside class="notes">Illustrative output, not a captured run. The check cannot infer missing walls. Show real checker output in a demo and explain its limits.</aside>
     </section>
 
     <!-- ============================================================
          14. CORE VS EXTRAS
          ============================================================ -->
-    <section class="slide slide--cream" data-title="What's core, and what's an optional extra">
+    <section class="slide slide--cream" data-title="Choose an app or a terminal">
       <p class="kicker reveal">What you actually need</p>
-      <h2 class="slide-title reveal editable" data-edit-id="core-title">What's core, and what's an optional extra</h2>
+      <h2 class="slide-title reveal editable" data-edit-id="core-title">Choose an app or a terminal</h2>
       <div class="grid-2 reveal" style="flex:1;">
         <div class="card">
-          <p class="card-eyebrow">Core: this is Garrick</p>
-          <p>The folders and the rules that govern them. The two memories: meetings, and the published material you study. Zone, project, thread. The self-check.</p>
+          <p class="card-eyebrow">Desktop route</p>
+          <p>Claude in Code mode, or Codex in the ChatGPT app. Start with one conversation, a useful brief and a saved next action. Add other tools later.</p>
         </div>
         <div class="card" style="border-style:dashed;">
-          <p class="card-eyebrow">Optional: swap or skip</p>
-          <p>A note browser like Obsidian. A way to run several agents at once, like cmux. A recorder for meetings. Email aliases for intake.</p>
+          <p class="card-eyebrow">Terminal route</p>
+          <p>Claude Code or Codex CLI. Add Obsidian for browsing and cmux for several sessions. No provider desktop app is needed for local CLI work.</p>
         </div>
       </div>
-      <p class="slide-body reveal" style="font-size:26px;">None of the extras are load-bearing. Remove any one of them and the workspace still keeps its promise.</p>
-      <aside class="notes">Naming the extras out loud pre-empts the question "do I need Obsidian for this" before it gets asked.</aside>
+      <p class="slide-body reveal" style="font-size:26px;">Both routes use the same files. Codex remote voice on iPhone adds a paired desktop host, awake and online.</p>
+      <aside class="notes">Offer the desktop route first to participants new to Terminal. Add phone access after the first useful session. See docs/extras/phone-access.md for provider requirements.</aside>
     </section>
 
     <!-- ============================================================
@@ -639,7 +639,7 @@ body.editing .editable {
     <section class="slide slide--navy slide--statement" data-title="Start with one folder">
       <p class="kicker reveal">Yours to open</p>
       <p class="statement reveal editable" data-edit-id="close-statement">Start with one folder.</p>
-      <p class="statement-sub reveal editable" data-edit-id="close-sub">Copy it, point an assistant at it, and start talking. The rules travel with the files; there's nothing else to install.</p>
+      <p class="statement-sub reveal editable" data-edit-id="close-sub">Set up your chosen assistant and Garrick. File one conversation, make a brief, then wrap it. Tomorrow, open the project and ask what comes next.</p>
       <p class="byline reveal" style="margin-top:20px;">Garrick · MIT licence · Marco Venuti</p>
       <aside class="notes">End here, not on a roadmap. The point of this whole deck is that it's ready now, not that it will be someday.</aside>
     </section>

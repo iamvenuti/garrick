@@ -1,5 +1,7 @@
 # Extra: cmux, one terminal tab per thread
 
+This is an optional extension of the [terminal route](../terminal-setup.md). Run Claude Code or Codex CLI inside it; no provider desktop app is required for local work. Add the ChatGPT desktop host separately if you want [Codex remote voice on iPhone](phone-access.md).
+
 Garrick's own idea of a thread, one line of work with one resume point, doesn't care how many terminal windows you have open, or whether you have any open at all beyond the one you're typing in. cmux is a terminal built for running several agent sessions side by side, one workspace per tab, which maps cleanly onto Garrick's model: a tab for the thread you're picking up, and a hooked session per tab that resumes where it left off when you come back to it.
 
 Garrick ships nothing that talks to cmux directly. There's no bundled skill or config for it in `System/skills`; using it is a matter of opening one cmux tab per active thread, in the zone folder that thread lives in, the same way you'd open one plain terminal tab per thread without it.

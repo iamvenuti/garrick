@@ -1,6 +1,6 @@
-# Getting started
+# Getting started: command reference
 
-New to Terminal? Start with [First steps](first-steps.md), which sets up your Mac in about 30 minutes.
+For everyday app use, follow [Desktop first steps](first-steps.md), then [Your first useful session](first-session.md). For a CLI workflow, start with [Terminal setup](terminal-setup.md). This page is the detailed reference for the installer and workspace tools; your assistant can run them for you.
 
 Requires macOS, Python 3.9 or later, and git. If `git --version` fails, run `xcode-select --install` and wait for it to finish. You also need Claude Code or Codex. Claude Code reads `AGENTS.md` natively from version 2.1.277; `claude --version` tells you which one you have.
 
@@ -12,7 +12,7 @@ From the folder you downloaded or cloned Garrick into:
 python3 install.py
 ```
 
-This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. A party is an organisation or person whose confidences you hold, and each gets a one-word tag and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is a pair of tags whose material must never meet; the installer only asks about walls once you have named two parties.
+This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. A party is an organisation or person whose confidences you hold, and each gets a one-word tag and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the parties relevant to your first project and add others later.
 
 To skip the questions (for a demo, a test, or a guided session), pass a config file:
 
@@ -87,6 +87,8 @@ A thread that was just created has no history, so opening it only tells you its 
 The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`.
 
 ## The check
+
+For app users, ask “Run the workspace check and explain any findings.” The command below does the same. A clean result covers the implemented checks, not a guarantee against every disclosure; see [coverage and limits](principles.md#what-the-check-covers).
 
 ```sh
 python3 System/tools/check.py

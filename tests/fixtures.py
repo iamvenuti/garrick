@@ -31,6 +31,12 @@ GIT_ENV = dict(
     GIT_AUTHOR_EMAIL="test@example.invalid",
     GIT_COMMITTER_NAME="Test",
     GIT_COMMITTER_EMAIL="test@example.invalid",
+    # A commit can start background maintenance, whose lock file races a test deleting .git.
+    GIT_CONFIG_COUNT="2",
+    GIT_CONFIG_KEY_0="maintenance.auto",
+    GIT_CONFIG_VALUE_0="false",
+    GIT_CONFIG_KEY_1="gc.auto",
+    GIT_CONFIG_VALUE_1="0",
 )
 
 CONTEXT = """\

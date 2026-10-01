@@ -2,35 +2,48 @@
 
 [![Tests](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml/badge.svg)](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml) [![MIT licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg) ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 
-**The layer under your agent harness: plain folders on your own disk become the one place your work and your memory live.**
+**Pick up any project where you left it, with its decisions, source material and next action kept in files you own.**
 
-An operating system for knowledge work, run by the AI assistant you already use.
+Garrick gives Claude Code or Codex a workspace for your work and your memory. Ask it to file a conversation, prepare a brief or close a session. It keeps the record in plain folders on your Mac, so another session can pick up from the saved notes.
 
-Your work comes from many directions: customers, partners under NDA, suppliers, internal projects. Each one trusted you with something, and each has its own rules about who may know it. Today that work lives in chat tabs, a notes app and your head.
+Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the assistant rules for using it, and checks project files for specific signs of information crossing a declared boundary.
 
-Garrick puts it in plain folders on your own disk, and gives any assistant the rules to run them.
+[![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4)
 
-[![Asked to prep for a meeting with a supplier both clients use, the assistant checks the wall between them and leaves the other client's call out of the brief.](docs/assets/demo-wall.gif)](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4)
+*[Watch the 84-second walkthrough](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) ([captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)). Dramatised with fictional data; it illustrates the intended workflow.*
 
-*The wall at work: two walled clients, one shared supplier, and a brief that holds back what the other client said. [Watch the 84-second video](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) (with [captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)).*
+## Choose how you work
 
-- **Walls between whoever trusted you.** Customers, partners, clients and internal projects each sit behind their own wall. Every conversation goes into one memory, because that is how you hold them. The walls decide where that memory may be used, and a check before every commit stops one party's names, or words lifted from its meetings, reaching another's work.
-- **Two memories.** Meetings keeps who said what, and when. Knowledge keeps what you've read: reports, articles, research. Both are there for any work the walls allow.
-- **Private by design.** Markdown under git, on your own disk. Your record never lives in an AI assistant's memory, so changing AI assistant or account loses nothing. Try it in a folder you can delete; your existing setup stays as it is.
-- **Any assistant.** Claude Code or Codex today. The rules are files in the workspace, not settings in one vendor's app.
-- **Built to be spoken to.** Open a thread, file a meeting, close the day, by voice.
+Both routes use the same files, rules and skills. You can change routes later.
 
-![Garrick at a glance: mail, recordings and files come in; your assistant files them into the Meetings and Knowledge memories or a client project, following the rules; you talk to it in cmux or on your phone, and browse everything in Obsidian.](docs/architecture/overview.png)
+| If you prefer… | Start here | What you need |
+|---|---|---|
+| A normal app window, with help setting up if wanted | [Desktop first steps](docs/first-steps.md), or a [guided session](docs/guided-session.md) | Claude's desktop app in Code mode, or Codex in the ChatGPT desktop app. Terminal is used for installation; daily work happens in the app. |
+| A terminal and tools you choose yourself | [Terminal setup](docs/terminal-setup.md) | Claude Code or Codex CLI. A provider's desktop app is optional. Add Obsidian for browsing or cmux for several sessions when useful. |
 
-An [interactive version](docs/architecture/overview.html) walks through it step by step; download it and open it in a browser.
+Already set up? [Your first useful session](docs/first-session.md) takes one conversation through filing, a brief and a saved next action. Start with one project; add the rest as you need it.
+
+[Phone access](docs/extras/phone-access.md) is optional for either route. For example, Codex remote voice on iPhone can answer from your Garrick workspace while your laptop is at home, awake and connected. That route needs the ChatGPT desktop host app even if you normally work in a terminal.
+
+## What Garrick keeps for you
+
+- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving and “open [thread]” when you return.
+- **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read.
+- **Declared information boundaries.** You choose which pairs of parties must be kept apart. The assistant checks those rules before using a conversation for a project. A commit check catches specified names, links and copied wording in supported text files.
+- **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.
+- **Short, speakable requests.** Use your app's voice features or dictation. Garrick supplies the naming and reply conventions; the app supplies the microphone and voice connection.
+
+**What the walls mean:** they are rules for the assistant, backed by limited checks before a commit. Separate folders do not create a wall automatically. A clean paraphrase can pass, and generated Word, PowerPoint and PDF contents are outside the text scan. The hook does not block chat replies, initial file writes or sending. Review anything you intend to share. [Principles and limits](docs/principles.md#what-the-check-covers) explain the scope.
 
 ## Who it's for
 
-Anyone who holds confidences from more than one source: an advisor with several clients, an account manager with competing customers, a corporate manager working under several NDAs, anyone on internal projects that aren't for everyone. At work, run it with the assistant and account your employer approves. Your files stay on your disk, but what the assistant reads still goes to its provider.
+People holding confidences from several sources: advisors, account managers, people working with partners under NDA, and teams' individual members handling separate internal projects. For two internal projects to have a wall, give them separate party tags and declare the pair, even if both belong to one company.
 
-## Try it
+At work, use the assistant and account your employer approves. Files stay on your disk, but content the assistant reads goes to its provider. Garrick does not control the provider's retention or training settings.
 
-On a Mac with git and Claude Code or Codex (new to Terminal? [First steps](docs/first-steps.md) sets your Mac up in about 30 minutes):
+## Try the fictional workspace
+
+On a Mac with git, Python 3.9+ and Claude Code or Codex ready:
 
 ```sh
 git clone https://github.com/iamvenuti/garrick.git
@@ -38,50 +51,41 @@ cd garrick
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 
-That builds an invented advisor's workspace, four weeks into use. Start Claude Code or Codex in `~/Garrick-demo` and say "what's open". Nothing is written outside that folder, so deleting it removes the lot ([try it safely](docs/try-it-safely.md) has the details).
+Open `~/Garrick-demo` in your chosen app or terminal assistant and say “what's open”. The [first-session guide](docs/first-session.md#try-the-wall-with-fictional-data) gives you a short wall demonstration. The demo builder writes only inside that target folder; your assistant keeps its own session data separately. [Try it safely](docs/try-it-safely.md) explains removal.
 
-When you want your own:
+When you want your own, run `python3 install.py` from the downloaded repository. It asks one question at a time and writes into a new folder, `~/Garrick` by default. [Getting started](docs/getting-started.md) is the command reference.
 
-```sh
-python3 install.py
-```
+## How the files fit together
 
-It asks one question at a time and writes only into the folder you name (`~/Garrick` by default). [Getting started](docs/getting-started.md) walks through it.
+A **zone** is a side of your life, such as Work or Personal, with its own folder and git history. A **project** holds one undertaking. A **thread** is a line of work inside it, with one resume note. Meetings and Knowledge hold the source material those projects can draw on under the rules.
 
-## How it is organised
+<details>
+<summary>See the workspace diagram and optional tools</summary>
 
-- **Zones** for the separate sides of your life, such as work and personal. Each is its own folder and its own git repository.
-- **Projects** inside a zone: one per client or undertaking.
-- **Threads** inside a project: one per line of work, each with a single "resume here" point, so you can say "open Acme pricing" and hear where you left off.
-- **Two memories**: Meetings, for every conversation, including correspondence, and Knowledge, for the published material you study. Mail and files dropped in a zone's inbox are filed where they belong: a conversation into Meetings with its parties, so the walls see it too; a newsletter into Knowledge; a client's document into its project, after the wall check.
+![Mail, transcripts and files enter the workspace; the assistant files them under its rules. Obsidian, cmux and phone access are optional.](docs/architecture/overview.png)
 
-Dictation mistakes in names get matched against your own list of names, so a mangled client name still lands in the right project.
+Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace. Desktop users can talk to the assistant directly in their app.
+
+</details>
 
 ## Core and extras
 
-Core is the installer, `install.py`, and everything it copies from `template/`: the folder structure, the rules and context files, the scaffold and check scripts, and the skills. Core never depends on anything outside itself.
+Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
 
-Extras are tools that add value but aren't part of Garrick: Obsidian as a reader, cmux for one terminal tab per thread, a recorder such as Plaud feeding the meetings inbox, your assistant's mail connector, an IMAP script or a mail rule fetching mail into a zone's inbox, phone access through an assistant's remote features, scheduled jobs. Each is documented in [`docs/extras/`](docs/extras/index.md), with what it adds and what you lose without it, which in every case is nothing that core needs.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access and scheduled jobs. Add one when it solves a problem you have; none is required for the first session.
 
-## Status
+## Status and documentation
 
-Early. You need macOS, Python 3.9 or later and git (both come with the Command Line Tools: `xcode-select --install`), and Claude Code or Codex. What changed between releases is in the [changelog](CHANGELOG.md).
+Early, for macOS. See the [changelog](CHANGELOG.md).
 
-## Documentation
-
-- [The demo workspace](examples/demo/README.md): an invented advisor's month, and the shot list for the three-minute voice demo.
-- [The introduction](presentation/index.html): fifteen slides on the idea and its rules. Open it in a browser; arrow keys move, N shows the speaker notes.
-- [First steps](docs/first-steps.md): for anyone new to Terminal. Git and Python, the Claude desktop app and the settings it needs for private work, Obsidian, dictation, and Gmail routing with plus addresses and a filter.
-- [Getting started](docs/getting-started.md): install, your first project, opening and wrapping a thread, the check.
-- [Principles](docs/principles.md): what the workspace actually is, and why it's built the way it is.
-- [Try it safely](docs/try-it-safely.md): install into a throwaway folder, see exactly what it does and doesn't touch, remove it in one command.
-- [Claude Code and Codex](docs/harnesses.md): what each reads, and why each zone is its own git repository.
-- [Extras](docs/extras/index.md): the tools that pair well with Garrick but aren't part of it.
-- [Guided session](docs/guided-session.md): what happens when someone installs it with you, and what to prepare.
+- [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
+- [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).
+- [Command reference](docs/getting-started.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
+- [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (download and open in a browser).
 
 ## Contributing
 
-Issues and ideas are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first, because of the clean-room rule. A way through the walls is a security report, not an issue: see [SECURITY.md](SECURITY.md).
+Issues and ideas are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first. Report a bypass of a documented check through [SECURITY.md](SECURITY.md), using fictional data.
 
 ## Licence
 

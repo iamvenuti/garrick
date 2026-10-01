@@ -1,13 +1,13 @@
 # Security
 
-Garrick's promise is that one client's material stays out of another client's work. A way around that promise is a security problem, even when nothing crashes.
+Garrick uses declared information boundaries, instructions for the assistant and limited commit checks. A bypass of a documented check or a skill that violates those rules is a security problem, even when nothing crashes. The [coverage and limits](docs/principles.md#what-the-check-covers) define what is checked; Garrick does not provide access isolation or a guarantee against disclosure.
 
 ## What to report privately
 
 - A way for the wall check (`check.py` or the pre-commit hook) to let a walled name, link or quote through.
 - A skill that carries material across a wall: from a meeting page into another party's thread, for example.
 - The installer writing outside its target folder, or touching an existing workspace.
-- Anything that sends workspace content off the machine. Core never does.
+- Garrick's Python tools sending workspace content off the machine. They should not. Your chosen AI assistant processes the content it reads through its provider; that expected data flow is separate.
 
 ## How
 
@@ -20,7 +20,7 @@ You'll get an answer within a week. Fixes go into the next release, and the advi
 ## What is not a vulnerability
 
 - A refusal that should have passed. That is a false positive; open an issue with the "wall check" form.
-- A limit the documentation already states, such as a clean paraphrase, or an edited copy of a mail's attachment, getting past the check. Paraphrase is the skill's job, not the hook's, as [principles](docs/principles.md) explains.
+- A documented scanner limit, such as a clean paraphrase, an edited attachment or unscanned document format. These limits do not make disclosure harmless; they define where the check cannot detect it. Report a skill that wrongly instructs or permits crossing a wall, or a bypass of a check within its documented coverage. See [principles](docs/principles.md#what-the-check-covers).
 
 ## Supported versions
 

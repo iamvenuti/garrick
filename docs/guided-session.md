@@ -1,46 +1,44 @@
 # Guided session
 
-A guided session is Garrick installed with someone beside you. You share your screen, you type, and the facilitator explains what each question means. It suits people who don't use a terminal day to day. It takes two hours, with a shorter follow-up two to three weeks later.
+Set up Garrick with someone beside you, then use it on one real piece of work. You share your screen and drive. Allow up to two hours, with a shorter follow-up two to three weeks later.
+
+By the end, you should have one conversation filed, a useful brief, and a next action that a fresh chat can recover. You will also see a declared wall applied in the fictional demo.
 
 ## Before the call
 
-Fill in this worksheet beforehand, so the two hours aren't spent thinking up answers. It covers what `install.py` will ask:
+Follow [Desktop first steps](first-steps.md) through preparing your Mac and choosing an assistant. Download Garrick, but leave its installation for the session if you want help with the questions. Someone comfortable in Terminal can use [Terminal setup](terminal-setup.md) instead. Both routes produce the same workspace.
 
-- Your name, and one line on what you do and for whom.
-- The parts of your life or work that should never mix by default. Most people settle on two, such as Work and Personal. These become your zones.
-- Every organisation or person whose confidences you hold: what it is, which zone it belongs to, a one-word tag, and the domain their email comes from, if you know it.
-- Any pairs of those whose material must never meet, and why. These become your walls.
-- People you deal with regularly, so their names get recognised instead of guessed at.
-- Names your phone or dictation tends to mangle, if you already know any.
-- Your first real project: its name, which party it's for, and the name of its first line of work. Pick names you can say aloud, without digits or dates.
+Bring:
 
-Check that you have, before the call ([First steps](first-steps.md) sets each one up):
+- One project you want to pick up tomorrow, and the question you need answered.
+- One short email, transcript or typed call note you are allowed to use with your chosen assistant and account.
+- The names of the parties involved. A party can be a client, partner or confidential internal project.
+- Any pair whose information must stay apart. Start with the parties relevant to this project; you can add others later.
 
-- a Mac with Python 3.9 or later (`python3 --version` in Terminal);
-- git (`git --version`). If it's missing, run `xcode-select --install` a day ahead: it takes a while and needs nothing from you once started;
-- the Claude desktop app with its Code tab, or Claude Code in Terminal (`claude --version`, 2.1.277 or later), or Codex, installed and signed in, with Help improve Claude turned off in Claude's privacy settings;
-- a copy of Garrick, downloaded as a ZIP from the repository page and unzipped, or cloned with git. Note where it landed.
+The facilitator will help with unfamiliar terms. You do not need to prepare a complete map of your work, install Obsidian or cmux, or connect your mail account.
 
 ## In the session
 
-- **The model.** Zones, projects, threads, one memory with walled use, and one resume point per thread. [Principles](principles.md) covers the same ground if you want to read ahead.
-- **The install.** You run `python3 install.py` and answer each question yourself, with the worksheet open beside it.
-- **A tour.** `AGENTS.md`, then `System/rules.md`, then `System/context.md`, now filled in with your own zones and parties.
-- **Your first project.** Your own first client, customer, partner or internal project, not an invented one, created by asking the assistant in plain language.
-- **Open and wrap.** You open a thread, tell the assistant where the work stands, wrap it, and hear it read back. This is the habit everything else depends on.
-- **The check.** `python3 System/tools/check.py`: a clean pass, a problem made on purpose, and a clean pass again.
-- **The two memories.** Where a transcript or an email goes to be filed later.
+1. **See a brief and a wall.** Try the fictional workspace for a few minutes. See what it should hold back and hear the limits of the checks.
+2. **Install your workspace.** Name the first parties and the boundaries between them. Select your new folder in the app, or open your terminal assistant there.
+3. **Use your own material.** Follow [Your first useful session](first-session.md): file the conversation, check its labels and produce a brief for your project.
+4. **Save and return.** Tell the assistant the next action, say “wrap it”, then open a fresh chat and ask where you stand.
+5. **Check it together.** Ask the assistant to run the workspace check and explain any finding. Review the brief before sharing it.
+
+Confirm which app, folder and prompt you will use tomorrow. Add phone access only after this works at the desk.
 
 ## What gets installed
 
-Exactly what `install.py` produces and nothing more: the workspace in the folder you chose, with `AGENTS.md`, `System/` (the rules, your context, the tools and skills), empty Meetings and Knowledge wikis, and one folder per zone, each its own git repository. Nothing is set up in Obsidian, no recorder or mail account is connected, and nothing runs on a schedule. Those are the [extras](extras/index.md). You can add any of them later, and the workspace doesn't need them to work.
+Garrick creates a folder containing your notes, rules, skills and local git history. Nothing is connected to your mailbox or recorder, and nothing runs on a schedule. Your chosen assistant supplies the app or terminal interface and processes the material it reads through its provider.
+
+Declared walls guide the assistant. The commit hook checks supported text for certain names, links and copied wording; it cannot guarantee confidentiality. Read [what the check covers](principles.md#what-the-check-covers) together before using real confidential material.
+
+## Between sessions
+
+Return to the project for a real task, then wrap it. Try filing one more conversation yourself. Note where you needed help or where the result was not useful. If you never returned, that is useful feedback too.
 
 ## The follow-up
 
-Two to three weeks later, bring at least one real conversation: a transcript exported as text into `Wikis/Meetings/raw/inbox/`, or an email saved as a `.eml` file into a zone's `Inbox/`. In the follow-up you:
+Two to three weeks later, start by opening your project in a fresh chat. Review what you actually used, whether the brief was accurate, and how much help each step needed. Then repeat one filing and brief without the facilitator directing you.
 
-- file it into the Meetings memory, answering the one-line questions about zone and parties yourself. That answer is where a wall gets set;
-- test a wall on purpose, and see the assistant refuse to carry one party's material into another party's project, while still answering a plain question about it outside any project;
-- run the check again to see whether anything drifted.
-
-Nothing breaks if you don't touch the workspace between the two sessions.
+Add an [extra](extras/index.md) only to address a need you encountered: browsing in Obsidian, several terminal sessions in cmux, mail intake or [phone access](extras/phone-access.md). The files and resume notes stay the same whichever interface you choose.

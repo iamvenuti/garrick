@@ -14,12 +14,14 @@ from the network and carries no third-party script. Delete it and nothing is
 lost: every fact on it lives in a file you own. Each panel says where its
 numbers come from and how old they are.
 
-**It sits outside the workspace**, in the jobs folder beside the logs
-(`~/Library/Logs/garrick-jobs/status.html` on a Mac), unless you pass `--out`.
-The page is the one place that shows every zone at once, so it is never
-committed with a zone, never synced with one, and never part of the material
-the walls check reads. It shows metadata only: names, party tags, dates and
-counts, never a line of what a note says.
+**It lives in `System/generated/status.html`**, the folder for pages a tool
+rebuilds. The page is the one place that shows every zone at once, so that
+folder is kept out of two things: the workspace's git history (the root
+`.gitignore` names it, and `check.py` reports it if not) and the wording the
+wall check treats as shared by every side (`check.py` never reads it as such,
+so whatever the page repeats can never be copied across a wall unnoticed).
+It shows metadata only: names, party tags, dates and counts, never a line of
+what a note says.
 
 **Links open the files themselves**, in whatever app you use for Markdown.
 Pass `--obsidian VAULT` if you opened the workspace root in Obsidian as a vault
@@ -693,15 +695,23 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build the status page for a Garrick workspace.")
     ap.add_argument("--workspace", help="the workspace folder (default: GARRICK_WORKSPACE, or the folder this runs in)")
-    ap.add_argument("--out", help="where to write the page (default: status.html in the jobs folder)")
+    ap.add_argument("--out", help="where to write the page (default: System/generated/status.html)")
     ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
     args = ap.parse_args(argv)
     ws = find_workspace(args.workspace)
-    agent = load_agent(ws)
-    out = Path(args.out).expanduser() if args.out else jobs_dir(agent) / "status.html"
-    if str(out.resolve()).startswith(str(ws) + os.sep):
-        print("status: writing inside the workspace; this page shows every zone, so keep it out of every repository.", file=sys.stderr)
+    generated = ws / "System" / "generated"
+    out = Path(args.out).expanduser() if args.out else generated / "status.html"
+    inside = str(out.resolve()).startswith(str(ws) + os.sep)
+    if inside and not str(out.resolve()).startswith(str(generated.resolve()) + os.sep):
+        print("status: %s is inside the workspace but not in System/generated/; this page shows every zone, "
+              "so keep it where git and the wall check leave it alone." % out, file=sys.stderr)
+    if inside and (ws / ".git").exists():
+        probe = subprocess.run(["git", "-C", str(ws), "check-ignore", "-q", "--no-index", "System/generated/status.html"],
+                               capture_output=True, text=True)
+        if probe.returncode == 1:
+            print("status: the workspace's .gitignore does not name System/generated/; add that line so the page "
+                  "is never committed.", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(build(ws, args.obsidian), encoding="utf-8")

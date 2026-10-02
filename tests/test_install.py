@@ -107,8 +107,12 @@ class InstallTest(unittest.TestCase):
         tracked = git(self.root, "ls-files").splitlines()
         self.assertFalse([t for t in tracked if t.startswith(("Zones/", "Wikis/"))])
         ignore = (self.root / ".gitignore").read_text()
-        for line in ("Zones/", "Wikis/", ".DS_Store"):
+        for line in ("Zones/", "Wikis/", "System/generated/", ".DS_Store"):
             self.assertIn(line, ignore)
+        # A page a tool rebuilds, such as the status page, never enters the root history.
+        (self.root / "System" / "generated").mkdir()
+        (self.root / "System" / "generated" / "status.html").write_text("<p>every zone</p>\n")
+        self.assertEqual(git(self.root, "status", "--porcelain"), "")
         # A zone's Inbox is tracked only for its .gitkeep: nothing dropped there enters the zone's history.
         work = self.root / "Zones" / "Work"
         self.assertIn("Inbox/.gitkeep", git(work, "ls-files").splitlines())

@@ -164,6 +164,21 @@ class TestQuotes(WallCase):
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "the Oslo depot signed before the tenth of November at any price\n")
         self.assertEqual([], self.walls())
 
+    def test_system_wording_crosses_every_wall(self):
+        write(self.root / "System" / "notes.md", "Reminder: " + SECRET + ".\n")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", SECRET + "\n")
+        self.assertEqual([], self.walls())
+
+    def test_generated_pages_exempt_nothing(self):
+        # A page that gathers every zone, kept in System/generated/, must not
+        # turn what it repeats into common wording.
+        write(self.root / "System" / "generated" / "status.html", "<p>" + SECRET + "</p>\n")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", SECRET + "\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertIn("260314-birch-call", found[0].message)
+        self.assertNoLeak(found, *SECRET_WORDS)
+
     def test_sources_are_checked_for_quotes(self):
         write(self.acme / "Sources" / "Pasted.txt", SECRET + "\n")
         found = self.walls()

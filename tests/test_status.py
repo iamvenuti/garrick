@@ -99,22 +99,40 @@ class TestSelfContained(StatusCase):
         html = self.page(vault="My Work")
         self.assertIn("obsidian://open?vault=My%20Work&amp;file=Zones/Work/Acme%20Review/Threads/Pricing/Pricing", html)
 
-    def test_writes_nothing_but_itself(self):
-        before = sorted(str(p) for p in self.root.rglob("*"))
-        out = self.jobs / "status.html"
+    def run_main(self, *extra):
         old = os.environ.get("GARRICK_JOBS_DIR")
         os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)
+        err = io.StringIO()
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                status.main(["--workspace", str(self.root)])
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                status.main(["--workspace", str(self.root), *extra])
         finally:
             if old is None:
                 os.environ.pop("GARRICK_JOBS_DIR", None)
             else:
                 os.environ["GARRICK_JOBS_DIR"] = old
-        self.assertTrue(out.is_file())
-        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
-        self.assertEqual(["status.html"], sorted(p.name for p in self.jobs.iterdir()))
+        return err.getvalue()
+
+    def test_writes_nothing_but_itself(self):
+        before = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+        self.run_main()
+        after = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+        self.assertEqual({"System/generated", "System/generated/status.html"}, after - before)
+        self.assertEqual(set(), before - after)
+        self.assertEqual([], list(self.jobs.iterdir()))
+
+    def test_warns_when_written_elsewhere_in_the_workspace(self):
+        err = self.run_main("--out", str(self.root / "Zones" / "Work" / "status.html"))
+        self.assertIn("not in System/generated/", err)
+
+    @unittest.skipUnless(shutil.which("git"), "git is not installed")
+    def test_names_the_missing_ignore_line(self):
+        from fixtures import git_init
+        git_init(self.root)
+        write(self.root / ".gitignore", "Zones/\nWikis/\n")
+        self.assertIn("does not name System/generated/", self.run_main())
+        write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
+        self.assertNotIn("System/generated", self.run_main())
 
 
 class TestPanels(StatusCase):

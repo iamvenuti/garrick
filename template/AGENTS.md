@@ -11,6 +11,7 @@ Three levels of work, two memories, one system folder.
 | Path | Holds |
 |---|---|
 | `System/` | Rules, context, skills and checks. Everything else consumes it |
+| `System/generated/` | Pages a tool rebuilds, such as the status page. Never committed; never edit them, never file anything here |
 | `Zones/<Zone>/` | One side of life or work. Its own git repository |
 | `Zones/<Zone>/<Project>/` | One client, engagement or undertaking. The hub note is named after it |
 | `Zones/<Zone>/<Project>/Threads/<Thread>/` | One line of work, with one resume point |

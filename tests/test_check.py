@@ -291,6 +291,42 @@ class TestResume(CheckCase):
         self.assertClean("resume")
 
 
+class TestGenerated(CheckCase):
+    def page(self):
+        write(self.root / "System" / "generated" / "status.html", "<p>Workspace status</p>\n")
+
+    def repo(self, ignore):
+        git_init(self.root)
+        write(self.root / ".gitignore", "Zones/\nWikis/\n" + ignore)
+
+    def test_no_repository_no_findings(self):
+        self.page()
+        self.assertClean("generated")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_ignored_folder_is_clean(self):
+        self.repo("System/generated/\n")
+        self.page()
+        self.assertClean("generated")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_folder_not_ignored_warns(self):
+        self.repo("")
+        self.page()
+        self.assertFinds("generated", "warning", "does not ignore")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committed_page_is_an_error(self):
+        self.repo("")
+        self.page()
+        commit_all(self.root)
+        self.assertFinds("generated", "error", "committed")
+
+    def test_placeholders_in_generated_output_are_not_an_unfinished_install(self):
+        write(self.root / "System" / "generated" / "brief.md", "Fill {{ZONE}} later\n")
+        self.assertClean("placeholders")
+
+
 class TestDeliverables(CheckCase):
     def test_pass(self):
         self.assertClean("deliverables")

@@ -75,6 +75,7 @@ CHECKS = [
     ("inbox", "Zone inboxes"),
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
+    ("generated", "Generated files"),
 ]
 
 # How a group of findings is said aloud when there is more than one.
@@ -95,6 +96,7 @@ EAR_GROUP = {
     "inbox": "{n} files in the zone inboxes need attention",
     "knowledge": "{n} Knowledge pages cross into Meetings or carry parties",
     "raw": "{n} raw records were changed",
+    "generated": "{n} generated files could end up in the workspace history",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -184,6 +186,17 @@ def as_list(value) -> List[str]:
 def party_name(ws: Workspace, tag: str) -> str:
     entry = ws.context["parties"].get(tag)
     return entry["party"] if entry and entry.get("party") else tag
+
+
+GENERATED = ("System", "generated")
+
+
+def is_generated(ws: Workspace, path: Path) -> bool:
+    """Output a tool wrote for you, such as the status page: never committed,
+    never read as material the workspace shares. Skipping it can only make a
+    check stricter, so a file put there by mistake loses nothing but its
+    place in git."""
+    return Path(rel(ws, path)).parts[:2] == GENERATED
 
 
 def is_template_path(ws: Workspace, path: Path) -> bool:
@@ -381,7 +394,7 @@ def check_instructions(ws: Workspace) -> List[Finding]:
 def check_placeholders(ws: Workspace) -> List[Finding]:
     out = []
     for path in walk_files(ws.root):
-        if is_template_path(ws, path):
+        if is_template_path(ws, path) or is_generated(ws, path):
             continue
         found = PLACEHOLDER_RE.findall(rel(ws, path))
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix == "":
@@ -795,7 +808,7 @@ def shingles(tokens: List[str]) -> Iterable[int]:
 @dataclass
 class QuoteIndex:
     owners: Dict[int, set]  # shingle -> the finished meeting pages whose page or raw record holds it
-    common: set  # shingles in material that crosses every wall: System/, Knowledge, instruction files
+    common: set  # shingles in material that crosses every wall: System/ (not System/generated/), Knowledge, instruction files
 
 
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
@@ -823,7 +836,10 @@ def quote_index(ws: Workspace) -> QuoteIndex:
             for h in shingles(words(text)):
                 owners.setdefault(h, set()).add(page)
     common: set = set()
-    shared = [ws.root / "AGENTS.md"] + list(walk_files(ws.root / "System"))
+    # Wording found in material every side reads is common wording, not a
+    # leak. Generated output is not that material: a page that gathers every
+    # zone would otherwise exempt whatever it repeats from the wall check.
+    shared = [ws.root / "AGENTS.md"] + [p for p in walk_files(ws.root / "System") if not is_generated(ws, p)]
     shared += list(walk_files(ws.root / "Wikis" / "Knowledge")) if (ws.root / "Wikis" / "Knowledge").is_dir() else []
     shared += [ws.root / "Wikis" / "AGENTS.md", ws.root / "Wikis" / "Meetings" / "AGENTS.md"]
     for path in shared:
@@ -1347,10 +1363,37 @@ def check_raw(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_generated(ws: Workspace) -> List[Finding]:
+    """System/generated/ holds pages a tool rebuilds, such as the status page,
+    which shows every zone at once. It must never enter the workspace's git
+    history: the root repository ignores it, and nothing in it is tracked."""
+    out = []
+    folder = ws.root / Path(*GENERATED)
+    if not (ws.root / ".git").exists():
+        return out
+    def git(*args):
+        try:
+            return subprocess.run(["git", "-C", str(ws.root), *args], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    tracked = git("ls-files", "--", "/".join(GENERATED))
+    for line in (tracked.stdout.splitlines() if tracked and tracked.returncode == 0 else []):
+        out.append(Finding(ERROR, "generated", line,
+                           "generated output is committed; run `git rm --cached` on it and let the .gitignore keep it out",
+                           "A generated file is in the workspace history"))
+    probe = "/".join(GENERATED) + "/probe.html"
+    ignored = git("check-ignore", "-q", "--no-index", probe)
+    if folder.is_dir() and ignored is not None and ignored.returncode == 1:
+        out.append(Finding(WARNING, "generated", ".gitignore",
+                           "the root repository does not ignore System/generated/; add that line to .gitignore",
+                           "The generated folder is not ignored"))
+    return out
+
+
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_names,
     check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_walls,
-    check_sources, check_inbox, check_knowledge, check_raw,
+    check_sources, check_inbox, check_knowledge, check_raw, check_generated,
 ]
 
 

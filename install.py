@@ -412,7 +412,8 @@ def install(cfg, target, force=False, quiet=False):
 
     ignore = ".DS_Store\n._*\n__pycache__/\n"
     inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
-    w.write(root / ".gitignore", "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + ignore)
+    generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
+    w.write(root / ".gitignore", "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + ignore)
     for repo in repos[1:]:
         w.write(repo / ".gitignore", ignore + (inbox if repo.parent == root / "Zones" else ""))
 

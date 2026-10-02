@@ -24,7 +24,7 @@ This is a rule for an assistant with access to the shared memory, not access iso
 
 ### What the check covers
 
-The installed pre-commit hook checks staged project files before saving a commit. For declared walls, it can reject links to walled meeting pages, configured names and aliases from the other party, and matching runs of eight words with enough content words from walled meetings or transcripts. Common wording and certain ambiguous names are excluded. Project `Sources/` files are exempt from the name check because incoming documents can legitimately name other parties.
+The installed pre-commit hook checks staged project files before saving a commit. For declared walls, it can reject links to walled meeting pages, configured names and aliases from the other party, and matching runs of eight words with enough content words from walled meetings or transcripts. Common wording and certain ambiguous names are excluded. Wording that also appears in material every side reads, the `System/` folder, the Knowledge wiki and the instruction files, counts as common. Pages a tool rebuilds into `System/generated/`, such as the status page, never do: they can gather every zone at once, so nothing they repeat may become an exemption. Project `Sources/` files are exempt from the name check because incoming documents can legitimately name other parties.
 
 The text scan covers Markdown, plain text, CSV/TSV, HTML, JSON, YAML and VTT files up to 2 MB. It does not inspect the contents of generated Word, PowerPoint or PDF deliverables. A separate check can match an exact mail attachment copied into `Sources/`; that is a byte comparison, not a content scan of those formats.
 

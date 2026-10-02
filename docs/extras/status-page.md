@@ -19,11 +19,11 @@ A sidebar holds the overall state, a *problems only* switch that hides everythin
 
 **It stores nothing.** It reads files the workspace and the jobs extra already keep, and writes only itself. Delete it and nothing is lost.
 
-**It lives outside the workspace**, beside the job logs: `~/Library/Logs/garrick-jobs/status.html` on a Mac, `~/.local/state/garrick-jobs/status.html` elsewhere, or wherever `GARRICK_JOBS_DIR` points. So it is never committed with a zone, never synced with one, and never part of the shared material the wall check compares against. You can write it somewhere else with `--out`, but keep it out of every repository.
+**It lives in `System/generated/status.html`**, the workspace's folder for pages a tool rebuilds. Two rules keep that folder harmless, and `check.py` holds both. It never enters git history: the root `.gitignore` names it, and the check reports a generated file that is committed, or a `.gitignore` that has lost the line. And it never counts as shared wording. The wall check lets a run of words through when it also appears in material every side reads, such as `System/` or the Knowledge wiki; `System/generated/` is left out of that, so whatever the page repeats can never be copied across a wall unnoticed. You can write the page elsewhere with `--out`; inside the workspace, anywhere but `System/generated/` earns a warning.
 
 ## Set it up
 
-1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository.
+1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing.
 2. **Build it and open it:**
    ```sh
    python3 System/status/status.py --workspace ~/Garrick --open

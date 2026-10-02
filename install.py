@@ -410,7 +410,9 @@ def install(cfg, target, force=False, quiet=False):
         for harness in (".claude", ".agents"):
             w.symlink(repo / harness / "skills", rel)
 
-    ignore = ".DS_Store\n._*\n__pycache__/\n"
+    ignore = (".DS_Store\n._*\n__pycache__/\n"
+              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
+              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
     inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
     w.write(root / ".gitignore", "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + ignore)

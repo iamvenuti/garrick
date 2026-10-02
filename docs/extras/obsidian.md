@@ -24,7 +24,7 @@ At first the graph shows every note as the same grey dot. A few settings make it
 
 Obsidian reads these settings when the vault opens. If you or your assistant change a file in `.obsidian/` while Obsidian is running, reopen the vault. Otherwise the change won't show, and Obsidian may save its own copy over it.
 
-Opening a zone as a vault puts `.obsidian/` inside that zone's git repository. Obsidian rewrites `workspace.json` and `graph.json` all the time, even when you only pan or zoom, so add both to the zone's `.gitignore` if you don't want that churn in its history.
+Opening a folder as a vault puts `.obsidian/` inside that folder's git repository. Obsidian rewrites `workspace.json` and `graph.json` all the time, even when you only pan or zoom, so the installer's `.gitignore` files leave both out. Your other settings, such as excluded files in `app.json`, are still tracked. The colour groups live in `graph.json`, so copy it to `graph.json.backup` if you want to keep them.
 
 ## What it adds
 

@@ -9,6 +9,7 @@ running the tests is read or written.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -113,6 +114,16 @@ class InstallTest(unittest.TestCase):
         (self.root / "System" / "generated").mkdir()
         (self.root / "System" / "generated" / "status.html").write_text("<p>every zone</p>\n")
         self.assertEqual(git(self.root, "status", "--porcelain"), "")
+        # Opening a zone as an Obsidian vault: the state it rewrites constantly stays out, its settings do not.
+        vault = self.root / "Zones" / "Work" / ".obsidian"
+        vault.mkdir()
+        for name in ("workspace.json", "workspace-mobile.json", "graph.json", "app.json"):
+            (vault / name).write_text("{}\n")
+        try:
+            self.assertEqual(git(self.root / "Zones" / "Work", "status", "--porcelain", "--untracked-files=all"),
+                             "?? .obsidian/app.json")
+        finally:
+            shutil.rmtree(vault)
         # A zone's Inbox is tracked only for its .gitkeep: nothing dropped there enters the zone's history.
         work = self.root / "Zones" / "Work"
         self.assertIn("Inbox/.gitkeep", git(work, "ls-files").splitlines())

@@ -285,6 +285,12 @@ class TestResume(CheckCase):
             "### Outcome", "### Resume here\n\n`Deliverables/gone.md`\n\n### Outcome"))
         self.assertClean("resume")
 
+    def test_parked_thread_is_not_checked(self):
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(thread_note("Acme Review", "Pricing", status="parked") + "\n`Deliverables/gone.md`\n")
+        self.assertClean("resume")
+        self.assertClean("threads")
+
     def test_only_the_resume_block(self):
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text() + "\n---\n\n**2 March 2026.** Drafted `Deliverables/old draft.md`, since replaced.\n")

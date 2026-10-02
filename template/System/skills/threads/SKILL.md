@@ -6,8 +6,9 @@ description: >
   says "open X", "pick up X", "resume X", "where was I on X", "where am I",
   "what's open", "what's open in Work", "close X", "wrap X", "wrap up", "wrap
   this", "save where I am", "close for the day", "I'm done for today", "finish
-  X", "X is done", "close X for good", "new project X for Acme", "new thread X
-  in Acme", or "start a thread on X". Also use at the end of any session that
+  X", "X is done", "close X for good", "park X", "put X aside", "wake X", "what's
+  parked", "new project X for Acme", "new thread X in Acme", or "start a thread
+  on X". Also use at the end of any session that
   produced a decision or a deliverable, so the thread can be resumed cold.
 ---
 
@@ -109,12 +110,17 @@ note, and the note's path.
 whether to reopen it. Reopening sets `status: active` and writes a new Resume
 here block above the outcome paragraph.
 
+**If the thread is parked**, say so, give where it stood in one sentence, and
+ask whether to wake it. Waking is the Park section's second half.
+
 **If X names a zone** ("open Work"), treat it as "what's open in Work".
 
 ## List: "where am I", "what's open"
 
 1. List the live threads, most recently updated first (`updated:` in the
-   frontmatter; where two tie, the later commit to the note).
+   frontmatter; where two tie, the later commit to the note). Parked threads are
+   not live: leave them out, and end with how many are parked, if any.
+   "What's parked" lists them instead, oldest first.
 2. "What's open in Work", "what's open for Acme": narrow to that zone, project
    or party first.
 3. "Where am I": if a thread is in focus this session, say which first.
@@ -290,6 +296,26 @@ Spoken: "Acme pricing is closed. Two actions still point at it: tick them, keep
 them, or drop them?"
 
 Written: the outcome paragraph, the files changed, the commit hash.
+
+## Park: "park X", "put X aside"; wake: "wake X", "pick X up again"
+
+Parking sets a thread aside without finishing it, so the lists stay short. It
+moves nothing: the folder, the Resume here block, the links and the history
+stay exactly where they are.
+
+1. **Resolve X.** Parked threads resolve like any other.
+2. **Re-read the thread note now.**
+3. **Set `status: parked`** to park, or `status: active` to wake, and `updated:`
+   today, in the note's frontmatter. Leave the Resume here block as it is: it
+   still says where the work stood.
+4. **Add a dated entry** below the `---`: "Parked." or "Woken.", with the reason
+   if the user gave one.
+5. **Commit** in the zone's repository: "Acme, Pricing: parked".
+6. **Keep the memory pointer**, if there is one. A parked thread is not closed.
+
+Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
+
+Written: the same, then the note's path and the commit hash.
 
 ## New: "new project X for P in Z", "new thread X in P"
 

@@ -631,8 +631,8 @@ def check_resume(ws: Workspace) -> List[Finding]:
         for thread in visible_dirs(project / "Threads"):
             note = thread / (thread.name + ".md")
             text = read_text(note) if note.is_file() else None
-            if not text or str(parse_frontmatter(note).get("status") or "").strip().lower() == "done":
-                continue
+            if not text or str(parse_frontmatter(note).get("status") or "").strip().lower() in ("done", "parked"):
+                continue  # finished, or set aside: nobody resumes it until it is woken
             spoken = "%s, %s" % (project.name, thread.name)
             for line in resume_block(text):
                 for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):

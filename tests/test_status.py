@@ -135,6 +135,38 @@ class TestSelfContained(StatusCase):
         self.assertNotIn("System/generated", self.run_main())
 
 
+class TestParkedAndCopy(StatusCase):
+    def park(self):
+        note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        note.write_text(thread_note("Birch Entry", "Market Sizing", "birch", status="parked"))
+
+    def test_parked_is_folded_away_and_not_live(self):
+        self.park()
+        html = self.page()
+        self.assertIn('id="parked-work"', html)
+        self.assertIn("1 live · 1 parked", html)
+        self.assertIn('data-copy="wake Market Sizing"', html)
+        self.assertNotIn('data-copy="park Market Sizing"', html)
+
+    def test_copy_buttons_carry_the_phrase_to_say(self):
+        html = self.page()
+        self.assertIn('data-copy="open Pricing"', html)
+        self.assertIn('data-copy="park Pricing"', html)
+        self.assertIn("status.py --workspace", html)
+
+    def test_shared_names_are_said_with_their_project(self):
+        write(self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md",
+              thread_note("Birch Entry", "Pricing", "birch"))
+        html = self.page()
+        self.assertIn('data-copy="open Acme Review, Pricing"', html)
+        self.assertIn('data-copy="open Birch Entry, Pricing"', html)
+
+    def test_buttons_only_copy(self):
+        html = self.page()
+        self.assertNotIn("shortcuts://", html)
+        self.assertNotIn("<form", html)
+
+
 class TestPanels(StatusCase):
     def test_inbox_waiting(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")

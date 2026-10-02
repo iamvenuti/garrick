@@ -46,7 +46,7 @@ The depth isn't configurable, and that's deliberate: a name you can say aloud on
 
 ## One resume point per thread
 
-Every thread has exactly one place that says where it stands: the `### Resume here` block at the top of its `## State of play` section. It says what's live, how to rebuild it, the next single action, who it's waiting on, and the deadline if there is one. Wrapping a thread means rewriting that block so it describes now, then adding a dated entry below it, never editing the old ones. Open the thread months later, cold, and that block is the only thing you need to read first. So `check.py` reads every live thread's block and warns when a link or a file path in it leads nowhere: a deliverable renamed or moved turns up in the next check, not in the next cold resume.
+Every thread has exactly one place that says where it stands: the `### Resume here` block at the top of its `## State of play` section. It says what's live, how to rebuild it, the next single action, who it's waiting on, and the deadline if there is one. Wrapping a thread means rewriting that block so it describes now, then adding a dated entry below it, never editing the old ones. Open the thread months later, cold, and that block is the only thing you need to read first. A thread you are not working on but not finished with can be parked: "park X" sets `status: parked`, keeps the note and its block exactly as they are, and takes it out of "what's open" until "wake X". So `check.py` reads every live thread's block and warns when a link or a file path in it leads nowhere: a deliverable renamed or moved turns up in the next check, not in the next cold resume.
 
 ## Built to be spoken to
 

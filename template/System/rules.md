@@ -45,6 +45,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 - **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread.
 - **Rewrite the Resume here block at the end of any session that produced a decision or a deliverable**, so that it describes now. Add a dated entry below it; keep the old entries.
 - **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
+- **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken.
 - **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it.
 - **If your assistant has a memory of its own**, keep one entry per live thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread closes.
 
@@ -58,6 +59,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
 - **"Close X" or "wrap X"**: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
+- **"Park X"**: set the thread aside without closing it. **"Wake X"**: bring it back. **"What's parked"**: name the parked threads.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting on it. If a heard name is close to two entries, ask. Read through ordinary transcription noise without comment, and never correct the user's spelling back at them.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table.

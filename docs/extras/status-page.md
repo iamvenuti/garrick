@@ -4,7 +4,7 @@ One page that answers two questions before you open anything: is anything wrong,
 
 ## What it shows
 
-- **Threads**, one column per zone: every live thread with its project, its party and how long since its note was updated, oldest first. The bar fills toward sixty days and turns amber after two weeks, red after six.
+- **Threads**, one column per zone: every live thread with its project, its party and how long since its note was updated, oldest first. The bar fills toward sixty days and turns amber after two weeks, red after six. Threads you have parked ("park X") sit in a folded *Parked* group at the foot of their zone, out of the counts.
 - **Checks**: what `System/tools/check.py` finds, run as the page is built, grouped by check.
 - **Open actions**: the unticked items in each zone's `Todo.md`.
 - **Inboxes**: what is waiting to be filed in each zone's `Inbox/` and in the Meetings inbox.
@@ -40,6 +40,12 @@ A sidebar holds the overall state, a *problems only* switch that hides everythin
    `extras/status/garrick.status.plist` runs that every evening at 23:30.
 
 The page says how old it is, and turns its banner red when it is more than a day and a half old, so a schedule that stopped is not mistaken for a quiet week.
+
+## Buttons that copy, not act
+
+The page is a file, and a file cannot act on your workspace, so its buttons copy instead. Hover a thread for *Open* and *Park*, or a parked one for *Wake*: each copies the phrase to say, "open Pricing" or "park Acme Review, Pricing", with the name in the shortest form that is unique, the way the threads skill says it. Paste it to your assistant. The sidebar copies the command that rebuilds the page.
+
+Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself.
 
 ## Reading the job strips
 

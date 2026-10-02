@@ -143,7 +143,7 @@ def threads(ws: Path) -> Dict[str, dict]:
     note was last updated. Frontmatter only, like "what's open"."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, done = [], 0
+        rows, parked, done = [], [], 0
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
@@ -154,11 +154,13 @@ def threads(ws: Path) -> Dict[str, dict]:
                 if str(fm.get("status", "")).lower() == "done":
                     done += 1
                     continue
-                rows.append({"project": project.name, "thread": thread.name, "note": note,
-                             "party": tags(fm.get("party") or pfm.get("party", "")),
-                             "updated": as_date(fm.get("updated", "")), "status": fm.get("status", "")})
+                row = {"project": project.name, "thread": thread.name, "note": note,
+                       "party": tags(fm.get("party") or pfm.get("party", "")),
+                       "updated": as_date(fm.get("updated", "")), "status": fm.get("status", "")}
+                (parked if str(fm.get("status", "")).lower() == "parked" else rows).append(row)
         rows.sort(key=lambda r: r["updated"] or dt.date.min)
-        out[zone.name] = {"rows": rows, "done": done, "folder": zone}
+        parked.sort(key=lambda r: r["updated"] or dt.date.min)
+        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone}
     return out
 
 
@@ -396,6 +398,22 @@ ICON = {
 CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 
 
+def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str], str]:
+    """The name to say for each thread, as the threads skill says it: the
+    thread alone when no other thread has that name, else "project, thread"."""
+    every = [(r["project"], r["thread"]) for z in T.values() for r in z["rows"] + z["parked"]]
+    count: Dict[str, int] = {}
+    for _, thread in every:
+        count[thread.lower()] = count.get(thread.lower(), 0) + 1
+    return {(p, t): (t if count[t.lower()] == 1 else "%s, %s" % (p, t)) for p, t in every}
+
+
+def copy(label: str, text: str, say: str) -> str:
+    """A button that copies a phrase for your assistant, or a command for your
+    terminal. The page acts on nothing itself."""
+    return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
+
+
 def card(id_: str, title: str, meta: str, body: str, open_: bool = True) -> str:
     return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span></summary>'
             '<div class="body">%s</div></details>' % (id_, " open" if open_ else "", CHEV, E(title), E(meta), body))
@@ -489,6 +507,15 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .meters{display:flex;flex-direction:column;gap:12px}.meters .m{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12px}.meters .m .meter{grid-column:1/-1}
 table{border-collapse:collapse;width:100%;font-size:12.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;padding:6px;border-bottom:1px solid var(--grid)}
 td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:0}.r{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow-x:auto}
+.acts{display:inline-flex;gap:4px;opacity:0;transition:opacity .12s}
+.thread:hover .acts,.acts:focus-within,.acts.show{opacity:1}
+.thread .t{position:relative}.thread .t .acts{position:absolute;right:0;top:50%;transform:translateY(-50%);background:var(--surface);padding-left:6px}
+.act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
+.act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
+.parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
+.parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
+@media (hover:none){.acts{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
 .only [data-ok="1"]{display:none}
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
@@ -508,6 +535,9 @@ if(h>36){var s=document.getElementById('stale');s.style.display='block';s.textCo
 var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
 var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,y=e.type==='focusin'?r.top:e.clientY,w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,Math.max(8,x-w/2))+'px';tip.style.top=(y-tip.offsetHeight-12)+'px'}
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);
+var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
+function put(text){if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
+document.querySelectorAll('button[data-copy]').forEach(function(b){b.addEventListener('click',function(){put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})})});
 var links={};document.querySelectorAll('nav a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});
 if('IntersectionObserver' in window){var io=new IntersectionObserver(function(es){es.forEach(function(x){if(x.isIntersecting&&links[x.target.id]){Object.keys(links).forEach(function(k){links[k].classList.remove('on')});links[x.target.id].classList.add('on')}})},{rootMargin:'-20% 0px -70% 0px'});Object.keys(links).forEach(function(id){var t=document.getElementById(id);if(t)io.observe(t)})}
 })();
@@ -543,6 +573,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
     live = sum(len(z["rows"]) for z in T.values())
+    parked_n = sum(len(z["parked"]) for z in T.values())
+    names = short_names(T)
     aging = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days > 14)
     week = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days <= 7)
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
@@ -563,9 +595,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
     aside = ('<aside><div class="brand"><h1>Workspace status</h1><p>Built %s · <span id="age">just now</span></p></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
-             '<div class="controls"><label class="switch"><input type="checkbox" id="only"> Problems only</label>'
+             '<div class="controls">%s<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh))
+             % (now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh,
+                copy("Copy the rebuild command", "python3 System/status/status.py --workspace %s --open" % ws,
+                     "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'class="act wide"')))
 
     # ---- hero and tiles
     if attn:
@@ -601,16 +635,31 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             nb += k == "critical"
             chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
             tip = "%s, %s: updated %s" % (r["project"], r["thread"], r["updated"].strftime("%d %b %Y") if r["updated"] else "never")
-            rows.append('<div class="thread" data-ok="%d" data-tip="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small></div>'
+            say = names[(r["project"], r["thread"])]
+            acts = ('<span class="acts">%s%s</span>' % (copy("Open", "open " + say, "Copied “open %s”. Paste it to your assistant." % say),
+                                                      copy("Park", "park " + say, "Copied “park %s”. Paste it to your assistant." % say)))
+            rows.append('<div class="thread" data-ok="%d" data-tip="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small>%s</div>'
                         '<div class="fresh %s"><i style="width:%.1f%%"></i></div><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (k == "good", E(tip), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
+                        % (k == "good", E(tip), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips, acts,
                            k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)), "%dd" % days if days is not None else "—"))
+        held = []
+        for r in data["parked"]:
+            say = names[(r["project"], r["thread"])]
+            days = (now.date() - r["updated"]).days if r["updated"] else None
+            held.append('<div class="thread" data-ok="1"><div class="t"><a href="%s">%s</a><small>%s</small><span class="acts show">%s</span></div>'
+                        '<span></span><span class="num muted" style="text-align:right">%s</span></div>'
+                        % (E(link(r["note"])), E(r["thread"]), E(r["project"]),
+                           copy("Wake", "wake " + say, "Copied “wake %s”. Paste it to your assistant." % say),
+                           "%dd" % days if days is not None else "—"))
+        slug = re.sub(r"\W+", "-", z.lower())
+        parked_block = ('<details class="parked" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
+                        % (slug, CHEV, len(held), "".join(held))) if held else ""
         meta = "%d live" % len(data["rows"]) + (" · %d aging" % na if na else "") + (" · %d stale" % nb if nb else "") + (" · %d done" % data["done"] if data["done"] else "")
-        cols += ('<details class="zone" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta">%s</span></summary>%s</details>'
-                 % (re.sub(r"\W+", "-", z.lower()), CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>'))
+        cols += ('<details class="zone" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta">%s</span></summary>%s%s</details>'
+                 % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>over 45 days</span><span>· the bar is days since the thread note was updated, full at 60</span></div>')
-    threads_card = '<div class="full">%s</div>' % card("threads", "Threads", "%d live · names, parties and dates only" % live,
+    threads_card = '<div class="full">%s</div>' % card("threads", "Threads", "%d live · %d parked · names, parties and dates only" % (live, parked_n),
                                                        '<div class="zones">%s</div>%s' % (cols, legend))
 
     # ---- checks
@@ -689,7 +738,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             % (top, attn_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>Workspace status</title><style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
-            '<div id="tip" role="tooltip"></div><script>%s</script></body></html>' % (CSS, now.isoformat(timespec="seconds"), aside, main, JS))
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s</script></body></html>' % (CSS, now.isoformat(timespec="seconds"), aside, main, JS))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

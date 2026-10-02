@@ -20,6 +20,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 - Guided setup brings real use and a fictional wall demonstration into the first session. Obsidian, cmux, mail fetching and phone access are optional follow-ons.
 - Clarify declared pairwise walls, supported checks and their limits. Lead with continuity of work and local ownership instead of an absolute confidentiality claim.
 - Document Codex remote voice on iPhone with its desktop host requirement, and Claude Code Remote Control from a terminal.
+- The Obsidian guide shows how to make the graph readable: colour notes by level, leave parked and finished threads out, and link notes rather than quoting their paths, since Obsidian draws no line from a path in backticks. It also covers keeping Obsidian's constantly rewritten files out of a zone's git history.
 
 ## [0.1.0] - 2026-09-30
 

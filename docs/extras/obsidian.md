@@ -14,6 +14,18 @@ Open any folder in the workspace as its own vault, since Obsidian doesn't care a
 
 Wikilinks such as `[[wiki/people/dana-whitlock]]` resolve within whichever vault you opened, the same shortest-path rule Obsidian always uses. If you open the root as one vault, a link from a project note into `Wikis/Meetings/wiki/sources/` resolves normally, since it's all one vault as far as Obsidian is concerned. `check.py` resolves links the same way, to catch a project note that links to a meeting a wall should have kept out. It reports a link that leads nowhere only inside a thread's Resume here block, where a broken link is a broken resume point and many people never open Obsidian to see it; everywhere else, Obsidian shows those as unresolved.
 
+## Making the graph readable
+
+At first the graph shows every note as the same grey dot. A few settings make it show your projects and threads instead. They live in the vault's own `.obsidian/` folder, so each vault keeps its own.
+
+- **Colour by level.** In the graph view, open Groups and add these in order, because the first match wins: `[type:project]` for project notes, `[type:thread]` for thread notes, then `path:Zones` for everything else filed in a zone, and `path:Wikis/Meetings` and `path:Wikis/Knowledge` for the two memories. The `path:` groups assume you opened the workspace root; in a vault over one zone, the first two groups are enough.
+- **Leave out what is set aside.** Type `-[status:parked] -[status:done]` into the graph's search box to drop parked and finished threads from the picture. They keep their folders and links; Obsidian just stops drawing them. The file explorer has no equivalent setting, so parked threads stay listed there, and the [status page](status-page.md) is where they fold away.
+- **Link notes rather than quoting their paths.** Obsidian draws a line only for a `[[wikilink]]`. A path in backticks, such as `` `Sources/brief.md` ``, is plain text to it, so a note your Resume here block names that way shows up unconnected. If you browse in Obsidian, ask your assistant to name notes as wikilinks and keep backticks for files that aren't notes, like spreadsheets and scripts.
+
+Obsidian reads these settings when the vault opens. If you or your assistant change a file in `.obsidian/` while Obsidian is running, reopen the vault. Otherwise the change won't show, and Obsidian may save its own copy over it.
+
+Opening a zone as a vault puts `.obsidian/` inside that zone's git repository. Obsidian rewrites `workspace.json` and `graph.json` all the time, even when you only pan or zoom, so add both to the zone's `.gitignore` if you don't want that churn in its history.
+
 ## What it adds
 
 A graph and backlink view of how your projects, threads, people and meeting pages connect. A mobile app for reading and light editing when you're away from a terminal. Faster browsing than opening files one at a time in a plain editor.

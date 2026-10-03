@@ -303,6 +303,22 @@ class RefusalTest(unittest.TestCase):
             self.assertFalse(target.exists(), label)
 
 
+class TagGuessTest(unittest.TestCase):
+    """The tag the questions offer is always one they would accept."""
+
+    def test_guesses(self):
+        installer = load_installer()
+        guess = installer.tag_guess
+        self.assertEqual(guess("Acme Corp"), "acme")
+        self.assertEqual(guess("Birch & Co"), "birch")
+        self.assertEqual(guess("Acme Corp", {"acme": "Acme Ltd"}), "acme-corp")
+        self.assertEqual(guess("Café Birch"), "cafe")
+        for name in ("4Birch", "4Birch Holdings", "12 Cobalt Lanes", "!!!", ""):
+            self.assertEqual(guess(name), "", name)
+        for name in ("Acme Corp", "Birch & Co", "O'Lark Partners", "Dune-Cedar Group", "Zoë & Ünal"):
+            self.assertRegex(guess(name), installer.TAG_RE, name)
+
+
 class TargetIdentityTest(unittest.TestCase):
     """The target is compared with the home folder, the protected folders and Garrick's
     own folder by identity, not by spelling: a symlink, or a name that differs only in
@@ -451,6 +467,49 @@ class InteractiveTest(unittest.TestCase):
             self.assertIn("| `acme` | `birch` | Competitors |", text)
             self.assertIn("| Dana Whitlock | `acme` | Procurement |", text)
             self.assertIn("| Personal | <What Personal holds> |", text)
+            # The walls question shows an example, never the user's own two tags as if suggesting a wall.
+            self.assertIn('two clients tagged cedar and dune would be "cedar dune"', r.stdout)
+            self.assertNotIn('"acme birch"', r.stdout)
+        finally:
+            box.close()
+
+    def test_tags_walls_and_aliases_ask_plainly(self):
+        box = Sandbox()
+        try:
+            target = box.work / "plain"
+            answers = [
+                str(target), "Sam Rivera", "Independent advisor", "", "", "",
+                "4Birch", "Client", "",                  # a party whose name starts with a digit
+                "",                                      # no tag is offered, so Enter is refused
+                "4birch",                                # refused: a tag starts with a letter
+                "fourbirch", "",                         # accepted; no domain
+                "Fernway Logistics", "Carrier", "", "", "",
+                "Cobalt Freight", "Carrier", "", "", "",
+                "",                                      # no more parties
+                "fernway cobalt", "", "",                # one wall, then done
+                "",                                      # no people
+                "dana whitlaw", "",                      # an alias with no meaning: skipped, and said so
+                "", "y",
+            ]
+            r = run([INSTALL], box.env, stdin="\n".join(answers) + "\n")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            text = (target / "System" / "context.md").read_text()
+            # Only a default the question accepts is offered, and the prompt gives the real rule.
+            self.assertIn("A short tag for 4Birch, used in notes: one lowercase word that starts with a letter.\n>",
+                          r.stdout)
+            self.assertIn("A tag is one lowercase word that starts with a letter", r.stdout)
+            self.assertIn("| 4Birch | Client | Work | `fourbirch` |  |", text)
+            self.assertIn("A short tag for Fernway Logistics, used in notes: one lowercase word that starts "
+                          "with a letter. [fernway]", r.stdout)
+            # The wall example is plainly an example: other tags than the user's own.
+            self.assertIn('two clients tagged acme and birch would be "acme birch"', r.stdout)
+            self.assertNotIn('"fernway cobalt"', r.stdout)
+            self.assertIn("| `fernway` | `cobalt` |", text)
+            # Aliases can wait: the question says so, and where they go later.
+            self.assertIn("Most people skip this now", r.stdout)
+            self.assertIn("Aliases table in System/context.md", r.stdout)
+            self.assertIn('Skipped "dana whitlaw": an alias needs what it means.', r.stdout)
+            self.assertNotIn("dana whitlaw", text)
         finally:
             box.close()
 

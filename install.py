@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -35,6 +36,9 @@ DEFAULT_ZONES = ["Work", "Personal"]
 PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
 TAG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+TAG_RULE = "one lowercase word that starts with a letter, then letters, digits or hyphens"
+# Wall examples the questions can show, never built from the user's own tags.
+EXAMPLE_WALLS = (("acme", "birch"), ("cedar", "dune"))
 # The one way to put your own address on the workspace's repositories when git had
 # none. docs/getting-started.md gives the same command; a test keeps them alike.
 OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done'
@@ -178,7 +182,7 @@ def validate(cfg, pl):
         if p["zone"] not in zone_names:
             problems.append(f'{label} is in zone "{p["zone"]}", which is not one of: {", ".join(sorted(zone_names))}.')
         if not TAG_RE.match(p["tag"]):
-            problems.append(f'The tag for {label} ("{p["tag"]}") must be one lowercase word: letters, digits or hyphens.')
+            problems.append(f'The tag for {label} ("{p["tag"]}") must be {TAG_RULE}.')
         elif p["tag"] in tags:
             problems.append(f'The tag "{p["tag"]}" is used twice.')
         tags.append(p["tag"])
@@ -532,6 +536,24 @@ def home_relative(answer):
     return p if p.is_absolute() else Path.home() / p
 
 
+def tag_guess(name, taken=()):
+    """The tag the question offers for a party: its first word, or its first words
+    joined by hyphens, in lowercase. Only one the question would accept: valid and
+    not taken. "" when there is none, such as for 4Birch, whose tag cannot start with 4."""
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    words = [w for w in (re.sub(r"[^a-z0-9]", "", w) for w in plain.split()) if w]
+    for n in range(1, len(words) + 1):
+        guess = "-".join(words[:n])
+        if TAG_RE.match(guess) and guess not in taken:
+            return guess
+    return ""
+
+
+def example_wall(tags):
+    """A pair of example tags for the walls question that is not the user's own."""
+    return next((pair for pair in EXAMPLE_WALLS if not set(pair) & set(tags)), EXAMPLE_WALLS[-1])
+
+
 def interview(pl, target=None, force=False):
     check_git()  # before the first question, not after the last
     print("Garrick setup. A few questions, one at a time. Press Enter to accept what is in [brackets].\n")
@@ -585,13 +607,17 @@ def interview(pl, target=None, force=False):
                     zone = match[0]
                     break
                 print(f"That is not one of your zones: {', '.join(names)}.\n")
-        guess = re.sub(r"[^a-z0-9]", "", pname.lower().split()[0]) or "party"
-        taken = {p["tag"] for p in parties}
+        taken = {p["tag"]: p["name"] for p in parties}
+        guess = tag_guess(pname, taken)
         while True:
-            tag = ask(f"A short tag for {pname}: one lowercase word, used in notes.", guess).strip("`")
-            if TAG_RE.match(tag) and tag not in taken:
+            tag = ask(f"A short tag for {pname}, used in notes: one lowercase word that starts with a letter.",
+                      guess).strip("`")
+            if tag in taken:
+                print(f"{tag} is already the tag for {taken[tag]}. Pick another.\n")
+            elif TAG_RE.match(tag):
                 break
-            print("One lowercase word, letters, digits or hyphens, not already used.\n")
+            else:
+                print(f"A tag is {TAG_RULE}, such as acme or acme-uk.\n")
         taken_domains = {d: p["name"] for p in parties for d in p["domains"]}
         while True:
             domains = domain_list(ask(f"Mail domains for {pname}: the part after the @ in their addresses, "
@@ -605,9 +631,12 @@ def interview(pl, target=None, force=False):
     tags = [p["tag"] for p in parties]
     walls = []
     if len(tags) >= 2:
-        print(f"Walls: pairs of parties whose material must never meet. Your tags: {', '.join(tags)}.\n")
+        print(f"Walls: pairs of parties whose material must never meet. None is assumed. "
+              f"Your tags: {', '.join(tags)}.\n")
+        a, b = example_wall(tags)
         while True:
-            pair = ask("Two tags with a wall between them, like \"" + " ".join(tags[:2]) + "\" (Enter when done):")
+            pair = ask(f"Two of your tags with a wall between them, separated by a space. For example, "
+                       f"two clients tagged {a} and {b} would be \"{a} {b}\". (Enter when done)")
             if not pair:
                 break
             bits = pair.replace(",", " ").split()
@@ -630,14 +659,19 @@ def interview(pl, target=None, force=False):
                 print(f"Use one of: {', '.join(tags)}.\n")
         people.append({"name": person, "party": party, "role": ask(f"{person}'s role, in a few words?")})
 
+    print("Aliases: names that dictation writes wrongly, and what they mean. Most people skip this now, "
+          "before they have dictated anything. Your assistant adds one to the Aliases table in "
+          "System/context.md whenever it has to ask what a name meant, and you can add them there yourself.\n")
     aliases = []
     while True:
-        heard = ask("Names dictation gets wrong. What it writes (Enter to skip):")
+        heard = ask("A name as dictation wrote it (Enter to skip):")
         if not heard:
             break
         means = ask(f'What does "{heard}" mean?')
         if means:
             aliases.append({"heard": heard, "means": means})
+        else:
+            print(f'Skipped "{heard}": an alias needs what it means.\n')
 
     cfg = {"owner": {"name": name, "description": desc}, "zones": zones, "parties": parties,
            "walls": walls, "people": people, "aliases": aliases}

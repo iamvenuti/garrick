@@ -1,0 +1,6 @@
+model,flow_m3_per_hour,list_price_eur,export_list_eur
+BC-40,12,3200,2950
+BC-50,20,3900,3600
+BC-65,35,4800,4450
+BC-80,55,6100,5650
+BC-100,80,7400,6850

@@ -32,6 +32,10 @@ Birch's board meets on 28 September. Iris Bell, at the [[Meetings/wiki/sources/2
 
 ---
 
-**26 September 2026.** Drafted the outline in five sections. Timing and budget left as questions for the board rather than guessed. The logistics section points at Carrier Choice and repeats none of it.
+**26 September 2026.** Drafted the [[Birch Entry/Threads/Launch Plan/Outline|outline]] in five sections. Timing and budget left as questions for the board rather than guessed. The logistics section points at Carrier Choice and repeats none of it. Questions for the distributor agreement are in [[Birch Entry/Threads/Launch Plan/Distributor terms|Distributor terms]], held until the board has decided.
+
+**25 September 2026.** Went through the board paper with Theo, Iris and Lena Moss ([[Meetings/wiki/sources/260925-birch-board-paper-review|board paper review]]). Theo wants one page, with the memo behind it. Lena: the board sets the budget, so the page asks for one rather than proposing it. Sent Iris the page that afternoon: [[Birch Entry/Deliverables/260925 - Board recommendation|board recommendation]].
+
+**23 September 2026.** Iris and Ruth Kemp narrowed the distributors to two ([[Meetings/wiki/sources/260923-birch-distributor-shortlist|distributor shortlist]]). Exclusivity is the first thing either will ask about. Ruth runs the talks once the board has said yes.
 
 **17 September 2026.** Thread opened when Market Sizing closed. Waits for the board.

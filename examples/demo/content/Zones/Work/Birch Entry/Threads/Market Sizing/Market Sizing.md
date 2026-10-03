@@ -28,6 +28,10 @@ Theo Marsh, at the [[Meetings/wiki/sources/260904-birch-kick-off|kick-off]]: "If
 
 **16 September 2026.** Presented the memo to Theo and Iris ([[Meetings/wiki/sources/260916-birch-market-sizing-review|sizing review]]). Theo: "That's smaller than I hoped, but it's real." Decided, Theo's call: distributor-led entry, spring launch, carrier chosen before Christmas. "Close the sizing work. It's done."
 
-**9 September 2026.** Sizing model built from public trade statistics and Iris's six distributor contacts. Three scenarios; the middle one carried into the memo.
+**11 September 2026.** Went through the assumptions with Iris and Lena Moss ([[Meetings/wiki/sources/260911-birch-sizing-assumptions|sizing assumptions]]). Lena: price at the export list less the distributor's margin, taken at thirty percent. The model is in [[Birch Entry/Threads/Market Sizing/Sizing model|Sizing model]].
+
+**9 September 2026.** Sizing model built from public trade statistics ([[Knowledge/wiki/sources/nfec-nordic-pump-market-review-2026|Nordic Pump Market Review 2026]]) and Iris's six distributor contacts. Three scenarios; the middle one carried into the memo.
+
+**7 September 2026.** Iris took me through the six distributors from the June fair ([[Meetings/wiki/sources/260907-birch-distributor-contacts|distributor contacts]]). Four sell pumps; they are a check on the share figures, not their source.
 
 **4 September 2026.** Thread opened at the kick-off.

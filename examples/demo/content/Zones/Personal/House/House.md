@@ -5,7 +5,7 @@ zone: Personal
 party: lark
 status: active
 created: 2026-09-08
-updated: 2026-09-12
+updated: 2026-09-21
 ---
 
 # House
@@ -31,4 +31,9 @@ None yet.
 
 ## References
 
+- [[Meetings/wiki/sources/260909-pell-kitchen-quote|Kitchen quote visit from Pell Joinery, 9 September]]
 - [[Meetings/wiki/sources/260910-kitchen-quote|Kitchen quote call with Ray, 10 September]]
+- [[Meetings/wiki/sources/260918-kitchen-survey|Kitchen survey with Ray and Ned, 18 September]]
+- [[Meetings/wiki/sources/260921-kitchen-go-ahead|Go-ahead call with Ray, 21 September]]
+- [[Knowledge/wiki/sources/homewright-before-the-frost-roof-checklist|Before the Frost, on small roof repairs]]
+- [[Knowledge/wiki/sources/homewright-worktops-compared|Worktops Compared]]

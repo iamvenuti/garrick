@@ -34,6 +34,12 @@ Dana Whitlock, at the [[Meetings/wiki/sources/260902-acme-kick-off|kick-off]] on
 
 **24 September 2026.** Reviewed the map with Dana and Owen ([[Meetings/wiki/sources/260924-acme-supplier-map-review|supplier map review]]). Three single-source parts confirmed. Dana decided: "Seal kits first. If they stop, we stop." Owen asks a second maker for a quote by 9 October. Housings and boards deferred to a second pass, Dana's call: "one fixed properly, not three half-fixed."
 
+**21 September 2026.** Asked Felix Rook what qualifying a second seal-kit maker takes ([[Meetings/wiki/sources/260921-acme-seal-kit-qualification|seal-kit qualification]]): about ten weeks from samples to approval, if nothing fails. Notes on all three parts are in [[Acme Review/Threads/Supplier Map/Single-source parts|Single-source parts]].
+
 **11 September 2026.** Sent the supplier map to Dana, copying Owen. Built from Owen's ERP export, received on the 4th. Marked seal kits, motor housings and control boards as single-source. Left tier two blank where the export did not show it, rather than guess.
+
+**8 September 2026.** Walked the pump line with Hana Croft and Owen ([[Meetings/wiki/sources/260908-acme-pump-line-walk|pump line walk]]). Hana: "Seal kits are the one part I can't work around." Stock cover for the three single-source parts goes on the map.
+
+**3 September 2026.** Owen talked through the export before running it ([[Meetings/wiki/sources/260903-acme-erp-export-call|export call]]): tier two is only in the buyers' notes, and he takes the old system's duplicates out first. Sent Dana the [[Acme Review/Deliverables/260903 - Scope and plan|scope and plan]].
 
 **2 September 2026.** Thread opened at the kick-off. Map due 11 September, pump line only.

@@ -36,6 +36,12 @@ Dana Whitlock, at the [[Meetings/wiki/sources/260902-acme-kick-off|kick-off]]: C
 
 **18 September 2026.** First draft of the brief, on time. Three options, costed at last year's volumes. The Pellow & Strand outlook puts market renewals at four to seven percent, so Cobalt's nine reads as an opening position ([[Knowledge/wiki/sources/pellow-strand-freight-rate-outlook-autumn-2026|Freight Rate Outlook]]).
 
+**17 September 2026.** Took Dana and Owen through the three options at the weekly check-in ([[Meetings/wiki/sources/260917-acme-weekly-check-in|weekly check-in]]). Dana wants each option in euros, not percent. The costing is in [[Acme Review/Threads/Freight Terms/Cost model|Cost model]].
+
 **15 September 2026.** Sat in on the renewal call with Dana and Marta Quill ([[Meetings/wiki/sources/260915-cobalt-renewal-for-acme|Cobalt renewal for Acme]]). Marta opened at nine percent and offered to "hold it at three percent" if Acme commits to twelve hundred pallets a quarter. Cobalt wants a fuel index clause, reviewed quarterly, "both ways". Nothing agreed until the offer is in writing.
+
+**14 September 2026.** Sent Dana the [[Acme Review/Deliverables/260914 - Freight baseline|freight baseline]], and drafted the [[Acme Review/Threads/Freight Terms/Renewal call questions|renewal call questions]].
+
+**10 September 2026.** Gil Thorne took me through last year's freight ([[Meetings/wiki/sources/260910-acme-freight-spend-baseline|freight spend baseline]]): 4,470 pallets with Cobalt for 920,000 euros, 85 percent of them on the southern lanes. Dana wants the numbers on one page before the renewal call.
 
 **2 September 2026.** Thread opened at the kick-off. First draft due 18 September.

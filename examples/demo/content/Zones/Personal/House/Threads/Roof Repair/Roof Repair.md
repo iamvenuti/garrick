@@ -32,6 +32,6 @@ Ray Lark spotted them while quoting for the kitchen ([[Meetings/wiki/sources/260
 
 ---
 
-**12 September 2026.** Decided to leave the roof with Ray rather than get a separate roofer: the scaffolding is the main cost, and he will already know the house.
+**12 September 2026.** Decided to leave the roof with Ray rather than get a separate roofer: the scaffolding is the main cost, and he will already know the house. Homewright puts scaffolding at about half the cost of a small roof repair ([[Knowledge/wiki/sources/homewright-before-the-frost-roof-checklist|Before the Frost]]). Questions for his quote are in [[House/Threads/Roof Repair/Questions for Ray|Questions for Ray]].
 
 **10 September 2026.** Thread opened after Ray's call.

@@ -32,10 +32,14 @@ Mine. The old kitchen goes this autumn, before the heating season.
 
 ---
 
-**21 September 2026.** Rang Ray and said yes. Start confirmed for 5 October.
+**21 September 2026.** Rang Ray and said yes ([[Meetings/wiki/sources/260921-kitchen-go-ahead|go-ahead call]]). Start confirmed for 5 October. The worktop is still to choose: [[House/Threads/Kitchen/Worktop options|Worktop options]].
 
-**12 September 2026.** Compared the two quotes. Lark & Sons is dearer by about nine hundred euros but includes the electrics and making good, and can start a month sooner.
+**18 September 2026.** Ray and Ned measured up ([[Meetings/wiki/sources/260918-kitchen-survey|kitchen survey]]). Ned runs a new cooker circuit, inside Ray's price. Ray holds the 5 October start if I say yes by Monday.
+
+**12 September 2026.** Compared the two quotes ([[House/Deliverables/260912 - Kitchen quotes|kitchen quotes]]). Lark & Sons is dearer by about nine hundred euros but includes the electrics and making good, and can start a month sooner.
 
 **10 September 2026.** Ray's quote by phone ([[Meetings/wiki/sources/260910-kitchen-quote|kitchen quote]]): "Eighteen thousand four hundred, all in", appliances excluded. Worktop needed "by the first of October or I lose the slot with the supplier."
+
+**9 September 2026.** Corin Pell came to quote for Pell Joinery ([[Meetings/wiki/sources/260909-pell-kitchen-quote|Pell's visit]]): units and fitting only, from early November.
 
 **8 September 2026.** Thread opened. Asked two builders to quote.

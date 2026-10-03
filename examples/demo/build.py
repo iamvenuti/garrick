@@ -102,6 +102,8 @@ PLAN = [
         todo("Supplier map to Dana", "Freight options brief, first draft")]),
     ("2026-09-03 09:10", "Wikis", "Meetings: ingest 260903-acme-erp-export-call, Acme ERP export call", [
         M + "raw/260903-acme-erp-export-call.txt", M + "wiki/sources/260903-acme-erp-export-call.md"]),
+    ("2026-09-03 16:20", "Zones/Work", "Acme Review: scope and plan sent to Dana", [
+        ACME + "Deliverables/260903 - Scope and plan.md"]),
     ("2026-09-04 12:30", "Wikis", "Meetings: ingest 260904-birch-kick-off, Birch kick-off", [
         M + "raw/260904-birch-kick-off.vtt", M + "wiki/sources/260904-birch-kick-off.md",
         M + "wiki/people/theo-marsh.md", M + "wiki/people/iris-bell.md"]),
@@ -118,6 +120,8 @@ PLAN = [
         K + "wiki/entities/pellow-strand-research.md"]),
     ("2026-09-07 11:10", "Wikis", "Meetings: ingest 260907-birch-distributor-contacts, Birch distributor contacts", [
         M + "raw/260907-birch-distributor-contacts.vtt", M + "wiki/sources/260907-birch-distributor-contacts.md"]),
+    ("2026-09-07 11:30", "Zones/Work", "Birch Entry: distributor contacts received from Iris", [
+        BIRCH + "Sources/Birch distributor contacts.csv"]),
     ("2026-09-08 08:20", "Wikis", "Knowledge: ingested Nordic Pump Market Review 2026 (Nordic Fluid Equipment Council)", [
         K + "raw/nfec-nordic-pump-market-review-2026.txt", K + "wiki/sources/nfec-nordic-pump-market-review-2026.md",
         K + "wiki/concepts/market-sizing.md", K + "wiki/concepts/distributor-led-entry.md",
@@ -137,6 +141,11 @@ PLAN = [
         M + "wiki/people/gil-thorne.md"]),
     ("2026-09-10 11:45", "Zones/Work", "Work: actions from Acme freight spend baseline", [
         todo("Freight baseline to Dana")]),
+    ("2026-09-10 15:30", "Zones/Work", "Acme Review: line stoppage log received from Owen", [
+        ACME + "Sources/Pump line stoppages.csv"]),
+    ("2026-09-10 17:00", "Zones/Work", "Birch Entry, Market Sizing: assumptions sent to Iris for Friday", [
+        BIRCH + "Deliverables/260910 - Sizing assumptions.md",
+        todo("Sizing assumptions to Iris"), done("Sizing assumptions to Iris")]),
     ("2026-09-10 18:30", "Wikis", "Meetings: ingest 260910-kitchen-quote, Kitchen quote", [
         M + "raw/260910-kitchen-quote.txt", M + "wiki/sources/260910-kitchen-quote.md",
         M + "wiki/people/ray-lark.md"]),
@@ -149,6 +158,8 @@ PLAN = [
         M + "wiki/people/lena-moss.md"]),
     ("2026-09-11 12:15", "Zones/Work", "Work: actions from Birch sizing assumptions", [
         todo("Rerun the sizing")]),
+    ("2026-09-11 14:05", "Zones/Work", "Acme Review: last year's freight spend received from Gil", [
+        ACME + "Sources/Acme freight spend 2025.csv"]),
     ("2026-09-11 16:45", "Zones/Work", "Acme Review, Supplier Map: supplier map sent to Dana", [
         ACME + "Deliverables/260911 - Supplier map.md", done("Supplier map to Dana", "Stock cover on the supplier map")]),
     ("2026-09-11 21:15", "Wikis", "Knowledge: ingested Before the Frost: A Roof Checklist (Homewright)", [
@@ -159,10 +170,16 @@ PLAN = [
         HOUSE + "House.md", HOUSE + "Deliverables/260912 - Kitchen quotes.md",
         todo("Compare the two kitchen quotes"), done("Compare the two kitchen quotes")]),
     ("2026-09-12 10:25", "Zones/Personal", "House, Roof Repair: left with Ray; waiting on his quote", [
-        HOUSE + "Threads/Roof Repair/Roof Repair.md", todo("Chase Ray for the roof quote")]),
+        HOUSE + "Threads/Roof Repair/Roof Repair.md", HOUSE + "Threads/Roof Repair/Questions for Ray.md",
+        todo("Chase Ray for the roof quote")]),
     ("2026-09-14 08:45", "Wikis", "Knowledge: ingested Seeing the Whole Chain (Brindle Systems)", [
         K + "raw/brindle-seeing-the-whole-chain.txt", K + "wiki/sources/brindle-seeing-the-whole-chain.md",
         K + "wiki/concepts/supply-chain-visibility.md", K + "wiki/entities/brindle-systems.md"]),
+    ("2026-09-14 10:30", "Zones/Work", "Birch Entry, Market Sizing: export price list in; sizing rerun", [
+        BIRCH + "Sources/Birch export price list.csv", done("Rerun the sizing")]),
+    ("2026-09-14 15:40", "Zones/Work", "Acme Review, Freight Terms: baseline to Dana; questions for the renewal call", [
+        ACME + "Deliverables/260914 - Freight baseline.md", ACME + "Threads/Freight Terms/Renewal call questions.md",
+        done("Freight baseline to Dana")]),
     ("2026-09-14 20:05", "Zones/Personal", "Personal: home insurance renewal due", [
         todo("Renew the home insurance")]),
     ("2026-09-15 15:05", "Wikis", "Meetings: ingest 260915-cobalt-renewal-for-acme, Cobalt renewal for Acme", [
@@ -177,7 +194,8 @@ PLAN = [
     ("2026-09-16 12:30", "Wikis", "Meetings: ingest 260916-birch-market-sizing-review, Birch market sizing review", [
         M + "raw/260916-birch-market-sizing-review.md", M + "wiki/sources/260916-birch-market-sizing-review.md"]),
     ("2026-09-16 12:40", "Zones/Work", "Birch Entry, Market Sizing: memo presented; Theo closed the sizing", [
-        BIRCH + "Deliverables/260916 - Market sizing memo.md", done("Market sizing memo")]),
+        BIRCH + "Deliverables/260916 - Market sizing memo.md", BIRCH + "Threads/Market Sizing/Sizing model.md",
+        done("Market sizing memo")]),
     ("2026-09-16 12:45", "Zones/Work", "Birch Entry: new thread Carrier Choice", [
         thread("Work", "Birch Entry", "Carrier Choice")]),
     ("2026-09-17 09:25", "Zones/Work", "Birch Entry: new thread Launch Plan", [
@@ -191,6 +209,8 @@ PLAN = [
         M + "wiki/people/arno-vale.md"]),
     ("2026-09-18 11:55", "Zones/Work", "Work: actions from Birch carrier requirements", [
         todo("Carrier requirements to Iris")]),
+    ("2026-09-18 15:10", "Zones/Work", "Birch Entry, Carrier Choice: requirements sent to Iris and Arno", [
+        BIRCH + "Deliverables/260918 - Carrier requirements.md", done("Carrier requirements to Iris")]),
     ("2026-09-18 17:20", "Zones/Work", "Acme Review, Freight Terms: first draft of the options brief", [
         ACME + "Deliverables/260918 - Freight options brief.md", done("Freight options brief, first draft")]),
     ("2026-09-18 17:40", "Zones/Work", "Work: sizing invoiced to Birch; Acme's September invoice noted", [
@@ -217,7 +237,8 @@ PLAN = [
     ("2026-09-21 19:00", "Wikis", "Meetings: ingest 260921-kitchen-go-ahead, Kitchen go-ahead", [
         M + "raw/260921-kitchen-go-ahead.txt", M + "wiki/sources/260921-kitchen-go-ahead.md"]),
     ("2026-09-21 19:10", "Zones/Personal", "House, Kitchen: Lark & Sons chosen; starts 5 October", [
-        HOUSE + "Threads/Kitchen/Kitchen.md", todo("Clear the kitchen", "Pay Ray's deposit"), done("Tell Ray yes")]),
+        HOUSE + "Threads/Kitchen/Kitchen.md", HOUSE + "Threads/Kitchen/Worktop options.md", HOUSE + "House.md",
+        todo("Clear the kitchen", "Pay Ray's deposit"), done("Tell Ray yes")]),
     ("2026-09-22 11:40", "Wikis", "Meetings: ingest 260922-cobalt-northern-lane-for-birch, Cobalt northern lane for Birch", [
         M + "raw/260922-cobalt-northern-lane-for-birch.vtt",
         M + "wiki/sources/260922-cobalt-northern-lane-for-birch.md"]),
@@ -239,21 +260,26 @@ PLAN = [
         todo("Questions for the distributor agreement")]),
     ("2026-09-23 16:30", "Zones/Work", "Birch Entry, Carrier Choice: shortlist drafted; waiting on Iris's volumes", [
         BIRCH + "Deliverables/260923 - Carrier shortlist.md", BIRCH + "Threads/Carrier Choice/Carrier Choice.md",
-        todo("Chase Fernway")]),
+        BIRCH + "Threads/Carrier Choice/Volume forecast.md", todo("Chase Fernway")]),
     ("2026-09-24 10:40", "Wikis", "Meetings: ingest 260924-acme-supplier-map-review, Acme supplier map review", [
         M + "raw/260924-acme-supplier-map-review.txt", M + "wiki/sources/260924-acme-supplier-map-review.md"]),
     ("2026-09-24 10:44", "Zones/Work", "Work: actions from Acme supplier map review", [
         todo("Freight options brief, final", "Supplier map, second version")]),
     ("2026-09-24 11:30", "Zones/Work", "Acme Review, Supplier Map: seal kits first; waiting on Owen's quote", [
-        ACME + "Threads/Supplier Map/Supplier Map.md", ACME + "Acme Review.md"]),
+        ACME + "Threads/Supplier Map/Supplier Map.md", ACME + "Threads/Supplier Map/Single-source parts.md",
+        ACME + "Acme Review.md"]),
     ("2026-09-25 10:20", "Wikis", "Meetings: ingest 260925-birch-board-paper-review, Birch board paper review", [
         M + "raw/260925-birch-board-paper-review.txt", M + "wiki/sources/260925-birch-board-paper-review.md"]),
     ("2026-09-25 10:25", "Zones/Work", "Work: actions from Birch board paper review", [
         todo("Board recommendation")]),
+    ("2026-09-25 16:10", "Zones/Work", "Birch Entry, Launch Plan: one-page recommendation to Iris for the board", [
+        BIRCH + "Deliverables/260925 - Board recommendation.md", done("Board recommendation")]),
     ("2026-09-25 17:50", "Zones/Work", "Acme Review, Freight Terms: brief reworked; due to Dana 2 October", [
-        ACME + "Threads/Freight Terms/Freight Terms.md", todo("Test the pallet commitment")]),
+        ACME + "Threads/Freight Terms/Freight Terms.md", ACME + "Threads/Freight Terms/Cost model.md",
+        todo("Test the pallet commitment")]),
     ("2026-09-26 11:15", "Zones/Work", "Birch Entry, Launch Plan: outline drafted; waiting on the board", [
         BIRCH + "Threads/Launch Plan/Launch Plan.md", BIRCH + "Threads/Launch Plan/Outline.md",
+        BIRCH + "Threads/Launch Plan/Distributor terms.md", BIRCH + "Birch Entry.md",
         todo("Launch plan: timing and budget")]),
 ]
 

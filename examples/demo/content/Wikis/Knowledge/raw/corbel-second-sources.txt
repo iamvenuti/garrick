@@ -1,0 +1,28 @@
+Corbel Supply Institute
+Second Sources: Qualifying an Alternative Supplier
+Practice guide. Published 20 November 2025. Downloaded from the Institute's website, 20 September 2026.
+
+Why this guide
+
+We surveyed 210 manufacturers with between 50 and 1,000 employees in 2025. Sixty-two percent had at least one part from a single supplier that would stop a production line within a month if it stopped arriving.
+
+How long it takes
+
+Qualifying a second source for a machined, cast or moulded part took a median of eleven weeks, from first drawings to an approved first batch. Rubber and polymer parts took longest, because of ageing and pressure tests.
+
+The steps
+
+1. Send drawings and the material specification.
+2. Test samples against the specification.
+3. Inspect the first production batch against the drawings (first-article inspection).
+4. Place a trial order before moving regular volume.
+
+While you wait
+
+Hold extra stock of the part, a bridge, until the second source is approved. Size it to the qualification time, not to the usual reorder cycle.
+
+Keep the second source warm
+
+A second source does not need half the volume. Respondents that kept an 80/20 split held on to their second supplier; those that placed a token order once a year usually lost it.
+
+Methodology: online survey of 210 manufacturers in seven European countries, January to March 2025, and interviews with 18 purchasing managers.

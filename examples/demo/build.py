@@ -114,6 +114,10 @@ PLAN = [
         K + "wiki/sources/pellow-strand-freight-rate-outlook-autumn-2026.md",
         K + "wiki/concepts/freight-rate-indexation.md", K + "wiki/concepts/lane-capacity.md",
         K + "wiki/entities/pellow-strand-research.md"]),
+    ("2026-09-08 08:20", "Wikis", "Knowledge: ingested Nordic Pump Market Review 2026 (Nordic Fluid Equipment Council)", [
+        K + "raw/nfec-nordic-pump-market-review-2026.txt", K + "wiki/sources/nfec-nordic-pump-market-review-2026.md",
+        K + "wiki/concepts/market-sizing.md", K + "wiki/concepts/distributor-led-entry.md",
+        K + "wiki/entities/nordic-fluid-equipment-council.md"]),
     ("2026-09-08 19:30", "Zones/Personal", "New project House (lark), first thread Kitchen", [
         project("Personal", "House", "lark", "Kitchen")]),
     ("2026-09-10 18:30", "Wikis", "Meetings: ingest 260910-kitchen-quote, Kitchen quote", [
@@ -125,6 +129,10 @@ PLAN = [
         thread("Personal", "House", "Roof Repair")]),
     ("2026-09-11 16:45", "Zones/Work", "Acme Review, Supplier Map: supplier map sent to Dana", [
         ACME + "Deliverables/260911 - Supplier map.md", done("Supplier map to Dana")]),
+    ("2026-09-11 21:15", "Wikis", "Knowledge: ingested Before the Frost: A Roof Checklist (Homewright)", [
+        K + "raw/homewright-before-the-frost-roof-checklist.txt",
+        K + "wiki/sources/homewright-before-the-frost-roof-checklist.md",
+        K + "wiki/concepts/wear-and-tear.md", K + "wiki/entities/homewright.md"]),
     ("2026-09-12 10:15", "Zones/Personal", "House, Kitchen: two quotes compared; Lark & Sons ahead", [
         HOUSE + "House.md", HOUSE + "Deliverables/260912 - Kitchen quotes.md",
         todo("Compare the two kitchen quotes"), done("Compare the two kitchen quotes")]),
@@ -140,6 +148,10 @@ PLAN = [
         M + "wiki/people/marta-quill.md"]),
     ("2026-09-15 15:12", "", "Context: alias for Cobalt Freight, learned from dictation", [
         alias("cobalt fright, cobalt freighter", "Cobalt Freight")]),
+    ("2026-09-16 08:35", "Wikis", "Knowledge: ingested Shippers push back on volume commitments (The Freight Ledger)", [
+        K + "raw/freight-ledger-shippers-push-back-on-volume-commitments.txt",
+        K + "wiki/sources/freight-ledger-shippers-push-back-on-volume-commitments.md",
+        K + "wiki/concepts/volume-commitments.md", K + "wiki/entities/the-freight-ledger.md"]),
     ("2026-09-16 12:30", "Wikis", "Meetings: ingest 260916-birch-market-sizing-review, Birch market sizing review", [
         M + "raw/260916-birch-market-sizing-review.md", M + "wiki/sources/260916-birch-market-sizing-review.md"]),
     ("2026-09-16 12:40", "Zones/Work", "Birch Entry, Market Sizing: memo presented; Theo closed the sizing", [
@@ -154,6 +166,13 @@ PLAN = [
         ACME + "Deliverables/260918 - Freight options brief.md", done("Freight options brief, first draft")]),
     ("2026-09-18 17:40", "Zones/Work", "Work: sizing invoiced to Birch; Acme's September invoice noted", [
         todo("Invoice Birch", "Invoice Acme"), done("Invoice Birch")]),
+    ("2026-09-19 10:00", "Wikis", "Knowledge: ingested Worktops Compared (Homewright)", [
+        K + "raw/homewright-worktops-compared.txt", K + "wiki/sources/homewright-worktops-compared.md",
+        K + "wiki/concepts/kitchen-worktops.md"]),
+    ("2026-09-20 17:30", "Wikis", "Knowledge: ingested Second Sources (Corbel Supply Institute)", [
+        K + "raw/corbel-second-sources.txt", K + "wiki/sources/corbel-second-sources.md",
+        K + "wiki/concepts/second-sourcing.md", K + "wiki/concepts/safety-stock.md",
+        K + "wiki/entities/corbel-supply-institute.md"]),
     ("2026-09-21 08:40", "Wikis", "Knowledge: ingested Carriers race for Nordic capacity (The Freight Ledger)", [
         K + "raw/freight-ledger-carriers-race-for-nordic-capacity.txt",
         K + "wiki/sources/freight-ledger-carriers-race-for-nordic-capacity.md",
@@ -165,6 +184,10 @@ PLAN = [
         M + "wiki/sources/260922-cobalt-northern-lane-for-birch.md"]),
     ("2026-09-22 11:44", "Zones/Work", "Work: actions from Cobalt northern lane for Birch", [
         todo("Volume forecast to Marta")]),
+    ("2026-09-23 08:30", "Wikis", "Knowledge: ingested Distribution Agreements in the Nordic Countries (Varne & Lisle)", [
+        K + "raw/varne-lisle-distribution-agreements-in-the-nordics.txt",
+        K + "wiki/sources/varne-lisle-distribution-agreements-in-the-nordics.md",
+        K + "wiki/concepts/distribution-agreements.md", K + "wiki/entities/varne-and-lisle.md"]),
     ("2026-09-23 16:30", "Zones/Work", "Birch Entry, Carrier Choice: shortlist drafted; waiting on Iris's volumes", [
         BIRCH + "Deliverables/260923 - Carrier shortlist.md", BIRCH + "Threads/Carrier Choice/Carrier Choice.md",
         todo("Chase Fernway")]),

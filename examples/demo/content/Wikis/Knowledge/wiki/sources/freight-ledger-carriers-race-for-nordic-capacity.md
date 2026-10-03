@@ -17,4 +17,4 @@ A trade press article from The Freight Ledger on new road capacity into the Nord
 - Fernway Logistics says it will start a twice-weekly northern service in January and "price below the market to win the first customers". No figures given.
 - The article's unnamed analysts expect the new space to ease pressure by mid-2027.
 
-Touches [[../concepts/lane-capacity|lane capacity]], [[../entities/cobalt-freight|Cobalt Freight]] and [[../entities/fernway-logistics|Fernway Logistics]].
+Touches [[../concepts/lane-capacity|lane capacity]], [[../entities/cobalt-freight|Cobalt Freight]], [[../entities/fernway-logistics|Fernway Logistics]] and [[../entities/the-freight-ledger|The Freight Ledger]].

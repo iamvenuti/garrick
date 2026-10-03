@@ -383,10 +383,11 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
 # What a note is, in the order the legend shows them. Colours are fixed so a
 # kind looks the same in every workspace; none is amber or red, which the
 # rings use for threads gone quiet. Threads take the brand blue, the light
-# theme's accent, which also draws the lines of a selected note.
+# theme's accent, which also draws the lines of a selected note. A mail page
+# (`type: email` in the Meetings wiki) has its own kind beside meetings.
 KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
-         ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("person", "person", "#13a38a"),
-         ("knowledge", "knowledge", "#7c9a2d")]
+         ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("mail", "mail", "#c94f9c"),
+         ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
 
 
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict:
@@ -426,6 +427,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         fm = frontmatter(path, ws)
         parts = path.relative_to(root).parts
         kind = as_text(fm.get("type")).strip().lower()
+        kind = "mail" if kind in ("email", "mail") else kind
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
         if kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):

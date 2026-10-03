@@ -30,7 +30,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
+from fixtures import build_workspace, meeting_page, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 STATUS = REPO / "extras" / "status" / "status.py"
@@ -155,6 +155,20 @@ class TestGraph(StatusCase):
         self.assertEqual("meeting", by_name["Acme kick-off"])
         self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertNotIn("Decisions.", html)
+
+    def test_mail_pages_have_a_kind_of_their_own(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260314-acme-forecast.md",
+              meeting_page("Work", "[acme]", "Pallet forecast").replace("type: meeting", "type: email"))
+        html = self.page()
+        data = graph_data(html)
+        kinds = dict((i, k) for i, k in data["kinds"])
+        self.assertEqual("mail", kinds[data["nodes"][self.node(data, "Pallet forecast")]["k"]])
+        self.assertEqual("meeting", kinds[data["nodes"][self.node(data, "Acme kick-off")]["k"]])
+        colour = dict((label, c) for (_, label, c) in status.KINDS)["mail"].lower()
+        rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
+        self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
+        self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
+        self.assertIn('<i style="background:%s"></i>mail</span>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
 
     def test_inboxes_raw_and_catalogues_stay_out(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Note.md", "# A dropped note\n")

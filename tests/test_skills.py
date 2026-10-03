@@ -154,6 +154,20 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, text, needle)
         self.assertNotIn("Skip threads marked done.", text)
 
+    def test_one_todo_line_format(self):
+        """Wrap and finish find a thread's open actions by the thread the line names,
+        so the zone's list and every skill that writes to it use the same line."""
+        writers = [REPO / "template" / "Zones" / "_zone" / "Todo.md"] + [
+            SKILLS / name / "SKILL.md" for name in ("threads", "meetings", "interview")]
+        for path in writers:
+            lines = re.findall(r"- \[ \] <action> · .*? · <date>", flat(path.read_text(encoding="utf-8")))
+            self.assertTrue(lines, path)
+            self.assertEqual({"- [ ] <action> · <project>, <thread> · <date>"}, set(lines), path)
+        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        for needle in ("that is how a later wrap or finish finds its lines", "Touch no line that names another thread",
+                       "unticked lines that name this thread"):
+            self.assertIn(needle, threads, needle)
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "meetings" / "SKILL.md", SKILLS / "threads" / "SKILL.md",

@@ -136,9 +136,12 @@ One meeting at a time, even when several files are waiting.
    page. Re-read it right before appending (another session may be writing
    to it too), then append under `## Inbox`:
    ```markdown
-   - [ ] <action> · <party or person> · <date>
+   - [ ] <action> · <project>, <thread> · <date>
    ```
-   Touch no other line.
+   Name a thread only when it is plain: the one the user names, or the only
+   live thread of the only project in this zone whose `party` is among the
+   page's parties. Otherwise write the party or person the action is for
+   where the thread would go, and never guess one. Touch no other line.
 9. **Commit.** The meeting page, the raw file, any new person page, the
    index and the log all live in the Wikis repository; `Todo.md` lives in
    the zone's own, separate repository. That is two commits, not one, and

@@ -1,9 +1,9 @@
 # {{ZONE}}: open actions
 
-One line per action: what, for whom, by when. Tick it when done.
+One line per action: what, which thread it is for, and by when. An action that belongs to no thread names its party or person instead. Tick a line when it is done.
 
 ## Inbox
 
-- [ ] <action> · <project or person> · <date>
+- [ ] <action> · <project>, <thread> · <date>
 
 ## Done

@@ -153,8 +153,9 @@ was accepted, in this order:
    the `threads` skill's *New* procedure says. When it refuses a name, relay
    the reason and offer a fix. One commit per zone.
 3. **Open actions.** Re-read each zone's `Todo.md` and append under `## Inbox`
-   as `- [ ] <action> · <project or person> · <date>`. Commit with that zone's
-   other changes.
+   as `- [ ] <action> · <project>, <thread> · <date>`, naming the thread just
+   set up for it, or the party or person when no thread fits. Commit with
+   that zone's other changes.
 4. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
    plain words.
 5. **Close the record**: add `## Set up` with what was created and the commit

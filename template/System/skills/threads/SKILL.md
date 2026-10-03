@@ -186,8 +186,10 @@ per wrap: the one named, and nothing else.
    Never edit or compress earlier entries. They are the record.
 7. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
    before editing. Append new actions for this thread under `## Inbox` as
-   `- [ ] <action> · <project or person> · <date>`; tick the ones this session
-   finished. Touch no other thread's lines.
+   `- [ ] <action> · <project>, <thread> · <date>`, naming this thread in full
+   (`Acme, Pricing`): that is how a later wrap or finish finds its lines.
+   Tick the ones this session finished. Touch no line that names another
+   thread.
 8. **Set `updated:`** in the note's frontmatter to today.
 9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
    Re-read the hub first; change that one line.
@@ -289,8 +291,9 @@ Closes a thread for good.
 5. **Hub:** re-read it, move the thread's line from `## Threads` to a
    `## Finished` section directly below it (create the section if missing),
    ending the line with the outcome in a few words.
-6. **Open actions:** if `Todo.md` still has lines for this thread, name them and
-   ask whether to tick, keep or drop them. Do not decide for the user.
+6. **Open actions:** if `Todo.md` still has unticked lines that name this
+   thread (`Acme, Pricing`), name them and ask whether to tick, keep or drop
+   them. Do not decide for the user.
 7. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
 8. **Delete the memory pointer**, if there is one. A pointer that outlives its

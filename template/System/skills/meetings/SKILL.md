@@ -171,8 +171,8 @@ Acme"): there is nothing to ingest without the words of the call, so offer
 both routes: drop the transcript in `Wikis/Meetings/raw/inbox/`, or paste
 the notes or the transcript into the conversation (*Notes pasted in*). If
 they have a recorder connector that can place a transcript in the inbox,
-say so as an option, not the only way. Spoken: "Drop the
-transcript in the inbox, or paste your notes here, and I'll file them."
+say so as an option, not the only way. Spoken: "Drop the transcript in the
+inbox, or paste your notes here, and I'll file them."
 
 ## Notes pasted in
 

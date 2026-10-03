@@ -116,9 +116,10 @@ takes one explicitly, and refuses without it.
      becomes `you@removed.invalid`, because Knowledge is read in every zone;
      attachments stay byte for byte. It writes a draft source page with no
      zone and no parties, the author and date filled from the mail where it
-     has them, and prints `<slug>\t<raw path>\t<page path>`. Then the `knowledge` skill, *Ingest*,
-     from step 4: check the author and date, rate the confidence, write the
-     summary, the concept and entity pages, the index, the log, the commit.
+     has them, and prints `<slug>\t<raw path>\t<page path>`. Then the
+     `knowledge` skill, *Ingest*, from step 4: check the author and date,
+     rate the confidence, write the summary, the concept and entity pages,
+     the index, the log, the commit.
      A slug already taken is refused: pass `--slug` with a distinguishing
      word, never a number.
    - **Material that came by mail**: first the mail itself, as a

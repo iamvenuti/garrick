@@ -381,11 +381,11 @@ Written: the paths created and the commit hash.
 
 ## New zone: "add a zone called X", "new zone X"
 
-A zone is one side of life or work, kept apart from the others. The same
-script makes one, as the installer does: the folder with its `AGENTS.md`,
-`Todo.md` and `Inbox/`, its own git repository with the wall hook, and its
-row in the Zones table of `System/context.md`. Run it from the workspace
-root.
+A zone is one side of life or work, kept apart from the others. The
+scaffolding script makes one as the installer does: the folder with its
+`AGENTS.md`, `Todo.md` and `Inbox/`, its own git repository with the wall
+hook, and its row in the Zones table of `System/context.md`. Run it from the
+workspace root.
 
 ```sh
 python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"

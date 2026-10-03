@@ -249,6 +249,16 @@ class TestGraph(StatusCase):
         self.assertIn("if(q.s*q.s<.81*d2)", js)                       # a far group pushes as one, from its centre
         self.assertIn("for(var i=0;i<(V.length>BIG?160:400);i++)step();", js)
 
+    def test_a_still_graph_stops_drawing(self):
+        # Measured in headless Chrome on the demo with rotation paused: no frame
+        # drawn in two quiet seconds once the graph settled, where it drew 120.
+        js = status.GRAPH_JS
+        self.assertIn("if(moving)requestAnimationFrame(frame);else running=false", js)
+        for wakes in ("setPointerCapture(e.pointerId);wake()", "if(down||h.n!==hover)wake()", "scale*=k;wake()",
+                      "function close(){sel=null;pop.hidden=true;wake()}", "auto=true;theta=phase=0;wake()"):
+            self.assertIn(wakes, js)
+        self.assertIn("new MutationObserver(recolor)", js)            # a still graph follows the theme switch
+
     def test_no_field_the_layout_writes(self):
         layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg", "lp", "lw"}
         for n in graph_data(self.page())["nodes"]:

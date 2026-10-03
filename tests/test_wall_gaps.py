@@ -374,5 +374,110 @@ class TestProjectFiles(QuoteCase):
         self.assertNoLeak(found, *BRIEF_WORDS)
 
 
+class TestPersonPages(GapCase):
+    """A person page says who someone is and which party: read on both sides of every wall."""
+
+    def setUp(self):
+        super().setUp()
+        self.people = self.meetings / "wiki" / "people"
+        page = meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", BRIEF + ".")
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md", page)
+
+    def person(self, party="birch", body="Managing partner of Birch & Co."):
+        party_line = "party: %s\n" % party if party is not None else ""
+        return write(self.people / "theo-marsh.md", "---\ntitle: Theo Marsh\ntype: person\n%screated: 2026-03-12\n"
+                     "updated: 2026-03-12\n---\n\n# Theo Marsh\n\n%s\n" % (party_line, body))
+
+    def test_a_finished_page_and_no_party_at_all(self):
+        self.person()
+        self.assertClean("people")
+        self.person(party="none", body="A friend; belongs to no party.")
+        self.assertClean("people")
+
+    def test_party_missing_or_unknown(self):
+        self.person(party=None)
+        found = self.findings("people")
+        self.assertEqual([("warning", "Wikis/Meetings/wiki/people/theo-marsh.md")], [(f.severity, f.path) for f in found])
+        self.assertIn("party: none", found[0].message)
+        self.person(party="cedar")
+        self.assertIn("`cedar`", self.findings("people", "error")[0].message)
+
+    def test_type_and_dates(self):
+        self.person().write_text(self.person().read_text().replace("type: person", "type: contact")
+                                 .replace("updated: 2026-03-12", "updated: March 2026"))
+        self.assertEqual(["error", "warning"], sorted(f.severity for f in self.findings("people")))
+
+    def test_wording_from_a_meeting(self):
+        self.person(body="Managing partner. Said that " + BRIEF.lower() + ".")
+        found = self.findings("people", "warning")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("meeting 260314-birch-call", found[0].message)
+        for word in BRIEF_WORDS:
+            self.assertNotIn(word, (found[0].message + found[0].ear).lower())
+
+    def test_wording_from_a_transcript(self):
+        write(self.meetings / "raw" / "260314-birch-call.txt", "Theo: our pallet volumes fall by a fifth whenever the northern depot shuts.\n")
+        self.person(body="Thinks pallet volumes fall by a fifth whenever the northern depot shuts.")
+        self.assertIn("260314-birch-call", self.findings("people", "warning")[0].message)
+
+    def test_wording_every_side_reads_is_fine(self):
+        role = "Managing partner who chairs the board and signs every carrier contract himself"
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Theo Marsh | `birch` | Managing partner |", "| Theo Marsh | `birch` | %s |" % role))
+        write(self.meetings / "wiki" / "sources" / "260316-birch-board.md",
+              meeting_page("Work", "[birch]", "Board").replace("Decisions.", "Attending: Theo Marsh, %s." % role.lower()))
+        self.person(body=role + ".")
+        self.assertClean("people")
+
+
+class TestKnowledgePages(GapCase):
+    """Knowledge carries no party, and no meeting's wording: what is there is common to every side."""
+
+    def setUp(self):
+        super().setUp()
+        page = meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", BRIEF + ".")
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md", page)
+        self.page = self.knowledge / "wiki" / "concepts" / "plants.md"
+
+    def test_party_singular_is_refused_like_parties(self):
+        write(self.page, "---\ntitle: Plants\ntype: concept\nparty: birch\n---\n\n# Plants\n")
+        found = self.findings("knowledge", "error")
+        self.assertEqual(["Wikis/Knowledge/wiki/concepts/plants.md"], [f.path for f in found])
+        self.assertIn("`party`", found[0].message)
+
+    def test_a_page_repeating_a_meeting(self):
+        write(self.page, "# Plants\n\nReported: " + BRIEF + ".\n")
+        found = self.findings("knowledge")
+        self.assertEqual([("warning", "Wikis/Knowledge/wiki/concepts/plants.md")], [(f.severity, f.path) for f in found])
+        self.assertIn("meeting 260314-birch-call", found[0].message)
+        for word in BRIEF_WORDS:
+            self.assertNotIn(word, found[0].message.lower())
+
+    def test_a_raw_record_repeating_a_transcript(self):
+        write(self.meetings / "raw" / "260314-birch-call.vtt",
+              "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Theo Marsh>Pallet volumes fall by a fifth\n\n"
+              "00:00:04.500 --> 00:00:08.000\n<v Theo Marsh>whenever the northern depot shuts.\n")
+        write(self.knowledge / "raw" / "depot-mail.eml", "From: a@b.example\nSubject: Depots\n\n"
+              "Pallet volumes fall by a fifth whenever the northern depot shuts.\n")
+        found = self.findings("knowledge", "warning")
+        self.assertEqual(["Wikis/Knowledge/raw/depot-mail.eml"], [f.path for f in found])
+
+    def test_laundered_wording_still_shows(self):
+        # Copied into Knowledge, the wording becomes common and a walled note
+        # repeating it passes the walls: the Knowledge page is where it shows.
+        write(self.knowledge / "raw" / "depot-article.txt", "Report: " + BRIEF + ".\n")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", BRIEF + ".\n")
+        self.assertEqual([], self.findings("walls"))
+        self.assertEqual(["Wikis/Knowledge/raw/depot-article.txt"], [f.path for f in self.findings("knowledge", "warning")])
+
+    def test_wording_the_instructions_share_is_fine(self):
+        rule = "Before material from a meeting goes into a project's notes compare the project's party with the meeting's parties"
+        write(self.root / "System" / "rules.md", "# Rules\n\n" + rule + ".\n")
+        write(self.meetings / "wiki" / "sources" / "260316-birch-wrap.md",
+              meeting_page("Work", "[birch]", "Wrap").replace("Decisions.", "As the rules say: " + rule.lower() + "."))
+        write(self.page, "# Walls\n\n" + rule + ".\n")
+        self.assertClean("knowledge")
+
+
 if __name__ == "__main__":
     unittest.main()

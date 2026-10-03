@@ -74,6 +74,7 @@ CHECKS = [
     ("resume", "Resume points"),
     ("deliverables", "Deliverables"),
     ("meetings", "Meeting pages"),
+    ("people", "Person pages"),
     ("walls", "Walls"),
     ("sources", "Project sources"),
     ("inbox", "Inboxes"),
@@ -96,10 +97,11 @@ EAR_GROUP = {
     "resume": "{n} resume points name files that are not there",
     "deliverables": "{n} deliverables lack their date",
     "meetings": "{n} things need fixing on meeting pages",
+    "people": "{n} things need fixing on person pages",
     "walls": "the walls were crossed in {n} places",
     "sources": "{n} project sources came from mail that is not filed in Meetings",
     "inbox": "{n} files in the inboxes need attention",
-    "knowledge": "{n} Knowledge pages cross into Meetings or carry parties",
+    "knowledge": "{n} Knowledge pages carry parties or meeting material",
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
 }
@@ -849,6 +851,50 @@ def check_meetings(ws: Workspace) -> List[Finding]:
                                    "A meeting page is misnamed"))
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "meetings", r, problem, "A meeting page has a date in the wrong form"))
+    return out
+
+
+PEOPLE = ("Wikis", "Meetings", "wiki", "people")
+
+
+def check_people(ws: Workspace) -> List[Finding]:
+    """A person page is read on both sides of every wall. It says who someone
+    is and which party they belong to, and holds nothing learned in a meeting."""
+    out = []
+    folder = ws.root.joinpath(*PEOPLE)
+    if not folder.is_dir():
+        return out
+    common = None
+    for page in sorted(folder.rglob("*.md")):
+        r = rel(ws, page)
+        text = read_text(page) or ""
+        fm = parse_frontmatter_text(text) if text else parse_frontmatter(page)
+        name = str(fm.get("title") or page.stem)
+        tags = [strip_tag(t) for t in as_list(fm.get("party"))]
+        if not tags:
+            out.append(Finding(WARNING, "people", r,
+                               "no `party`: write the tag of the party they belong to, or `party: none` if they have none",
+                               "The page for %s does not say which party they belong to" % name))
+        elif tags != ["none"]:
+            for tag in tags:
+                if tag not in ws.context["parties"]:
+                    out.append(Finding(ERROR, "people", r,
+                                       "party `%s` is not a tag in the Parties table, so no wall can see it" % tag,
+                                       "The page for %s names an unknown party" % name))
+        if fm and fm.get("type") not in (None, "person"):
+            out.append(Finding(WARNING, "people", r, "`type` is %r, should be person" % fm.get("type"),
+                               "The page for %s is not marked as a person" % name))
+        for problem in bad_dates(fm):
+            out.append(Finding(ERROR, "people", r, problem, "The page for %s has a date in the wrong form" % name))
+        if common is None:
+            common = quote_index(ws).common
+        heard = meeting_wording(ws, body_of(text), common)
+        if heard:
+            more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
+            out.append(Finding(WARNING, "people", r,
+                               "repeats eight or more words from meeting %s%s; a person page is read on both sides of "
+                               "every wall, so it says who they are and nothing learned in a meeting" % (heard[0].stem, more),
+                               "The page for %s repeats what was said in a meeting" % name))
     return out
 
 
@@ -1635,6 +1681,10 @@ def check_inbox(ws: Workspace) -> List[Finding]:
 
 
 def check_knowledge(ws: Workspace) -> List[Finding]:
+    """Knowledge holds published material, which every side may use. A page
+    carries no party and no zone, links nowhere into Meetings, and neither it
+    nor its raw record repeats a meeting: wording found here counts as common
+    to every side, so a conversation copied in would cross every wall."""
     out = []
     kroot = ws.root / "Wikis" / "Knowledge"
     mroot = ws.root / "Wikis" / "Meetings"
@@ -1643,28 +1693,44 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     kfiles = PathIndex(ws, walk_files(kroot))
     mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
     raw = kroot / "raw"
+    beyond = None
     for path in walk_files(kroot):
-        if path.suffix.lower() not in TEXT_SUFFIXES or raw in path.parents:
+        suffix = path.suffix.lower()
+        if suffix not in TEXT_SUFFIXES and suffix != ".eml":
             continue
         text = read_text(path) or ""
-        fm = {}
-        if path.suffix.lower() == ".md":  # read once; a page too big to scan still has its fields read
-            fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
-        carried = [k for k in ("parties", "zone") if as_list(fm.get(k))]
-        if carried:
-            out.append(Finding(ERROR, "knowledge", rel(ws, path),
-                               "carries %s; Knowledge holds published material, which carries nobody's confidence. "
-                               "Take the field out, or file the item in Meetings if it is a conversation"
-                               % " and ".join("`%s`" % k for k in carried),
-                               "A Knowledge page carries parties"))
-        for written, target in extract_links(text):
-            explicit = "Meetings/" in target.replace("\\", "/") or target.startswith("obsidian:Meetings:")
-            if not explicit and resolve(ws, path, target, kfiles):
-                continue  # the link lands inside Knowledge, which is where Obsidian looks first
-            if resolve(ws, path, target, mfiles):
+        if raw not in path.parents and suffix != ".eml":
+            fm = {}
+            if suffix == ".md":  # read once; a page too big to scan still has its fields read
+                fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
+            carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
+            if carried:
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
-                                   "links %s, a Meetings page; Knowledge must not carry anyone's confidence" % written,
-                                   "A Knowledge page links into Meetings"))
+                                   "carries %s; Knowledge holds published material, which carries nobody's confidence. "
+                                   "Take the field out, or file the item in Meetings if it is a conversation"
+                                   % " and ".join("`%s`" % k for k in carried),
+                                   "A Knowledge page carries parties"))
+            for problem in bad_dates(fm):
+                out.append(Finding(ERROR, "knowledge", rel(ws, path), problem,
+                                   "A Knowledge page has a date in the wrong form"))
+            for written, target in extract_links(text):
+                explicit = "Meetings/" in target.replace("\\", "/") or target.startswith("obsidian:Meetings:")
+                if not explicit and resolve(ws, path, target, kfiles):
+                    continue  # the link lands inside Knowledge, which is where Obsidian looks first
+                if resolve(ws, path, target, mfiles):
+                    out.append(Finding(ERROR, "knowledge", rel(ws, path),
+                                       "links %s, a Meetings page; Knowledge must not carry anyone's confidence" % written,
+                                       "A Knowledge page links into Meetings"))
+        if beyond is None:
+            beyond = quote_index(ws).common_beyond_knowledge
+        heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond)
+        if heard:
+            more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
+            out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                               "shares eight or more words in a row with meeting %s%s; wording in Knowledge is common to "
+                               "every side, so a conversation copied here crosses every wall. If the meeting quoted "
+                               "this published text, nothing needs changing" % (heard[0].stem, more),
+                               "A Knowledge page repeats a meeting"))
     return out
 
 
@@ -1743,7 +1809,7 @@ def check_generated(ws: Workspace) -> List[Finding]:
 
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_hooks, check_names,
-    check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_walls,
+    check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_people, check_walls,
     check_sources, check_inbox, check_knowledge, check_raw, check_generated,
 ]
 

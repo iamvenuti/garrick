@@ -58,6 +58,22 @@ updated: YYYY-MM-DD
 
 Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
 
+## A person page
+
+`wiki/people/<name-slug>.md`, one per person met:
+
+```yaml
+---
+title: <their name>
+type: person
+party: <tag>                 # from the Parties table; `none` for someone who belongs to no party
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+---
+```
+
+Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
+
 ## Rules
 
 - **`zone` and `parties` are required**, on a meeting page and a mail page alike. They are what the walls read. A page missing either is unfinished, and no project may use it until it is filled in. When the transcript or the addresses do not make them obvious, ask.

@@ -169,7 +169,9 @@ def build_workspace(root: Path) -> Path:
     write(meetings / "wiki" / "index.md", "# Index\n")
     write(meetings / "wiki" / "sources" / "260310-acme-kickoff.md", meeting_page("Work", "[acme]", "Acme kick-off"))
     write(meetings / "wiki" / "sources" / "260312-birch-kickoff.md", meeting_page("Work", "[birch]", "Birch kick-off"))
-    write(meetings / "wiki" / "people" / "dana-whitlock.md", "# Dana Whitlock\n")
+    write(meetings / "wiki" / "people" / "dana-whitlock.md",
+          "---\ntitle: Dana Whitlock\ntype: person\nparty: acme\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n"
+          "# Dana Whitlock\n\nHead of procurement at Acme Corp.\n")
     write(meetings / "raw" / "inbox" / ".gitkeep")
     write(meetings / "raw" / "260310-acme-kickoff.txt", "Dana: we start Monday.\n")
 

@@ -33,4 +33,4 @@ updated: YYYY-MM-DD
 - **Freeze first.** Save a web page or document into `raw/` before summarising it, so the source cannot change under you.
 - **Attribute claims.** A vendor's claim is written as the vendor's claim, never as fact.
 - **Nothing from a meeting comes in here.** Conversations belong in Meetings, where the walls can see them.
-- **No page carries `parties` or a `zone`.** What is here is published and usable anywhere. A newsletter that arrived by mail belongs here, its saved message in `raw/`; a party writing to you does not.
+- **No page carries `party`, `parties` or a `zone`.** What is here is published and usable anywhere. A newsletter that arrived by mail belongs here, its saved message in `raw/`; a party writing to you does not.

@@ -299,11 +299,59 @@ class SkillsTest(unittest.TestCase):
 
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
-                     SKILLS / "meetings" / "SKILL.md", SKILLS / "threads" / "SKILL.md",
-                     REPO / "template" / "System" / "rules.md"):
+                     SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",
+                     SKILLS / "threads" / "SKILL.md", REPO / "template" / "System" / "rules.md",
+                     REPO / "template" / "AGENTS.md", REPO / "template" / "Zones" / "_zone" / "Todo.md",
+                     REPO / "AGENTS.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
             self.assertNotIn("–", text, path)
+
+
+class RepositoryInstructionsTest(unittest.TestCase):
+    """The repository's own AGENTS.md, which an assistant working on Garrick reads first."""
+
+    def setUp(self):
+        self.text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+
+    def test_the_layout_names_every_top_level_folder(self):
+        listed = re.findall(r"^\| `([^`]+)` \|", section(self.text, "## Layout"), re.M)
+        folders = sorted(p.name for p in REPO.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+        self.assertTrue(folders)
+        for folder in folders:
+            self.assertTrue([path for path in listed if path.startswith(folder + "/")], folder)
+        self.assertIn("examples/demo/", listed)
+
+    def test_each_placeholder_is_put_to_the_script_that_fills_it(self):
+        bullet = [line for line in section(self.text, "## Placeholders").splitlines() if "{{UPPER_CASE}}" in line]
+        self.assertEqual(1, len(bullet), bullet)
+        sentences = re.split(r"(?<=\.) ", bullet[0])
+        installer = [s for s in sentences if s.startswith("The installer fills")]
+        scaffold = [s for s in sentences if s.startswith("`System/tools/scaffold.py` fills")]
+        self.assertEqual((1, 1), (len(installer), len(scaffold)), sentences)
+
+        def used(folder):
+            found = set()
+            for path in folder.rglob("*"):
+                found.update(re.findall(r"\{\{[A-Z][A-Z0-9_]*\}\}", path.name))
+                if path.is_file() and not path.name.startswith("."):
+                    found.update(re.findall(r"\{\{[A-Z][A-Z0-9_]*\}\}", path.read_text(encoding="utf-8")))
+            return found
+
+        zone, templates = used(REPO / "template" / "Zones" / "_zone"), used(REPO / "template" / "System" / "templates")
+        self.assertTrue(zone and templates)
+        for name in zone:
+            self.assertIn("`%s`" % name, installer[0], name)
+        for name in templates:
+            self.assertIn("`%s`" % name, scaffold[0], name)
+
+    def test_the_clean_room_names_its_one_exception(self):
+        rule = [line for line in section(self.text, "## Rules for this repository").splitlines()
+                if line.startswith("- **Clean room.**")]
+        self.assertEqual(1, len(rule), rule)
+        self.assertIn("The one exception is the maintainer's own name", rule[0])
+        for place in ("`LICENSE`", "the deck's byline", "commit metadata"):
+            self.assertIn(place, rule[0], place)
 
 
 class ThreadListingTest(unittest.TestCase):

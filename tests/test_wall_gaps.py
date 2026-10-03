@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
@@ -178,6 +178,52 @@ class TestMeetingsInbox(GapCase):
         found = check.run_checks(self.root, staged=self.wikis)
         self.assertEqual([("error", "inbox", "Wikis/Meetings/raw/inbox/call.vtt")],
                          [(f.severity, f.check, f.path) for f in found])
+
+
+class TestStatusAndDates(GapCase):
+    """A status no tool reads, or a date that does not sort, is an error."""
+
+    def setUp(self):
+        super().setUp()
+        self.hub = self.acme / "Acme Review.md"
+        self.note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+
+    def edit(self, path, old, new):
+        text = path.read_text()
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1))
+
+    def test_the_values_in_use_pass(self):
+        for status in ("active", "parked", "Parked   # until the budget is in"):
+            with self.subTest(status):
+                self.note.write_text(self.note.read_text().replace(
+                    self.note.read_text().split("status: ", 1)[1].split("\n", 1)[0], status, 1))
+                self.assertClean("threads")
+        self.edit(self.hub, "status: active", "status: done")
+        self.edit(self.hub, "updated: 2026-03-01", "updated: 2026-09-23  # wrapped")
+        self.assertClean("projects")
+
+    def test_thread_status_outside_the_three(self):
+        self.edit(self.note, "status: active", "status: closed")
+        found = self.findings("threads", "error")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("'closed'", found[0].message)
+        self.assertIn("active, parked or done", found[0].message)
+
+    def test_project_status_outside_the_two(self):
+        self.edit(self.hub, "status: active", "status: parked")
+        found = self.findings("projects", "error")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("active or done", found[0].message)
+
+    def test_dates_not_written_iso(self):
+        self.edit(self.note, "updated: 2026-03-01", "updated: 23 September 2026")
+        self.edit(self.hub, "created: 2026-03-01", "created: 2026-02-30")
+        page = self.meetings / "wiki" / "sources" / "260310-acme-kickoff.md"
+        self.edit(page, "date: 2026-03-10", "date: 2026-03-10\ncreated: 10/03/2026")
+        self.assertIn("`updated` is '23 September 2026'", self.findings("threads", "error")[0].message)
+        self.assertIn("`created` is '2026-02-30'", self.findings("projects", "error")[0].message)
+        self.assertIn("`created` is '10/03/2026'", self.findings("meetings", "error")[0].message)
 
 
 if __name__ == "__main__":

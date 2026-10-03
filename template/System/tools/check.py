@@ -20,6 +20,7 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -606,6 +607,41 @@ def check_names(ws: Workspace) -> List[Finding]:
     return out
 
 
+# The values the templates and the threads skill write, and nothing else: a
+# thread is set aside with parked and closed with done; a project is closed
+# with done. Any other word reads as live to every tool, whatever it meant.
+THREAD_STATUSES = ("active", "parked", "done")
+PROJECT_STATUSES = ("active", "done")
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def bad_dates(fm: dict) -> List[str]:
+    """`created` and `updated` values that are not a real YYYY-MM-DD date."""
+    out = []
+    for key in ("created", "updated"):
+        value = fm.get(key)
+        if value is None:
+            continue
+        text = value.strip() if isinstance(value, str) else ""
+        try:
+            ok = bool(ISO_DATE_RE.match(text)) and bool(datetime.date(int(text[:4]), int(text[5:7]), int(text[8:])))
+        except ValueError:
+            ok = False
+        if not ok:
+            out.append("`%s` is %r, should be a date written YYYY-MM-DD" % (key, value))
+    return out
+
+
+def bad_status(fm: dict, allowed: Tuple[str, ...]) -> Optional[str]:
+    """The `status` value when it is set to anything but one of `allowed`."""
+    value = fm.get("status")
+    if value is None:
+        return None  # read as active by every tool
+    if isinstance(value, str) and value.strip().lower() in allowed:
+        return None
+    return "`status` is %r, should be %s" % (value, " or ".join(", ".join(allowed).rsplit(", ", 1)))
+
+
 def check_projects(ws: Workspace) -> List[Finding]:
     out = []
     for project, fm in ws.projects:
@@ -623,6 +659,11 @@ def check_projects(ws: Workspace) -> List[Finding]:
             out.append(Finding(ERROR, "projects", r,
                                "frontmatter `zone` is %r but the project sits in %s" % (fm.get("zone"), project.parent.name),
                                "The %s hub note names the wrong zone" % project.name))
+        status = bad_status(fm, PROJECT_STATUSES)
+        if status:
+            out.append(Finding(ERROR, "projects", r, status, "Project %s has a status no tool reads" % project.name))
+        for problem in bad_dates(fm):
+            out.append(Finding(ERROR, "projects", r, problem, "The %s hub note has a date in the wrong form" % project.name))
         tags = [strip_tag(t) for t in as_list(fm.get("party"))]
         if not tags:
             out.append(Finding(WARNING, "projects", r, "no `party`; it cannot draw on the Meetings wiki until it has one",
@@ -653,6 +694,11 @@ def check_threads(ws: Workspace) -> List[Finding]:
             if fm.get("type") != "thread":
                 out.append(Finding(ERROR, "threads", r, "frontmatter `type` is %r, should be thread" % fm.get("type"),
                                    "Thread %s is not marked as a thread" % spoken))
+            status = bad_status(fm, THREAD_STATUSES)
+            if status:
+                out.append(Finding(ERROR, "threads", r, status, "Thread %s has a status no tool reads" % spoken))
+            for problem in bad_dates(fm):
+                out.append(Finding(ERROR, "threads", r, problem, "Thread %s has a date in the wrong form" % spoken))
             text = read_text(note) or ""
             lines = [l.strip() for l in text.splitlines()]
             try:
@@ -801,6 +847,8 @@ def check_meetings(ws: Workspace) -> List[Finding]:
         if not MEETING_NAME_RE.match(page.stem):
             out.append(Finding(WARNING, "meetings", r, "file name should be `YYMMDD-slug.md`",
                                    "A meeting page is misnamed"))
+        for problem in bad_dates(fm):
+            out.append(Finding(ERROR, "meetings", r, problem, "A meeting page has a date in the wrong form"))
     return out
 
 

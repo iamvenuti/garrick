@@ -35,6 +35,9 @@ DEFAULT_ZONES = ["Work", "Personal"]
 PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
 TAG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+# The one way to put your own address on the workspace's repositories when git had
+# none. docs/getting-started.md gives the same command; a test keeps them alike.
+OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done'
 
 
 class InstallError(Exception):
@@ -498,10 +501,12 @@ def install(cfg, target, force=False, quiet=False):
     else:
         say("  Each zone checks the walls before every commit.")
     if local_identity:
-        say("  git had no name and email set, so this workspace uses your name and garrick@localhost.")
-        say('  To use your own, run in each repository: git config user.email "you@example.com"')
+        say("  git had no name or email set, so commits here carry your name and the address garrick@localhost. "
+            "Nothing needs changing.")
+        say(f"  To use your own address instead, run this in {root}:")
+        say(f"    {OWN_ADDRESS}")
     say("")
-    say(f"Next: open a terminal in {root} and start your assistant.")
+    say(f"Next: open {root} in your Claude or ChatGPT app, or start claude or codex there.")
     return root
 
 

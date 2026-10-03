@@ -101,7 +101,10 @@ class InstallTest(unittest.TestCase):
 
     def test_succeeds_and_names_next_step(self):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
-        self.assertIn("open a terminal in", self.result.stdout)
+        # One closing line for either route, app or terminal, with the full path.
+        self.assertEqual(self.result.stdout.strip().splitlines()[-1],
+                         f"Next: open {self.root} in your Claude or ChatGPT app, or start claude or codex there.")
+        self.assertNotIn("garrick@localhost", self.result.stdout)  # git had an identity: no hint
 
     def test_structure(self):
         r = self.root
@@ -255,6 +258,15 @@ class RefusalTest(unittest.TestCase):
         r = run([INSTALL, "--config", EXAMPLE, "--target", target], env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(git(target / "Zones" / "Work", "config", "user.name"), "Sam Rivera")
+        self.assertEqual(empty.read_text(), "")
+        # Nothing is required. The one way to use your own address is the one documented, and it works.
+        self.assertIn("garrick@localhost. Nothing needs changing.", r.stdout)
+        command = r.stdout.split(f"run this in {target}:\n", 1)[1].splitlines()[0].strip()
+        self.assertIn(f"\n{command}\n", (REPO / "docs" / "getting-started.md").read_text())
+        subprocess.run(["/bin/sh", "-c", command], cwd=target, env=env, check=True)
+        for repo in repos(target):
+            self.assertEqual(git(repo, "config", "user.email"), "you@example.com", repo)
+            self.assertEqual(git(repo, "config", "user.name"), "Sam Rivera", repo)
         self.assertEqual(empty.read_text(), "")
 
     def test_bad_configs(self):

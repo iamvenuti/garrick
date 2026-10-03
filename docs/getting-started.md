@@ -47,7 +47,11 @@ Zones/<Zone>/           one folder and one git repository per zone you named
 
 The root, `Wikis/`, and each zone are separate git repositories, each with a first commit already made. `System/skills` is symlinked into `.claude/skills` and `.agents/skills` in every one of those repositories, so Claude Code and Codex both find the skills wherever a session starts.
 
-If git had no email configured on your machine, the installer sets `user.name` to the name you gave it and `user.email` to `garrick@localhost`, just inside these new repositories. Those local settings win over any global one you add later. To use your own address, set it globally with `git config --global user.email "you@example.com"`, then remove the local settings in each repository, for example `git -C Zones/Work config --unset user.email` and the same for `user.name`, for the root, `Wikis` and every zone.
+If git had no name or email set on your machine, the installer sets your name and the address `garrick@localhost` in these new repositories only. Nothing needs changing. To use your own address instead, run this in the workspace folder. It sets the address in the root, in `Wikis` and in every zone, and wins over any global git setting:
+
+```sh
+for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done
+```
 
 ## Your first project
 

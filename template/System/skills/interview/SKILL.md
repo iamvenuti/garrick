@@ -34,7 +34,7 @@ All paths are relative to the workspace root.
 | The interview record | `System/interviews/YYMMDD - <topic>.md` |
 | Me, Zones, Parties, Walls, People, Aliases | `System/context.md` |
 | The zones | the folders under `Zones/` |
-| New projects and threads | `System/tools/scaffold.py`, as the `threads` skill's *New* procedure runs it |
+| New zones, projects and threads | `System/tools/scaffold.py`, as the `threads` skill's *New zone* and *New* procedures run it |
 | Open actions | `Zones/<Zone>/Todo.md` |
 
 ## Before the first question
@@ -131,8 +131,9 @@ end of the record under `## Proposal`, then show it.
 8. **What I still don't know**: every gap, as a short list. This is the part
    the user most needs to read.
 
-A zone the answers need but the workspace does not have: say so. Creating a
-zone is not this skill's job.
+A zone the answers need but the workspace does not have: propose it, with
+what it holds. On a yes it is made first, through the `threads` skill's
+*New zone* procedure.
 
 Spoken: "I'd set up three projects in Work and one in Personal, with four
 parties and one wall, between Acme and Birch. The thing I still need most is
@@ -146,19 +147,21 @@ path.
 The user may accept all of it, part of it, or change it first. Apply only what
 was accepted, in this order:
 
-1. **Parties, Walls, People, Aliases.** Re-read `System/context.md` right
+1. **Zones**, if the proposal adds one, through the `threads` skill's *New
+   zone* procedure: before anything names them.
+2. **Parties, Walls, People, Aliases.** Re-read `System/context.md` right
    before editing it, then add the rows. Commit in the workspace root's
    repository: "Interview: four parties, one wall".
-2. **Projects and threads**, through the scaffolding script, one at a time, as
+3. **Projects and threads**, through the scaffolding script, one at a time, as
    the `threads` skill's *New* procedure says. When it refuses a name, relay
    the reason and offer a fix. One commit per zone.
-3. **Open actions.** Re-read each zone's `Todo.md` and append under `## Inbox`
+4. **Open actions.** Re-read each zone's `Todo.md` and append under `## Inbox`
    as `- [ ] <action> · <project>, <thread> · <date>`, naming the thread just
    set up for it, or the party or person when no thread fits. Commit with
    that zone's other changes.
-4. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
+5. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
    plain words.
-5. **Close the record**: add `## Set up` with what was created and the commit
+6. **Close the record**: add `## Set up` with what was created and the commit
    hashes, and commit it with the context change, or on its own.
 
 Never push. That leaves the machine and needs its own yes.
@@ -172,6 +175,7 @@ see them, or 'open' and a project's name to start."
 - **It asks one question at a time**, never a form.
 - **It never records what a party said in confidence**, only who and what kind.
 - **It never guesses a wall.** An inferred wall is proposed and asked about.
-- **It does not create zones**, and does not move, copy or connect the user's
-  existing files and accounts.
+- **It makes a zone only through the `threads` skill's *New zone***, and
+  only on a yes. It does not move, copy or connect the user's existing files
+  and accounts.
 - **It never pushes, sends or shares.**

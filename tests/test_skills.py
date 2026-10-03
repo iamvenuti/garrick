@@ -162,6 +162,25 @@ class SkillsTest(unittest.TestCase):
         for needle in ('**"wrap it"** for the thread in hand', '**"Wake X"** or **"unpark X"**'):
             self.assertIn(needle, rules, needle)
 
+    def test_a_new_zone_goes_through_the_scaffold(self):
+        """A zone is made as the installer makes one, by the scaffold script, after
+        the name and what it holds are confirmed; the interview hands over to it."""
+        for phrase in ("add a zone called x", "new zone x"):
+            self.assertIn(phrase, triggers(SKILLS / "threads"), phrase)
+        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        new_zone = flat(section(text, '## New zone: "add a zone called X", "new zone X"'))
+        for needle in ('python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"',
+                       "**Confirm the name and what it holds**", "wait for the yes", "never `git add -A`",
+                       "python3 System/tools/check.py"):
+            self.assertIn(needle, new_zone, needle)
+        self.assertIn("offer to add it (*New zone*, below)", flat(text))
+        interview = flat((SKILLS / "interview" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("through the `threads` skill's *New zone* procedure", interview)
+        for path in (SKILLS / "threads" / "SKILL.md", SKILLS / "interview" / "SKILL.md"):
+            body = flat(path.read_text(encoding="utf-8"))
+            self.assertNotIn("not this skill's job", body, path)
+            self.assertNotIn("does not create zones", body, path)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

@@ -1,15 +1,16 @@
 ---
 name: threads
 description: >
-  Open, list, wrap, finish and create work threads, by voice or typed. The
-  procedure behind the spoken commands in System/rules.md. Use when the user
-  says "open X", "pick up X", "resume X", "where was I on X", "where am I",
-  "what's open", "what's open in Work", "close X", "wrap X", "wrap it", "wrap
-  up", "wrap this", "save where I am", "close for the day", "I'm done for
-  today", "finish X", "X is done", "close X for good", "park X", "put X
-  aside", "wake X", "unpark X", "what's parked", "new project X for Acme",
-  "new thread X in Acme", or "start a thread on X". Also use at the end of
-  any session that produced a decision or a deliverable, so the thread can be
+  Open, list, wrap, park, finish and create work threads, and add zones, by
+  voice or typed. The procedure behind the spoken commands in
+  System/rules.md. Use when the user says "open X", "pick up X", "resume X",
+  "where was I on X", "where am I", "what's open", "what's open in Work",
+  "close X", "wrap X", "wrap it", "wrap up", "wrap this", "save where I am",
+  "close for the day", "I'm done for today", "finish X", "X is done", "close
+  X for good", "park X", "put X aside", "wake X", "unpark X", "what's
+  parked", "new project X for Acme", "new thread X in Acme", "start a thread
+  on X", "add a zone called X", or "new zone X". Also use at the end of any
+  session that produced a decision or a deliverable, so the thread can be
   resumed cold.
 ---
 
@@ -355,8 +356,8 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    - a sibling that sounds alike: say which, and offer a distinct name, or ask
      whether the user meant the existing one and wants it opened;
    - an unknown party: step 3;
-   - an unknown zone: name the zones that exist. Creating a zone is not this
-     skill's job.
+   - an unknown zone: name the zones that exist, and offer to add it
+     (*New zone*, below).
 5. **Fill in what you were told.** If the user gave the purpose, write it into
    the one-line description in the hub and the thread note. Otherwise leave the
    angle-bracket fields and mention them once.
@@ -373,6 +374,43 @@ sentence?" or, on a refusal: "Can't name it Q3 pricing: names can't have
 digits. Autumn pricing?"
 
 Written: the paths created and the commit hash.
+
+## New zone: "add a zone called X", "new zone X"
+
+A zone is one side of life or work, kept apart from the others. The same
+script makes one, as the installer does: the folder with its `AGENTS.md`,
+`Todo.md` and `Inbox/`, its own git repository with the wall hook, and its
+row in the Zones table of `System/context.md`. Run it from the workspace
+root.
+
+```sh
+python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"
+```
+
+1. **Confirm the name and what it holds**, in one line, and wait for the
+   yes: "A new zone called Health, for appointments and records. Right?" If
+   the user did not say what it holds, ask. A heard name close to a zone that
+   exists may mean that one: ask, naming it.
+2. **Run the script.** When it refuses, relay the one-line reason in plain
+   words and suggest a fix, as for a project: a spoken version of a name that
+   cannot be said, or a distinct one for a name that sounds like a zone
+   already there.
+3. **Commit what the script left uncommitted.** Check
+   `git status --porcelain` in the workspace root and in `Zones/<Zone>`.
+   Stage by name, never `git add -A`, and commit each repository on its own:
+   "New zone Health". The Zones row in `System/context.md` belongs to the
+   root's repository.
+4. **Run the check**: `python3 System/tools/check.py`. It reports a zone
+   missing from the Zones table, without its wall hook, or not its own
+   repository. Explain any problem in plain words.
+
+The new zone holds nothing yet. Offer to start its first project (*New*).
+
+Spoken: "Health is set up as a zone of its own. What's the first project in
+it?" or, on a refusal: "Can't add Works: it sounds too much like Work.
+Another name?"
+
+Written: the zone's path, what it holds, and the commit hashes.
 
 ## The wall check
 
@@ -461,5 +499,6 @@ Written form: the spoken answer on top, then the detail each command lists.
   and can be undone from git.
 - **It never edits `raw/`**, and never writes status into `System/context.md`
   or into a memory pointer.
-- **It does not create zones** or change the workspace layout. Projects and
-  threads come from the scaffolding script, and nowhere else.
+- **It changes the layout only through the scaffolding script.** Zones,
+  projects and threads come from `scaffold.py`, and nowhere else: never a
+  folder made or copied by hand.

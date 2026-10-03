@@ -444,7 +444,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         party = tags(fm.get("party") or fm.get("parties"))
         folder_thread = parts[2] if in_zone and len(parts) > 3 and parts[1] == "Threads" else ""
         parked = (place, project) in asleep or (place, project, folder_thread) in held
-        say = names.get((project, thread), "") if thread else ""
+        say = names.get((place, project, thread), "") if thread else ""
         if kind == "project" and project.casefold() not in threads_said \
                 and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1:
             say = project        # "open Acme Review": the threads skill resolves a project name too
@@ -718,22 +718,28 @@ ICON = {
 CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 
 
-def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str], str]:
+def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
     """The name to say for each thread, as the threads skill says it: the
-    thread alone when no other thread has that name, else "project, thread"."""
-    every = [(r["project"], r["thread"]) for z in T.values() for r in z["rows"] + z["parked"]]
-    count: Dict[str, int] = {}
-    for _, thread in every:
-        count[thread.lower()] = count.get(thread.lower(), 0) + 1
-    return {(p, t): (t if count[t.lower()] == 1 else "%s, %s" % (p, t)) for p, t in every}
+    thread alone when no other thread has that name, else "project, thread",
+    and the zone first as well, "zone, project, thread", when two projects
+    of that name, in two zones, both have the thread. Keyed by zone, project
+    and thread."""
+    every = [(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["rows"] + z["parked"]]
+    threads_n: Dict[str, int] = {}
+    pairs_n: Dict[Tuple[str, str], int] = {}
+    for _, p, t in every:
+        threads_n[t.lower()] = threads_n.get(t.lower(), 0) + 1
+        pairs_n[(p.lower(), t.lower())] = pairs_n.get((p.lower(), t.lower()), 0) + 1
+    return {(z, p, t): (t if threads_n[t.lower()] == 1 else "%s, %s" % (p, t) if pairs_n[(p.lower(), t.lower())] == 1
+                        else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
 
 
-def thread_card(r: dict, names: Dict[Tuple[str, str], str], link: "Links", days: Optional[int]) -> str:
+def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int]) -> str:
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked, the name to say, and links."""
     return json.dumps({"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
-                       "s": 1 if r["status"] == "parked" else 0, "w": names[(r["project"], r["thread"])], "h": 0,
+                       "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
                        "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""},
                       separators=(",", ":"), ensure_ascii=False)
 

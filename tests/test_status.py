@@ -403,6 +403,20 @@ class TestParkedAndCopy(StatusCase):
         self.assertEqual("Acme Review, Pricing", found[("Acme Review", "Pricing")]["w"])
         self.assertEqual("Birch Entry, Pricing", found[("Birch Entry", "Pricing")]["w"])
 
+    def test_a_shared_project_name_is_said_with_its_zone(self):
+        for zone in ("Work", "Personal"):
+            write(self.root / "Zones" / zone / "House" / "House.md", project_hub(zone, "House", ""))
+            write(self.root / "Zones" / zone / "House" / "Threads" / "Kitchen" / "Kitchen.md", thread_note("House", "Kitchen", ""))
+        write(self.root / "Zones" / "Personal" / "House" / "Threads" / "Roof" / "Roof.md", thread_note("House", "Roof", ""))
+        html = self.page()
+        rows = [json.loads(htmllib.unescape(raw)) for raw in re.findall(r'class="thread"[^>]*data-card="([^"]*)"', html)]
+        said = {(c["z"], c["p"], c["n"]): c["w"] for c in rows}
+        self.assertEqual("Work, House, Kitchen", said[("Work", "House", "Kitchen")])
+        self.assertEqual("Personal, House, Kitchen", said[("Personal", "House", "Kitchen")])
+        self.assertEqual("Roof", said[("Personal", "House", "Roof")])        # unique, so said alone
+        nodes = {(n["z"], n["n"]): n["w"] for n in graph_data(html)["nodes"] if n["n"] == "Kitchen"}
+        self.assertEqual({("Work", "Kitchen"): "Work, House, Kitchen", ("Personal", "Kitchen"): "Personal, House, Kitchen"}, nodes)
+
     def test_buttons_only_copy(self):
         html = self.page()
         self.assertNotIn("shortcuts://", html)

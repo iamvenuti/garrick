@@ -6,7 +6,7 @@ Requires macOS, Python 3.9 or later, and git. If `git --version` fails, run `xco
 
 ## Install
 
-From the folder you downloaded or cloned Garrick into:
+From the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP or `~/garrick-source` for a clone:
 
 ```sh
 python3 install.py
@@ -17,7 +17,7 @@ This asks a few questions, one at a time: where the workspace should go (default
 To skip the questions (for a demo, a test, or a guided session), pass a config file:
 
 ```sh
-python3 install.py --config examples/acme.json --target ~/Garrick-demo
+python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
 `examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config.

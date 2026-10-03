@@ -52,7 +52,14 @@ Tomorrow, return for that next action. Once this is useful, add another project 
 
 ## Try the wall with fictional data
 
-Use the separate `~/Garrick-demo` workspace for this exercise, never your real one. Build it using the [README commands](../README.md#try-the-fictional-workspace), then open that folder in a separate app chat or terminal session.
+Use the separate `~/Garrick-demo` workspace for this exercise, never your real one. If it is not built yet, build it in Terminal from the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP:
+
+```sh
+cd ~/Downloads/garrick-main
+python3 examples/demo/build.py --target ~/Garrick-demo
+```
+
+For a clone, start with `cd ~/garrick-source` instead. Then open `~/Garrick-demo` in a separate app chat or terminal session.
 
 1. Say “Open Birch Entry, Carrier Choice.”
 2. Say “Prep me for Cobalt for this Birch project. Apply the walls before drafting.” The intended result uses the Birch-side call and says some material was held back, without revealing the Acme call's contents.

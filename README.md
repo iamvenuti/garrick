@@ -55,14 +55,14 @@ At work, use the assistant and account your employer approves. Files stay on you
 On a Mac with git, Python 3.9+ and Claude Code or Codex ready:
 
 ```sh
-git clone https://github.com/iamvenuti/garrick.git
-cd garrick
+git clone https://github.com/iamvenuti/garrick.git ~/garrick-source
+cd ~/garrick-source
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 
 Open `~/Garrick-demo` in your chosen app or terminal assistant and say “what's open”. The [first-session guide](docs/first-session.md#try-the-wall-with-fictional-data) gives you a short wall demonstration. The demo builder writes only inside that target folder; your assistant keeps its own session data separately. [Try it safely](docs/try-it-safely.md) explains removal.
 
-When you want your own, run `python3 install.py` from the downloaded repository. It asks one question at a time and writes into a new folder, `~/Garrick` by default. [Getting started](docs/getting-started.md) is the command reference.
+When you want your own, run `python3 install.py` in `~/garrick-source`. It asks one question at a time and writes into a new folder, `~/Garrick` by default. [Getting started](docs/getting-started.md) is the command reference.
 
 ## How the files fit together
 

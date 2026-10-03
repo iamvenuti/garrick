@@ -13,8 +13,8 @@ Install and sign in to either [Claude Code](https://code.claude.com/docs/en/setu
 ## Try the demo, then install your own
 
 ```sh
-git clone https://github.com/iamvenuti/garrick.git
-cd garrick
+git clone https://github.com/iamvenuti/garrick.git ~/garrick-source
+cd ~/garrick-source
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 
@@ -27,7 +27,7 @@ claude
 
 Or run `codex` in that folder. Say “what's open”, then try the [fictional wall exercise](first-session.md#try-the-wall-with-fictional-data).
 
-Back in the downloaded `garrick` repository, run:
+Back in `~/garrick-source`, run:
 
 ```sh
 python3 install.py

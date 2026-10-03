@@ -231,8 +231,16 @@ class TestGraph(StatusCase):
         self.assertIn("theta=SWAY*Math.sin(phase)", js)             # it sways, so a wide fit holds while it moves
         self.assertNotIn("Math.random", js)                         # seeded, so the same notes lie the same way
 
+    def test_names_do_not_cover_each_other(self):
+        js = status.GRAPH_JS
+        # Placed in order: the note in focus, its links, projects, threads, the rest.
+        self.assertIn("var w=n===f?0:f&&near[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1", js)
+        self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
+        self.assertIn("if(got<0&&(n===f||n.h)){got=0", js)            # the focus and projects are never left out
+        self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top
+
     def test_no_field_the_layout_writes(self):
-        layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg"}
+        layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg", "lp", "lw"}
         for n in graph_data(self.page())["nodes"]:
             self.assertEqual(set(), layout & set(n))
 

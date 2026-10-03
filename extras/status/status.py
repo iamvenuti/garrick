@@ -429,7 +429,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
                 and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1:
             say = project        # "open Acme Review": the threads skill resolves a project name too
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
-        # i, adj and deg to each node in the browser, so none of those is used here.
+        # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
         nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
@@ -1041,12 +1041,32 @@ V.forEach(function(n){var p=P[n.i],r=n.r*zs;ctx.globalAlpha=f&&!near[n.i]?.15:n.
 ctx.fillStyle=fill(n);ctx.beginPath();ctx.arc(p[0],p[1],r,0,6.283);ctx.fill();
 var rc=ring(n);if(rc){ctx.strokeStyle=rc;ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(p[0],p[1],r+3.2,0,6.283);ctx.stroke()}
 if(n===sel){ctx.strokeStyle=C['--ink'];ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+(rc?6.4:3),0,6.283);ctx.stroke()}});
-ctx.textAlign='center';ctx.textBaseline='top';ctx.lineJoin='round';
-V.forEach(function(n){var show=n===f||(f&&near[n.i])||n.h||n.c||scale>1.4;if(!show)return;
-var p=P[n.i],big=n.h||n===f;ctx.globalAlpha=f&&!near[n.i]?.2:n.s?.45:1;
-ctx.font=(big?'600 12px ':'11px ')+'system-ui,-apple-system,sans-serif';var y=p[1]+n.r*zs+(ring(n)?7:4);
-ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,p[0],y);ctx.fillStyle=big?C['--ink']:C['--ink2'];ctx.fillText(n.n,p[0],y)});
+ctx.textAlign='left';ctx.textBaseline='top';ctx.lineJoin='round';
+names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=f&&!near[n.i]?.2:n.s?.45:1;ctx.font=l.font;
+ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,l.x,l.y);ctx.fillStyle=l.big?C['--ink']:C['--ink2'];ctx.fillText(n.n,l.x,l.y)});
 ctx.globalAlpha=1}
+/* Which names to draw, and where. They are placed most wanted first: the note
+   in focus, its linked notes, projects, threads, then the rest once zoomed in.
+   A name whose box would cover one already placed tries above its note, then
+   beside it, and is left out when none of those is free, unless it is the
+   note in focus or a project, which are always named. A name keeps the side it
+   had while that stays free, so names do not hop as the graph moves. The
+   list comes back least wanted first, so the most wanted is drawn on top. */
+var FONT='system-ui,-apple-system,sans-serif';
+function names(P,f,near,zs){var want=[],out=[],cells={};
+V.forEach(function(n){var w=n===f?0:f&&near[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1;if(w<0)n.lp=-1;else want.push([w,n])});
+want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
+function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
+function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}
+want.forEach(function(e){var n=e[1],p=P[n.i],big=n.h||n===f;if(p[0]<-200||p[0]>W+200||p[1]<-40||p[1]>H+40){n.lp=-1;return}
+var font=(big?'600 12px ':'11px ')+FONT,lw=n.lw||(n.lw={});if(lw[font]==null){ctx.font=font;lw[font]=ctx.measureText(n.n).width}
+var w=lw[font],h=big?14:13,r=n.r*zs+(ring(n)?6:3),at=[[p[0]-w/2,p[1]+r+1],[p[0]-w/2,p[1]-r-1-h],[p[0]+r+4,p[1]-h/2],[p[0]-r-4-w,p[1]-h/2]],
+tries=n.lp>=0?[n.lp,0,1,2,3]:[0,1,2,3],pad=n.lp>=0?-1:1,got=-1,box=null;
+for(var i=0;i<tries.length&&got<0;i++){var x=Math.max(2,Math.min(W-w-2,at[tries[i]][0])),y=at[tries[i]][1],b=[x-2-pad,y-pad,x+w+2+pad,y+h+pad];
+if(free(b)){got=tries[i];box=[x,y,b]}}
+if(got<0&&(n===f||n.h)){got=0;box=[Math.max(2,Math.min(W-w-2,at[0][0])),at[0][1]];box.push([box[0]-2,box[1],box[0]+w+2,box[1]+h])}
+n.lp=got;if(got<0)return;each(box[2],function(k){(cells[k]||(cells[k]=[])).push(box[2])});out.push({n:n,x:box[0],y:box[1],font:font,big:big})});
+return out.reverse()}
 function frame(t){if(!running)return;var dt=Math.min(64,t-(last||t));last=t;
 if(alpha>0){step();step()}if(auto)fit();
 idle+=dt;if(spin&&!hover&&!sel&&!drag&&idle>2500){phase+=dt*.0002;theta=SWAY*Math.sin(phase)}

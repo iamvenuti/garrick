@@ -12,6 +12,7 @@ Three levels of work, two memories, one system folder.
 |---|---|
 | `System/` | Rules, context, skills and checks. Everything else consumes it |
 | `System/generated/` | Pages a tool rebuilds, such as the status page. Never committed; never edit them, never file anything here |
+| `System/interviews/` | The interview skill's records, one per interview |
 | `Zones/<Zone>/` | One side of life or work. Its own git repository |
 | `Zones/<Zone>/<Project>/` | One client, engagement or undertaking. The hub note is named after it |
 | `Zones/<Zone>/<Project>/Threads/<Thread>/` | One line of work, with one resume point |
@@ -27,6 +28,8 @@ Route every question by its subject, not by the folder the session happens to be
 - "What is X", "what does the research say about Y" → `Wikis/Knowledge/`.
 - "Where am I on X", "open X" → that thread's `Resume here` block.
 - A question that could belong to two zones → ask which. Never pick one silently.
+
+`Zones/` and `Wikis/` are separate repositories that the root's `.gitignore` leaves out, so search tools started at the root skip them. Search them by path, naming `Zones/` and `Wikis/` or the zone or wiki concerned. Never search from the root alone.
 
 Every zone and wiki has its own `AGENTS.md`. Read it before working there, even if your assistant did not load it: each zone is its own git repository, and not every assistant looks inside one. It adds to this file and wins where it says so.
 

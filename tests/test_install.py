@@ -202,6 +202,19 @@ class InstallTest(unittest.TestCase):
     def test_home_untouched(self):
         self.assertEqual(list(self.box.home.iterdir()), [])
 
+    def test_root_instructions_say_to_search_zones_and_wikis_by_path(self):
+        # The root .gitignore leaves Zones/ and Wikis/ out, and search tools honour it, so a
+        # search from the root alone finds nothing filed. The root AGENTS.md says so.
+        text = (self.root / "AGENTS.md").read_text()
+        self.assertIn("`Zones/` and `Wikis/` are separate repositories that the root's `.gitignore` leaves out, "
+                      "so search tools started at the root skip them.", text)
+        self.assertIn("Never search from the root alone.", text)
+        self.assertIn("| `System/interviews/` |", text)
+        # And the check finds no drift in it: no budget passed, nothing copied from another file.
+        r = run([self.root / "System" / "tools" / "check.py", "--root", self.root, "--json"], self.box.env)
+        found = [f for f in json.loads(r.stdout)["findings"] if f["check"] == "instructions"]
+        self.assertEqual(found, [])
+
 
 class RefusalTest(unittest.TestCase):
     def setUp(self):

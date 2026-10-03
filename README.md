@@ -10,9 +10,11 @@ Garrick gives Claude Code or Codex a workspace for your work and your memory. As
 
 Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the assistant rules for using it, and checks project files for specific signs of information crossing a declared boundary.
 
-[![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4)
+[![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/user-attachments/assets/cc315cd1-d505-4d9b-b477-bd0976888aa9)
 
-*[Download the 84-second walkthrough](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) (MP4, 16 MB; [captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)). Dramatised with fictional data; it illustrates the intended workflow.*
+https://github.com/user-attachments/assets/cc315cd1-d505-4d9b-b477-bd0976888aa9
+
+*The walkthrough, 98 seconds, with [captions](docs/assets/garrick-launch-video.srt). Dramatised with fictional data; it illustrates the intended workflow.*
 
 ## Start small
 

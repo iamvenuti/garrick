@@ -1,0 +1,67 @@
+1
+00:00:00,900 --> 00:00:02,777
+Pick up any project where you left it.
+
+2
+00:00:03,127 --> 00:00:07,884
+Its decisions, its source material and its next action, kept in files you own.
+
+3
+00:00:09,184 --> 00:00:16,224
+Garrick is a workspace of plain files, run by the assistant you choose: Claude or Codex, in an app or a terminal.
+
+4
+00:00:16,524 --> 00:00:18,956
+Every line of work keeps one resume point.
+
+5
+00:00:19,456 --> 00:00:20,907
+SAM: Open launch plan.
+
+6
+00:00:26,712 --> 00:00:30,893
+Calls and mail land in your inboxes. It files each one where it belongs.
+
+7
+00:00:31,293 --> 00:00:32,786
+SAM: Process the inbox.
+
+8
+00:00:41,550 --> 00:00:42,233
+SAM: Both.
+
+9
+00:00:45,278 --> 00:00:51,529
+Acme and Birch compete, so you've declared a wall between them. You met their carrier, Cobalt, once for each.
+
+10
+00:00:51,929 --> 00:00:53,252
+SAM: Prep me for Cobalt.
+
+11
+00:01:00,025 --> 00:01:02,265
+The Acme call stays out of Birch's brief.
+
+12
+00:01:02,565 --> 00:01:06,938
+Walls are rules for the assistant, backed by limited checks before a commit.
+
+13
+00:01:08,138 --> 00:01:12,170
+SAM: Board said March, and Theo's budget comes Wednesday. Wrap up.
+
+14
+00:01:16,425 --> 00:01:21,310
+Tomorrow, Claude or Codex picks up from that note, not from a lost conversation.
+
+15
+00:01:22,510 --> 00:01:28,099
+And an optional page, Garrick's Status, answers two questions: is anything wrong, and where was I?
+
+16
+00:01:29,399 --> 00:01:33,858
+Your work, ready to pick up again, in files you own, with boundaries you declare.
+
+17
+00:01:34,358 --> 00:01:35,126
+Garrick.

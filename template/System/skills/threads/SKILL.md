@@ -38,8 +38,9 @@ All paths are relative to the workspace root.
 | Meeting pages | `Wikis/Meetings/wiki/sources/`, people in `wiki/people/` |
 
 A thread note is the `.md` file whose name matches its folder. Other files in the
-folder are working notes. Any path component starting with `_` (`_zone`,
-`_project`, `_thread`) is a template: never list it, open it or wrap it.
+folder are working notes. A folder whose name starts with `_` is not part of
+the work: the scripts pass over it, and so does this skill. Never list, open
+or wrap anything inside it.
 
 A thread is **live** unless its frontmatter says `status: done` (finished) or
 `status: parked` (set aside until it is woken).
@@ -228,7 +229,8 @@ Written: the same, plus the files changed and the commit hash.
 
 Wrap every thread worked on today, then give one summary.
 
-1. **Find today's threads.** For each zone folder under `Zones/` (skip `_zone`):
+1. **Find today's threads.** For each zone folder under `Zones/` (skip one
+   whose name starts with `_`):
    ```sh
    git -C "Zones/<Zone>" log --since=midnight --name-only --format=
    git -C "Zones/<Zone>" status --porcelain --untracked-files=all
@@ -243,7 +245,8 @@ Wrap every thread worked on today, then give one summary.
      → the project's live thread if it has one; if it has several, ask which,
      once, for all such files together;
    - `Todo.md` → no thread;
-   - a path starting with `_` → a template; ignore it.
+   - a path through a folder whose name starts with `_` → not part of the
+     work; ignore it.
 
    Add any thread this conversation worked on that left no file behind. Skip
    threads marked done or parked: neither is live, and a wrap would rewrite

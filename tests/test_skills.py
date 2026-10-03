@@ -181,6 +181,13 @@ class SkillsTest(unittest.TestCase):
             self.assertNotIn("not this skill's job", body, path)
             self.assertNotIn("does not create zones", body, path)
 
+    def test_threads_names_no_template_folders(self):
+        """`_zone`, `_project` and `_thread` live only in this repository, never in a workspace."""
+        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        for name in ("`_zone`", "`_project`", "`_thread`"):
+            self.assertNotIn(name, text, name)
+        self.assertIn("A folder whose name starts with `_` is not part of the work", flat(text))
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "
@@ -289,7 +296,9 @@ class ThreadListingTest(unittest.TestCase):
             dates = [line.split("\t", 1)[0] for line in lines]
             self.assertEqual(sorted(dates, reverse=True), dates, shell)  # newest first
 
-    def test_templates_and_working_notes_are_left_out(self):
+    def test_underscore_folders_and_working_notes_are_left_out(self):
+        """An installed workspace has no template folders under Zones/; a folder whose
+        name starts with `_` is passed over, as the scripts pass over it."""
         notes = {
             "Zones/Work/Acme Review/Threads/Pricing/Pricing.md": "updated: 2026-03-02\nstatus: active\n",
             "Zones/Work/Acme Review/Threads/Pricing/Call notes.md": "updated: 2026-03-03\n",

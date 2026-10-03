@@ -13,6 +13,7 @@ import io
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,11 @@ def _load(name, path):
 
 
 agent = _load("agent", JOBS / "agent.py")
+job = _load("garrick_job", JOBS / "job.py")
 whats_open = _load("garrick_whats_open", JOBS / "whats_open.py")
+
+# How the status page reads a run from a job's log: a run's last line, or a skip.
+LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)|skipped)", re.M)
 
 SAMPLE = {
     "type": "result", "subtype": "success", "is_error": False, "num_turns": 3,
@@ -319,6 +324,70 @@ class JobTest(FakeAssistants):
         self.assertTrue(log.startswith(running))           # a skipped fire neither rotates its log
         self.assertFalse((self.jobs / "tidy.log.1").exists())
         self.assertEqual("4\n", (self.jobs / "tidy.items").read_text())  # nor deletes its count
+
+    def test_waiting_out_the_shared_lock_skips_the_run(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "agent.lock").mkdir()                     # another assistant job, still going
+        started = time.time()
+        r = self.job("sweep", "--agent", "--timeout", "1", "--cwd", str(self.tmp), "--",
+                     sys.executable, "-c", "print('ran')")
+        self.assertEqual(75, r.returncode)
+        self.assertLess(time.time() - started, 10)
+        log = (self.jobs / "sweep.log").read_text()
+        self.assertNotIn("ran", log)
+        self.assertEqual([("sweep", None)], [(m.group(2), m.group(3)) for m in LOGLINE.finditer(log)])
+        self.assertEqual([], self.calls())                     # not even the sign-in check
+        self.assertTrue((self.jobs / "agent.lock").exists())   # not this run's to remove
+        self.assertFalse((self.jobs / "sweep.lock").exists())
+        self.assertFalse((self.jobs / "sweep.heartbeat.json").exists())
+
+    def test_a_lock_stands_as_long_as_its_holder_said(self):
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        (lock / "until").write_text("%d 1\n" % (time.time() + 3600))
+        long_ago = time.time() - 7200
+        os.utime(lock, (long_ago, long_ago))                   # older than this run's own limit allows
+        tidy = ("tidy", "--timeout", "1", "--", sys.executable, "-c", "print('ran')")
+        self.assertEqual(75, self.job(*tidy).returncode)
+        (lock / "until").write_text("%d 1\n" % (time.time() - 1))   # the holder's time is up
+        self.assertEqual(0, self.job(*tidy).returncode)
+        self.assertIn("ran", (self.jobs / "tidy.log").read_text())
+        self.assertFalse(lock.exists())
+
+    def test_a_lock_without_a_record_goes_stale_by_its_age(self):
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        long_ago = time.time() - 7200
+        os.utime(lock, (long_ago, long_ago))
+        self.assertEqual(0, self.job("tidy", "--timeout", "1", "--", sys.executable, "-c", "pass").returncode)
+
+    def test_the_locks_cover_the_wait_the_retry_and_the_run(self):
+        script = ("import os; d = os.environ['GARRICK_JOBS_DIR']; "
+                  "print(*(open(os.path.join(d, n, 'until')).read().split()[0] for n in ('tidy.lock', 'agent.lock')))")
+        before = time.time()
+        r = self.job("tidy", "--agent", "--timeout", "100", "--cwd", str(self.tmp), "--", sys.executable, "-c", script,
+                     env={"GARRICK_LOGIN_RETRY_AFTER": "300"})
+        self.assertEqual(0, r.returncode, r.stderr)
+        until = re.search(r"^(\d+) (\d+)$", (self.jobs / "tidy.log").read_text(), re.M)
+        job_until, agent_until = float(until.group(1)), float(until.group(2))
+        self.assertGreaterEqual(job_until - before, 2 * 100 + 300)   # the wait for the shared lock, the retry, the run
+        self.assertGreaterEqual(agent_until - before, 100 + 300)     # the retry and the run
+        self.assertFalse((self.jobs / "tidy.lock").exists())
+        self.assertFalse((self.jobs / "agent.lock").exists())
+
+    def test_a_run_removes_only_its_own_lock(self):
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        self.assertTrue(job.take_lock(lock, 60))
+        self.assertFalse(job.take_lock(lock, 60))
+        (lock / "until").write_text("%d 1\n" % (time.time() + 60))   # since taken over by another run
+        job.release(lock)
+        self.assertTrue(lock.exists())
+        (lock / "until").write_text("%d %d\n" % (time.time() + 60, os.getpid()))
+        job.release(lock)
+        self.assertFalse(lock.exists())
 
     def test_the_watchdog_stops_a_run(self):
         started = time.time()

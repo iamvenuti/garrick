@@ -12,14 +12,19 @@ everything a run needs when nobody is watching it:
    exit code, how long it took, how much it did. A scheduler lists a job as
    loaded whether or not it has ever worked; the heartbeat says whether it ran.
 3. **A lock.** One run per job at a time. A fire that finds the previous run
-   still going is skipped with exit 75 and a line in the log.
+   still going is skipped with exit 75 and a line in the log. A lock stands
+   for as long as its run can rightly take: the wait for the shared lock
+   below, the sign-in retry and the run itself, with ten minutes of slack.
+   After that it belongs to a run that died without cleaning up, and the
+   next fire takes it over.
 4. **A watchdog.** A run still going after `--timeout` seconds (1500) is
    stopped, with every process it started, and exits 124.
 5. **With `--agent`**, one assistant job at a time across all jobs: headless
    sessions started in the same minute, as happens when a laptop wakes with
-   several jobs overdue, can fail each other's sign-in. Then a sign-in check
-   (agent.py login), once more after five minutes if it fails, and exit 4
-   with the run skipped if it fails again.
+   several jobs overdue, can fail each other's sign-in. A run that waits its
+   whole time limit for another assistant job is skipped with exit 75. Then
+   a sign-in check (agent.py login), once more after five minutes if it
+   fails, and exit 4 with the run skipped if it fails again.
 6. **An idle alarm.** A job that reports how much it did (agent.report_items)
    and has done nothing for GARRICK_IDLE_DAYS days (7) gets a line in its log
    and `idle_days` in its heartbeat. A job that exits 0 having found nothing
@@ -59,6 +64,7 @@ EXIT_LOGIN = 4
 EXIT_LOCKED = 75
 EXIT_TIMEOUT = 124
 MAX_LOG_BYTES = 1024 * 1024
+SLACK = 600  # two sign-in checks of up to 90 s each, the watchdog's grace, a slow start
 
 
 def stamp(t: Optional[float] = None) -> str:
@@ -87,21 +93,60 @@ def rotate(path: Path) -> None:
         path.replace(path.with_name(path.name + ".1"))
 
 
-def take_lock(lock: Path, stale_after: float) -> bool:
-    """mkdir is atomic. A lock older than the watchdog limit plus slack belongs
-    to a run that died without cleaning up, and is taken over."""
-    try:
-        lock.mkdir()
-        return True
-    except FileExistsError:
-        if time.time() - lock.stat().st_mtime > stale_after:
-            shutil.rmtree(lock, ignore_errors=True)
-            try:
-                lock.mkdir()
-                return True
-            except FileExistsError:
+def take_lock(lock: Path, hold: float) -> bool:
+    """mkdir is atomic. The lock records, in `until`, when it goes stale and
+    which process holds it. A run that finds it judges it by that record, so
+    a job with a short time limit does not take over the lock of one with a
+    long limit. A lock without a record, left by an older version, goes stale
+    `hold` seconds after it was made."""
+    took_over = False
+    for _ in range(2):
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            if took_over or not is_stale(lock, hold):
                 return False
-        return False
+            shutil.rmtree(lock, ignore_errors=True)
+            took_over = True
+            continue
+        record = "%d %d\n" % (time.time() + hold, os.getpid())
+        try:
+            (lock / "until").write_text(record, encoding="utf-8")
+        except OSError:
+            return True  # the lock holds all the same, and goes stale by its age
+        if took_over:
+            # Several runs can find one stale lock at once, as when a laptop
+            # wakes with jobs overdue. The last record written stands; the
+            # runs whose record it is not step back.
+            time.sleep(1)
+            try:
+                return (lock / "until").read_text(encoding="utf-8") == record
+            except OSError:
+                return False
+        return True
+    return False
+
+
+def is_stale(lock: Path, hold: float) -> bool:
+    try:
+        until = float((lock / "until").read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        try:
+            until = lock.stat().st_mtime + hold
+        except OSError:
+            return True  # gone already
+    return time.time() > until
+
+
+def release(lock: Path) -> None:
+    """Remove the lock, unless another run took it over while this one was
+    away, as when a laptop sleeps through a run's limit."""
+    try:
+        holder = (lock / "until").read_text(encoding="utf-8").split()[1]
+    except (OSError, IndexError):
+        holder = str(os.getpid())
+    if holder == str(os.getpid()):
+        shutil.rmtree(lock, ignore_errors=True)
 
 
 def watchdog(cmd: List[str], timeout: float, cwd: Path, env: dict, log) -> int:
@@ -191,10 +236,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     items_file = jobs / ("%s.items" % name)
     lastwork = jobs / ("%s.lastwork" % name)
     cwd = Path(args.cwd or os.environ.get("GARRICK_WORKSPACE") or Path.home()).expanduser()
-    stale = args.timeout + 600
+    # The job's lock covers the wait for the shared one, the sign-in retry and
+    # the run; the shared one covers the retry and the run.
+    hold_job = 2 * args.timeout + retry + SLACK
+    hold_agent = args.timeout + retry + SLACK
 
     lock = jobs / ("%s.lock" % name)
-    if not take_lock(lock, stale):
+    if not take_lock(lock, hold_job):
         with log_path.open("a", encoding="utf-8") as log:
             log.write("===== %s  %s  skipped: the previous run still holds the lock =====\n\n" % (stamp(), name))
         return EXIT_LOCKED
@@ -214,17 +262,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                        GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
             code = 0
             if args.agent:
-                waited = 0
-                while not take_lock(agent_lock, stale):
-                    if waited >= args.timeout:
-                        log.write("job: gave up after %ds waiting for another assistant job\n" % waited)
-                        break
-                    time.sleep(15)
-                    waited += 15
-                else:
-                    held_agent = True
-                if waited:
-                    log.write("job: waited %ds for another assistant job\n" % waited)
+                asked = time.time()
+                while not take_lock(agent_lock, hold_agent):
+                    left = asked + args.timeout - time.time()
+                    if left <= 0:
+                        # Running anyway would put two assistants side by side: the lock is there to stop that.
+                        log.write("===== %s  %s  skipped: another assistant job held the shared lock for %ds =====\n\n"
+                                  % (stamp(), name, time.time() - asked))
+                        return EXIT_LOCKED
+                    time.sleep(min(15, left))
+                held_agent = True
+                if time.time() - asked >= 1:
+                    log.write("job: waited %ds for another assistant job\n" % (time.time() - asked))
                 if not agent.login_ok(cwd):
                     log.write("job: %s is not signed in; checking again in %ds\n" % (agent.harness(), retry))
                     log.flush()
@@ -253,8 +302,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return code
     finally:
         if held_agent:
-            shutil.rmtree(agent_lock, ignore_errors=True)
-        shutil.rmtree(lock, ignore_errors=True)
+            release(agent_lock)
+        release(lock)
 
 
 if __name__ == "__main__":

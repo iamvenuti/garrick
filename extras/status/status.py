@@ -7,7 +7,7 @@ One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
 moved, what the check found, open actions, what is waiting in the inboxes,
 and, if you run scheduled jobs, how they ran and what the assistant spent.
-A graph of the notes and the links between them, zone by zone, turns slowly
+A graph of the notes and the links between them, zone by zone, fills a card
 at the top; click a note to open it or copy what to say about it. Hover a
 thread in the list for the same actions. Every card can be dragged elsewhere
 or hidden, and Reset view puts the page back.
@@ -955,9 +955,10 @@ sync();
 """
 
 # The graph: a force layout on a canvas, written here because the page loads
-# nothing from the network. Each zone and wiki starts in its own sector, so a
-# zone reads as a cluster. It turns slowly when left alone and stops for a
-# hover, a drag, an open panel, or the system's reduced-motion setting.
+# nothing from the network. Each zone and wiki has its own spot, laid along the
+# card in its proportions, so a zone reads as a cluster and the notes fill the
+# card. It sways a few degrees when left alone and stops for a hover, a drag,
+# an open panel, or the system's reduced-motion setting.
 GRAPH_JS = r"""
 (function(){
 var src=document.getElementById('graph-data'),cv=document.getElementById('gcv');if(!src||!cv)return;
@@ -968,14 +969,38 @@ var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-grap
 var N=G.nodes,hubOf={},seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[];if(n.h)hubOf[n.z+'/'+n.p]=n});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
-var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
-N.forEach(function(n){var a=places.indexOf(n.z)/Math.max(1,places.length)*6.283,r=150+rnd()*80;n.ax=Math.cos(a)*200;n.ay=Math.sin(a)*200;a+=(rnd()-.5)*.6;
-n.x=Math.cos(a)*r;n.y=Math.sin(a)*r;n.vx=n.vy=0;n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
-var V=[],E=[],alpha=1,theta=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,running=false,last=0,idle=0,C={};
+var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z);n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
+var V=[],E=[],alpha=1,theta=0,phase=0,SWAY=.1,pull=1.4,ticks=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,asp=2,running=false,last=0,idle=0,C={};
+/* Where each zone and wiki sits: its notes are drawn toward that spot. A few
+   places that fit across the card go in a row, more go round an ellipse in the
+   card's proportions, each given room by how many notes it draws, and in the
+   order that keeps linked places next to each other. */
+function room(k){return 30*Math.sqrt(k)+20}
+function spots(nodes,links){var cnt={},live=[],w={},A={};nodes.forEach(function(n){cnt[n.z]=(cnt[n.z]||0)+1});
+places.forEach(function(p){if(cnt[p])live.push(p)});links.forEach(function(e){var a=N[e[0]].z,b=N[e[1]].z;if(a!==b)w[a+'\n'+b]=w[b+'\n'+a]=(w[a+'\n'+b]||0)+1});
+if(!live.length)return A;if(live.length===1){A[live[0]]=[0,0];return A}
+var long=Math.max(asp,1/asp),gap=40,sum=0,big=0;live.forEach(function(p){var r=room(cnt[p]);sum+=2*r;big=Math.max(big,r)});
+var row=live.length<=3&&(sum+gap*(live.length-1))/(2*big)<=long*1.25;
+live=order(live,w,row);
+if(row){var x=-(sum+gap*(live.length-1))/2;live.forEach(function(p){var r=room(cnt[p]);x+=r;A[p]=asp>=1?[x,0]:[0,x];x+=r+gap});return A}
+var rm=sum/2/live.length,k=rm,a,b,per;
+for(var i=0;i<80;i++){a=asp>=1?k*asp+(asp-1)*rm:k;b=asp>=1?k:k/asp+(1/asp-1)*rm;
+per=Math.PI*(3*(a+b)-Math.sqrt((3*a+b)*(a+3*b)));if(per>=sum*1.15)break;k*=1.08}
+var M=720,cum=[0],pts=[];for(i=0;i<=M;i++){var t=Math.PI+i/M*6.2832;pts.push([a*Math.cos(t),b*Math.sin(t)]);if(i)cum.push(cum[i-1]+Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]))}
+var at=-room(cnt[live[0]])/sum*cum[M],j=0;
+live.forEach(function(p){var share=2*room(cnt[p])/sum*cum[M],s=((at+share/2)%cum[M]+cum[M])%cum[M];at+=share;
+for(j=0;j<M&&cum[j+1]<s;j++);A[p]=pts[j]});return A}
+/* the order of places along the row or round the ellipse that puts the most
+   links between neighbours: every order is tried when there are few places */
+function order(live,w,row){if(live.length<3||live.length>7)return live;var best=live,score=1e18;
+function cost(o){var c=0,n=o.length;for(var i=0;i<n;i++)for(var j=i+1;j<n;j++){var d=j-i;if(!row)d=Math.min(d,n-d);c+=(w[o[i]+'\n'+o[j]]||0)*d*d}return c}
+(function perm(o,rest){if(!rest.length){var c=cost(o);if(c<score){score=c;best=o}return}
+rest.forEach(function(p,i){perm(o.concat([p]),rest.slice(0,i).concat(rest.slice(i+1)))})})(row?[]:[live[0]],row?live:live.slice(1));return best}
+function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.ax=a[0];n.ay=a[1]})}
 /* parked threads and projects stay off the graph unless asked for, as in the lists */
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)}
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
-N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});
+N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
 var drawn={};V.forEach(function(n){drawn[n.k]=1});document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.gseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)})}
 function step(){var L=70,S=900,i,j,a,b,dx,dy,d2,k,m;
@@ -983,14 +1008,25 @@ for(i=0;i<V.length;i++){a=V[i];for(j=i+1;j<V.length;j++){b=V[j];dx=b.x-a.x;dy=b.
 k=S*alpha/d2;a.vx-=dx*k;a.vy-=dy*k;b.vx+=dx*k;b.vy+=dy*k;
 m=a.r+b.r+(a.h&&b.h?55:a.h||b.h?28:14);if(d2<m*m){k=(m-Math.sqrt(d2))/Math.sqrt(d2)*.25;a.x-=dx*k;a.y-=dy*k;b.x+=dx*k;b.y+=dy*k}}}
 E.forEach(function(e){a=N[e[0]];b=N[e[1]];dx=b.x+b.vx-a.x-a.vx;dy=b.y+b.vy-a.y-a.vy;var d=Math.sqrt(dx*dx+dy*dy)||1;
-k=(d-L)/d*alpha*.3/Math.max(1,Math.min(a.deg,b.deg));a.vx+=dx*k;a.vy+=dy*k;b.vx-=dx*k;b.vy-=dy*k});
-V.forEach(function(n){var g=n.deg?.012:.06;n.vx-=(n.x-n.ax)*g*alpha;n.vy-=(n.y-n.ay)*g*alpha;if(n===drag)return;n.vx*=.6;n.vy*=.6;n.x+=n.vx;n.y+=n.vy});
+k=(d-L)/d*alpha*(a.z===b.z?.3:.09)/Math.max(1,Math.min(a.deg,b.deg));a.vx+=dx*k;a.vy+=dy*k;b.vx-=dx*k;b.vy-=dy*k});
+/* The pull toward a place's spot is weaker across the card than down it, so
+   the notes spread in the card's proportions. Every few steps it is adjusted
+   by how far the notes' own proportions still are from the card's. */
+if(alpha>.05&&++ticks%10===0&&V.length>1){var bx=box([0]),la=(bx[1]-bx[0]+40)/(bx[3]-bx[2]+40);pull=Math.max(.7,Math.min(4,pull*Math.pow(asp/la,.3)))}
+var q=pull;V.forEach(function(n){var g=(n.deg?.04:.08)*alpha;n.vx-=(n.x-n.ax)*g/q;n.vy-=(n.y-n.ay)*g*q;if(n===drag)return;n.vx*=.6;n.vy*=.6;n.x+=n.vx;n.y+=n.vy});
 var mx=0,my=0;V.forEach(function(n){mx+=n.x;my+=n.y});mx/=V.length||1;my/=V.length||1;if(!drag)V.forEach(function(n){n.x-=mx;n.y-=my});
 alpha=Math.max(0,alpha-(alpha>.02?.005:.0005))}
 function toScreen(n){var c=Math.cos(theta),s=Math.sin(theta);return[W/2+px+scale*(n.x*c-n.y*s),H/2+py+scale*(n.x*s+n.y*c)]}
 function toWorld(x,y){var c=Math.cos(theta),s=Math.sin(theta),u=(x-W/2-px)/scale,v=(y-H/2-py)/scale;return[u*c+v*s,-u*s+v*c]}
-function fit(now){if(!W||!H)return;var R=60;V.forEach(function(n){R=Math.max(R,Math.sqrt(n.x*n.x+n.y*n.y)+n.r)});var t=Math.min(W,H)/2/(R+30);
-if(now){scale=t;px=py=0}else{scale+=(t-scale)*.08;px*=.9;py*=.9}}
+/* Fit: the box the visible notes fill, as drawn, over the whole sway while it
+   sways, scaled the same both ways into the card and centred in it. Room is
+   kept for the buttons at the top and the names under the lowest notes. */
+function box(turns){var b=[1e9,-1e9,1e9,-1e9];(turns||(spin?[-SWAY,SWAY,theta]:[theta])).forEach(function(t){var c=Math.cos(t),s=Math.sin(t);
+V.forEach(function(n){var x=n.x*c-n.y*s,y=n.x*s+n.y*c;if(x<b[0])b[0]=x;if(x>b[1])b[1]=x;if(y<b[2])b[2]=y;if(y>b[3])b[3]=y})});return b}
+function fit(now){if(!W||!H||!V.length)return;var b=box(),l=34,r=34,t=58,u=36,
+k=Math.min((W-l-r)/Math.max(1,b[1]-b[0]),(H-t-u)/Math.max(1,b[3]-b[2]),2.2),
+x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
+if(now){scale=k;px=x;py=y}else{scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08}}
 function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
 function fill(n){return G.colors[n.k]||C['--muted']}
 function ring(n){return n.d==null||n.s?null:n.d>45?C['--critical']:n.d>14?C['--warning']:null}
@@ -1013,9 +1049,10 @@ ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,p[0],y);ctx.fi
 ctx.globalAlpha=1}
 function frame(t){if(!running)return;var dt=Math.min(64,t-(last||t));last=t;
 if(alpha>0){step();step()}if(auto)fit();
-idle+=dt;if(spin&&!hover&&!sel&&!drag&&idle>2500)theta+=dt*.00006;
+idle+=dt;if(spin&&!hover&&!sel&&!drag&&idle>2500){phase+=dt*.0002;theta=SWAY*Math.sin(phase)}
 if((frame.k=(frame.k||0)+1)%30===0||!C['--ink'])colors();draw();requestAnimationFrame(frame)}
-function size(){var r=wrap.getBoundingClientRect();W=r.width;H=r.height;dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr}
+function size(){var r=wrap.getBoundingClientRect();W=r.width;H=r.height;dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr;
+var a=W>120&&H>120?Math.max(.5,Math.min(3,(W-68)/(H-94))):asp;if(Math.abs(Math.log(a/asp))>.15){asp=a;return true}}
 function start(){if(running)return;running=true;last=0;requestAnimationFrame(frame)}function stop(){running=false}
 function at(e){var r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,best=null,bd=1e9;
 V.forEach(function(n){var p=toScreen(n),d=Math.hypot(p[0]-x,p[1]-y);if(d<n.r*Math.max(.7,Math.min(1.6,scale))+5&&d<bd){bd=d;best=n}});return{x:x,y:y,n:best}}
@@ -1050,11 +1087,15 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()
 document.querySelectorAll('.gseg button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn()};spinBtn();
-document.getElementById('gfit').onclick=function(){auto=true;theta=0};
+document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0};
 var pk=document.getElementById('gpark');function parkBtn(){pk.textContent=parked?'Hide parked':'Show parked';pk.classList.toggle('on',parked)}
 pk.hidden=!N.some(function(n){return n.s});pk.onclick=function(){parked=!parked;st.set('garrick-graph-parked',parked?'1':'0');parkBtn();if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true};parkBtn();
-rebuild();for(var i=0;i<400;i++)step();size();colors();fit(true);
-if('ResizeObserver' in window)new ResizeObserver(function(){size();if(auto)fit(true);draw()}).observe(wrap);
+/* Every note starts near its place's spot, as if everything were drawn, so a
+   note that a wider view brings in arrives from where it belongs. */
+size();var A0=spots(N,G.edges);N.forEach(function(n){var a=A0[n.z]||[0,0],t=rnd()*6.2832,d=Math.sqrt(rnd())*room(8);
+n.x=a[0]+Math.cos(t)*d;n.y=a[1]+Math.sin(t)*d;n.vx=n.vy=0});
+rebuild();for(var i=0;i<400;i++)step();colors();fit(true);
+if('ResizeObserver' in window)new ResizeObserver(function(){if(size()){anchors();alpha=Math.max(alpha,.3)}if(auto)fit(true);draw()}).observe(wrap);
 if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting?start():stop()}).observe(wrap);else start();
 })();
 """

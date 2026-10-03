@@ -220,6 +220,17 @@ class TestGraph(StatusCase):
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
 
+    def test_the_graph_fills_its_card(self):
+        js = status.GRAPH_JS
+        self.assertNotIn("Math.min(W,H)", js)                       # no circle scaled into the shorter side
+        self.assertIn("function spots(", js)                        # each place has a spot along the card
+        self.assertIn("A[p]=asp>=1?[x,0]:[0,x]", js)                # a row when a few places fit across it
+        self.assertIn("k*asp+(asp-1)*rm", js)                       # else an ellipse in the card's proportions
+        # One scale for both directions, fitted to the box the notes fill, and centred.
+        self.assertIn("k=Math.min((W-l-r)/Math.max(1,b[1]-b[0]),(H-t-u)/Math.max(1,b[3]-b[2]),2.2)", js)
+        self.assertIn("theta=SWAY*Math.sin(phase)", js)             # it sways, so a wide fit holds while it moves
+        self.assertNotIn("Math.random", js)                         # seeded, so the same notes lie the same way
+
     def test_no_field_the_layout_writes(self):
         layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg"}
         for n in graph_data(self.page())["nodes"]:

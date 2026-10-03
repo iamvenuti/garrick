@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Garrick: introduction</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNjQgNjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMy41IiBmaWxsPSIjM0Q3M0UwIi8+PHBhdGggZD0iTTM5NyAtMTFRMzI1IC0xMSAyNjMuNSAxNS41UTIwMiA0MiAxNTcuMCA5MC41UTExMiAxMzkgODcuMCAyMDQuNVE2MiAyNzAgNjIgMzQ4UTYyIDQyNyA4OC4wIDQ5NS41UTExNCA1NjQgMTYwLjUgNjE1LjBRMjA3IDY2NiAyNjkuMCA2OTUuMFEzMzEgNzI0IDQwMyA3MjRRNDM2IDcyNCA0NjguMCA3MTcuNVE1MDAgNzExIDUzNiA2OTJRNTU4IDY4MSA1NzAuMCA2NzcuMFE1ODIgNjczIDU5MiA2NzNRNjIxIDY3MyA2MjEgNzEwSDY0Nkw2NDQgNTk1TDY0NiA0NzhINjIxUTYxOSA1NDMgNTkwLjUgNTkxLjVRNTYyIDY0MCA1MTMuNSA2NjcuMFE0NjUgNjk0IDQwMiA2OTRRMjg5IDY5NCAyMjYuNSA2MDQuMFExNjQgNTE0IDE2NCAzNTBRMTY0IDE5MCAyMjQuNSAxMDQuNVEyODUgMTkgMzk4IDE5UTQ1MSAxOSA0OTUuMCAzNi41UTUzOSA1NCA1NjUuNSA4My4wUTU5MiAxMTIgNTkyIDE0NlYxNzRRNTkyIDIxOCA1NzEuNSAyMzcuMFE1NTEgMjU2IDQ5NiAyNjFMNDUzIDI2NVYyODlMNjE5IDI4NUw3NzMgMjg5VjI2NUw3MjggMjYxUTY2NyAyNTUgNjY3IDE3NFYxNTZRNjY3IDExOCA2ODkgNzlMNzAzIDU0TDY4MCAzOVE2NTYgNzUgNjI5IDc1UTYxOSA3NSA2MTEuNSA3MS41UTYwNCA2OCA1NzYgNDhRNTMzIDE3IDQ5MC4wIDMuMFE0NDcgLTExIDM5NyAtMTFaIiBmaWxsPSIjRkZGRkZGIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgyLjA4IDQ5LjUwKSBzY2FsZSgwLjA0OTEwIC0wLjA0OTEwKSIvPjxwYXRoIGQ9Ik0yOCAtM1YyMEw0NCAyMlE3NyAyNiA5Mi4wIDMzLjVRMTA3IDQxIDExMS41IDYxLjBRMTE2IDgxIDExNiAxMjFWMzI5UTExNiAzNzggOTcuNSAzOTUuNVE3OSA0MTMgMjggNDEzVjQzNlE2OCA0MzYgMTA1LjUgNDM5LjBRMTQzIDQ0MiAxODYgNDQ4TDE3NSAzMzNIMTg2VjEyMVExODYgODEgMTkwLjUgNjEuMFExOTUgNDEgMjEwLjUgMzMuNVEyMjYgMjYgMjU4IDIyTDI3NCAyMFYtM0wxNTEgMFpNMTg0IDI2OSAxNzMgMzEyUTE5NCAzOTEgMjI4LjAgNDIyLjVRMjYyIDQ1NCAzMDQgNDU0UTM0NCA0NTQgMzU4LjAgNDM0LjBRMzcyIDQxNCAzNzIgMzk0UTM3MiAzNzIgMzU5LjAgMzU4LjBRMzQ2IDM0NCAzMjMgMzQ0UTMwNSAzNDQgMjkzLjAgMzUzLjVRMjgxIDM2MyAyODEgMzc4UTI4MSAzODMgMjgyLjAgMzg3LjBRMjgzIDM5MSAyODQgMzk4UTI4NSA0MDIgMjg1LjUgNDA1LjBRMjg2IDQwOCAyODYgNDEwUTI4NiA0MjAgMjcyIDQyMFEyNTQgNDIwIDIzNi41IDM5OS41UTIxOSAzNzkgMjA1LjAgMzQ1LjBRMTkxIDMxMSAxODQgMjY5WiIgZmlsbD0iI0ZGRkZGRiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNDAuNjIgNDkuNTApIHNjYWxlKDAuMDQ5MTAgLTAuMDQ5MTApIi8+PC9zdmc+">
 
 <!-- Web fonts: the one thing in this file that needs the network.
      Everything else (CSS, JS, markup) is inline and self-contained. -->
@@ -15,16 +16,18 @@
 /* ==========================================================================
    THEME
    Garrick's own palette: navy for the bookend statements, cream for the
-   working slides, terracotta and peach as the only accents. Change these
-   nine variables and the whole deck restyles.
+   working slides, and the blue of Garrick's mark as the only accent: deep
+   on cream (4.8:1), light on navy (6.9:1). Change these variables and the
+   whole deck restyles.
    ========================================================================== */
 :root {
   --navy: #1E2833;
   --cream: #ECE4D3;
   --cream-card: #F5F0E6;
-  --terracotta: #B24A22;
-  --terracotta-dark: #A8431E;
-  --peach: #F0A882;
+  --brand: #3D73E0;
+  --blue: #2B5CC6;
+  --blue-dark: #234FAE;
+  --blue-light: #8EB1F5;
   --hairline: #D6CAB2;
   --ink-muted: #4A5360;
   --ink-faint: #5F6773;
@@ -204,8 +207,8 @@ svg {
   letter-spacing: 4px;
   text-transform: uppercase;
 }
-.slide--cream .kicker { color: var(--terracotta-dark); }
-.slide--navy  .kicker { color: var(--peach); }
+.slide--cream .kicker { color: var(--blue-dark); }
+.slide--navy  .kicker { color: var(--blue-light); }
 
 h1.deck-title, h2.slide-title {
   font-family: var(--font-display);
@@ -260,7 +263,7 @@ h2.slide-title { font-size: 72px; max-width: 1500px; }
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--terracotta);
+  color: var(--blue);
 }
 
 /* Speaker notes travel with the slide but never render on it — only the
@@ -276,7 +279,7 @@ code.snippet {
   font-family: 'DM Sans', monospace;
   font-size: 26px;
   background: var(--navy);
-  color: var(--peach);
+  color: var(--blue-light);
   padding: 20px 28px;
   border-radius: 10px;
   letter-spacing: 0.2px;
@@ -288,6 +291,7 @@ code.snippet {
   gap: 36px;
 }
 .slide--cover h1.deck-title { font-size: 220px; letter-spacing: -2px; }
+.slide--cover .cover-mark { width: 132px; height: 132px; margin-bottom: auto; flex: none; }
 .slide--cover .subtitle { font-size: 40px; color: var(--cream-muted); max-width: 1300px; line-height: 1.35; }
 .slide--cover .byline { font-size: 24px; color: var(--cream-faint); }
 
@@ -317,7 +321,7 @@ code.snippet {
   width: 6px;
   align-self: stretch;
   background: repeating-linear-gradient(
-    to bottom, var(--terracotta) 0 14px, transparent 14px 26px
+    to bottom, var(--blue) 0 14px, transparent 14px 26px
   );
   border-radius: 3px;
 }
@@ -364,7 +368,7 @@ code.snippet {
   background: rgba(245, 240, 230, 0.35);
   transition: background 0.2s, transform 0.2s;
 }
-.deck-dots button.is-current { background: var(--peach); transform: scale(1.3); }
+.deck-dots button.is-current { background: var(--blue-light); transform: scale(1.3); }
 .kbd-hint { opacity: 0.75; }
 
 .notes-panel {
@@ -387,7 +391,7 @@ code.snippet {
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--peach);
+  color: var(--blue-light);
   margin-bottom: 8px;
 }
 
@@ -403,7 +407,7 @@ code.snippet {
   border-radius: 50%;
   border: 1px solid rgba(240, 168, 130, 0.5);
   background: rgba(18, 24, 31, 0.9);
-  color: var(--peach);
+  color: var(--blue-light);
   font-size: 16px;
   opacity: 0;
   pointer-events: none;
@@ -412,16 +416,16 @@ code.snippet {
   cursor: pointer;
 }
 .edit-toggle.show, .edit-toggle.active { opacity: 1; pointer-events: auto; }
-.edit-toggle.active { background: var(--terracotta); color: var(--cream-card); }
+.edit-toggle.active { background: var(--blue); color: var(--cream-card); }
 
 body.editing .editable {
-  outline: 1px dashed var(--terracotta);
+  outline: 1px dashed var(--blue);
   outline-offset: 4px;
   cursor: text;
 }
 .edit-saved-flag {
   position: fixed; top: 16px; left: 64px;
-  font-size: 13px; color: var(--peach);
+  font-size: 13px; color: var(--blue-light);
   background: rgba(18, 24, 31, 0.9);
   padding: 6px 12px; border-radius: 8px;
   opacity: 0; transition: opacity 0.4s ease;
@@ -439,6 +443,7 @@ body.editing .editable {
          1. COVER
          ============================================================ -->
     <section class="slide slide--navy slide--cover active" data-title="Garrick">
+      <svg class="cover-mark reveal" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Garrick's mark"><rect width="64" height="64" rx="3.5" fill="#3D73E0"/><path d="M397 -11Q325 -11 263.5 15.5Q202 42 157.0 90.5Q112 139 87.0 204.5Q62 270 62 348Q62 427 88.0 495.5Q114 564 160.5 615.0Q207 666 269.0 695.0Q331 724 403 724Q436 724 468.0 717.5Q500 711 536 692Q558 681 570.0 677.0Q582 673 592 673Q621 673 621 710H646L644 595L646 478H621Q619 543 590.5 591.5Q562 640 513.5 667.0Q465 694 402 694Q289 694 226.5 604.0Q164 514 164 350Q164 190 224.5 104.5Q285 19 398 19Q451 19 495.0 36.5Q539 54 565.5 83.0Q592 112 592 146V174Q592 218 571.5 237.0Q551 256 496 261L453 265V289L619 285L773 289V265L728 261Q667 255 667 174V156Q667 118 689 79L703 54L680 39Q656 75 629 75Q619 75 611.5 71.5Q604 68 576 48Q533 17 490.0 3.0Q447 -11 397 -11Z" fill="#FFFFFF" transform="translate(8.28 48.54) scale(0.04384 -0.04384)"/><path d="M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V329Q116 378 97.5 395.5Q79 413 28 413V436Q68 436 105.5 439.0Q143 442 186 448L175 333H186V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM184 269 173 312Q194 391 228.0 422.5Q262 454 304 454Q344 454 358.0 434.0Q372 414 372 394Q372 372 359.0 358.0Q346 344 323 344Q305 344 293.0 353.5Q281 363 281 378Q281 383 282.0 387.0Q283 391 284 398Q285 402 285.5 405.0Q286 408 286 410Q286 420 272 420Q254 420 236.5 399.5Q219 379 205.0 345.0Q191 311 184 269Z" fill="#FFFFFF" transform="translate(42.69 48.54) scale(0.04384 -0.04384)"/><path d="M405 -11Q362 -11 343.5 16.0Q325 43 325 104V320Q325 379 302.5 404.0Q280 429 227 429Q191 429 169.5 420.0Q148 411 148 396Q148 392 149.5 387.5Q151 383 152 377Q157 357 157 349Q157 333 144.5 321.5Q132 310 112 310Q93 310 81.0 323.5Q69 337 69 358Q69 386 91.5 407.5Q114 429 153.5 441.5Q193 454 244 454Q323 454 359.0 416.5Q395 379 395 296V116Q395 65 403.0 44.5Q411 24 430 24Q444 24 455.5 33.5Q467 43 472 59L490 52Q472 -11 405 -11ZM163 -11Q112 -11 81.0 14.0Q50 39 50 79Q50 117 81.0 151.5Q112 186 180 223Q210 240 247.0 256.5Q284 273 329 289L330 270Q233 230 180.5 182.0Q128 134 128 87Q128 58 145.0 42.0Q162 26 193 26Q221 26 248.5 40.5Q276 55 297.5 78.5Q319 102 328 130L334 97Q309 47 263.5 18.0Q218 -11 163 -11Z" fill="#FFFFFF" transform="translate(50.99 60.86) scale(0.01310 -0.01310)"/><path d="M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V332Q116 377 98.0 395.0Q80 413 35 413H28V436Q78 436 114.5 438.5Q151 441 186 448V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM132 554Q106 554 91.0 572.0Q76 590 76 615Q76 641 91.0 658.5Q106 676 132 676Q161 676 174.5 658.5Q188 641 188 615Q188 590 174.5 572.0Q161 554 132 554Z" fill="#FFFFFF" transform="translate(57.41 60.86) scale(0.01310 -0.01310)"/></svg>
       <p class="kicker reveal">For people who hold other people's confidences</p>
       <h1 class="deck-title reveal editable" data-edit-id="cover-title">Garrick</h1>
       <p class="subtitle reveal editable" data-edit-id="cover-sub">A workspace, run by an AI assistant you talk to, living in files you already own.</p>
@@ -453,7 +458,7 @@ body.editing .editable {
       <p class="kicker reveal">The tab you already have open</p>
       <h2 class="slide-title reveal editable" data-edit-id="problem-title">You already juggle things you can't afford to mix</h2>
       <p class="slide-body reveal editable" data-edit-id="problem-body-1">A client tells you something in confidence. An hour later you're drafting a note for a different client, in the same chat window, with the same assistant that has remembered everything you've said all week. It's convenient, right up until it isn't.</p>
-      <p class="slide-body reveal editable" data-edit-id="problem-body-2" style="color:var(--terracotta-dark); font-weight:600;">Nothing in that chat knows that one of those two is a wall, not just a change of subject.</p>
+      <p class="slide-body reveal editable" data-edit-id="problem-body-2" style="color:var(--blue-dark); font-weight:600;">Nothing in that chat knows that one of those two is a wall, not just a change of subject.</p>
       <p class="folio">Garrick</p>
       <aside class="notes">Let the discomfort sit for a second before offering the fix. This is the case for a general AI chat tool. It's genuinely strong, which is why the next slides have to earn the alternative.</aside>
     </section>
@@ -512,7 +517,7 @@ body.editing .editable {
       <div class="grid-3 reveal">
         <div class="card"><p class="card-eyebrow">1</p><h3 style="font-size:32px;">A new folder</h3><p>Point the installer at an empty folder that isn't your real workspace.</p></div>
         <div class="card"><p class="card-eyebrow">2</p><h3 style="font-size:32px;">Nothing else changes</h3><p>Nothing is written to your home configuration or any account you already use.</p></div>
-        <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Delete it, it's gone</h3><p>Don't like it? Remove the folder. There's nothing else to undo.</p></div>
+        <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Delete it, it's gone</h3><p>Don't like it? Remove the folder. Only your assistant's own chat history stays behind.</p></div>
       </div>
       <code class="snippet reveal">python3 examples/demo/build.py --target ~/Garrick-demo</code>
       <aside class="notes">Good moment to actually run this line, live, if it's a guided session: the risk-free part lands harder demonstrated than described.</aside>
@@ -567,7 +572,7 @@ body.editing .editable {
       <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
         <p class="slide-body" style="flex:1.1;">Every thread carries a block that says what's done, what the live artifact is, what happens next and who it's waiting on. Closing a session properly (the wrap habit) is what keeps that block true two months later, when you've forgotten everything else about it.</p>
         <div class="card" style="flex:0.9; background:var(--navy); border-color:var(--navy);">
-          <p class="card-eyebrow" style="color:var(--peach);">Resume here</p>
+          <p class="card-eyebrow" style="color:var(--blue-light);">Resume here</p>
           <p style="color:var(--cream-card); font-size:24px; line-height:1.6;">Live artifact: the pricing draft<br>Next: send to Dana for sign-off<br>Waiting on: Acme, since Tuesday</p>
         </div>
       </div>
@@ -620,11 +625,11 @@ body.editing .editable {
       <p class="kicker reveal">Optional extra</p>
       <h2 class="slide-title reveal editable" data-edit-id="status-title">Where everything stands, at a glance</h2>
       <div class="row reveal" style="flex:1; gap:48px; align-items:center; min-height:0;">
-        <img src="../docs/assets/status-graph-dark.png" alt="The status page's graph on the demo workspace, with a Birch thread selected and its links listed" style="height:620px; width:auto; border-radius:16px; box-shadow:0 12px 40px rgba(20,30,60,.22); flex:none;">
-        <p class="slide-body" style="flex:1;">One page, built from your own files. Every note and how it links, each zone in its own space. Threads that have gone quiet carry a ring. Click one and it gives you the words to say.</p>
+        <img src="../docs/assets/status-graph-dark.png" alt="Garrick's Status: the graph of the demo workspace, with a Birch thread selected and its links listed" style="height:620px; width:auto; border-radius:16px; box-shadow:0 12px 40px rgba(20,30,60,.22); flex:none;">
+        <p class="slide-body" style="flex:1;">Garrick's Status: one page, built from your own files. Every note and how it links, each zone its own cluster. Threads that have gone quiet carry a ring. Pick one and it gives you the words to say.</p>
       </div>
       <p class="folio">Garrick</p>
-      <aside class="notes">The fictional demo workspace. The selected thread, Carrier Choice, sits on the Birch side: its links stay there, and the Cobalt call held for Acme is in another cluster. The page shows names and links only, never what a note says. It runs no server and loads nothing from the network. Cards can be moved or hidden, and Reset view puts them back.</aside>
+      <aside class="notes">The fictional demo workspace. The selected thread, Carrier Choice, sits on the Birch side: its links stay there, and the Cobalt call held for Acme is in another part of the graph. The page shows names, tags, dates and the links between notes, not what a note says; the check findings it lists can quote a link. It runs no server and loads nothing from the network. Hovering a thread in the list opens the same card. Parked projects stay off the graph until you ask for them. Cards can be moved or hidden, and Reset view puts them back.</aside>
     </section>
 
     <!-- ============================================================
@@ -664,7 +669,7 @@ body.editing .editable {
 <!-- Deck chrome: counter, dot navigation, keyboard hint — all outside the
      scaled stage so they stay a fixed size regardless of window size. -->
 <div class="deck-controls">
-  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">15</span></span>
+  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">16</span></span>
   <span class="deck-dots" id="deckDots"></span>
   <span class="kbd-hint">→ / space next · ← previous · N notes · E edit</span>
 </div>

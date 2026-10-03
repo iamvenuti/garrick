@@ -10,8 +10,12 @@ intake alone; meetings and knowledge are the procedures it calls.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +23,8 @@ sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS = REPO / "template" / "System" / "skills"
+# zsh is the macOS default and the shell an assistant's tools run there; bash the other common one.
+SHELLS = ("/bin/zsh", "/bin/bash")
 
 
 def description(skill: Path) -> str:
@@ -44,6 +50,22 @@ def section(text: str, heading: str) -> str:
 def flat(text: str) -> str:
     """Text with every run of white space as one space, so wrapping never matters."""
     return " ".join(text.split())
+
+
+def listing_snippet() -> str:
+    """The shell lines the threads skill gives for listing every thread."""
+    text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+    after = text.split("To list every thread with its status and last update:", 1)[1]
+    return re.search(r"```sh\n(.*?)```", after, re.S).group(1)
+
+
+def first_value(path: Path, key: str) -> str:
+    """What `grep -m1 '^key:' | cut -d' ' -f2` gives for a file."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(key + ":"):
+            fields = line.split(" ")
+            return fields[1] if len(fields) > 1 else ""
+    return ""
 
 
 class SkillsTest(unittest.TestCase):
@@ -127,10 +149,93 @@ class SkillsTest(unittest.TestCase):
 
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
-                     SKILLS / "meetings" / "SKILL.md", REPO / "template" / "System" / "rules.md"):
+                     SKILLS / "meetings" / "SKILL.md", SKILLS / "threads" / "SKILL.md",
+                     REPO / "template" / "System" / "rules.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
             self.assertNotIn("–", text, path)
+
+
+class ThreadListingTest(unittest.TestCase):
+    """The listing behind "what's open", run exactly as the threads skill gives it,
+    in each shell, on a fresh install, on the demo workspace and on a few odd folders."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        base = Path(cls.tmp.name).resolve()
+        (base / "home").mkdir()
+        env = dict(os.environ, HOME=str(base / "home"), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+                   PYTHONDONTWRITEBYTECODE="1")
+        cls.fresh, cls.demo, cls.odd = base / "fresh", base / "demo", base / "odd"
+        cls.have_git = shutil.which("git") is not None
+        if cls.have_git:
+            cls.installed = subprocess.run([sys.executable, str(REPO / "install.py"), "--config",
+                                            str(REPO / "examples" / "acme.json"), "--target", str(cls.fresh)],
+                                           env=env, capture_output=True, text=True)
+            cls.built = subprocess.run([sys.executable, str(REPO / "examples" / "demo" / "build.py"),
+                                        "--target", str(cls.demo)], env=env, capture_output=True, text=True)
+        cls.snippet = listing_snippet()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def listings(self, root):
+        """(shell, result) for each shell this machine has: on macOS, both."""
+        shells = [s for s in SHELLS if os.access(s, os.X_OK)]
+        if sys.platform == "darwin":
+            self.assertEqual(list(SHELLS), shells)
+        if not shells:
+            self.skipTest("neither zsh nor bash is installed")
+        return [(s, subprocess.run([s, "-c", self.snippet], cwd=str(root), capture_output=True, text=True))
+                for s in shells]
+
+    def test_a_fresh_install_lists_nothing(self):
+        if not self.have_git:
+            self.skipTest("git is not installed")
+        self.assertEqual(0, self.installed.returncode, self.installed.stderr)
+        self.assertTrue((self.fresh / "Zones" / "Work").is_dir())
+        for shell, res in self.listings(self.fresh):
+            self.assertEqual((0, "", ""), (res.returncode, res.stdout, res.stderr), shell)
+
+    def test_the_demo_lists_its_threads(self):
+        if not self.have_git:
+            self.skipTest("git is not installed")
+        self.assertEqual(0, self.built.returncode, self.built.stderr)
+        expected = []
+        for note in (self.demo / "Zones").glob("*/*/Threads/*/*.md"):
+            if note.stem == note.parent.name:
+                rel = note.relative_to(self.demo).as_posix()
+                expected.append("%s\t%s\t%s" % (first_value(note, "updated"), first_value(note, "status"), rel))
+        self.assertEqual(7, len(expected), expected)
+        self.assertIn("2026-09-23\tactive\tZones/Work/Birch Entry/Threads/Carrier Choice/Carrier Choice.md", expected)
+        self.assertIn("2026-09-17\tdone\tZones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", expected)
+        for shell, res in self.listings(self.demo):
+            lines = res.stdout.splitlines()
+            self.assertEqual((0, ""), (res.returncode, res.stderr), shell)
+            self.assertEqual(sorted(expected), sorted(lines), shell)
+            dates = [line.split("\t", 1)[0] for line in lines]
+            self.assertEqual(sorted(dates, reverse=True), dates, shell)  # newest first
+
+    def test_templates_and_working_notes_are_left_out(self):
+        notes = {
+            "Zones/Work/Acme Review/Threads/Pricing/Pricing.md": "updated: 2026-03-02\nstatus: active\n",
+            "Zones/Work/Acme Review/Threads/Pricing/Call notes.md": "updated: 2026-03-03\n",
+            "Zones/Work/_project/Threads/_thread/_thread.md": "updated: 2026-03-04\n",
+            "Zones/Work/_project/Threads/Kick Off/Kick Off.md": "updated: 2026-03-04\n",
+            "Zones/Personal/House/Threads/Roof Repair/Roof Repair.md": "updated: 2026-03-01\nstatus: parked\n",
+            "Zones/Personal/House/House.md": "updated: 2026-03-05\n",
+        }
+        for rel, body in notes.items():
+            path = self.odd / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("---\n" + body + "---\n", encoding="utf-8")
+        for shell, res in self.listings(self.odd):
+            self.assertEqual((0, ""), (res.returncode, res.stderr), shell)
+            self.assertEqual(["2026-03-02\tactive\tZones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                              "2026-03-01\tparked\tZones/Personal/House/Threads/Roof Repair/Roof Repair.md"],
+                             res.stdout.splitlines(), shell)
 
 
 if __name__ == "__main__":

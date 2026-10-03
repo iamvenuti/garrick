@@ -44,13 +44,16 @@ A thread is **live** unless its frontmatter says `status: done`.
 To list every thread with its status and last update:
 
 ```sh
-for f in Zones/*/*/Threads/*/*.md; do
+find Zones -mindepth 5 -maxdepth 5 -path 'Zones/*/*/Threads/*/*.md' | while IFS= read -r f; do
   case "$f" in */_*) continue;; esac
   [ "$(basename "$f" .md)" = "$(basename "$(dirname "$f")")" ] || continue
   printf '%s\t%s\t%s\n' "$(grep -m1 '^updated:' "$f" | cut -d' ' -f2)" \
     "$(grep -m1 '^status:' "$f" | cut -d' ' -f2)" "$f"
 done | sort -r
 ```
+
+It runs the same in zsh and bash, prints nothing when there are no threads
+yet, and keeps the spaces in a name.
 
 A zone's own `AGENTS.md` adds to this skill and wins where it says so.
 

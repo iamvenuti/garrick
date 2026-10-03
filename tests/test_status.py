@@ -465,7 +465,7 @@ class TestNameAndMark(StatusCase):
         brand = html[html.index('<div class="brand">'):html.index("<h1>")]
         self.assertIn('class="mark" aria-hidden="true"', brand)
         self.assertIn('fill="#3D73E0"', brand)
-        self.assertEqual(4, brand.count("<path"))           # Gr and the small ai
+        self.assertEqual(2, brand.count("<path"))           # Gr alone: the small "ai" cannot be read at heading size
         icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml,([^"]+)">', html)
         svg = urllib.parse.unquote(icon.group(1))
         self.assertTrue(svg.startswith('<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'))

@@ -1117,7 +1117,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (mark(attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall),
+             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall),
                 live, "" if live == 1 else "s", week, navh,
                 copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out),
                      "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'class="act wide"')))

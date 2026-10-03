@@ -940,24 +940,75 @@ def without_party_field(text: str) -> str:
     return "\n".join(lines)
 
 
+# Dates are not content either. Two notes written on the same day share "24
+# September 2026" and the words around it by chance, so month and day names,
+# years and the days of a month do not count toward MIN_CONTENT_WORDS.
+CALENDAR = frozenset("""
+january february march april june july august september october november december
+jan feb mar apr jun jul aug sep sept oct nov dec
+monday tuesday wednesday thursday friday saturday sunday
+""".split())
+
+
+def is_content(token: str) -> bool:
+    if token in STOPWORDS or token in CALENDAR:
+        return False
+    return not (token.isdigit() and (len(token) <= 2 or (len(token) == 4 and token[:2] in ("19", "20"))))
+
+
 def shingles(tokens: List[str]) -> Iterable[int]:
     """A hash for each run of SHINGLE words that carries enough content words."""
-    content = [t not in STOPWORDS for t in tokens]
+    content = [is_content(t) for t in tokens]
     for i in range(len(tokens) - SHINGLE + 1):
         if sum(content[i:i + SHINGLE]) >= MIN_CONTENT_WORDS:
             yield hash(tuple(tokens[i:i + SHINGLE]))
 
 
+HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
+WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
+
+
+def without_link_targets(text: str) -> str:
+    """`text` as a reader sees it: a wikilink reduced to its alias, a Markdown
+    link to its text, an address to nothing. Where a link points is not
+    wording; the link check reads it, and two notes that point at the same
+    page share no words by doing so."""
+    text = WIKILINK_RE.sub(lambda m: " %s " % (m.group(1).split("|", 1)[1] if "|" in m.group(1) else ""), text)
+    return WEB_RE.sub(" ", MDLINK_RE.sub("] ", text))
+
+
+def runs(text: str) -> set:
+    """Every shingle of `text`, links reduced to the words a reader sees, and
+    no run crossing a Markdown heading: the headings of a note are its
+    template's structure ("State of play", "Resume here"), and the words
+    either side of one were not written as one sentence."""
+    text = without_link_targets(text)
+    out: set = set()
+    last = 0
+    for m in HEADING_RE.finditer(text):
+        out.update(shingles(words(text[last:m.start()])))
+        out.update(shingles(words(m.group(0))))
+        last = m.end()
+    out.update(shingles(words(text[last:])))
+    return out
+
+
 @dataclass
 class QuoteIndex:
-    """Where each run of words was said, and which runs are common wording.
+    """Where each run of words was said or written, and which runs are common.
 
-    `owners` maps a shingle to the finished meeting pages whose page or raw
-    record holds it. `common` holds the shingles that also appear in one of
-    the shared files (SHARED_FILES, SHARED_FOLDERS), which every side reads,
-    so repeating one is never evidence of a leak."""
+    `owners` maps a shingle to what holds it: meeting pages, finished or not,
+    whose page or raw record has it, and the text files of every project.
+    `tags` gives each project file the party tags it is written for, and
+    `project` its project. `common` holds the shingles that also appear in one
+    of the shared files (SHARED_FILES, SHARED_FOLDERS), which every side reads,
+    so repeating one is never evidence of a leak; `common_beyond_knowledge`
+    the ones found in a shared file outside the Knowledge wiki."""
     owners: Dict[int, set]
     common: set
+    common_beyond_knowledge: set = field(default_factory=set)
+    tags: Dict[Path, frozenset] = field(default_factory=dict)
+    project: Dict[Path, Path] = field(default_factory=dict)
 
 
 # The files every side reads, whose wording is common rather than a leak: the
@@ -992,26 +1043,75 @@ def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
     return sorted(p for p in raw.iterdir() if p.is_file() and p.stem in stems)
 
 
+def finished(fm: dict) -> bool:
+    """A meeting page with both of the fields the walls read."""
+    return bool(fm.get("zone")) and bool(as_list(fm.get("parties")))
+
+
 def quote_index(ws: Workspace) -> QuoteIndex:
     if ws.quote_index is not None:
         return ws.quote_index
     owners: Dict[int, set] = {}
+
+    def add(text: str, owner: Path) -> None:
+        for h in runs(text):
+            owners.setdefault(h, set()).add(owner)
+
+    # Every meeting page and its raw record, finished or not: nothing on an
+    # unfinished page may be used anywhere until it has its zone and parties.
     for page, fm in ws.meetings.items():
-        if not fm.get("zone") or not as_list(fm.get("parties")):
-            continue  # unfinished: the meetings check reports it, and nothing on it may be used
-        texts = [body_of(read_text(page) or "")]
-        texts += [transcript_text(r, read_text(r) or "") for r in meeting_raws(ws, page, fm)]
-        for text in texts:
-            for h in shingles(words(text)):
-                owners.setdefault(h, set()).add(page)
+        add(body_of(read_text(page) or ""), page)
+        for r in meeting_raws(ws, page, fm):
+            add(transcript_text(r, read_text(r) or ""), page)
+    # Every project's own text files, under the party each is written for: a
+    # client's brief or data file, and the notes made from them, are that
+    # party's material as much as its meetings are. Template folders are not.
+    tags: Dict[Path, frozenset] = {}
+    projects: Dict[Path, Path] = {}
+    for project, pfm in ws.projects:
+        ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        thread_tags: Dict[str, set] = {}
+        for path in walk_files(project):
+            if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
+                continue
+            text = read_text(path)
+            if not text:
+                continue
+            parts = path.relative_to(project).parts
+            ftags = set(ptags)
+            if len(parts) > 2 and parts[0] == "Threads":
+                if parts[1] not in thread_tags:
+                    note = project / "Threads" / parts[1] / (parts[1] + ".md")
+                    thread_tags[parts[1]] = {strip_tag(t) for t in as_list(parse_frontmatter(note).get("party"))}
+                ftags |= thread_tags[parts[1]]
+            tags[path] = frozenset(ftags)
+            projects[path] = project
+            add(body_of(text), path)
     common: set = set()
+    beyond: set = set()
     # Wording also found in a shared file is common wording, not a leak. No
     # other file counts, however widely it is read: see SHARED_FILES.
+    knowledge = ws.root / "Wikis" / "Knowledge"
     for path in shared_files(ws):
-        if path.suffix.lower() in TEXT_SUFFIXES:
-            common.update(h for h in shingles(words(read_text(path) or "")) if h in owners)
-    ws.quote_index = QuoteIndex(owners, common)
+        if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
+            found = {h for h in runs(transcript_text(path, read_text(path) or "")) if h in owners}
+            common |= found
+            if knowledge not in path.parents:
+                beyond |= found
+    ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     return ws.quote_index
+
+
+def meeting_wording(ws: Workspace, text: str, exempt: set) -> List[Path]:
+    """The finished meeting pages whose page or raw record shares a run of
+    SHINGLE words with `text`, leaving out the runs in `exempt`."""
+    index = quote_index(ws)
+    found = set()
+    for h in runs(text):
+        if h in exempt:
+            continue
+        found.update(o for o in index.owners.get(h, ()) if o in ws.meetings and finished(ws.meetings[o]))
+    return sorted(found)
 
 
 def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
@@ -1110,6 +1210,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             mfm = ws.meetings[page]
             mtags = [strip_tag(t) for t in as_list(mfm.get("parties"))]
             if not mtags or not mfm.get("zone"):
+                reported.add(page)
                 out.append(Finding(ERROR, "walls", r,
                                    "uses %s, an unfinished meeting page (no zone or parties)" % page.stem,
                                    "A note in %s uses an unfinished meeting page" % where))
@@ -1130,15 +1231,11 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 out.append(Finding(WARNING, "walls", r,
                                    "uses meeting %s from zone %s; cross-zone work happens only when asked" % (page.stem, mfm.get("zone")),
                                    "A note in %s uses a meeting from the %s zone" % (where, mfm.get("zone"))))
-    if not tags:
-        return out
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
-    if not far:
-        return out
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
-    if not in_sources:
+    if far and not in_sources:
         scanned = without_party_field(text) + "\n" + path.name
         for b, forms in name_forms(ws, far).items():
             if b in reported or not forms or not names_hit(scanned, forms):
@@ -1149,20 +1246,54 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                                "names %s, or one of its people; a wall stands between %s and %s" % (party_name(ws, b), a, b),
                                "A note in %s names %s" % (where, party_name(ws, b))))
 
-    # Quotes. Wording also found on the near side of the wall, or in one of
-    # the shared files every side reads, is not evidence of a leak.
+    # Quotes: a run of words held only across a wall, by a meeting page or its
+    # raw record or by another project's file, or held by an unfinished page.
+    # Wording also held on the near side of the wall, by a meeting or a file
+    # of another project, or by this project's own Sources/, is not evidence of
+    # a leak, and nor is wording found in one of the shared files every side
+    # reads. This project's own notes are neither: a leak copied twice must
+    # not vouch for itself. A file in Sources/ is what a party sent, which may
+    # repeat what another party sent too: like the name check, the file check
+    # leaves it out, and only meetings count against it.
     index = quote_index(ws)
+    sent = _in_sources(project, path)
     lifted: Dict[Path, int] = {}
-    for h in set(shingles(words(text))):
-        pages = index.owners.get(h)
-        if not pages or h in index.common:
+    unfinished: Dict[Path, int] = {}
+    copied: Dict[Path, set] = {}  # another project -> its files the wording came from
+    for h in runs(text):
+        owners = index.owners.get(h)
+        if not owners or h in index.common:
             continue
-        walled_pages = {p for p in pages
-                        if any(walled(ws.context, a, strip_tag(m)) for a in tags for m in as_list(ws.meetings[p].get("parties")))}
-        if walled_pages != pages:
+        pages, open_pages, files = [], [], []
+        clear = False
+        for o in owners:
+            if o == path:
+                continue
+            mfm = ws.meetings.get(o)
+            if mfm is not None:
+                if not finished(mfm):
+                    open_pages.append(o)
+                elif any(walled(ws.context, a, strip_tag(m)) for a in tags for m in as_list(mfm.get("parties"))):
+                    pages.append(o)
+                else:
+                    clear = True
+                    break
+            elif sent or (index.project.get(o) == project and not _in_sources(project, o)):
+                continue
+            elif any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ())):
+                files.append(o)
+            else:
+                clear = True
+                break
+        if clear:
             continue
-        for p in walled_pages:
-            lifted[p] = lifted.get(p, 0) + 1
+        for o in pages:
+            lifted[o] = lifted.get(o, 0) + 1
+        for o in open_pages:
+            unfinished[o] = unfinished.get(o, 0) + 1
+        if not pages and not open_pages:  # a meeting holds it too: that is the one to name
+            for o in files:
+                copied.setdefault(index.project[o], set()).add(o)
     for page in sorted(lifted):
         if page in reported:
             continue
@@ -1172,6 +1303,20 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                            "repeats wording from meeting %s, a meeting with %s; a wall stands between %s and %s"
                            % (page.stem, b, a, b),
                            "A note in %s quotes a meeting with %s" % (where, party_name(ws, b))))
+    for page in sorted(unfinished):
+        if page in reported:
+            continue
+        out.append(Finding(ERROR, "walls", r,
+                           "repeats wording from %s, an unfinished meeting page (no zone or parties)" % page.stem,
+                           "A note in %s quotes an unfinished meeting page" % where))
+    for other in sorted(copied):
+        sources = sorted(copied[other])
+        a, b = sorted((a, t) for a in tags for t in index.tags[sources[0]] if walled(ws.context, a, t))[0]
+        more = " and %d more of its files" % (len(sources) - 1) if len(sources) > 1 else ""
+        out.append(Finding(ERROR, "walls", r,
+                           "repeats wording from %s%s, in project %s for %s; a wall stands between %s and %s"
+                           % (rel(ws, sources[0]), more, other.name, b, a, b),
+                           "A note in %s quotes a file of %s" % (where, party_name(ws, b))))
     return out
 
 

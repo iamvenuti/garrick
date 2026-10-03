@@ -19,6 +19,11 @@ from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, w
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
 
+# Wording only one side ever saw. Never allowed to appear in a finding.
+BRIEF = "The board plans to close the Leeds plant by the end of the third quarter and move the pump line to Gdansk"
+BRIEF_WORDS = ("leeds", "plant", "gdansk")
+ROWS = "supplier,part,spend\nHalden Castings,motor housing,410000\nKeld Seals,seal kit,186000\nOrrin Electronics,control board,352000\n"
+
 # The checker runs git as the user would; these keep the user's own config out.
 NO_USER_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -224,6 +229,149 @@ class TestStatusAndDates(GapCase):
         self.assertIn("`updated` is '23 September 2026'", self.findings("threads", "error")[0].message)
         self.assertIn("`created` is '2026-02-30'", self.findings("projects", "error")[0].message)
         self.assertIn("`created` is '10/03/2026'", self.findings("meetings", "error")[0].message)
+
+
+class QuoteCase(GapCase):
+    def walls(self):
+        return [f for f in check.run_checks(self.root) if f.check == "walls"]
+
+    def assertNoLeak(self, findings, *secrets):
+        text = check.report_text(findings, self.root) + check.report_ear(findings) + check.report_staged(findings)
+        for secret in secrets:
+            self.assertNotIn(secret.lower(), text.lower())
+
+
+class TestUnfinishedPages(QuoteCase):
+    """A page without its zone or parties may not be used: its wording is caught, as its links are."""
+
+    def setUp(self):
+        super().setUp()
+        page = meeting_page("Work", None, "Call").replace("Decisions.", BRIEF + ".")
+        write(self.meetings / "wiki" / "sources" / "260318-call.md", page)
+
+    def test_wording_from_an_unfinished_page(self):
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", BRIEF + ".\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertEqual("error", found[0].severity)
+        self.assertIn("260318-call, an unfinished meeting page", found[0].message)
+        self.assertNoLeak(found, *BRIEF_WORDS)
+
+    def test_wording_from_its_raw_record(self):
+        write(self.meetings / "raw" / "260319-call.txt", "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        write(self.meetings / "wiki" / "sources" / "260319-call.md", meeting_page(None, None, "Second call"))
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        found = self.walls()
+        self.assertEqual(["Zones/Work/Acme Review/Deliverables/260320 - Note.md"], [f.path for f in found])
+        self.assertIn("260319-call", found[0].message)
+
+    def test_linked_and_quoted_is_one_finding(self):
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "[[260318-call]]: " + BRIEF + ".\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertIn("uses 260318-call", found[0].message)
+
+    def test_finished_it_is_walled_as_usual(self):
+        page = self.meetings / "wiki" / "sources" / "260318-call.md"
+        page.write_text(meeting_page("Work", "[acme]", "Call").replace("Decisions.", BRIEF + "."))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", BRIEF + ".\n")
+        self.assertEqual([], self.walls())
+
+
+class TestProjectFiles(QuoteCase):
+    """A project's own files are its party's material: a brief or a data file
+    pasted across a wall is caught as a meeting would be."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.acme / "Sources" / "Acme brief.md", "# Brief\n\n" + BRIEF + ".\n")
+        write(self.acme / "Sources" / "Acme supplier list.csv", ROWS)
+        self.note = self.birch / "Threads" / "Market Sizing" / "Notes.md"
+
+    def test_a_sentence_from_the_brief(self):
+        write(self.note, "Worth knowing: " + BRIEF.lower() + ".\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertEqual(("error", "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"), (found[0].severity, found[0].path))
+        self.assertIn("Zones/Work/Acme Review/Sources/Acme brief.md, in project Acme Review for acme", found[0].message)
+        self.assertIn("a wall stands between birch and acme", found[0].message)
+        self.assertEqual("A note in Birch Entry's Market Sizing thread quotes a file of Acme Corp", found[0].ear)
+        self.assertNoLeak(found, *BRIEF_WORDS)
+
+    def test_rows_of_a_data_file(self):
+        write(self.birch / "Deliverables" / "260321 - Suppliers.csv", ROWS.split("\n", 1)[1])
+        found = self.walls()
+        self.assertEqual(["Zones/Work/Birch Entry/Deliverables/260321 - Suppliers.csv"], [f.path for f in found])
+        self.assertNoLeak(found, "halden", "keld", "orrin", "410000")
+
+    def test_the_same_side_passes(self):
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", BRIEF + ".\n")
+        write(self.acme / "Deliverables" / "260321 - Suppliers.csv", ROWS)
+        self.assertEqual([], self.walls())
+
+    def test_a_copy_never_vouches_for_another(self):
+        write(self.note, BRIEF + ".\n")
+        write(self.birch / "Deliverables" / "260321 - Memo.md", BRIEF + ".\n")
+        self.assertEqual(2, len(self.walls()))
+
+    def test_what_a_party_sent_vouches_for_its_notes(self):
+        # Both clients sent the same supplier terms: each side quotes its own copy.
+        terms = "Rates hold for thirty days from the quote and exclude the quarterly fuel surcharge"
+        write(self.acme / "Sources" / "Carrier terms.md", terms + ".\n")
+        write(self.birch / "Sources" / "Carrier terms.md", terms + ".\n")
+        write(self.note, "Carrier says: " + terms.lower() + ".\n")
+        self.assertEqual([], self.walls())
+
+    def test_notes_copied_across_both_named(self):
+        # Wording that sits in notes on both sides and nowhere else: the check
+        # cannot tell which came first, so it names both.
+        line = "Pallet volumes fall by a fifth when the northern depot closes for refitting"
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", line + ".\n")
+        write(self.note, line + ".\n")
+        self.assertEqual(["Zones/Work/Acme Review/Threads/Pricing/Notes.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"], sorted(f.path for f in self.walls()))
+
+    def test_a_meeting_is_named_before_a_file(self):
+        page = meeting_page("Work", "[acme]", "Acme call").replace("Decisions.", BRIEF + ".")
+        write(self.meetings / "wiki" / "sources" / "260315-acme-call.md", page)
+        write(self.note, BRIEF + ".\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertIn("meeting 260315-acme-call", found[0].message)
+
+    def test_published_wording_and_templates_cross_every_wall(self):
+        write(self.knowledge / "raw" / "plant-report.txt", "Reported: " + BRIEF + ".\n")
+        write(self.note, BRIEF + ".\n")
+        self.assertEqual([], self.walls())
+        (self.knowledge / "raw" / "plant-report.txt").unlink()
+        disclaimer = "This memo was prepared for its addressee alone and relies on figures supplied by the client"
+        write(self.acme / "Deliverables" / "260321 - Memo.md", disclaimer + ".\n")
+        write(self.birch / "Deliverables" / "260321 - Memo.md", disclaimer + ".\n")
+        self.assertEqual(3, len(self.walls()))  # the note, and the memo on each side
+        write(self.root / "System" / "templates" / "memo.md", disclaimer + ".\n")
+        self.assertEqual(["Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"], [f.path for f in self.walls()])
+
+    def test_same_day_wraps_are_not_quotes(self):
+        # "Close for the day" wraps every thread worked on: the same date, the same headings.
+        for project, thread, waiting in ((self.acme, "Pricing", "Owen's quote"), (self.birch, "Market Sizing", "the board")):
+            note = project / "Threads" / thread / (thread + ".md")
+            note.write_text(note.read_text().split("## State of play")[0]
+                            + "## State of play\n\n### Resume here\n\n**Where it stands, 3 October 2026.** Waiting on %s.\n\n"
+                              "| | |\n|---|---|\n| Waiting on | %s |\n| Deadline | 9 October 2026 |\n\n---\n\n"
+                              "**3 October 2026.** Wrapped.\n\n**2 October 2026.** Wrapped.\n" % (waiting, waiting))
+        self.assertEqual([], self.walls())
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_it(self):
+        real_repo(self.work)
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            write(self.note, BRIEF + ".\n")
+            git(self.work, "add", "-A")
+            found = check.run_checks(self.root, staged=self.work)
+        self.assertEqual([("error", "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md")],
+                         [(f.severity, f.path) for f in found])
+        self.assertNoLeak(found, *BRIEF_WORDS)
 
 
 if __name__ == "__main__":

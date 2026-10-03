@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,7 @@ EXIT_MISSING = 127
 
 DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}
 DEFAULT_MAX_CALL_USD = 5.0
+JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 # --------------------------------------------------------------------------- settings
@@ -93,6 +95,18 @@ def jobs_dir() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "garrick-jobs"
     return Path.home() / ".local" / "state" / "garrick-jobs"
+
+
+def name_problem(name: str) -> Optional[str]:
+    """Why `name` cannot name a job, or None. The name becomes the name of the
+    job's files, so a `/` would put them outside the jobs folder, and the
+    status page reads it from the log as one word. `agent` is the shared
+    lock's."""
+    if not JOB_NAME.fullmatch(name):
+        return "%r is not a job name: use letters, digits, hyphens and underscores" % name
+    if name.lower() == "agent":
+        return "agent names the lock that every assistant job shares: choose another name"
+    return None
 
 
 def _number(name: str, default: float) -> float:
@@ -260,6 +274,10 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
               "from Garrick's extras/jobs/ beside agent.py." % (profile, problem), file=sys.stderr)
         return EXIT_USAGE, ""
     job = job or os.environ.get("GARRICK_JOB") or "manual"
+    problem = name_problem(job)
+    if problem:
+        print("agent: %s" % problem, file=sys.stderr)
+        return EXIT_USAGE, ""
     ledger = ledger_path()
     now = time.time()
     reason = cap_reason(read_ledger(ledger, now), now, caps())

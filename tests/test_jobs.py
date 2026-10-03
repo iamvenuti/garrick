@@ -281,6 +281,12 @@ class RunTest(FakeAssistants):
         with mock.patch.object(agent, "PROFILE", self.tmp / "nowhere" / "headless-settings.json"):
             self.assertEqual(0, agent.run("sonnet", "Sweep.")[0])
 
+    def test_a_job_name_is_one_plain_word(self):
+        for name in ("../escape", "two words", "agent"):
+            self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "Sweep.", job=name)[0], name)
+        self.assertEqual([], self.calls())
+        self.assertEqual(0, agent.run("sonnet", "Sweep.", job="whats-open_2")[0])
+
     def test_unknown_harness_and_tier(self):
         os.environ["GARRICK_HARNESS"] = "other"
         self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "x")[0])
@@ -388,6 +394,15 @@ class JobTest(FakeAssistants):
         (lock / "until").write_text("%d %d\n" % (time.time() + 60, os.getpid()))
         job.release(lock)
         self.assertFalse(lock.exists())
+
+    def test_a_name_that_is_not_one_plain_word_is_refused(self):
+        for name in ("../escape", "two words", "Agent"):
+            r = self.job(name, "--", sys.executable, "-c", "print('ran')")
+            self.assertEqual(agent.EXIT_USAGE, r.returncode, name)
+            self.assertIn("job.py:", r.stderr)
+        self.assertFalse(self.jobs.exists())                   # nothing written, inside the folder or out
+        self.assertEqual([], list(self.tmp.glob("escape*")))
+        self.assertEqual(0, self.job("whats-open_2", "--", sys.executable, "-c", "pass").returncode)
 
     def test_the_watchdog_stops_a_run(self):
         started = time.time()

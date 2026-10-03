@@ -75,6 +75,7 @@ agent.report_items(handled)    # how much it did, for the idle alarm
 ```
 
 - **Tiers, not model names**: `haiku`, `sonnet` or `opus`. Codex maps each through `GARRICK_CODEX_MODEL_<TIER>`.
+- **Name it in letters, digits, hyphens and underscores**, as in `whats-open`. The name becomes the name of its log, heartbeat and lock, and `agent` is taken by the lock that all assistant jobs share.
 - **End the prompt with a closing line to print**, and check for it. A run that stopped early must not look like a run that found nothing.
 - **Report how much it handled.** A job that runs cleanly for a week and does nothing gets flagged in its log and heartbeat.
 - **One zone per call** when the job reads zone material. The [walls](../principles.md) still apply to anything it writes.

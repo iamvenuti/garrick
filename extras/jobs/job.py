@@ -3,7 +3,8 @@
 
     python3 job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] -- <command> [args...]
 
-The scheduler (launchd, cron) runs this, and this runs the job. One place for
+The name is letters, digits, hyphens and underscores, and not `agent`. The
+scheduler (launchd, cron) runs this, and this runs the job. One place for
 everything a run needs when nobody is watching it:
 
 1. **A log**, `<name>.log` in the jobs folder, rotated at 1 MB with one older
@@ -221,6 +222,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     cmd = argv[split + 1:]
     if not cmd:
         print("job.py: no command after --", file=sys.stderr)
+        return agent.EXIT_USAGE
+    problem = agent.name_problem(args.name)
+    if problem:
+        print("job.py: %s" % problem, file=sys.stderr)
         return agent.EXIT_USAGE
     warnings: List[str] = []
     if args.timeout is None:

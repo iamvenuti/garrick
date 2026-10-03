@@ -166,6 +166,25 @@ class TestGraph(StatusCase):
         data = graph_data(self.page())
         self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])
 
+    def test_parked_threads_and_their_notes_are_marked(self):
+        sizing = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing"
+        write(sizing / "Market Sizing.md", thread_note("Birch Entry", "Market Sizing", "birch", status="parked"))
+        write(sizing / "Interviews.md", "# Interviews\n")
+        data = graph_data(self.page())
+        held = {n["n"] for n in data["nodes"] if n["s"]}
+        # Birch Entry has no live thread left, so the project is parked with it.
+        self.assertEqual({"Market Sizing", "Interviews", "Birch Entry"}, held)
+        self.assertNotIn("Acme Review", held)
+
+    def test_parked_toggle(self):
+        html = self.page()
+        self.assertIn('id="gpark"', html)
+        self.assertIn("garrick-graph-parked", status.GRAPH_JS)
+        self.assertIn("(parked||!n.s)", status.GRAPH_JS)              # hidden unless asked for
+        self.assertIn("if(m.s&&!parked){parked=true", status.GRAPH_JS)  # following a link to one shows them
+        # Reset view clears every garrick- key but the theme, the toggle among them.
+        self.assertIn("k.indexOf('garrick-')===0&&k!=='garrick-status-theme'", status.LAYOUT_JS)
+
     def test_projects_carry_their_phrase(self):
         data = graph_data(self.page())
         self.assertEqual("Acme Review", data["nodes"][self.node(data, "Acme Review")]["w"])

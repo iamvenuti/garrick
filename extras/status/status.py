@@ -375,11 +375,16 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"), ("t
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
-    how long since it moved; from its body only the targets of its links."""
+    how long since it moved; from its body only the targets of its links.
+    A parked thread, with the notes in its folder, and a project with no live
+    thread left, with everything in it, are marked `s` and drawn only when the
+    page is asked to show them."""
     places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
-    parked = {(r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
     names = short_names(T)
+    held = {(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
+    awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
+    asleep = {(zone, project) for zone, project, _ in held} - awake
     notes = []
     for place, root in places:
         for folder, dirs, files in os.walk(root):
@@ -415,6 +420,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         updated = as_date(fm.get("updated"))
         days = (now.date() - updated).days if moving and updated else None
         party = tags(fm.get("party") or fm.get("parties"))
+        folder_thread = parts[2] if in_zone and len(parts) > 3 and parts[1] == "Threads" else ""
+        parked = (place, project) in asleep or (place, project, folder_thread) in held
         say = names.get((project, thread), "") if thread else ""
         if kind == "project" and project.casefold() not in threads_said \
                 and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1:
@@ -423,7 +430,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         # i, adj and deg to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
         nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
-                      "t": party, "d": days, "s": 1 if (project, thread) in parked else 0,
+                      "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if kind in ("project", "thread", "todo") else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
     by_base: Dict[str, Path] = {}
@@ -954,7 +961,7 @@ var src=document.getElementById('graph-data'),cv=document.getElementById('gcv');
 var G=JSON.parse(src.textContent),wrap=cv.parentNode,ctx=cv.getContext('2d'),pop=document.getElementById('gpop');
 var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
-var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0';
+var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
 var N=G.nodes,hubOf={},seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[];if(n.h)hubOf[n.z+'/'+n.p]=n});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -962,7 +969,8 @@ var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
 N.forEach(function(n){var a=places.indexOf(n.z)/Math.max(1,places.length)*6.283,r=150+rnd()*80;n.ax=Math.cos(a)*200;n.ay=Math.sin(a)*200;a+=(rnd()-.5)*.6;
 n.x=Math.cos(a)*r;n.y=Math.sin(a)*r;n.vx=n.vy=0;n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
 var V=[],E=[],alpha=1,theta=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,running=false,last=0,idle=0,C={};
-function visible(n){return mode==='all'||n.c}
+/* parked threads and projects stay off the graph unless asked for, as in the lists */
+function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)}
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});
 document.querySelectorAll('.gseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)})}
@@ -1025,19 +1033,22 @@ function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];ret
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
 var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,pu:hub&&hub!==n?hub.u:''};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
-var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">everything</small>')+'</button>'}).join('');
+var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true}
 function glide(tx,ty){var sx=px,sy=py,t0=performance.now();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g)})(t0)}
 pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
-var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){mode='all';st.set('garrick-graph-mode',mode);rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
+var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode',mode)}
+if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
 document.querySelectorAll('.gseg button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=0};
+var pk=document.getElementById('gpark');function parkBtn(){pk.textContent=parked?'Hide parked':'Show parked';pk.classList.toggle('on',parked)}
+pk.hidden=!N.some(function(n){return n.s});pk.onclick=function(){parked=!parked;st.set('garrick-graph-parked',parked?'1':'0');parkBtn();if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true};parkBtn();
 rebuild();for(var i=0;i<400;i++)step();size();colors();fit(true);
 if('ResizeObserver' in window)new ResizeObserver(function(){size();if(auto)fit(true);draw()}).observe(wrap);
 if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting?start():stop()}).observe(wrap);else start();
@@ -1245,13 +1256,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         core = sum(1 for n in GR["nodes"] if n["c"])
         legend = "".join('<span><i style="background:%s"></i>%s</span>' % (GR["colors"][i], E(label)) for i, label in GR["kinds"])
         legend = ('<div class="legend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
-                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked</span>'
+                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked, when shown</span>'
                   '<span>· click a note to open it or copy what to say, double-click to open it, drag to move, pinch or ⌘-scroll to zoom</span></div>' % legend)
         data = script_json(GR)
         graph_card = card("graph", "Graph", "%d notes, %d links · %d projects and threads · names only" % (len(GR["nodes"]), len(GR["edges"]), core),
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in every zone and wiki, and the links between them"></canvas>'
                           '<div class="gbar"><div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
-                          '<button data-m="all">Everything</button></div><button id="gspin"></button><button id="gfit">Fit</button></div>'
+                          '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
 
     left = checks_card + jobs_card + wikis_card

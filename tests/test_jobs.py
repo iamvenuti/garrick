@@ -334,6 +334,20 @@ class JobTest(FakeAssistants):
         self.assertEqual(9, self.beat("sweep")["idle_days"])
         self.assertIn("idle", (self.jobs / "sweep.log").read_text())
 
+    def test_a_setting_that_is_not_a_number_falls_back(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "sweep.lastwork").write_text("%d\n" % (time.time() - 9 * 86400))
+        script = "import os; open(os.environ['GARRICK_ITEMS_FILE'], 'w').write('0')"
+        r = self.job("sweep", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", script,
+                     env={"GARRICK_JOB_TIMEOUT": "half an hour", "GARRICK_LOGIN_RETRY_AFTER": "soon",
+                          "GARRICK_IDLE_DAYS": "seven"})
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(9, self.beat("sweep")["idle_days"])       # the run finished and left its heartbeat
+        log = (self.jobs / "sweep.log").read_text()
+        for name in ("GARRICK_JOB_TIMEOUT", "GARRICK_LOGIN_RETRY_AFTER", "GARRICK_IDLE_DAYS"):
+            self.assertIn("job: %s is " % name, log)
+        self.assertIn("job: idle", log)                             # seven days, the default, still applied
+
 
 class WhatsOpenTest(FakeAssistants):
     def setUp(self):

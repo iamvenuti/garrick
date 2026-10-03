@@ -26,7 +26,9 @@ everything a run needs when nobody is watching it:
    looks healthy on every other check.
 
 With GARRICK_NOTIFY=1, a failed or idle run also raises a macOS notification.
-Nothing here leaves the machine.
+Nothing here leaves the machine. GARRICK_JOB_TIMEOUT, GARRICK_LOGIN_RETRY_AFTER
+and GARRICK_IDLE_DAYS set to anything but a number keep their defaults, with
+a line in the log saying so.
 
 The command runs in `--cwd` (or GARRICK_WORKSPACE, or your home folder; never
 `/`, where a scheduler starts) with GARRICK_JOB, GARRICK_ITEMS_FILE,
@@ -61,6 +63,23 @@ MAX_LOG_BYTES = 1024 * 1024
 
 def stamp(t: Optional[float] = None) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+
+def number(name: str, default: float, warnings: List[str]) -> float:
+    """A count of seconds or days from the environment. A value that is not a
+    number of zero or more falls back to the default, with a warning for the
+    log: a typo in a plist must not stop every run."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not 0 <= value < float("inf"):
+        warnings.append("job: %s is %r, not a number of zero or more; using %g\n" % (name, raw, default))
+        return default
+    return value
 
 
 def rotate(path: Path) -> None:
@@ -152,12 +171,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("name")
     ap.add_argument("--agent", action="store_true", help="the job calls an assistant")
     ap.add_argument("--cwd")
-    ap.add_argument("--timeout", type=float, default=float(os.environ.get("GARRICK_JOB_TIMEOUT", 1500)))
+    ap.add_argument("--timeout", type=float, help="seconds before the watchdog stops the run (1500)")
     args = ap.parse_args(argv[:split])
     cmd = argv[split + 1:]
     if not cmd:
         print("job.py: no command after --", file=sys.stderr)
         return agent.EXIT_USAGE
+    warnings: List[str] = []
+    if args.timeout is None:
+        args.timeout = number("GARRICK_JOB_TIMEOUT", 1500, warnings)
+    retry = number("GARRICK_LOGIN_RETRY_AFTER", 300, warnings)
+    idle_limit = number("GARRICK_IDLE_DAYS", 7, warnings)
 
     jobs = agent.jobs_dir()
     jobs.mkdir(parents=True, exist_ok=True)
@@ -181,6 +205,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             start = time.time()
             log.write("===== %s  %s  start =====\n" % (stamp(start), name))
+            log.writelines(warnings)
             log.flush()
             env = dict(os.environ, GARRICK_JOB=name, GARRICK_ITEMS_FILE=str(items_file),
                        GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
@@ -198,7 +223,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if waited:
                     log.write("job: waited %ds for another assistant job\n" % waited)
                 if not agent.login_ok(cwd):
-                    retry = float(os.environ.get("GARRICK_LOGIN_RETRY_AFTER", 300))
                     log.write("job: %s is not signed in; checking again in %ds\n" % (agent.harness(), retry))
                     log.flush()
                     time.sleep(retry)
@@ -213,8 +237,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             now = time.time()
             items = read_items(items_file) if code == 0 else None
             idle = idle_days(items, lastwork, now)
-            limit = int(os.environ.get("GARRICK_IDLE_DAYS", 7))
-            if idle is not None and idle >= limit:
+            if idle is not None and idle >= idle_limit:
                 log.write("job: idle. It has run cleanly and done nothing for %d days: its input has stopped "
                           "arriving, or it should be stopped.\n" % idle)
                 notify("%s has done nothing for %d days." % (name, idle))

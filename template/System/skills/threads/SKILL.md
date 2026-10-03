@@ -191,8 +191,8 @@ per wrap: the one named, and nothing else.
    before editing. Append new actions for this thread under `## Inbox` as
    `- [ ] <action> · <project>, <thread> · <date>`, naming this thread in full
    (`Acme, Pricing`): that is how a later wrap or finish finds its lines.
-   Tick the ones this session finished. Touch no line that names another
-   thread.
+   Tick the lines this session finished, whether they name this thread or
+   only a party or person. Touch no line that names another thread.
 8. **Set `updated:`** in the note's frontmatter to today.
 9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
    Re-read the hub first; change that one line.
@@ -496,7 +496,7 @@ Written form: the spoken answer on top, then the detail each command lists.
 ## What this skill does not do
 
 - **It never touches a thread it was not asked about.** A wrap reads and writes
-  one thread's note, one hub line, that thread's `Todo.md` lines and that
+  one thread's note, one hub line, the `Todo.md` lines step 7 allows and that
   thread's memory pointer. Other threads are not read, judged or refreshed,
   even when something about them looks stale.
 - **A wrap is not a sweep.** It does not tidy `Todo.md`, audit memories, check

@@ -8,8 +8,9 @@ at a glance: every live thread by zone with how long since its resume point
 moved, what the check found, open actions, what is waiting in the inboxes,
 and, if you run scheduled jobs, how they ran and what the assistant spent.
 A graph of the notes and the links between them, zone by zone, turns slowly
-at the top; click a note to open it or copy what to say about it. Every
-card can be dragged elsewhere or hidden, and Reset view puts the page back.
+at the top; click a note to open it or copy what to say about it. Hover a
+thread in the list for the same actions. Every card can be dragged elsewhere
+or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
 already keep, and writes nothing but itself. It runs no server, loads nothing
@@ -239,7 +240,8 @@ def threads(ws: Path) -> Dict[str, dict]:
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
-            pfm = frontmatter(project / (project.name + ".md"), ws)
+            hub = project / (project.name + ".md")
+            pfm = frontmatter(hub, ws)
             for thread in visible_dirs(project / "Threads"):
                 note = thread / (thread.name + ".md")
                 fm = frontmatter(note, ws)
@@ -247,7 +249,8 @@ def threads(ws: Path) -> Dict[str, dict]:
                 if state == "done":
                     done += 1
                     continue
-                row = {"project": project.name, "thread": thread.name, "note": note,
+                row = {"zone": zone.name, "project": project.name, "thread": thread.name, "note": note,
+                       "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
                        "updated": as_date(fm.get("updated")), "status": state}
                 (parked if state == "parked" else rows).append(row)
@@ -387,6 +390,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
     by_rel = {r: p for p, r in rel.items()}
     nodes, index = [], {}
     kinds = [k for k, _, _ in KINDS]
+    projects = [(place, path.parent.name) for place, root, path in notes
+                if root.parent.name == "Zones" and path.parent.parent == root and path.stem == path.parent.name]
+    threads_said = {t.casefold() for z in T.values() for r in z["rows"] + z["parked"] for t in [r["thread"]]}
     for place, root, path in notes:
         fm = frontmatter(path, ws)
         parts = path.relative_to(root).parts
@@ -403,17 +409,21 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
         state = as_text(fm.get("status")).strip().lower()
-        moving = kind == "thread" and state not in ("done", "parked")
+        moving = kind == "thread" and state != "done"
         updated = as_date(fm.get("updated"))
         days = (now.date() - updated).days if moving and updated else None
         party = tags(fm.get("party") or fm.get("parties"))
+        say = names.get((project, thread), "") if thread else ""
+        if kind == "project" and project.casefold() not in threads_said \
+                and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1:
+            say = project        # "open Acme Review": the threads skill resolves a project name too
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
         # i, adj and deg to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
         nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if (project, thread) in parked else 0,
                       "c": 1 if kind in ("project", "thread", "todo") else 0, "h": 1 if kind == "project" else 0,
-                      "w": names.get((project, thread), "") if thread else "", "u": link(path)})
+                      "w": say, "u": link(path)})
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
@@ -603,6 +613,16 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str], str]:
     return {(p, t): (t if count[t.lower()] == 1 else "%s, %s" % (p, t)) for p, t in every}
 
 
+def thread_card(r: dict, names: Dict[Tuple[str, str], str], link: "Links", days: Optional[int]) -> str:
+    """What a thread's card shows, as JSON for its row: the same fields the
+    graph gives a note, so one helper draws both. Names, tags, the days since
+    the note was updated, whether it is parked, the name to say, and links."""
+    return json.dumps({"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
+                       "s": 1 if r["status"] == "parked" else 0, "w": names[(r["project"], r["thread"])], "h": 0,
+                       "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""},
+                      separators=(",", ":"), ensure_ascii=False)
+
+
 def copy(label: str, text: str, say: str) -> str:
     """A button that copies a phrase for your assistant, or a command for your
     terminal. The page acts on nothing itself."""
@@ -775,15 +795,13 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .meters{display:flex;flex-direction:column;gap:12px}.meters .m{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12px}.meters .m .meter{grid-column:1/-1}
 table{border-collapse:collapse;width:100%;font-size:12.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;padding:6px;border-bottom:1px solid var(--grid)}
 td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:0}th.r,td.r{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow-x:auto}
-.acts{display:inline-flex;gap:4px;opacity:0;transition:opacity .12s}
-.thread:hover .acts,.acts:focus-within,.acts.show{opacity:1}
-.thread .t{position:relative}.thread .t .acts{position:absolute;right:0;top:50%;transform:translateY(-50%);background:var(--surface);padding-left:6px}
+.thread{border-radius:6px;transition:background .1s}.thread:hover,.thread.on{background:var(--wash)}
 .act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
-@media (hover:none){.acts{opacity:1}.head .tools{opacity:1}}
+@media (hover:none){.head .tools{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
 .only [data-ok="1"]{display:none}
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
@@ -805,10 +823,12 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 .gbar .gseg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
 .gbar button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer}
 .gbar button.on{background:var(--wash);color:var(--ink)}.gbar>button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
-.gpop{position:absolute;right:10px;top:10px;width:290px;max-height:calc(100% - 20px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:12.5px}
-.gpop h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}
+.gpop,.tcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:12.5px}
+.gpop{position:absolute;right:10px;top:10px;width:290px;max-height:calc(100% - 20px);overflow:auto}
+.tcard{position:fixed;left:0;top:0;width:300px;max-width:calc(100vw - 16px);z-index:9}
+.gpop h4,.tcard h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}.tcard h4{margin-right:0}
 .gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
-.gpop .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gpop .gacts a.act:hover{text-decoration:none}
+.gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:12.5px;padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
@@ -820,7 +840,10 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
 """
 
-JS = r"""
+# What a note's panel in the graph and a thread's card in the list both show,
+# built in one place, so the two offer the same actions under the same labels.
+# Each action opens a file or copies a phrase; none acts on the workspace.
+PANEL_JS = r"""
 var Panel=(function(){
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
@@ -849,6 +872,30 @@ document.addEventListener('mousemove',show);document.addEventListener('focusin',
 var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
 function put(text){if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* A thread's card: opens under its row on hover, or on focus from the keyboard,
+   with what the graph panel shows for that note. It is fixed, so a scrolled
+   page cannot push it out of view, and overlaps its row by a pixel, so the
+   pointer never falls into a gap on the way in. While one is open, another
+   row takes over only after a dwell, so the pointer can cross rows to reach it. */
+var tc=document.createElement('div'),tRow=null,tHide=0,tShow=0,tQuiet=false;tc.className='tcard';tc.id='tcard';tc.hidden=true;
+function tPlace(){if(!tRow)return;var b=tRow.getBoundingClientRect();if(b.bottom<0||b.top>innerHeight){tClose();return}
+var w=tc.offsetWidth,h=tc.offsetHeight,x=Math.min(b.right-w,innerWidth-w-8),y=b.bottom-1;if(y+h>innerHeight-8&&b.top-h+1>=8)y=b.top-h+1;
+tc.style.left=Math.max(8,x)+'px';tc.style.top=Math.max(8,y)+'px'}
+function tOpen(row){clearTimeout(tHide);clearTimeout(tShow);if(tRow!==row){var o;try{o=JSON.parse(row.dataset.card)}catch(x){return}
+if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.head(o)+Panel.acts(o);tc.setAttribute('aria-label',o.n);
+row.parentNode.insertBefore(tc,row.nextSibling)}tc.hidden=false;tPlace()}
+function tClose(){clearTimeout(tShow);clearTimeout(tHide);if(tRow)tRow.classList.remove('on');tRow=null;tc.hidden=true}
+function tLater(){clearTimeout(tShow);clearTimeout(tHide);tHide=setTimeout(tClose,220)}
+document.querySelectorAll('.thread[data-card]').forEach(function(row){
+row.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow);if(tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
+row.addEventListener('mouseleave',tLater);
+row.addEventListener('focusin',function(){if(tQuiet){tQuiet=false;return}tOpen(row)});
+row.addEventListener('click',function(e){if(e.target.closest('a,button'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})});
+tc.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow)});tc.addEventListener('mouseleave',tLater);
+document.addEventListener('focusin',function(e){if(tRow&&!tRow.contains(e.target)&&!tc.contains(e.target))tClose()});
+document.addEventListener('keydown',function(e){if(e.key!=='Escape'||!tRow)return;var r=tRow,back=tc.contains(document.activeElement);tClose();
+if(back){var a=r.querySelector('a');if(a){tQuiet=true;a.focus()}}});
+window.addEventListener('scroll',function(){if(tRow)requestAnimationFrame(tPlace)},{passive:true});window.addEventListener('resize',function(){if(tRow)tPlace()});
 var links={};document.querySelectorAll('nav a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});
 if('IntersectionObserver' in window){var io=new IntersectionObserver(function(es){es.forEach(function(x){if(x.isIntersecting&&links[x.target.id]){Object.keys(links).forEach(function(k){links[k].classList.remove('on')});links[x.target.id].classList.add('on')}})},{rootMargin:'-20% 0px -70% 0px'});Object.keys(links).forEach(function(id){var t=document.getElementById(id);if(t)io.observe(t)})}
 })();
@@ -971,17 +1018,13 @@ cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dat
 cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k},{passive:false});
-function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+var esc=Panel.esc;
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
-var stt=n.s?'Parked':n.d==null?'':(n.d>45?'Untouched for ':n.d>14?'Aging: updated ':'Updated ')+n.d+' day'+(n.d===1?'':'s')+(n.d>45?'':' ago');
-var acts='<a class="act" href="'+esc(n.u)+'">Open</a>';if(hub&&hub!==n)acts+='<a class="act" href="'+esc(hub.u)+'">Open project</a>';
-if(n.w)acts+='<button class="act" type="button" data-copy="'+esc((n.s?'wake ':'open ')+n.w)+'" data-say="'+esc('Copied “'+(n.s?'wake ':'open ')+n.w+'”. Paste it to your assistant.')+'">Copy “'+esc((n.s?'wake ':'open ')+n.w)+'”</button>';
+var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,pu:hub&&hub!==n?hub.u:''};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">everything</small>')+'</button>'}).join('');
-pop.innerHTML='<button class="x" aria-label="Close">×</button><h4>'+esc(n.n)+'</h4><div class="muted">'+esc([kindName(n),n.z,n.p].filter(Boolean).join(' · '))+'</div>'
-+(n.t.length?'<div style="margin-top:4px">'+n.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
-+(stt?'<div class="ink2" style="margin-top:4px">'+esc(stt)+'</div>':'')+'<div class="gacts">'+acts+'</div>'
+pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true}
@@ -1096,22 +1139,16 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             na += k == "warning"
             nb += k == "critical"
             chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
-            tip = "%s, %s: updated %s" % (r["project"], r["thread"], r["updated"].strftime("%d %b %Y") if r["updated"] else "never")
-            say = names[(r["project"], r["thread"])]
-            acts = ('<span class="acts">%s%s</span>' % (copy("Open", "open " + say, "Copied “open %s”. Paste it to your assistant." % say),
-                                                      copy("Park", "park " + say, "Copied “park %s”. Paste it to your assistant." % say)))
-            rows.append('<div class="thread" data-ok="%d" data-tip="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small>%s</div>'
+            rows.append('<div class="thread" data-ok="%d" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small></div>'
                         '<div class="fresh %s"><i style="width:%.1f%%"></i></div><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (k == "good", E(tip), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips, acts,
+                        % (k == "good", E(thread_card(r, names, link, days)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
                            k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)), "%dd" % days if days is not None else "—"))
         held = []
         for r in data["parked"]:
-            say = names[(r["project"], r["thread"])]
             days = (now.date() - r["updated"]).days if r["updated"] else None
-            held.append('<div class="thread" data-ok="1"><div class="t"><a href="%s">%s</a><small>%s</small><span class="acts show">%s</span></div>'
+            held.append('<div class="thread" data-ok="1" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s</small></div>'
                         '<span></span><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (E(link(r["note"])), E(r["thread"]), E(r["project"]),
-                           copy("Wake", "wake " + say, "Copied “wake %s”. Paste it to your assistant." % say),
+                        % (E(thread_card(r, names, link, days)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
                            "%dd" % days if days is not None else "—"))
         slug = re.sub(r"\W+", "-", z.lower())
         parked_block = ('<details class="parked" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
@@ -1121,7 +1158,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                  % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>over 45 days</span><span>· the bar is days since the thread note was updated, full at 60</span></div>')
-    threads_card = card("threads", "Threads", "%d live · %d parked · names, parties and dates only" % (live, parked_n),
+    threads_card = card("threads", "Threads", "%d live · %d parked · hover one for what to do" % (live, parked_n),
                         '<div class="zones">%s</div>%s' % (cols, legend))
 
     # ---- checks
@@ -1223,8 +1260,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
+                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

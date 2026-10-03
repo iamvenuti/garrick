@@ -48,6 +48,24 @@ def stamp(t):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
 
 
+def cards(html):
+    """Every thread row's card, by thread name, as the page's script reads it."""
+    out = {}
+    for raw in re.findall(r'class="thread"[^>]*data-card="([^"]*)"', html):
+        data = json.loads(htmllib.unescape(raw))
+        out[(data["p"], data["n"])] = data
+    return out
+
+
+def thread_order(html, anchor='id="zone-work"'):
+    """Thread names in the order a zone lists them, live ones or its Parked fold."""
+    start = html.index(anchor)
+    block = html[start:html.index("</details>", start)]
+    if anchor.startswith('id="zone-'):
+        block = block.split('<details class="parked"')[0]
+    return [json.loads(htmllib.unescape(raw))["n"] for raw in re.findall(r'data-card="([^"]*)"', block)]
+
+
 def luminance(hexa):
     def lin(c):
         c = int(c, 16) / 255
@@ -147,6 +165,16 @@ class TestGraph(StatusCase):
     def test_threads_carry_the_phrase_to_say(self):
         data = graph_data(self.page())
         self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])
+
+    def test_projects_carry_their_phrase(self):
+        data = graph_data(self.page())
+        self.assertEqual("Acme Review", data["nodes"][self.node(data, "Acme Review")]["w"])
+        write(self.root / "Zones" / "Personal" / "House" / "Threads" / "Acme Review" / "Acme Review.md",
+              thread_note("House", "Acme Review", ""))
+        write(self.root / "Zones" / "Personal" / "House" / "House.md", project_hub("Personal", "House", ""))
+        data = graph_data(self.page())
+        hub = next(n for n in data["nodes"] if n["n"] == "Acme Review" and n["h"])
+        self.assertEqual("", hub["w"])          # "open Acme Review" would reach the thread, so no phrase
 
     def test_titles_cannot_close_the_data(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -250,27 +278,77 @@ class TestParkedAndCopy(StatusCase):
         html = self.page()
         self.assertIn('id="parked-work"', html)
         self.assertIn("1 live · 1 parked", html)
-        self.assertIn('data-copy="wake Market Sizing"', html)
-        self.assertNotIn('data-copy="park Market Sizing"', html)
+        card = cards(html)[("Birch Entry", "Market Sizing")]
+        self.assertEqual((1, "Market Sizing"), (card["s"], card["w"]))   # the card offers "wake", not "park"
+        self.assertEqual(["Market Sizing"], thread_order(html, 'id="parked-work"'))
 
-    def test_copy_buttons_carry_the_phrase_to_say(self):
+    def test_cards_carry_the_phrase_to_say(self):
         html = self.page()
-        self.assertIn('data-copy="open Pricing"', html)
-        self.assertIn('data-copy="park Pricing"', html)
-        self.assertIn("status.py --workspace", html)
+        card = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual((0, "Pricing"), (card["s"], card["w"]))          # "open Pricing" and "park Pricing"
+        self.assertIn("status.py", html)
 
     def test_shared_names_are_said_with_their_project(self):
         write(self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md",
               thread_note("Birch Entry", "Pricing", "birch"))
-        html = self.page()
-        self.assertIn('data-copy="open Acme Review, Pricing"', html)
-        self.assertIn('data-copy="open Birch Entry, Pricing"', html)
+        found = cards(self.page())
+        self.assertEqual("Acme Review, Pricing", found[("Acme Review", "Pricing")]["w"])
+        self.assertEqual("Birch Entry, Pricing", found[("Birch Entry", "Pricing")]["w"])
 
     def test_buttons_only_copy(self):
         html = self.page()
         self.assertNotIn("shortcuts://", html)
         self.assertNotIn("<form", html)
+        for js in (status.PANEL_JS, status.JS, status.GRAPH_JS):
+            self.assertNotIn("fetch(", js)
+            self.assertNotIn("XMLHttpRequest", js)
+            self.assertNotIn("location.href=", js.replace("location.href=h.n.u", ""))  # double-click opens the note itself
 
+
+class TestThreadCards(StatusCase):
+    def test_rows_carry_a_card_not_buttons(self):
+        html = self.page()
+        start = html.index('<div class="zones">')
+        block = html[start:html.index('<div class="legend">', start)]
+        self.assertNotIn("<button", block)
+        self.assertNotIn("data-tip", block)
+        self.assertEqual({("Acme Review", "Pricing"), ("Birch Entry", "Market Sizing")}, set(cards(html)))
+
+    def test_a_card_carries_names_tags_dates_status_and_phrases_only(self):
+        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
+        card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "pu"}, set(card))
+        self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
+                         tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
+        self.assertTrue(card["u"].startswith("file://") and card["u"].endswith("/Pricing/Pricing.md"))
+        self.assertTrue(card["pu"].endswith("/Acme%20Review/Acme%20Review.md"))
+        self.assertNotIn("private figure", json.dumps(card))
+
+    def page(self, **kw):
+        return status.build(self.root, folder=self.jobs, **dict({"now": self.now}, **kw))
+
+    def test_one_helper_builds_both_sets_of_actions(self):
+        # The graph panel and the thread card draw their actions from Panel.acts
+        # and their heading from Panel.head; neither builds a button of its own.
+        self.assertEqual(1, status.PANEL_JS.count("function acts("))
+        for label in (">Open</a>", ">Open project</a>", "Copy “", "'open '", "'wake '", "'park '"):
+            self.assertIn(label, status.PANEL_JS)
+        for js in (status.JS, status.GRAPH_JS):
+            self.assertIn("Panel.head(o)+Panel.acts(o)", js)
+            self.assertNotIn("data-copy=", js)
+            self.assertNotIn('class="act"', js)
+
+    def test_the_card_stays_reachable(self):
+        # What a card needs so the pointer can reach it on a scrolled page.
+        self.assertIn(".tcard{position:fixed", status.CSS)
+        self.assertNotRegex(status.CSS, r"\.tcard\{[^}]*position:absolute")
+        self.assertIn("y=b.bottom-1", status.JS)           # overlaps its row by a pixel
+        self.assertIn("350", status.JS)                     # the dwell before another row takes over
+        self.assertIn("tc.addEventListener('mouseenter'", status.JS)
+        self.assertIn("'focusin'", status.JS)
+        self.assertIn("'Escape'", status.JS)
+        self.assertIn("document.addEventListener('click'", status.JS)   # copies inside a card work
 
 class TestPanels(StatusCase):
     def test_inbox_waiting(self):

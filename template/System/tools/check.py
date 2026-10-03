@@ -46,6 +46,7 @@ from garrick_lib import (  # noqa: E402
     load_context,
     mail_attachments,
     parse_frontmatter,
+    parse_frontmatter_text,
     parse_mail_bytes,
     sounds_alike,
     strip_recipients,
@@ -127,6 +128,7 @@ class Workspace:
     meetings: Dict[Path, dict] = field(default_factory=dict)  # meeting page -> frontmatter
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
+    meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
 
@@ -251,13 +253,41 @@ def _strip_md(parts: Tuple[str, ...]) -> Tuple[str, ...]:
     return parts
 
 
-def resolve(ws: Workspace, source: Path, target: str, candidates: Iterable[Path]) -> List[Path]:
-    """Which of `candidates` could `target`, written in `source`, point at?
+class PathIndex:
+    """Files a link may point at, indexed once: by the last part of each path,
+    for links matched the way Obsidian matches them, and by resolved path, for
+    exact ones. A link then costs the few files that share its last part, not
+    a pass over every file: thousands of notes stay seconds, not minutes."""
+
+    def __init__(self, ws: Workspace, candidates: Iterable[Path]):
+        self.items = list(candidates)
+        self.by_last: Dict[str, List[Tuple[Tuple[str, ...], Path]]] = {}
+        for c in self.items:
+            have = tuple(x.lower() for x in _strip_md(Path(rel(ws, c)).parts))
+            if have:
+                self.by_last.setdefault(have[-1], []).append((have, c))
+        self._exact: Optional[Dict[Path, List[Tuple[int, Path]]]] = None
+
+    def exact(self) -> Dict[Path, List[Tuple[int, Path]]]:
+        """Resolved path -> (position, file); built on the first exact link."""
+        if self._exact is None:
+            self._exact = {}
+            for i, c in enumerate(self.items):
+                try:
+                    self._exact.setdefault(c.resolve(), []).append((i, c))
+                except (OSError, RuntimeError):
+                    continue
+        return self._exact
+
+
+def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
+    """Which of `candidates` (files, or a PathIndex of them) could `target`,
+    written in `source`, point at?
 
     Absolute and ./ ../ paths resolve exactly. Everything else matches the way
     Obsidian does: a page whose path ends with the link's path.
     """
-    candidates = list(candidates)
+    index = candidates if isinstance(candidates, PathIndex) else PathIndex(ws, candidates)
     vault = None
     if target.startswith("obsidian:"):
         _, vault, target = target.split(":", 2)
@@ -265,21 +295,27 @@ def resolve(ws: Workspace, source: Path, target: str, candidates: Iterable[Path]
         base = Path(target) if target.startswith("/") else source.parent / target
         try:
             exact = base.resolve()
-        except OSError:
+        except (OSError, RuntimeError):
             return []
-        hits = [c for c in candidates if c.resolve() in (exact, exact.with_suffix(".md"), Path(str(exact) + ".md"))]
-        return hits
+        forms = [exact, Path(str(exact) + ".md")]
+        try:
+            forms.append(exact.with_suffix(".md"))
+        except ValueError:
+            pass
+        found: Dict[int, Path] = {}
+        for form in forms:
+            for i, c in index.exact().get(form, []):
+                found[i] = c
+        return [found[i] for i in sorted(found)]
     parts = _strip_md(tuple(p for p in target.replace("\\", "/").split("/") if p and p != "."))
     if not parts:
         return []
     tries = [((vault,) + parts)] if vault else []
     tries.append(parts)
     for want in tries:
-        hits = []
-        for c in candidates:
-            have = _strip_md(Path(rel(ws, c)).parts)
-            if len(have) >= len(want) and tuple(x.lower() for x in have[-len(want):]) == tuple(x.lower() for x in want):
-                hits.append(c)
+        want = tuple(x.lower() for x in want)
+        hits = [c for have, c in index.by_last.get(want[-1], [])
+                if len(have) >= len(want) and have[-len(want):] == want]
         if hits:
             return hits
     return []
@@ -626,7 +662,7 @@ def check_resume(ws: Workspace) -> List[Finding]:
     not when someone opens the thread months later. Placeholders, commands,
     web addresses and anything on another machine are not paths."""
     out = []
-    files = [p for p in walk_files(ws.root)]
+    files: Optional[PathIndex] = None  # every file in the workspace, indexed on the first link
     for project, _ in ws.projects:
         for thread in visible_dirs(project / "Threads"):
             note = thread / (thread.name + ".md")
@@ -639,6 +675,8 @@ def check_resume(ws: Workspace) -> List[Finding]:
                     target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
                     if not target or target.startswith("<") or "://" in target:
                         continue
+                    if files is None:
+                        files = PathIndex(ws, walk_files(ws.root))
                     if not resolve(ws, note, target, files):
                         out.append(Finding(WARNING, "resume", rel(ws, note),
                                            "Resume here links [[%s]], which leads nowhere" % target,
@@ -948,7 +986,9 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
-    meetings = list(ws.meetings)
+    if ws.meeting_links is None:
+        ws.meeting_links = PathIndex(ws, ws.meetings)
+    meetings = ws.meeting_links
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
     zone = project.parent.name
@@ -956,7 +996,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     # Links.
     seen = set()
-    for written, target in extract_links(text) if meetings else []:
+    for written, target in extract_links(text) if meetings.items else []:
         for page in resolve(ws, path, target, meetings):
             key = (written, page)
             if key in seen:
@@ -1313,13 +1353,16 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     mroot = ws.root / "Wikis" / "Meetings"
     if not kroot.is_dir():
         return out
-    kfiles = list(walk_files(kroot))
-    mfiles = [p for p in ws.wiki_files if mroot in p.parents]
+    kfiles = PathIndex(ws, walk_files(kroot))
+    mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
     raw = kroot / "raw"
     for path in walk_files(kroot):
         if path.suffix.lower() not in TEXT_SUFFIXES or raw in path.parents:
             continue
-        fm = parse_frontmatter(path) if path.suffix.lower() == ".md" else {}
+        text = read_text(path) or ""
+        fm = {}
+        if path.suffix.lower() == ".md":  # read once; a page too big to scan still has its fields read
+            fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
         carried = [k for k in ("parties", "zone") if as_list(fm.get(k))]
         if carried:
             out.append(Finding(ERROR, "knowledge", rel(ws, path),
@@ -1327,7 +1370,6 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                "Take the field out, or file the item in Meetings if it is a conversation"
                                % " and ".join("`%s`" % k for k in carried),
                                "A Knowledge page carries parties"))
-        text = read_text(path) or ""
         for written, target in extract_links(text):
             explicit = "Meetings/" in target.replace("\\", "/") or target.startswith("obsidian:Meetings:")
             if not explicit and resolve(ws, path, target, kfiles):

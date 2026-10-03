@@ -57,9 +57,9 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **Say the shortest name that is unique.** A thread name alone, if only one thread has it. Otherwise project and thread ("Acme, pricing"). The zone only when two projects share a name.
 - **When a name matches more than one thing**, ask in one line, naming the candidates. Never guess.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
-- **"Close X" or "wrap X"**: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
+- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
-- **"Park X"**: set the thread aside without closing it. **"Wake X"**: bring it back. **"What's parked"**: name the parked threads.
+- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back. **"What's parked"**: name the parked threads.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting on it. If a heard name is close to two entries, ask. Read through ordinary transcription noise without comment, and never correct the user's spelling back at them.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table.

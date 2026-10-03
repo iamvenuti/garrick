@@ -4,12 +4,13 @@ description: >
   Open, list, wrap, finish and create work threads, by voice or typed. The
   procedure behind the spoken commands in System/rules.md. Use when the user
   says "open X", "pick up X", "resume X", "where was I on X", "where am I",
-  "what's open", "what's open in Work", "close X", "wrap X", "wrap up", "wrap
-  this", "save where I am", "close for the day", "I'm done for today", "finish
-  X", "X is done", "close X for good", "park X", "put X aside", "wake X", "what's
-  parked", "new project X for Acme", "new thread X in Acme", or "start a thread
-  on X". Also use at the end of any session that
-  produced a decision or a deliverable, so the thread can be resumed cold.
+  "what's open", "what's open in Work", "close X", "wrap X", "wrap it", "wrap
+  up", "wrap this", "save where I am", "close for the day", "I'm done for
+  today", "finish X", "X is done", "close X for good", "park X", "put X
+  aside", "wake X", "unpark X", "what's parked", "new project X for Acme",
+  "new thread X in Acme", or "start a thread on X". Also use at the end of
+  any session that produced a decision or a deliverable, so the thread can be
+  resumed cold.
 ---
 
 # Threads
@@ -89,9 +90,9 @@ The **short name** is the one to say back: the thread name alone if no other
 thread has it; otherwise "project, thread"; the zone as well only when two
 projects share a name.
 
-**No name given** ("wrap this", "wrap up"): use the thread opened in this
-session, or the thread whose folder the session started in. If the session
-touched several, ask which, naming them.
+**No name given** ("wrap it", "wrap this", "wrap up"): use the thread opened
+in this session, or the thread whose folder the session started in. If the
+session touched several, ask which, naming them.
 
 ## Open: "open X"
 
@@ -306,7 +307,7 @@ them, or drop them?"
 
 Written: the outcome paragraph, the files changed, the commit hash.
 
-## Park: "park X", "put X aside"; wake: "wake X", "pick X up again"
+## Park: "park X", "put X aside"; wake: "wake X", "unpark X"
 
 Parking sets a thread aside without finishing it, so the lists stay short. It
 moves nothing: the folder, the Resume here block, the links and the history

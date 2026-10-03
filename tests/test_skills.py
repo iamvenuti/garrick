@@ -147,6 +147,21 @@ class SkillsTest(unittest.TestCase):
         rules = section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Files")
         self.assertIn("`YYMMDD - <name>.<ext>`", rules)
 
+    def test_thread_commands_survive_being_heard(self):
+        """The docs tell the user to say "wrap it". Waking is "wake X" or "unpark X":
+        "pick X up again" sounds like "pick up X", which opens a thread."""
+        phrases = triggers(SKILLS / "threads")
+        for phrase in ("wrap it", "wrap this", "wrap up", "pick up x", "wake x", "unpark x"):
+            self.assertIn(phrase, phrases, phrase)
+        text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn('**No name given** ("wrap it", "wrap this", "wrap up")', text)
+        self.assertIn('## Park: "park X", "put X aside"; wake: "wake X", "unpark X"',
+                      (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertNotIn("up again", text)
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        for needle in ('**"wrap it"** for the thread in hand', '**"Wake X"** or **"unpark X"**'):
+            self.assertIn(needle, rules, needle)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

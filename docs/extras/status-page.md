@@ -4,12 +4,12 @@ One page, Garrick's Status, that answers two questions before you open anything:
 
 ## What it shows
 
-- **A graph of the workspace**: every note in your zones and wikis, and the links between them. Each zone and wiki has its own spot, laid along the card: a few in a row, more round an ellipse in the card's proportions, with places that link to each other placed side by side. So a zone reads as a cluster, and the notes fill the card in either view. Each kind of note has its colour: projects, threads, meetings, mail filed in the Meetings wiki, people, Knowledge pages and other notes. Threads that have gone quiet carry an amber or red ring. Parked threads, with the notes in their folders, are hidden, and so is any project with no live thread left. Press *Show parked* to draw them, faded. Each zone's `Todo.md` stays out, since it has its own card, and so does every `AGENTS.md`, which holds instructions for assistants rather than notes. So do the zones' inboxes and any folder of raw records, old versions or generated pages (`raw`, `archive`, `generated`), but a project or thread is drawn whatever it is called. The legend lists only the kinds of note the view draws. Projects and threads are named; hover or click a note and its linked notes are named too, and zooming in names the rest. Names never sit on top of each other: the note in focus, its links, projects and then threads are placed first, and a name with no room under its note moves above or beside it, or waits until you zoom in or hover. A project's name and the selected note's always show. Click a note for its links and the same actions a thread's card offers. Double-click opens it. It sways a few degrees back and forth when left alone; a hover, a drag, an open panel or your system's reduced-motion setting stops it. *Fit* brings it back to the whole graph after you zoom or move it. *Projects and threads* and *Everything* switch how much it shows.
+- **A graph of the workspace**: every note in your zones and wikis, and the links between them, laid out to fill its card. *Projects and threads* and *Everything* switch how much it shows. Click a note for its links and the same actions a thread's card offers; double-click opens it. [Reading the graph](#reading-the-graph) says what it draws and what it leaves out.
 - **Threads**, one column per zone: every live thread, by name, with its project, its party and how long since its note was updated. The bar fills toward sixty days and turns amber after 14 days, red after 45. Threads you have parked ("park X") sit in a folded *Parked* group at the foot of their zone, also by name, out of the counts. Hover a thread for its card.
 - **Checks**: what `System/tools/check.py` finds, run as the page is built, grouped by check.
 - **Open actions**: the unticked items in each zone's `Todo.md`, counted by section, with an *Open* link to the list.
 - **Inboxes**: what is waiting to be filed in each zone's `Inbox/` and in the Meetings inbox.
-- **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps. A job's caps are the `GARRICK_CAP_*` values in its launchd plist, so that is where the page reads them, from the plists of the jobs that call the assistant, the lowest where they differ; a cap a plist leaves out is the default. With no such plist the caps are the ones the page was built with, and the card says which. A cap set to 0 shows as *no cap*. A job the cap stopped is one line in *Needs attention*, however many calls it lost.
+- **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps. The caps are the ones the jobs run under: the `GARRICK_CAP_*` values in the launchd plists of the jobs that call the assistant, with the default for any a plist leaves out and the lowest where jobs differ. With no such plist, the page shows the caps it was built with, and the card says which it used. A cap set to 0 shows as *no cap*. A job the cap stopped gets one line in *Needs attention*, however many calls it lost.
 - **Repositories and wikis**: what is not yet committed in the workspace, each zone and the wikis, and the date and title of the newest entry in each wiki's log.
 
 ![The graph on the demo workspace, with a thread selected](../assets/status-graph.png)
@@ -60,6 +60,18 @@ The page says how old it is, and turns its banner red when it is more than a day
 The page is a file, and a file cannot act on your workspace, so its buttons copy instead. Paste what a card copies to your assistant. The sidebar copies the command that rebuilds the page. It is absolute and quoted, so it runs from any folder, and it carries the flags the page was built with.
 
 Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself.
+
+## Reading the graph
+
+Each zone and wiki has its own spot on the card: a few sit in a row, more go round an ellipse in the card's proportions, and places that link to each other sit side by side. A zone reads as a cluster, and the notes fill the card in either view.
+
+Each kind of note has its own colour: projects, threads, meetings, mail filed in the Meetings wiki, people, Knowledge pages and other notes. The legend lists only the kinds the view draws. A thread that has gone quiet carries an amber or red ring. Parked threads, with the notes in their folders, are hidden, and so is any project with no live thread left; *Show parked* draws them, faded.
+
+Some notes stay off the graph: each zone's `Todo.md`, which has its own card; every `AGENTS.md`, which holds instructions for assistants rather than notes; the zones' inboxes; and any folder of raw records, old versions or generated pages (`raw`, `archive`, `generated`). A project or thread is drawn whatever it is called.
+
+Projects and threads are named. Hover or click a note and its linked notes are named too; zoom in and the rest are. Names are placed in order: the note in focus, its links, projects, then threads. A name with no room under its note moves above or beside it, or waits until you zoom in or hover, so one name never covers another. The exception is a project's name or the selected note's, which always shows, even on a graph too crowded to leave it room.
+
+The graph sways a few degrees back and forth when left alone. A hover, a drag, an open panel or your system's reduced-motion setting stops it, and once nothing moves it stops drawing. *Fit* brings back the whole graph after you zoom in or move it.
 
 ## Reading the job strips
 

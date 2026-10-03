@@ -31,7 +31,7 @@ Both routes use the same files, rules and skills. You can change routes later.
 
 | If you prefer… | Start here | What you need |
 |---|---|---|
-| A normal app window, with help setting up if wanted | [Desktop first steps](docs/first-steps.md), or a [guided session](docs/guided-session.md) | Claude's desktop app in Code mode, or Codex in the ChatGPT desktop app. Terminal is used for installation; daily work happens in the app. |
+| A normal app window, with help setting up if wanted | [Desktop first steps](docs/first-steps.md), or a [guided session](docs/guided-session.md) | Claude's desktop app in its Code tab, or Codex in the ChatGPT desktop app. Terminal is used for installation; daily work happens in the app. |
 | A terminal and tools you choose yourself | [Terminal setup](docs/terminal-setup.md) | Claude Code or Codex CLI. A provider's desktop app is optional. Add Obsidian for browsing or cmux for several sessions when useful. |
 
 Already set up? [Your first useful session](docs/first-session.md) takes one conversation through filing, a brief and a saved next action. Start with one project; add the rest as you need it.

@@ -6,23 +6,40 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Added
 
+- Garrick's mark: a white Gr on blue, set like an element tile, with a small "ai" in the full version (`docs/assets/garrick-mark.svg`, and `garrick-mark-favicon.svg` for small sizes). The letters are outlines of ANRT's Baskervville, under the SIL Open Font Licence. It sits beside the README's title, on the deck's cover and the social card, and in the status page's tab and heading; the deck, the social card and the adoption ladder take its blue as their accent.
+- The README opens with the wall at work, as a GIF that leads to the launch video, and an adoption ladder of four levels, each linking to its guides.
 - The `interview` skill: "interview me" opens with questions one at a time, including whose confidences you hold and which must never meet, keeps a record in `System/interviews/`, then proposes parties, walls, projects, threads and open actions and sets up only what you accept. Offered as an optional first step of the first session.
-- `extras/jobs/`, optional and outside core: an assistant on a schedule. One runner for Claude or Codex, picked by `GARRICK_HARNESS`, with tiers instead of model names; a wrapper with log, heartbeat, lock, watchdog, sign-in check and idle alarm; a ledger of every call with daily, hourly and cost caps; a deny profile so an unattended Claude cannot send, share, delete or edit `System/`, loaded with user and project settings only; and an example job, a "what's open" brief per zone, with a launchd plist.
-
-- `extras/status/`, optional and outside core: a status page. One self-contained HTML file with every live thread by zone and how long since it moved, what the check finds, open actions, what is waiting in the inboxes, and, with the jobs extra, a fourteen-day strip per job and the spend against its caps. Names, parties, dates and counts only, never what a note says; written to `System/generated/status.html`; links open the files, or Obsidian with `--obsidian VAULT`; nothing from the network. With a launchd plist for a nightly rebuild.
-- Parking a thread: "park X" sets it aside with `status: parked`, out of "what's open" and out of the Resume-links check, with its note untouched; "wake X" brings it back and "what's parked" lists them. The status page folds parked threads into their own group, and its buttons copy the phrase to say ("open Pricing", "park Pricing", "wake Pricing") or the rebuild command.
-- The status page draws a graph of the workspace at the top: every note in the zones and the wikis, and the links between them, each zone and wiki starting in its own region. It turns slowly until you touch it, rings threads that have gone quiet, and opens a panel on click with the note's links, buttons to open it or its project, and the phrase to say. It reads the targets of a note's links and nothing else from its body; `--no-graph` leaves it out. Every card can be dragged to another place or hidden, *Needs attention* excepted, and *Reset view* puts the page back as built. The arrangement is kept in the browser.
-- `System/generated/`, for pages a tool rebuilds. The installer's root `.gitignore` names it; `check.py` reports a generated file that is committed or a `.gitignore` without the line, and never reads the folder as wording shared by every side, so a page that gathers every zone cannot exempt anything from the wall check.
+- `extras/jobs/`, optional and outside core: an assistant on a schedule. One runner for Claude or Codex, picked by `GARRICK_HARNESS`, with tiers instead of model names; a wrapper with log, heartbeat, lock, watchdog, sign-in check and idle alarm; a ledger of every call with daily, hourly and cost caps; for Claude, a deny profile that refuses the sending, sharing and deleting tools it names and any edit to `System/`, loaded with user and project settings only; and an example job, a "what's open" brief per zone, with a launchd plist.
+- `extras/status/`, optional and outside core: a status page, *Garrick's Status*. One self-contained HTML file with every live thread by zone and how long since it moved, what the check finds, open actions, what is waiting in the inboxes, the newest entry in each wiki's log, and, with the jobs extra, a fourteen-day strip per job and the spend against its caps. It shows names, tags, dates, counts, check findings and the targets of links, not what a note says; written to `System/generated/status.html`; links open the files, or Obsidian with `--obsidian VAULT`; nothing from the network. With a launchd plist for a nightly rebuild.
+- The status page draws a graph of the workspace: every note in the zones and the wikis and the links between them, each zone and wiki starting in its own region, `AGENTS.md` and `Todo.md` left out. It rings threads that have gone quiet and opens a panel on click with the note's links, buttons to open it or its project, and the phrases to say. Parked projects stay off it until *Show parked*. It reads the targets of a note's links and nothing else from its body; `--no-graph` leaves it out. Every card can be dragged to another place or hidden, *Needs attention* excepted, and *Reset view* puts the page back as built. The arrangement is kept in the browser.
+- On the status page, hovering a thread in the list, or reaching it with the keyboard, opens a card with the same actions as the graph's panel. The list is sorted by name, and each zone's open actions have a link to its `Todo.md`.
+- Parking a thread: "park X" sets it aside with `status: parked`, out of "what's open", the end-of-day wrap, the scheduled brief and the Resume-links check, with its note untouched; "wake X" brings it back and "what's parked" lists them. The status page folds parked threads into their own group, and its buttons copy the phrase to say ("open Pricing", "park Pricing", "wake Pricing") or the rebuild command.
+- Notes of a call pasted into the conversation are filed like a dropped transcript: saved unedited to the Meetings inbox, then ingested. Asked to, prep saves its brief as a dated deliverable, after the same wall check, and commits it through the hook.
+- `System/generated/`, for pages a tool rebuilds. The installer's root `.gitignore` names it, and `check.py` reports a generated file that is committed or a `.gitignore` without the line.
 - `check.py` warns when a link or a file path in a live thread's Resume here block leads nowhere, so a deliverable renamed or moved shows up in the next check, not in the next cold resume.
+- Questions and feedback go to the repository's Discussions, linked from the issue chooser, the README and `CONTRIBUTING.md`. A bug report takes a desktop app's version as well as the command-line ones.
+- A sixteenth slide in the introduction, for the status page.
 
 ### Changed
 
+- The wall check counts wording as common only when it also appears in a file every side reads by design: the instruction files, `System/rules.md`, `System/context.md`, the skills, templates and tools, and the Knowledge wiki. An interview record, a generated page or anything else in `System/` no longer exempts what it repeats.
+- The installer refuses a target that is, holds or sits inside the folder it runs from, comparing folders rather than names: on a Mac, `~/garrick` and `~/Garrick` are one folder. A folder typed at the question goes in the home folder, the confirmation shows the full path, git is checked before the first question, the end of input stops it cleanly, and its last line suits either route.
+- The docs clone into `~/garrick-source`, and every example workspace has a folder of its own.
+- The workspace's `AGENTS.md` tells the assistant to search `Zones/` and `Wikis/` by path: the root's `.gitignore` leaves them out, so search tools started at the root skip them.
+- The threads skill's listing works the same in zsh and bash, and prints nothing on a workspace with no threads yet.
+- The diagram shows the desktop app as the main way to talk to the assistant, and says what the walls are: declared, with limited checks before a commit.
 - Separate desktop and terminal onboarding routes, with a shared first session that files one conversation, produces a brief and verifies resuming from a fresh chat.
 - Guided setup brings real use and a fictional wall demonstration into the first session. Obsidian, cmux, mail fetching and phone access are optional follow-ons.
 - Clarify declared pairwise walls, supported checks and their limits. Lead with continuity of work and local ownership instead of an absolute confidentiality claim.
 - Document Codex remote voice on iPhone with its desktop host requirement, and Claude Code Remote Control from a terminal.
 - The Obsidian guide shows how to make the graph readable: colour notes by level, leave parked and finished threads out, and link notes rather than quoting their paths, since Obsidian draws no line from a path in backticks.
 - The installer's `.gitignore` files leave out Obsidian's `workspace.json` and `graph.json` in any folder opened as a vault, since Obsidian rewrites both on every pan and zoom. Obsidian's settings are still tracked.
+
+### Fixed
+
+- The status page: its right column no longer renders right-aligned; the Wikis card reads the logs as they are written; the Wikis repository appears under Repositories; a note's title can no longer break the page's embedded data; the rebuild command it copies runs from anywhere; a mistyped `--workspace` stops instead of creating folders; and it reads frontmatter as `check.py` does.
+- The deck no longer says deleting the folder leaves nothing behind: the assistant's own chat history stays.
+- The demo builder takes a relative target as relative to where you run it.
 
 ## [0.1.0] - 2026-09-30
 
@@ -39,3 +56,6 @@ First public release.
 - `extras/fetch/imap_fetch.py`, optional and outside core: saves one IMAP mailbox or label into one zone's `Inbox/` with no assistant involved, so the assistant's vendor sees only the mail you file. The password comes from the macOS Keychain only. Works with password sign-in (Gmail app passwords, iCloud Mail, Fastmail), not with Microsoft 365 or Outlook.com, which accept only OAuth.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
+
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/iamvenuti/garrick/releases/tag/v0.1.0

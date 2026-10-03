@@ -23,7 +23,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
 
 ### Set it up
 
-1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and, for Claude, the deny profile refuses any edit to them.
+1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and the deny profile keeps Claude's file tools from editing them.
 2. **Run the example once by hand**, from the workspace:
    ```sh
    python3 System/jobs/job.py whats-open --agent --cwd ~/Garrick -- \
@@ -40,10 +40,11 @@ The example reads one zone per assistant call, so no single turn ever holds two 
 With nobody watching, a job gets the least it needs, and Claude is denied the ways out of the machine that the profile names.
 
 - **An allow list per call.** A job names the tools it needs: `--allow Read`, `--allow Grep`. Claude refuses the rest: with nobody to ask, any tool that needs permission and is not on the list is refused. A job that must write files names the tools for it: `--allow Edit`, `--allow Write`. The runner sets the permission mode to `default` on every call, so a default mode in your own settings, such as accepting edits, does not reach a job.
-- **A deny list on every call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; network and shell tools such as `curl`, `ssh`, `git push` and `rm`; and any edit under `System/`, inside `.git/`, or to the assistants' own settings. A deny beats an allow, so a job that lists one of these by mistake is still refused. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
-- **Only user and project settings.** Each call loads `--setting-sources user,project`. Allow rules you saved for your own sessions in a project's `.claude/settings.local.json` would otherwise apply to the job too. Tested with Claude Code 2.1.287: a job allowed only `Read`, started in a folder whose local settings allowed `python3`, ran `python3`; with `user,project` it was refused. Loading `user` alone goes too far: the job no longer reads the workspace's `AGENTS.md`.
+- **A deny list on every Claude call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; fetching web pages and searching the web; shell commands that start with `curl`, `ssh`, `git push`, `rm` and a few others; and edits by Claude's file tools under `System/`, inside `.git/`, to the assistants' own settings or to your launchd jobs. A deny beats an allow, so a tool on the list is refused even when a job lists it by mistake or your own settings allow it. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
+- **The shell rules are best-effort.** Each matches a command by how it starts, so `git -C . push` or `/bin/rm` gets past it, and the edit rules do not cover a shell command that writes a file. A job allowed `Bash` can do whatever a command can: allow it only to a job that needs it.
+- **Only user and project settings.** Each call loads `--setting-sources user,project`. Allow rules you saved for your own sessions in a project's `.claude/settings.local.json` would otherwise apply to the job too. Tested with Claude Code 2.1.287: a job allowed only `Read`, started in a folder whose local settings allowed `python3`, ran `python3`; with `user,project` it was refused. Loading `user` alone goes too far: the job no longer reads the workspace's `AGENTS.md`. Allow rules in `~/.claude/settings.json` and in the workspace's `.claude/settings.json` do reach a job; only the deny list stands above them.
 
-Under **Codex** there is no list of tools to allow or deny. A job runs sandboxed to its working folder, which is its write boundary, and has no connectors unless you have configured them. `agent.py requires <name>` stops a job, with exit 6, when the assistant has no connector it needs.
+Under **Codex** there is no list of tools to allow or deny, and the deny profile does not apply. A job runs sandboxed to its working folder, which is its write boundary, and has no connectors unless you have configured them. `agent.py requires <name>` stops a job, with exit 6, when the assistant has no connector it needs.
 
 ### What it spends
 

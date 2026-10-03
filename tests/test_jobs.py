@@ -185,7 +185,9 @@ class ProfileTest(unittest.TestCase):
                      "mcp__claude_ai_Gmail__forward", "mcp__claude_ai_Gmail__trash_thread",
                      "mcp__claude_ai_Google_Drive__share_file", "mcp__claude_ai_Google_Calendar__create_event",
                      "mcp__claude_ai_Notion__notion-create-comment", "Bash(git push:*)", "Bash(curl:*)",
-                     "Bash(rm:*)", "Edit(System/**)", "Write(**/.git/**)"):
+                     "Bash(rm:*)", "Edit(System/**)", "Write(**/.git/**)",
+                     # A user-level allow would otherwise reach a job: the web is denied outright.
+                     "WebFetch", "WebSearch"):
             self.assertIn(tool, deny, tool)
 
     def test_claude_command(self):

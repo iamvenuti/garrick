@@ -21,12 +21,15 @@ GARRICK_CODEX_MODEL_<TIER>, or its own default when that is unset.
 **What the assistant may do.** Claude takes a list of allowed tools per call
 (`--allow`) and refuses any other tool that needs permission, editing and
 writing files among them. On top of it, every call loads
-`headless-settings.json`, beside this file, whose deny list blocks every tool
-that sends, shares or deletes, and a deny beats an allow. The call also loads only your user and project
-settings, never a project's `.claude/settings.local.json`: allow rules kept
-there for your own sessions would otherwise reach a job nobody is watching.
-Codex has no per-tool list. It runs sandboxed to the job's folder, which is
-its write boundary, with no connectors unless you have configured them.
+`headless-settings.json`, beside this file, whose deny list names tools that
+send, share, delete or reach the web, and a deny beats an allow. Its
+shell rules match a command by how it starts, so they are best-effort. The
+call also loads only your user and project settings, never a project's
+`.claude/settings.local.json`: allow rules kept there for your own sessions
+would otherwise reach a job nobody is watching.
+Codex has no per-tool list and loads no profile. It runs sandboxed to the
+job's folder, which is its write boundary, with no connectors unless you have
+configured them.
 
 **What it spends.** Every call appends one line to `ledger.jsonl` in the jobs
 folder: when, which job, assistant, tier, turns, cost, seconds, exit code and

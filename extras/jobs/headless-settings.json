@@ -35,6 +35,8 @@
       "PushNotification",
       "CronCreate",
       "CronDelete",
+      "WebFetch",
+      "WebSearch",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(ssh:*)",

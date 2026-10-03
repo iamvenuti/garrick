@@ -457,6 +457,37 @@ class InteractiveTest(unittest.TestCase):
         finally:
             box.close()
 
+    def test_end_of_input_stops_without_writing(self):
+        box = Sandbox()
+        try:
+            cases = {
+                "no answers at all": "",
+                "a folder, then nothing": "ws-eof\n",  # "What is your name?" was asked forever
+                "all but Go ahead": "\n".join(["ws-eof"] + self.SHORT[:-1]) + "\n",  # "y" was assumed
+            }
+            for label, stdin in cases.items():
+                r = run([INSTALL], box.env, cwd=box.work, stdin=stdin, timeout=20)
+                self.assertEqual(r.returncode, 1, label)
+                self.assertEqual(r.stderr.strip(), "The input ended before the last question, so nothing was written.",
+                                 label)
+                self.assertEqual(list(box.home.iterdir()), [], label)
+        finally:
+            box.close()
+
+    def test_git_is_checked_before_the_first_question(self):
+        box = Sandbox()
+        try:
+            no_git = box.work / "bin"
+            no_git.mkdir()
+            env = dict(box.env, PATH=str(no_git))
+            r = run([INSTALL], env, cwd=box.work, stdin="\n".join(["ws-git"] + self.SHORT) + "\n", timeout=20)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("git is not installed", r.stderr)
+            self.assertNotIn("Where should the workspace go?", r.stdout)
+            self.assertEqual(list(box.home.iterdir()), [])
+        finally:
+            box.close()
+
 
 class ScaffoldTest(unittest.TestCase):
     @classmethod

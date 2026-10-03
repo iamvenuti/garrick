@@ -513,7 +513,9 @@ def ask(prompt, default=None):
     try:
         answer = input(f"{prompt}{suffix}\n> ").strip()
     except EOFError:
-        answer = ""
+        # Out of answers: stop, rather than ask forever or take "y" as the answer to "Go ahead?".
+        print()
+        raise InstallError("The input ended before the last question, so nothing was written.") from None
     print()
     return answer or (default or "")
 
@@ -526,6 +528,7 @@ def home_relative(answer):
 
 
 def interview(pl, target=None, force=False):
+    check_git()  # before the first question, not after the last
     print("Garrick setup. A few questions, one at a time. Press Enter to accept what is in [brackets].\n")
 
     while True:

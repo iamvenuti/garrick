@@ -24,7 +24,8 @@ Three levels of work, two memories, one system folder.
 
 Route every question by its subject, not by the folder the session happens to be open in or the one used last.
 
-- "Where did we land with X", "what did Y say", "what do I owe them" → `Wikis/Meetings/`.
+- "Where did we land with X", "what did Y say" → `Wikis/Meetings/`.
+- "What do I owe them" → their zone's `Todo.md`: the unticked lines for that party or person, or for a thread of one of their projects. A meeting page's actions table is what was agreed at the time, not what is still open.
 - "What is X", "what does the research say about Y" → `Wikis/Knowledge/`.
 - "Where am I on X", "open X" → that thread's `Resume here` block.
 - A question that could belong to two zones → ask which. Never pick one silently.

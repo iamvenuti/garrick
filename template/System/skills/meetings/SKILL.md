@@ -156,10 +156,10 @@ One meeting at a time, even when several files are waiting.
    Never push, and never add anything you did not touch this step.
 10. **Next file**, if more than one was waiting.
 
-Spoken: "Filed the call with Acme, 27 September. Dana owes the volumes by
-Friday; that's on the Work list." Add a second sentence only for something
-the user must know: a wall held something back, a new party or person was
-added, a commit failed.
+Spoken: "Filed the call with Acme, 27 September. You owe Dana the price
+sheet by Friday; that's on the Work list." Add a third sentence only for
+something the user must know: a wall held something back, a new party or
+person was added, a commit failed.
 
 Written: the same, then the page's path, the actions added, and the commit
 hashes.
@@ -307,7 +307,11 @@ writes a file only when the user asks to save the brief (step 7).
    check it against.
 3. **Gather.** Every page in `wiki/sources/` whose `parties` include X's tag
    (or the person's party), newest first. When the user names one
-   conversation ("the call I just filed"), that page alone.
+   conversation ("the call I just filed"), that page alone. Then what is
+   still open, from the `Todo.md` of the project's zone: the unticked lines
+   for X's party or person, or for a thread of a project whose `party` is
+   X's. A page's actions table is what was agreed at the time, not what is
+   still open.
 4. **Run the wall check**, exactly as the `threads` skill does before
    writing meeting material into a project:
    - A page missing `zone` or `parties`: unfinished, leave it out, and say
@@ -317,14 +321,16 @@ writes a file only when the user asks to save the brief (step 7).
    - A page whose `parties` include a tag walled (in `System/context.md`)
      against the project's party: leave it out entirely. Not quoted, not
      paraphrased, not summarised, not mentioned as having happened.
+   - A `Todo.md` line that names a walled party or one of its people, or a
+     thread of a project whose `party` is walled: leave it out the same way.
    - Nothing else backs this step up while the brief stays in the
      conversation: the zones' pre-commit wall check reads only what is about
      to be committed. A saved brief (step 7) is committed, so the hook reads
      it too, but only after this check has decided what it says.
 5. **Compose the briefing** from what passed: who they are (their person
    page), when you last met or wrote, what was decided, what is still open
-   from each page's actions table, and any commitment worth quoting. Say
-   only what the surviving pages support.
+   (the `Todo.md` lines), and any commitment worth quoting. Say only what
+   the surviving pages and lines support.
 6. **If a wall held anything back, say so and nothing more**: "A wall kept
    some meeting material out of this brief." No title, date, party or count,
    even if asked in the same breath.
@@ -359,7 +365,7 @@ open actions read out?" When the brief was saved, say where in place of
 the offer: "It's in Supplier Review's deliverables."
 
 Written: the same opening, then the pages drawn on (as links), the open
-actions across them, and any quoted commitments; when saved, the file's
+actions from `Todo.md`, and any quoted commitments; when saved, the file's
 path and the commit hash.
 
 ## Listening mode

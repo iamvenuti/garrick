@@ -168,6 +168,22 @@ class SkillsTest(unittest.TestCase):
                        "unticked lines that name this thread"):
             self.assertIn(needle, threads, needle)
 
+    def test_what_is_owed_comes_from_the_todo_list(self):
+        """Nothing updates a meeting page's actions table once an action is done:
+        what is still open is the zone's Todo.md, for a question and for a brief."""
+        agents = (REPO / "template" / "AGENTS.md").read_text(encoding="utf-8")
+        route = [line for line in agents.splitlines() if "what do i owe them" in line.lower()]
+        self.assertEqual(1, len(route), route)
+        self.assertIn("`Todo.md`", route[0])
+        self.assertNotIn("Wikis/Meetings", route[0])
+        self.assertIn("what was agreed at the time, not what is still open", route[0])
+        text = (SKILLS / "meetings" / "SKILL.md").read_text(encoding="utf-8")
+        prep = flat(section(text, '## Prep: "prep me for X", "brief me for X", "prepare a brief for X"'))
+        for needle in ("from the `Todo.md` of the project's zone", "A `Todo.md` line that names a walled party",
+                       "what is still open (the `Todo.md` lines)"):
+            self.assertIn(needle, prep, needle)
+        self.assertNotIn("from each page's actions table", prep)
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "meetings" / "SKILL.md", SKILLS / "threads" / "SKILL.md",

@@ -78,7 +78,9 @@ One meeting at a time, even when several files are waiting.
    project until it has them. When the transcript does not make them
    obvious, ask in one line, with a spoken form ready:
    - Written: "Which zone is this, and which parties were on the call?"
-   - Spoken: "Work or Personal, and who was on the call?"
+   - Spoken: "Which zone, and who was on the call?" With two or three
+     zones, say their names instead, as in "Clients or Home, and who was on
+     the call?"
    A party not yet in the Parties table: offer to add it, and ask whether a
    wall applies, exactly as the `threads` skill does for a new project's
    party: "X isn't a party yet. Add it to \<zone\>, and should anyone be
@@ -168,8 +170,8 @@ hashes.
 Acme"): there is nothing to ingest without the words of the call, so offer
 both routes: drop the transcript in `Wikis/Meetings/raw/inbox/`, or paste
 the notes or the transcript into the conversation (*Notes pasted in*). If
-they have a recorder connector such as `plaud` that can place a transcript
-in the inbox, say so as an option, not the only way. Spoken: "Drop the
+they have a recorder connector that can place a transcript in the inbox,
+say so as an option, not the only way. Spoken: "Drop the
 transcript in the inbox, or paste your notes here, and I'll file them."
 
 ## Notes pasted in
@@ -386,9 +388,8 @@ asked for the detail.
 - **It does not transcribe audio or talk to a recorder.** The inbox folder
   is the whole interface, and notes pasted into the conversation go through
   it too: any app that can export `.txt`, `.md` or `.vtt` works. A recorder
-  connector (for example the `plaud` skill) is an optional convenience that
-  places a file in the inbox for you; without one, place it yourself, or
-  paste the text.
+  connector is an optional convenience that places a file in the inbox for
+  you; without one, place it yourself, or paste the text.
 - **It never talks to a mail provider, and holds no credentials.** A zone's
   `Inbox/` is the whole interface for mail. Getting mail there, by hand, by
   a rule, by a script or by the assistant's own connector, is outside this

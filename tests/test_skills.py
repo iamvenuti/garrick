@@ -188,6 +188,14 @@ class SkillsTest(unittest.TestCase):
             self.assertNotIn(name, text, name)
         self.assertIn("A folder whose name starts with `_` is not part of the work", flat(text))
 
+    def test_meetings_assumes_no_zones_and_no_recorder(self):
+        """Zones are the user's to name, and the template ships no recorder skill."""
+        text = flat((SKILLS / "meetings" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertNotIn("Work or Personal", text)
+        self.assertIn('Spoken: "Which zone, and who was on the call?"', text)
+        self.assertNotIn("plaud", text.lower())
+        self.assertIn("a recorder connector", text)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

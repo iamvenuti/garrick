@@ -1,3 +1,5 @@
+<img src="docs/assets/garrick-mark.svg" alt="Garrick's mark: Gr on blue" width="96" align="right">
+
 # Garrick
 
 [![Tests](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml/badge.svg)](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml) [![MIT licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg) ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
@@ -10,7 +12,7 @@ Your work may involve customers, partners under NDA and internal projects. Garri
 
 [![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4)
 
-*[Watch the 84-second walkthrough](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) ([captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)). Dramatised with fictional data; it illustrates the intended workflow.*
+*[Download the 84-second walkthrough](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.mp4) (MP4, 16 MB; [captions](https://github.com/iamvenuti/garrick/releases/download/v0.1.0/garrick-launch-video.srt)). Dramatised with fictional data; it illustrates the intended workflow.*
 
 ## Start small
 
@@ -71,9 +73,9 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Mail, transcripts and files enter the workspace; the assistant files them under its rules. Obsidian, cmux and phone access are optional.](docs/architecture/overview.png)
+![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, cmux and phone access are optional.](docs/architecture/overview.png)
 
-Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace. Desktop users can talk to the assistant directly in their app.
+Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
 
 </details>
 
@@ -81,7 +83,7 @@ Download the [interactive diagram](docs/architecture/overview.html) and open it 
 
 Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
 
-[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page. Add one when it solves a problem you have; none is required for the first session.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page, Garrick's Status. Add one when it solves a problem you have; none is required for the first session.
 
 ## Status and documentation
 
@@ -90,7 +92,7 @@ Early, for macOS. See the [changelog](CHANGELOG.md).
 - [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
 - [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).
 - [Command reference](docs/getting-started.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
-- [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (download and open in a browser).
+- [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (open it in a browser from your downloaded copy, which holds its images).
 
 ## Contributing
 

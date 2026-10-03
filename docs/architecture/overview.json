@@ -214,13 +214,13 @@
       "id": "assistant",
       "type": "frontend",
       "label": "Your assistant",
-      "sublabel": "Claude Code or Codex",
+      "sublabel": "Claude or Codex in its desktop app",
       "pos": [
-        640,
+        630,
         420
       ],
       "size": [
-        180,
+        200,
         70
       ]
     },
@@ -252,7 +252,7 @@
     },
     {
       "kind": "region",
-      "label": "The workspace: run by your assistant, browsed in Obsidian",
+      "label": "The workspace: run by your assistant, browsed in any editor",
       "wraps": [
         "meetings",
         "acme",
@@ -338,7 +338,7 @@
       "id": "talk-here",
       "from": "cmux",
       "to": "assistant",
-      "label": "talk to it here",
+      "label": "or in a terminal",
       "variant": "dashed"
     },
     {
@@ -363,14 +363,14 @@
       "title": "One memory, walled use",
       "items": [
         "Everything is remembered in one place",
-        "One client's words never reach another client's work"
+        "Declared walls tell the assistant to keep one party's meetings out of another's projects, with limited checks before a commit"
       ]
     },
     {
       "dot": "slate",
       "title": "Tools around it",
       "items": [
-        "You talk to your assistant in cmux or on your phone; it follows the rules and does the work across everything",
+        "You talk to your assistant in its desktop app, or in cmux or on your phone; it follows the rules and does the work across everything",
         "Obsidian lets you browse and read all of it; cmux, Obsidian and a phone are optional"
       ]
     }

@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import os
+import plistlib
 import re
 import shlex
 import shutil
@@ -25,6 +26,7 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -490,6 +492,42 @@ class TestJobs(StatusCase):
         self.heartbeat(8)
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
+
+    def plists(self, **jobs):
+        """A LaunchAgents folder holding one plist per job, each as given."""
+        folder = self.jobs.parent / "LaunchAgents"
+        folder.mkdir(exist_ok=True)
+        for name, extra in jobs.items():
+            body = {"Label": "garrick." + name, "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", name, "--", "true"]}
+            body.update(extra)
+            (folder / (name + ".plist")).write_bytes(plistlib.dumps(body))
+        return mock.patch.object(status, "launch_agents", lambda: folder)
+
+    def test_schedules_read_monthly_weekly_and_daily(self):
+        with self.plists(monthly={"StartCalendarInterval": {"Day": 1, "Hour": 9, "Minute": 0}},
+                         weekly={"StartCalendarInterval": [{"Weekday": 1, "Hour": 7}, {"Weekday": 4, "Hour": 7}]},
+                         daily={"StartCalendarInterval": {"Hour": 23, "Minute": 30}}):
+            got = status.launchd_jobs()
+        self.assertEqual(("monthly day 1, 09:00", dt.timedelta(days=32)), (got["monthly"]["schedule"], got["monthly"]["late"]))
+        self.assertEqual(("weekly Mon 07:00, Thu 07:00", dt.timedelta(days=8)), (got["weekly"]["schedule"], got["weekly"]["late"]))
+        self.assertEqual(("daily 23:30", dt.timedelta(days=2)), (got["daily"]["schedule"], got["daily"]["late"]))
+
+    def test_a_monthly_job_is_not_late_after_a_week(self):
+        (self.jobs / "brief.heartbeat.json").write_text(json.dumps(
+            {"job": "brief", "finished": stamp(self.now.timestamp() - 7 * 86400), "exit": 0, "seconds": 30}))
+        with self.plists(brief={"StartCalendarInterval": {"Day": 1, "Hour": 9}}):
+            html = self.page()
+        self.assertIn("monthly day 1, 09:00", html)
+        self.assertNotIn("late: last ran", html)
+
+    def test_odd_plists_are_passed_over(self):
+        folder = self.jobs.parent / "LaunchAgents"
+        folder.mkdir()
+        (folder / "list.plist").write_bytes(plistlib.dumps(["not", "a", "dict"]))
+        (folder / "args.plist").write_bytes(plistlib.dumps({"ProgramArguments": "job.py brief"}))
+        (folder / "broken.plist").write_text("<plist>")
+        with mock.patch.object(status, "launch_agents", lambda: folder):
+            self.assertEqual({}, status.launchd_jobs())
 
 
 

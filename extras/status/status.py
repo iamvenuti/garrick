@@ -459,33 +459,82 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
             "kinds": [[i, KINDS[i][1]] for i in used], "mode": "all" if len(nodes) <= 150 else "core"}
 
 
-def schedules() -> Dict[str, Tuple[str, dt.timedelta]]:
-    """Job name -> (schedule in words, how long before a missing run is late),
-    from launchd jobs that run job.py. Elsewhere schedules are unknown."""
-    out = {}
-    folder = Path.home() / "Library" / "LaunchAgents"
+def launch_agents() -> Path:
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def _int(entry: dict, key: str) -> Optional[int]:
+    try:
+        return int(entry[key]) if key in entry else None
+    except (TypeError, ValueError):
+        return None
+
+
+MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+# How often a calendar entry fires, by the largest unit it names, and how long
+# without a run before the job counts as late.
+PERIODS = (("Month", "yearly", dt.timedelta(days=367)), ("Day", "monthly", dt.timedelta(days=32)),
+           ("Weekday", "weekly", dt.timedelta(days=8)), ("Hour", "daily", dt.timedelta(days=2)),
+           ("Minute", "hourly", dt.timedelta(hours=3)))
+
+
+def when(p: dict) -> Tuple[str, Optional[dt.timedelta]]:
+    """A launchd job's schedule in words, and how long before a missing run is
+    late: the shortest wait any of its calendar entries allows."""
+    if "StartInterval" in p:
+        secs = _int(p, "StartInterval")
+        if not secs or secs <= 0:
+            return "schedule not read", None
+        m = secs // 60
+        return ("every %d min" % m if m < 120 else "every %d h" % (m // 60)), dt.timedelta(seconds=3 * secs)
+    cal = p.get("StartCalendarInterval")
+    cal = [c for c in (cal if isinstance(cal, list) else [cal]) if isinstance(c, dict)]
+    if not cal:
+        return "no schedule in its plist", None
+    days = "Sun Mon Tue Wed Thu Fri Sat".split()
+    words, kinds, late = [], [], None
+    for c in cal:
+        kind, wait = next(((k, w) for key, k, w in PERIODS if key in c), ("every minute", dt.timedelta(minutes=3)))
+        hour, minute = _int(c, "Hour"), _int(c, "Minute") or 0
+        clock = "%02d:%02d" % (hour, minute) if hour is not None else "at :%02d" % minute
+        day, weekday, month = _int(c, "Day"), _int(c, "Weekday"), _int(c, "Month")
+        lead = ("%d %s " % (day or 1, MONTHS[(month - 1) % 12]) if month else "day %d, " % day if day
+                else days[weekday % 7] + " " if weekday is not None else "")
+        words.append(lead + clock)
+        kinds.append(kind)
+        late = wait if late is None else min(late, wait)
+    prefix = kinds[0] + " " if len(set(kinds)) == 1 else ""
+    return prefix + ", ".join(words), late
+
+
+def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
+    """Job name -> what its launchd plist says: the schedule in words, how
+    long before a missing run is late, whether it calls the assistant
+    (--agent) and the environment it runs with. Only plists that run job.py;
+    anything else in the folder, or a plist that does not read, is passed
+    over. Elsewhere than macOS there are none, and schedules are unknown."""
+    out: Dict[str, dict] = {}
+    folder = folder or launch_agents()
     if not folder.is_dir():
         return out
-    for plist in folder.glob("*.plist"):
+    for plist in sorted(folder.glob("*.plist")):
         try:
             p = plistlib.loads(plist.read_bytes())
         except Exception:
             continue
-        args = [str(a) for a in p.get("ProgramArguments", [])]
+        args = p.get("ProgramArguments") if isinstance(p, dict) else None
+        if not isinstance(args, list):
+            continue
+        args = [str(a) for a in args]
         at = next((i for i, a in enumerate(args) if a.endswith("job.py")), None)
         if at is None or at + 1 >= len(args):
             continue
-        name = args[at + 1]
-        if "StartInterval" in p:
-            m = int(p["StartInterval"]) // 60
-            out[name] = ("every %d min" % m if m < 120 else "every %d h" % (m // 60), dt.timedelta(seconds=3 * int(p["StartInterval"])))
-            continue
-        cal = p.get("StartCalendarInterval", {})
-        cal = cal if isinstance(cal, list) else [cal]
-        days = "Sun Mon Tue Wed Thu Fri Sat".split()
-        words = ", ".join((days[c["Weekday"] % 7] + " " if "Weekday" in c else "") + "%02d:%02d" % (c.get("Hour", 0), c.get("Minute", 0)) for c in cal)
-        weekly = bool(cal) and all("Weekday" in c for c in cal)
-        out[name] = (("weekly " if weekly else "daily ") + words, dt.timedelta(days=8 if weekly else 2))
+        flags = args[at + 2:]
+        flags = flags[:flags.index("--")] if "--" in flags else flags
+        env = p.get("EnvironmentVariables")
+        words, late = when(p)
+        out[args[at + 1]] = {"schedule": words, "late": late, "agent": "--agent" in flags,
+                             "env": env if isinstance(env, dict) else {}, "plist": plist}
     return out
 
 
@@ -508,7 +557,7 @@ def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime
 def jobs(folder: Path, now: dt.datetime) -> List[dict]:
     if not folder.is_dir():
         return []
-    sched = schedules()
+    sched = launchd_jobs()
     out = []
     for beat in sorted(folder.glob("*.heartbeat.json")):
         try:
@@ -522,7 +571,7 @@ def jobs(folder: Path, now: dt.datetime) -> List[dict]:
         except ValueError:
             pass
         code = int(hb.get("exit", -1)) if str(hb.get("exit", "")).lstrip("-").isdigit() else -1
-        words, limit = sched.get(name, ("schedule not found", None))
+        words, limit = (sched[name]["schedule"], sched[name]["late"]) if name in sched else ("schedule not found", None)
         if when and limit and now - when > limit:
             state, status = "critical", "late: last ran %s" % age(when, now)
         elif code not in OK_EXITS:

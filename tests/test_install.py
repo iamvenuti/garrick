@@ -10,6 +10,8 @@ running the tests is read or written.
 import importlib.util
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -115,8 +117,12 @@ class InstallTest(unittest.TestCase):
                      "Wikis/Knowledge/AGENTS.md", "Zones/Work/AGENTS.md", "Zones/Work/Todo.md",
                      "Zones/Personal/Todo.md", "Zones/Work/Inbox/.gitkeep", "Zones/Personal/Inbox/.gitkeep",
                      "System/skills/intake/SKILL.md", "System/skills/intake/intake.py",
-                     "System/skills/meetings/ingest.py"]:
+                     "System/skills/meetings/ingest.py", "System/templates/zone/AGENTS.md",
+                     "System/templates/zone/Todo.md", "System/templates/zone/Inbox/.gitkeep"]:
             self.assertTrue((r / path).exists(), path)
+        # A zone added later starts from the same template, with the same ignore file as every zone.
+        self.assertEqual((r / "System/templates/zone/.gitignore").read_text(), (r / "Zones/Work/.gitignore").read_text())
+        self.assertIn("System/templates/zone/Inbox/.gitkeep", git(r, "ls-files").splitlines())
         self.assertFalse((r / "Zones" / "_zone").exists())
         self.assertFalse((r / "Zones" / "Work" / "_project").exists())
         self.assertFalse((r / "System" / "templates" / "project" / "Threads").exists())
@@ -651,6 +657,144 @@ class ScaffoldTest(unittest.TestCase):
             self.skipTest("check.py is not in the template yet")
         r = run([check, "--root", self.root], self.box.env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+# The command docs/getting-started.md gives for a zone added after install. The tests run
+# it as written, with this interpreter, so the page and the script cannot drift apart.
+ZONE_COMMAND = re.search(r'^python3 (System/tools/scaffold\.py zone "([^"]+)" --holds "[^"]+")$',
+                         (REPO / "docs" / "getting-started.md").read_text(encoding="utf-8"), re.M)
+
+
+def first_commit(repo):
+    return git(repo, "rev-list", "--max-parents=0", "HEAD")
+
+
+class ZoneTest(unittest.TestCase):
+    """A zone added after install is made the way the installer makes one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.box = Sandbox()
+        cls.root, r = cls.box.install("ws")
+        assert r.returncode == 0, r.stderr
+        assert ZONE_COMMAND, "docs/getting-started.md gives no scaffold.py zone command"
+        cls.name = ZONE_COMMAND.group(2)
+        cls.zone = cls.root / "Zones" / cls.name
+        cls.made = run(shlex.split(ZONE_COMMAND.group(1)), cls.box.env, cwd=cls.root)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.box.close()
+
+    def scaffold(self, *args):
+        return run([self.root / "System" / "tools" / "scaffold.py", *args], self.box.env, cwd=self.root)
+
+    def test_says_what_it_made_and_what_to_say_next(self):
+        self.assertEqual(self.made.returncode, 0, self.made.stderr)
+        said = self.made.stdout.strip().splitlines()
+        self.assertEqual(said[0], f"Created the {self.name} zone: its own folder and git history, an inbox, "
+                                  "and the wall check before every commit.")
+        self.assertIn(f"Added {self.name} to the Zones table in System/context.md.", said[1])
+        self.assertTrue(said[-1].startswith(f'Next, say "new project <name> for <party> in {self.name}'), said[-1])
+
+    def test_made_as_the_installer_makes_a_zone(self):
+        personal = self.root / "Zones" / "Personal"
+
+        def first(zone):
+            """Each file and link in the zone's first commit, with the zone's name taken out."""
+            out = {}
+            for name in git(zone, "ls-tree", "-r", "--name-only", first_commit(zone)).splitlines():
+                path = zone / name
+                out[name] = os.readlink(path) if path.is_symlink() else path.read_text().replace(zone.name, "<zone>")
+            return out
+
+        self.assertEqual(first(self.zone), first(personal))
+        self.assertEqual(git(self.zone, "log", "--format=%s", first_commit(self.zone)), f"Garrick: {self.name} created")
+        self.assertEqual(git(self.zone, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+        for repo in (self.zone, personal):  # git had an identity, so neither sets its own
+            self.assertEqual(git(repo, "config", "--local", "--get-regexp", r"^user\."), "", repo)
+        hook = self.zone / ".git" / "hooks" / "pre-commit"
+        self.assertEqual(hook.read_text(), (personal / ".git" / "hooks" / "pre-commit").read_text())
+        self.assertTrue(os.access(hook, os.X_OK))
+        for harness in (".claude", ".agents"):
+            self.assertEqual((self.zone / harness / "skills").resolve(), (self.root / "System" / "skills").resolve())
+        # Its inbox stays out of its history, as every zone's does.
+        dropped = self.zone / "Inbox" / "Quote.eml"
+        dropped.write_text("From: dana.whitlock@acmecorp.example\n\nx\n")
+        try:
+            self.assertEqual(git(self.zone, "status", "--porcelain", "--untracked-files=all"), "")
+        finally:
+            dropped.unlink()
+
+    def test_listed_in_context_and_left_to_commit(self):
+        text = (self.root / "System" / "context.md").read_text()
+        zones = text.split("## Zones", 1)[1].split("\n## ", 1)[0]
+        rows = [line for line in zones.splitlines() if line.startswith("| ") and "---" not in line]
+        self.assertEqual([r.split("|")[1].strip() for r in rows], ["Zone", "Work", "Personal", self.name])
+        self.assertEqual(git(self.root, "status", "--porcelain"), "M System/context.md")
+
+    def test_check_stays_clean_and_the_hook_works_in_it(self):
+        check = run([self.root / "System" / "tools" / "check.py", "--root", self.root], self.box.env)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertIn("No problems found.", check.stdout)
+        made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--party", "acme", "--thread", "Roof")
+        self.assertEqual(made.returncode, 0, made.stderr)
+        note = self.zone / "Shed" / "Threads" / "Roof" / "Notes.md"
+        note.write_text("Theo Marsh says the roof will hold.\n")  # Birch's partner, behind the wall from acme
+        try:
+            git(self.zone, "add", "-A")
+            r = subprocess.run(["git", "-C", str(self.zone), "commit", "-q", "-m", "Shed"],
+                               env=self.box.env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("Commit refused: Zones/%s/Shed/Threads/Roof/Notes.md" % self.name, r.stderr)
+        finally:
+            git(self.zone, "reset", "-q")
+            shutil.rmtree(self.zone / "Shed")
+        self.assertEqual(git(self.zone, "rev-list", "--count", "HEAD"), "1")
+
+    def test_refusals(self):
+        context = (self.root / "System" / "context.md").read_text()
+        for name, why in (("work", "already has a zone called Work"), ("Werk", "sounds too much like Work"),
+                          ("Clients 2", "contains a digit"), ("_Garden", "starts with an underscore")):
+            r = self.scaffold("zone", name, "--holds", "Anything")
+            self.assertEqual(r.returncode, 1, (name, r.stdout))
+            self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
+            self.assertIn(why, r.stderr)
+        ignore = self.root / "System" / "templates" / "zone" / ".gitignore"
+        kept = ignore.read_text()
+        ignore.unlink()
+        try:
+            r = self.scaffold("zone", "Studio", "--holds", "Paintings")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("The zone template, System/templates/zone, is missing or has no .gitignore.", r.stderr)
+        finally:
+            ignore.write_text(kept)
+        self.assertEqual(sorted(p.name for p in (self.root / "Zones").iterdir()), sorted(["Personal", "Work", self.name]))
+        self.assertEqual((self.root / "System" / "context.md").read_text(), context)
+
+
+class ZoneIdentityTest(unittest.TestCase):
+    def test_a_new_zone_commits_as_the_workspace_does(self):
+        box = Sandbox()
+        self.addCleanup(box.close)
+        empty = box.work / "empty-gitconfig"
+        empty.write_text("")
+        # No identity anywhere but what the workspace sets itself, not even in the environment.
+        env = {k: v for k, v in box.env.items() if not k.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))}
+        env["GIT_CONFIG_GLOBAL"] = str(empty)
+        target = box.work / "anon"
+        self.assertEqual(run([INSTALL, "--config", EXAMPLE, "--target", target], env).returncode, 0)
+        subprocess.run(["/bin/sh", "-c", load_installer().OWN_ADDRESS], cwd=target, env=env, check=True)
+        scaffold = target / "System" / "tools" / "scaffold.py"
+        r = run([scaffold, "zone", "Garage", "--holds", ""], env, cwd=target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        garage = target / "Zones" / "Garage"
+        self.assertEqual(git(garage, "config", "user.name"), "Sam Rivera")
+        self.assertEqual(git(garage, "config", "user.email"), "you@example.com")
+        self.assertEqual(git(garage, "log", "-1", "--format=%an <%ae>"), "Sam Rivera <you@example.com>")
+        # Nothing said about what it holds: the row waits for it, as the installer's does.
+        self.assertIn("| Garage | <What Garage holds> |", (target / "System" / "context.md").read_text())
+        self.assertEqual(empty.read_text(), "")
 
 
 if __name__ == "__main__":

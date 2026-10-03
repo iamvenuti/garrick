@@ -1,8 +1,8 @@
 """Shared helpers for Garrick's tools.
 
-Standard library only, Python 3.9 or later. The checker (`check.py`) and the
-installer both import this module, so the public functions below keep their
-signatures:
+Standard library only, Python 3.9 or later. The checker (`check.py`),
+`scaffold.py` and the installer all import this module, so the public
+functions below keep their signatures:
 
     parse_frontmatter(path) -> dict
     is_speakable(name) -> (bool, str)
@@ -12,6 +12,10 @@ signatures:
     workspace_root(start=None) -> Path
     install_wall_hook(zone) -> Path
     has_wall_hook(zone) -> bool
+    hooks_path(repo) -> str
+    skill_links(root, repo) -> [(link, target)]
+    init_repo(path, message, identity=None, paths=None)
+    table_row(cells) -> str
     parse_mail(path) -> dict
     mail_attachments(data) -> [(name, type, bytes)]
     parties_for_domain(context, domain) -> [tag]
@@ -25,6 +29,7 @@ import email
 import email.policy
 import os
 import re
+import subprocess
 import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
@@ -47,8 +52,17 @@ __all__ = [
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
+    "hooks_path",
     "WALL_HOOK",
     "WALL_HOOK_MARK",
+    "ZONE_TEMPLATE",
+    "SKILL_FOLDERS",
+    "LOCAL_EMAIL",
+    "GitError",
+    "git",
+    "skill_links",
+    "init_repo",
+    "table_row",
     "INBOX",
     "MAIL_EXTS",
     "MEDIA_EXTS",
@@ -513,6 +527,68 @@ def install_wall_hook(zone: PathLike) -> Path:
     hook.write_text(WALL_HOOK, encoding="utf-8")
     hook.chmod(0o755)
     return hook
+
+
+def hooks_path(repo: PathLike) -> str:
+    """Where git takes this repository's hooks from, when a setting moves them
+    away from `.git/hooks`; then the wall check does not run. "" otherwise."""
+    try:
+        r = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=str(repo), capture_output=True, text=True)
+    except OSError:
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+# ---------------------------------------------------------------------------
+# Repositories: what the installer makes, and scaffold.py makes again for a zone
+# ---------------------------------------------------------------------------
+
+# Every zone starts as a copy of this folder, with the zone's name filled in:
+# the installer's zones and the ones scaffold.py adds later alike.
+ZONE_TEMPLATE = ("System", "templates", "zone")
+
+# Claude Code looks for skills in .claude/skills and Codex in .agents/skills,
+# from the session's folder up to its git repository's root.
+SKILL_FOLDERS = (".claude", ".agents")
+
+# The address the installer sets in the workspace's repositories when git has none.
+LOCAL_EMAIL = "garrick@localhost"
+
+
+class GitError(RuntimeError):
+    """A git command that failed, with git's own reason."""
+
+
+def git(args: List[str], cwd: PathLike) -> str:
+    r = subprocess.run(["git"] + list(args), cwd=str(cwd), capture_output=True, text=True)
+    if r.returncode != 0:
+        raise GitError("git %s failed in %s: %s" % (" ".join(args), cwd, r.stderr.strip() or r.stdout.strip()))
+    return r.stdout.strip()
+
+
+def skill_links(root: PathLike, repo: PathLike) -> List[Tuple[Path, str]]:
+    """The links that let an assistant started anywhere in `repo` find the
+    workspace's one skills folder: (link, relative target) for each assistant."""
+    target = os.path.relpath(Path(root) / "System" / "skills", Path(repo) / SKILL_FOLDERS[0])
+    return [(Path(repo) / folder / "skills", target) for folder in SKILL_FOLDERS]
+
+
+def init_repo(path: PathLike, message: str, identity: Optional[Dict[str, str]] = None,
+              paths: Optional[List[str]] = None) -> None:
+    """Make `path` its own git repository on branch main, then commit `paths`,
+    or everything, as its first commit. `identity` holds git settings such as
+    user.name and user.email, set in this repository alone. Raises GitError."""
+    git(["init", "-q"], path)
+    git(["symbolic-ref", "HEAD", "refs/heads/main"], path)
+    for key, value in (identity or {}).items():
+        git(["config", key, value], path)
+    git(["add", "--"] + list(paths) if paths else ["add", "-A"], path)
+    git(["commit", "-q", "-m", message], path)
+
+
+def table_row(cells: List[str]) -> str:
+    """One row of a Markdown table, with pipes and line breaks made safe."""
+    return "| " + " | ".join(str(c).replace("|", "\\|").replace("\n", " ") for c in cells) + " |"
 
 
 # ---------------------------------------------------------------------------

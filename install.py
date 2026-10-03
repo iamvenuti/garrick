@@ -55,7 +55,8 @@ def ph(key):
 
 def lib():
     sys.dont_write_bytecode = True  # leave template/System/tools free of __pycache__
-    sys.path.insert(0, str(TOOLS))
+    if str(TOOLS) not in sys.path:
+        sys.path.insert(0, str(TOOLS))
     try:
         import garrick_lib  # noqa: F401
     except ImportError as exc:
@@ -348,12 +349,8 @@ def fill_text(text, values):
     return text
 
 
-def cell(text):
-    return text.replace("|", "\\|").replace("\n", " ")
-
-
 def table(header_lines, rows):
-    return header_lines + ["| " + " | ".join(cell(c) for c in row) + " |" for row in rows]
+    return header_lines + [lib().table_row(row) for row in rows]
 
 
 def render_context(template_text, cfg):
@@ -402,13 +399,6 @@ def count(items, one, many):
     return f"{len(items)} {one if len(items) == 1 else many}"
 
 
-def git(args, cwd, env=None):
-    r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, env=env)
-    if r.returncode != 0:
-        raise InstallError(f"git {' '.join(args)} failed in {cwd}: {r.stderr.strip() or r.stdout.strip()}")
-    return r.stdout.strip()
-
-
 def git_identity_missing(cwd):
     for key in ("user.name", "user.email"):
         r = subprocess.run(["git", "config", "--get", key], cwd=cwd, capture_output=True, text=True)
@@ -417,14 +407,14 @@ def git_identity_missing(cwd):
     return False
 
 
-def init_repo(path, message, owner_name, local_identity, paths=("-A",)):
-    git(["init", "-q"], path)
-    git(["symbolic-ref", "HEAD", "refs/heads/main"], path)
-    if local_identity:
-        git(["config", "user.name", owner_name], path)
-        git(["config", "user.email", "garrick@localhost"], path)
-    git(["add", "--"] + list(paths) if paths != ("-A",) else ["add", "-A"], path)
-    git(["commit", "-q", "-m", message], path)
+def init_repo(path, message, owner_name, local_identity, paths=None):
+    """garrick_lib makes the repository, as it does for a zone scaffold.py adds later."""
+    pl = lib()
+    identity = {"user.name": owner_name, "user.email": pl.LOCAL_EMAIL} if local_identity else None
+    try:
+        pl.init_repo(path, message, identity, paths)
+    except pl.GitError as exc:
+        raise InstallError(str(exc)) from None
 
 
 def install(cfg, target, force=False, quiet=False):
@@ -451,20 +441,19 @@ def install(cfg, target, force=False, quiet=False):
     w.mkdir(root / "Wikis")
     w.copy_tree(TEMPLATE / "Wikis", root / "Wikis")
 
-    # One folder per zone.
+    # One folder per zone, from the template that System/tools/scaffold.py uses for a zone added later.
     for z in cfg["zones"]:
         zdir = root / "Zones" / z["name"]
         w.mkdir(zdir)
-        w.copy_tree(TEMPLATE / "Zones" / "_zone", zdir, fill={"ZONE": z["name"]})
+        w.copy_tree(TEMPLATE.joinpath(*pl.ZONE_TEMPLATE), zdir, fill={"ZONE": z["name"]})
 
     # Skill discovery. Claude Code reads .claude/skills and Codex reads .agents/skills
     # from the session's folder up to its git repository root. Zones and Wikis are
     # their own repositories, so each gets its own pointer at the one skills folder.
     repos = [root, root / "Wikis"] + [root / "Zones" / z["name"] for z in cfg["zones"]]
     for repo in repos:
-        rel = os.path.relpath(root / "System" / "skills", repo / ".claude")
-        for harness in (".claude", ".agents"):
-            w.symlink(repo / harness / "skills", rel)
+        for link, points_to in pl.skill_links(root, repo):
+            w.symlink(link, points_to)
 
     ignore = (".DS_Store\n._*\n__pycache__/\n"
               "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
@@ -478,6 +467,10 @@ def install(cfg, target, force=False, quiet=False):
     local_identity = git_identity_missing(root)
     for repo in repos[1:]:
         init_repo(repo, f"Garrick: {repo.name} created", cfg["owner"]["name"], local_identity)
+    # A zone added later is copied from the zone template, so the template keeps the
+    # ignore file every zone was just given: its inbox stays out of that zone's history too.
+    first_zone = root / "Zones" / cfg["zones"][0]["name"]
+    w.write(root.joinpath(*pl.ZONE_TEMPLATE, ".gitignore"), (first_zone / ".gitignore").read_text(encoding="utf-8"))
     # Only what Garrick wrote: with --force the folder may hold the user's own files.
     init_repo(root, "Garrick: workspace created", cfg["owner"]["name"], local_identity,
               paths=("AGENTS.md", "System", ".gitignore", ".claude", ".agents"))
@@ -490,7 +483,7 @@ def install(cfg, target, force=False, quiet=False):
             pl.install_wall_hook(zdir)
         except (FileExistsError, FileNotFoundError) as exc:
             raise InstallError(f"Could not install the wall check: {exc}")
-    hooks_path = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=root, capture_output=True, text=True)
+    hooks_path = pl.hooks_path(root)
 
     say("")
     say(f"Your workspace is ready at {root}")
@@ -499,11 +492,12 @@ def install(cfg, target, force=False, quiet=False):
     say("  Each zone has an Inbox folder: drop mail or any file there, and say \"process the inbox\".")
     say(f"  {count(cfg['parties'], 'party', 'parties')}, {count(cfg['walls'], 'wall', 'walls')} "
         f"and {count(cfg['people'], 'person', 'people')} in System/context.md.")
-    if hooks_path.returncode == 0 and hooks_path.stdout.strip():
-        say(f"  git is set to take its hooks from {hooks_path.stdout.strip()}, so the wall check will not run before commits.")
+    if hooks_path:
+        say(f"  git is set to take its hooks from {hooks_path}, so the wall check will not run before commits.")
         say("  To turn it on, run in each zone: git config core.hooksPath .git/hooks")
     else:
         say("  Each zone checks the walls before every commit.")
+    say("  More zones and parties can come later: ask your assistant.")
     if local_identity:
         say("  git had no name or email set, so commits here carry your name and the address garrick@localhost. "
             "Nothing needs changing.")

@@ -16,7 +16,7 @@ Zones never mix in storage. Giving each zone its own repository makes that true 
 
 The price is paid with Codex. A Codex session opened anywhere inside `Zones/Work` reads `Zones/Work/AGENTS.md`, because that is its repository's root file. It does not reach the workspace root's `AGENTS.md`, `System/rules.md` or `System/context.md`, because those sit in a different repository.
 
-That's why `template/Zones/_zone/AGENTS.md` opens with an explicit pointer: "Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own." `Wikis/AGENTS.md` carries the same line, pointing one level up. Claude Code is not bound by the repository boundary in the same way; the pointer is there for the harness that is, and costs Claude Code nothing to follow.
+That's why each zone's `AGENTS.md`, from `template/System/templates/zone/AGENTS.md`, opens with an explicit pointer: "Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own." `Wikis/AGENTS.md` carries the same line, pointing one level up. Claude Code is not bound by the repository boundary in the same way; the pointer is there for the harness that is, and costs Claude Code nothing to follow.
 
 ## Skill discovery
 

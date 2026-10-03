@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from fixtures import CONTEXT, write
+from fixtures import CONTEXT, GIT_ENV, HAVE_GIT, write
 
 import garrick_lib as lib  # noqa: E402  (fixtures puts the tools folder on sys.path)
 
@@ -167,6 +169,39 @@ class TestWorkspaceRoot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
                 lib.workspace_root(tmp)
+
+
+class TestRepositories(unittest.TestCase):
+    """The pieces the installer and scaffold.py both use to make a zone."""
+
+    def test_skill_links_point_at_the_one_skills_folder(self):
+        root = Path("/ws")
+        self.assertEqual([(root / "Zones/Work/.claude/skills", "../../../System/skills"),
+                          (root / "Zones/Work/.agents/skills", "../../../System/skills")],
+                         lib.skill_links(root, root / "Zones" / "Work"))
+        self.assertEqual((root / ".agents/skills", "../System/skills"), lib.skill_links(root, root)[1])
+
+    def test_table_row(self):
+        self.assertEqual("| Garden | House \\| garden, all on one line |",
+                         lib.table_row(["Garden", "House | garden,\nall on one line"]))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_init_repo(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, GIT_ENV):
+            repo = Path(tmp).resolve()
+            write(repo / "Todo.md", "# Garden: open actions\n")
+            lib.init_repo(repo, "Garrick: Garden created", {"user.name": "Jo Example", "user.email": lib.LOCAL_EMAIL})
+            self.assertEqual("main", lib.git(["rev-parse", "--abbrev-ref", "HEAD"], repo))
+            self.assertEqual("Garrick: Garden created", lib.git(["log", "--format=%s"], repo))
+            self.assertEqual("garrick@localhost", lib.git(["config", "--local", "user.email"], repo))
+            self.assertEqual("", lib.hooks_path(repo))
+            lib.git(["config", "core.hooksPath", "/elsewhere"], repo)
+            self.assertEqual("/elsewhere", lib.hooks_path(repo))
+            empty = repo / "Empty"
+            empty.mkdir()
+            with self.assertRaises(lib.GitError) as caught:  # nothing to commit
+                lib.init_repo(empty, "First")
+            self.assertIn("git commit -q -m First failed in", str(caught.exception))
 
 
 if __name__ == "__main__":

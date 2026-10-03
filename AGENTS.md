@@ -9,8 +9,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/` | The workspace a user gets. Copied, then filled in by the installer |
 | `template/System/rules.md` | How an assistant behaves in an installed workspace. The only copy |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
-| `template/Zones/_zone/` | One zone. The installer makes one copy per zone the user names, and `scaffold.py zone` one for a zone added later |
-| `template/System/templates/` | The project and thread templates, filled by `System/tools/scaffold.py` |
+| `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
 | `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py` |
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |

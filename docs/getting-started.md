@@ -12,7 +12,7 @@ From the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP or `~/ga
 python3 install.py
 ```
 
-This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. A party is an organisation or person whose confidences you hold, and each gets a one-word tag and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the parties relevant to your first project and add others later.
+This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. A party is an organisation or person whose confidences you hold, and each gets a one-word tag and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the zones and parties relevant to your first project and add others later: parties in `System/context.md`, zones as [Another zone](#another-zone) describes.
 
 To skip the questions (for a demo, a test, or a guided session), pass a config file:
 
@@ -33,7 +33,7 @@ AGENTS.md               entry point for any assistant
 System/
   rules.md              how the assistant behaves (the only copy)
   context.md            who you are and who you deal with, filled in from your answers
-  templates/            the project and thread notes scaffold.py copies
+  templates/            the zone, project and thread templates scaffold.py copies
   tools/                scaffold.py, check.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, interview
 Wikis/                  its own git repository
@@ -77,6 +77,25 @@ git -C Zones/Work commit -m "New project Acme"
 ```
 
 Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first, and asks whether a wall belongs between it and any existing party.
+
+## Another zone
+
+The installer makes the zones you name at the start. To add one later, run this from the workspace root:
+
+```sh
+python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden"
+```
+
+It makes the zone the way the installer does. It copies the zone template in `System/templates/zone/` to `Zones/Garden/`, with its `AGENTS.md`, `Todo.md` and `Inbox/`. The new folder is its own git repository, with a first commit under the same name and address as the rest of the workspace, the skill links for both assistants, and the wall check before every commit. The words after `--holds` go into a new row of the Zones table in `System/context.md`.
+
+The script checks the name first, as it does for a project: it refuses one that can't be said aloud, or that already exists or sounds too close to another zone. It commits the new zone, but not the change to `System/context.md`, which belongs to the workspace's own repository. Commit that from the workspace root:
+
+```sh
+git add System/context.md
+git commit -m "Zone Garden"
+```
+
+With an assistant, just ask: "add a zone called Garden, for the house and the garden." A new zone has no parties yet. Add the ones its work needs to the Parties table, with the new zone in their Zone column, before its first project.
 
 ## Opening and wrapping
 

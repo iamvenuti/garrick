@@ -331,7 +331,9 @@ def add_alias(root, heard, means):
 
 
 def build(target):
-    target = Path(target).expanduser()
+    # Absolute before anything runs: install.py runs from the source folder, so a
+    # relative target would otherwise land, or be refused, there instead of here.
+    target = Path(os.path.abspath(Path(target).expanduser()))
     check_target(target)
     if not CONTENT.is_dir():
         raise BuildError(f"{CONTENT} is missing.")

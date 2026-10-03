@@ -206,6 +206,13 @@ class DemoTest(unittest.TestCase):
         forced = run(["git", "-C", work, "commit", "-q", "--no-verify", "-m", "Launch plan: renewal call"])
         self.assertEqual(forced.returncode, 0, forced.stderr)
 
+    def test_relative_target_is_relative_to_where_you_are(self):
+        with tempfile.TemporaryDirectory() as here:
+            r = run([sys.executable, BUILD, "--target", "demo-here"], cwd=here)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((Path(here) / "demo-here" / "AGENTS.md").is_file())
+            self.assertFalse((REPO / "demo-here").exists())
+
     def test_deterministic_and_refuses_a_full_folder(self):
         again = self.base / "again"
         res = build(again)

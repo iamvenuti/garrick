@@ -108,6 +108,23 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, missing, needle)
         self.assertNotIn("drop the transcript in the inbox first", flat(text))
 
+    def test_prep_is_read_only_until_asked_to_save(self):
+        """The first session asks for the brief to be saved: prep writes it to Deliverables, dated, and commits it."""
+        self.assertIn("prepare a brief for x", triggers(SKILLS / "meetings"))
+        text = (SKILLS / "meetings" / "SKILL.md").read_text(encoding="utf-8")
+        prep = flat(section(text, '## Prep: "prep me for X", "brief me for X", "prepare a brief for X"'))
+        for needle in ("Read-only by default", "**Save it only when asked**",
+                       "`Zones/<Zone>/<Project>/Deliverables/YYMMDD - <name>.md`", "*Files* in `System/rules.md`",
+                       "Write the brief that passed step 4", "`[[Meetings/wiki/sources/<slug>|<title>]]`",
+                       'git -C "Zones/<Zone>" commit', "the pre-commit hook runs the wall check on it",
+                       "Saving is not sending"):
+            self.assertIn(needle, prep, needle)
+        for gone in ("It never writes anything", "never committed, so this check is the only one",
+                     "`prep` never writes anything"):
+            self.assertNotIn(gone, flat(text), gone)
+        rules = section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Files")
+        self.assertIn("`YYMMDD - <name>.<ext>`", rules)
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "meetings" / "SKILL.md", REPO / "template" / "System" / "rules.md"):

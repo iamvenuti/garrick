@@ -334,6 +334,29 @@ class TestStaged(WallCase):
             self.assertNotIn(word, res.stderr.lower())
         self.assertEqual(head, git(self.zone, "rev-parse", "HEAD"))
 
+    def test_a_saved_brief_goes_through_the_hook(self):
+        # Prep, asked to save, writes Deliverables/YYMMDD - <name>.md with the
+        # pages it drew on linked as [[Meetings/wiki/sources/<slug>|<title>]],
+        # and commits it in the zone: the hook reads those links.
+        brief = self.acme / "Deliverables" / "260315 - Brief for the kick-off.md"
+        name = str(brief.relative_to(self.zone))
+        commit = ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Acme Review: brief for Acme"]
+        write(brief, "# Brief for the kick-off\n\nFrom [[Meetings/wiki/sources/260310-acme-kickoff|Acme kick-off]]: "
+                     "work starts on Monday.\n")
+        git(self.zone, "add", "--", name)
+        res = _run(commit, self.zone)
+        self.assertEqual(0, res.returncode, res.stderr)
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("walls", "deliverables")])
+
+        write(brief, brief.read_text() + "\nSee also [[Meetings/wiki/sources/260312-birch-kickoff|the other kick-off]].\n")
+        git(self.zone, "add", "--", name)
+        head = git(self.zone, "rev-parse", "HEAD")
+        res = _run(commit, self.zone)
+        self.assertEqual(1, res.returncode, res.stderr)
+        self.assertIn("Commit refused: Zones/Work/Acme Review/Deliverables/260315 - Brief for the kick-off.md links",
+                      res.stderr)
+        self.assertEqual(head, git(self.zone, "rev-parse", "HEAD"))
+
     def test_hook_blocks_and_no_verify_overrides(self):
         self.assertTrue(has_wall_hook(self.zone))
         write(self.note, "Dana Whitlock called.\n")

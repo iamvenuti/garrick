@@ -7,8 +7,8 @@ description: >
   hands each one here from the inboxes. Use when the user says "ingest this
   transcript", "file this transcript", "file these notes", "file these as
   notes of a conversation", "import the meeting with X", "log this call",
-  "prep me for X", "brief me for X", or "who am I meeting with". Also use
-  right after a call ends, once its transcript is in
+  "prep me for X", "brief me for X", "prepare a brief for X", or "who am I
+  meeting with". Also use right after a call ends, once its transcript is in
   Wikis/Meetings/raw/inbox/. A request to process the inbox goes to the
   intake skill, which calls this one.
 ---
@@ -285,14 +285,17 @@ question, a learned domain, a wall, or a failed commit.
 Written: the same, then the page's path, any domain recorded, the actions
 added, and the commit hashes.
 
-## Prep: "prep me for X", "brief me for X"
+## Prep: "prep me for X", "brief me for X", "prepare a brief for X"
 
-A read-only briefing built from the pages already in the wiki, meetings and
-mail alike. It never writes anything.
+A briefing built from the pages already in the wiki, meetings and mail
+alike. Read-only by default: it reads, and answers in the conversation. It
+writes a file only when the user asks to save the brief (step 7).
 
 1. **Resolve X**, against Parties, People and Aliases in `System/context.md`:
-   a party directly, or a person through their party. Close to two
-   entries, or not found: ask, naming the candidates. Never guess.
+   a party directly, or a person through their party. A project, or "this
+   project", stands for its hub's `party`, and is the project step 2 needs.
+   Close to two entries, or not found: ask, naming the candidates. Never
+   guess.
 2. **Whose behalf this is for.** A wall is checked against a project's
    party, so find one: the thread in focus this session, or ask "which
    project is this for?" if none is. If the user explicitly wants the
@@ -300,7 +303,8 @@ mail alike. It never writes anything.
    say plainly that no wall was applied, because there was no project to
    check it against.
 3. **Gather.** Every page in `wiki/sources/` whose `parties` include X's tag
-   (or the person's party), newest first.
+   (or the person's party), newest first. When the user names one
+   conversation ("the call I just filed"), that page alone.
 4. **Run the wall check**, exactly as the `threads` skill does before
    writing meeting material into a project:
    - A page missing `zone` or `parties`: unfinished, leave it out, and say
@@ -310,9 +314,10 @@ mail alike. It never writes anything.
    - A page whose `parties` include a tag walled (in `System/context.md`)
      against the project's party: leave it out entirely. Not quoted, not
      paraphrased, not summarised, not mentioned as having happened.
-   - Nothing backs this step up. The zones' pre-commit wall check stops
-     walled material being committed into a project, but a brief stays in
-     the conversation and is never committed, so this check is the only one.
+   - Nothing else backs this step up while the brief stays in the
+     conversation: the zones' pre-commit wall check reads only what is about
+     to be committed. A saved brief (step 7) is committed, so the hook reads
+     it too, but only after this check has decided what it says.
 5. **Compose the briefing** from what passed: who they are (their person
    page), when you last met or wrote, what was decided, what is still open
    from each page's actions table, and any commitment worth quoting. Say
@@ -320,13 +325,39 @@ mail alike. It never writes anything.
 6. **If a wall held anything back, say so and nothing more**: "A wall kept
    some meeting material out of this brief." No title, date, party or count,
    even if asked in the same breath.
+7. **Save it only when asked** ("save the brief in this project's
+   Deliverables"), never on your own initiative, and never the unfiltered
+   record of step 2, which has no project to hold it.
+   - It goes into the project from step 2:
+     `Zones/<Zone>/<Project>/Deliverables/YYMMDD - <name>.md`, dated the
+     day it was first made, as *Files* in `System/rules.md` says, with a
+     name a person can say ("Brief for the Cobalt call"). The date never
+     moves, even when the brief is saved again.
+   - Write the brief that passed step 4 and nothing it held back: the pages
+     it drew on, as links (`[[Meetings/wiki/sources/<slug>|<title>]]`),
+     then the briefing. Anything added since (a page filed in the
+     meantime, a line the user dictates) goes through step 4 before it
+     goes in.
+   - Commit it in the zone's own repository, so the pre-commit hook runs
+     the wall check on it:
+     ```sh
+     git -C "Zones/<Zone>" add -- "<Project>/Deliverables/YYMMDD - <name>.md"
+     git -C "Zones/<Zone>" commit -m "<Project>: brief for <X>"
+     ```
+     When the hook refuses, take the material out and commit again, and
+     tell the user only that a wall held something back. Never
+     `--no-verify` unless the user asks for it in this request.
+   - Saving is not sending. Pushing, sending or sharing the brief needs
+     the user's yes, every time.
 
 Spoken, three sentences at most: who they are, where things stand, and the
 next thing due or owed. Offer the detail rather than giving it: "Want the
-open actions read out?"
+open actions read out?" When the brief was saved, say where in place of
+the offer: "It's in Supplier Review's deliverables."
 
 Written: the same opening, then the pages drawn on (as links), the open
-actions across them, and any quoted commitments.
+actions across them, and any quoted commitments; when saved, the file's
+path and the commit hash.
 
 ## Listening mode
 
@@ -363,8 +394,10 @@ asked for the detail.
   correction goes in the summary, never the source.
 - **It never decides a wall for the user.** It only checks the Walls table
   and says that something was held back, never what.
-- **`prep` never writes anything**, to a page, a project or anywhere else.
-  It reads and speaks.
+- **`prep` writes nothing unless asked.** Asked to save the brief, it
+  writes that one file, in the project's `Deliverables/`, and commits it in
+  that zone. Never a meeting page, a person page, another project or
+  anything outside the zone.
 - **It does not sweep or tidy `Todo.md`.** It appends this conversation's
   owed actions and nothing else: no re-triaging, no ticking off unrelated
   lines.

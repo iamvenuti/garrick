@@ -191,6 +191,9 @@ class ProfileTest(unittest.TestCase):
     def test_claude_command(self):
         cmd = agent.claude_command("sonnet", "Do the sweep.", ["Read", "Grep"], 5)
         self.assertEqual(["claude", "-p", "Do the sweep.", "--model", "sonnet"], cmd[:5])
+        # The allow list is the whole truth: no mode that accepts edits it does not name.
+        self.assertEqual("default", cmd[cmd.index("--permission-mode") + 1])
+        self.assertNotIn("acceptEdits", cmd)
         self.assertEqual(str(agent.PROFILE), cmd[cmd.index("--settings") + 1])
         self.assertEqual("user,project", cmd[cmd.index("--setting-sources") + 1])
         self.assertEqual("json", cmd[cmd.index("--output-format") + 1])
@@ -235,6 +238,9 @@ class RunTest(FakeAssistants):
                           line["exit"], line["denied"]))
         call = self.calls()[0]
         self.assertIn("--setting-sources", call)
+        self.assertEqual("default", call[call.index("--permission-mode") + 1])
+        self.assertNotIn("acceptEdits", call)
+        self.assertEqual(["--allowedTools", "Read"], call[-2:])
 
     def test_a_cap_refuses_without_calling(self):
         os.environ["GARRICK_CAP_CALLS_HOUR"] = "1"

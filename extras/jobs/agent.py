@@ -19,9 +19,10 @@ are, so a job follows each new release. Codex gets the model named in
 GARRICK_CODEX_MODEL_<TIER>, or its own default when that is unset.
 
 **What the assistant may do.** Claude takes a list of allowed tools per call
-(`--allow`). On top of it, every call loads `headless-settings.json`, beside
-this file, whose deny list blocks every tool that sends, shares or deletes, and
-a deny beats an allow. The call also loads only your user and project
+(`--allow`) and refuses any other tool that needs permission, editing and
+writing files among them. On top of it, every call loads
+`headless-settings.json`, beside this file, whose deny list blocks every tool
+that sends, shares or deletes, and a deny beats an allow. The call also loads only your user and project
 settings, never a project's `.claude/settings.local.json`: allow rules kept
 there for your own sessions would otherwise reach a job nobody is watching.
 Codex has no per-tool list. It runs sandboxed to the job's folder, which is
@@ -199,8 +200,12 @@ def parse_claude_output(stdout: str) -> dict:
 
 
 def claude_command(tier: str, prompt: str, allow: List[str], budget: float, profile: Path = PROFILE) -> List[str]:
+    # The allow list is the whole truth. With nobody to ask, the default mode
+    # refuses every tool that needs permission and is not on the list. It is
+    # named rather than left out, so a defaultMode in the user's own settings
+    # cannot change it.
     cmd = ["claude", "-p", prompt, "--model", tier,
-           "--permission-mode", "acceptEdits",
+           "--permission-mode", "default",
            "--settings", str(profile),
            "--setting-sources", "user,project",
            "--output-format", "json"]

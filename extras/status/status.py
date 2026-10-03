@@ -679,10 +679,21 @@ class Links:
         self.ws, self.vault = ws, vault
 
     def __call__(self, path: Path) -> str:
+        """A link to the file. In Obsidian a file is named by its path in the
+        vault, so a note that is a symlink to a file elsewhere keeps the path
+        of the link; a file outside the workspace, such as a job's log, is
+        linked as a file."""
         if self.vault:
-            rel = path.resolve().relative_to(self.ws).as_posix()
-            rel = rel[:-3] if rel.endswith(".md") else rel
-            return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(self.vault), urllib.parse.quote(rel))
+            rel = None
+            for candidate in (Path(os.path.abspath(path)), path.resolve()):
+                try:
+                    rel = candidate.relative_to(self.ws).as_posix()
+                    break
+                except ValueError:
+                    continue
+            if rel is not None:
+                rel = rel[:-3] if rel.endswith(".md") else rel
+                return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(self.vault), urllib.parse.quote(rel))
         return path.resolve().as_uri()
 
 
@@ -1506,9 +1517,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("status: %s is inside the workspace but not in System/generated/; this page shows every zone, "
               "so keep it where git and the wall check leave it alone." % out, file=sys.stderr)
     if inside and (ws / ".git").exists():
-        probe = subprocess.run(["git", "-C", str(ws), "check-ignore", "-q", "--no-index", "System/generated/status.html"],
-                               capture_output=True, text=True)
-        if probe.returncode == 1:
+        try:
+            probe = subprocess.run(["git", "-C", str(ws), "check-ignore", "-q", "--no-index", "System/generated/status.html"],
+                                   capture_output=True, text=True)
+        except OSError:                       # no git on this PATH: nothing to check against
+            probe = None
+        if probe is not None and probe.returncode == 1:
             print("status: the workspace's .gitignore does not name System/generated/; add that line so the page "
                   "is never committed.", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)

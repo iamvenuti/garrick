@@ -340,6 +340,24 @@ class TestSelfContained(StatusCase):
         html = self.page(vault="My Work")
         self.assertIn("obsidian://open?vault=My%20Work&amp;file=Zones/Work/Acme%20Review/Threads/Pricing/Pricing", html)
 
+    def test_obsidian_links_a_symlinked_note_by_its_place_in_the_vault(self):
+        outside = Path(self._tmp.name).resolve() / "Elsewhere" / "Shared notes.md"
+        write(outside, "# Shared notes\n")
+        os.symlink(str(outside), str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Shared notes.md"))
+        (self.jobs / "brief.heartbeat.json").write_text(json.dumps({"job": "brief", "finished": stamp(time.time()), "exit": 0}))
+        html = self.page(vault="My Work")
+        node = next(n for n in graph_data(html)["nodes"] if n["n"] == "Shared notes")
+        self.assertEqual("obsidian://open?vault=My%20Work&file=Zones/Work/Acme%20Review/Threads/Pricing/Shared%20notes", node["u"])
+        self.assertIn('href="%s"' % (self.jobs / "brief.log").as_uri(), html)   # a job's log is outside the vault: a file link
+
+    def test_builds_without_git(self):
+        (self.root / ".git").mkdir()
+        empty = Path(self._tmp.name) / "no-tools"
+        empty.mkdir()
+        with mock.patch.dict(os.environ, {"PATH": str(empty)}):
+            self.run_main()
+        self.assertTrue((self.root / "System" / "generated" / "status.html").is_file())
+
     def run_main(self, *extra):
         old = os.environ.get("GARRICK_JOBS_DIR")
         os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)

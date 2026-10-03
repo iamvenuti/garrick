@@ -147,6 +147,13 @@ class SkillsTest(unittest.TestCase):
         rules = section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Files")
         self.assertIn("`YYMMDD - <name>.<ext>`", rules)
 
+    def test_parked_threads_are_not_live(self):
+        text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "
+                       "`status: parked`", "Parked threads are not live", "Skip threads marked done or parked"):
+            self.assertIn(needle, text, needle)
+        self.assertNotIn("Skip threads marked done.", text)
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "meetings" / "SKILL.md", SKILLS / "threads" / "SKILL.md",

@@ -351,6 +351,25 @@ class WhatsOpenTest(FakeAssistants):
         self.assertEqual([], self.calls())
         self.assertIn("Nothing open", next(self.out.iterdir()).read_text())
 
+    def test_parked_threads_are_not_open(self):
+        roof = self.ws / "Zones" / "Personal" / "House" / "Threads" / "Roof Repair" / "Roof Repair.md"
+        roof.write_text(thread_note("House", "Roof Repair", "acme", status="parked"))
+        write(self.ws / "Zones" / "Work" / "Acme Review" / "Threads" / "Logistics" / "Logistics.md",
+              thread_note("Acme Review", "Logistics", "acme", status="Parked"))
+        labels = [label for label, _ in whats_open.live_threads(self.ws / "Zones" / "Work")]
+        self.assertEqual(["Acme Review, Pricing", "Birch Entry, Market Sizing"], sorted(labels))
+        self.assertEqual([], whats_open.live_threads(self.ws / "Zones" / "Personal"))
+        code = whats_open.main(["--workspace", str(self.ws), "--zone", "Work", "--zone", "Personal",
+                                "--out", str(self.out)])
+        self.assertEqual(0, code)
+        prompts = [c[c.index("-p") + 1] for c in self.calls() if "-p" in c]
+        self.assertEqual(1, len(prompts))  # Personal holds only a parked thread: no call for it
+        self.assertIn("Pricing", prompts[0])
+        self.assertNotIn("Logistics", prompts[0])
+        personal = [p for p in self.out.iterdir() if p.name.startswith("whats-open-personal-")]
+        self.assertEqual(1, len(personal))
+        self.assertIn("Nothing open", personal[0].read_text())
+
     def test_an_answer_without_its_closing_line_writes_nothing(self):
         os.environ["FAKE_RESULT"] = "# Brief, cut short"
         code = whats_open.main(["--workspace", str(self.ws), "--zone", "Work", "--out", str(self.out)])

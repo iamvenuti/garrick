@@ -39,7 +39,8 @@ A thread note is the `.md` file whose name matches its folder. Other files in th
 folder are working notes. Any path component starting with `_` (`_zone`,
 `_project`, `_thread`) is a template: never list it, open it or wrap it.
 
-A thread is **live** unless its frontmatter says `status: done`.
+A thread is **live** unless its frontmatter says `status: done` (finished) or
+`status: parked` (set aside until it is woken).
 
 To list every thread with its status and last update:
 
@@ -241,8 +242,10 @@ Wrap every thread worked on today, then give one summary.
    - a path starting with `_` → a template; ignore it.
 
    Add any thread this conversation worked on that left no file behind. Skip
-   threads marked done. Skip a thread already wrapped in this session with
-   nothing changed since that wrap; name it in the summary as already wrapped.
+   threads marked done or parked: neither is live, and a wrap would rewrite
+   what finishing or parking left in place. Skip a thread already wrapped in
+   this session with nothing changed since that wrap; name it in the summary
+   as already wrapped.
 
    A zone that is not a git repository: fall back to
    `find "Zones/<Zone>" -type f -newermt "$(date +%Y-%m-%d)"`, and say that is

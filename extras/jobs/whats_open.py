@@ -56,17 +56,21 @@ def frontmatter(path: Path) -> dict:
     return out
 
 
+NOT_LIVE = ("done", "parked")  # finished, or set aside until it is woken
+
+
 def live_threads(zone: Path) -> List[Tuple[str, Path]]:
     """(short label, note) for every live thread in the zone, newest first. A
     thread note is the .md file named after its folder; a path part starting
-    with `_` is a template, and `done` means finished."""
+    with `_` is a template; `done` means finished and `parked` set aside, and
+    neither is live."""
     found = []
     for note in zone.glob("*/Threads/*/*.md"):
         project, thread = note.parts[-4], note.parent.name
         if note.stem != thread or project.startswith(("_", ".")) or thread.startswith(("_", ".")):
             continue
         fm = frontmatter(note)
-        if fm.get("status", "").lower() == "done":
+        if fm.get("status", "").strip().lower() in NOT_LIVE:
             continue
         found.append((fm.get("updated", ""), "%s, %s" % (project, thread), note))
     found.sort(key=lambda row: row[0], reverse=True)

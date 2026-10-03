@@ -273,10 +273,10 @@ def profile_problem(path: Path) -> Optional[str]:
 
 
 def claude_command(tier: str, prompt: str, allow: List[str], budget: float, profile: Path = PROFILE) -> List[str]:
-    # The allow list is the whole truth. With nobody to ask, the default mode
-    # refuses every tool that needs permission and is not on the list. It is
-    # named rather than left out, so a defaultMode in the user's own settings
-    # cannot change it.
+    # The default mode: with nobody to ask, Claude refuses every tool that
+    # needs permission unless the allow list, or an allow rule in the user's
+    # own settings, names it. The mode is named rather than left out, so a
+    # defaultMode in those settings, such as acceptEdits, cannot change it.
     cmd = ["claude", "-p", prompt, "--model", tier,
            "--permission-mode", "default",
            "--settings", str(profile),

@@ -196,6 +196,17 @@ class SkillsTest(unittest.TestCase):
         self.assertNotIn("plaud", text.lower())
         self.assertIn("a recorder connector", text)
 
+    def test_mail_filed_as_reading_loses_its_recipients(self):
+        """intake.py file-reading strips a mail's recipients before freezing it, so
+        neither skill may say the mail goes into Knowledge untouched."""
+        intake = flat((SKILLS / "intake" / "SKILL.md").read_text(encoding="utf-8"))
+        knowledge = flat((SKILLS / "knowledge" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("a mail with its recipients taken out first", intake)
+        self.assertIn("`you@removed.invalid`", intake)
+        self.assertIn("a mail goes in with its recipients taken out", knowledge)
+        self.assertNotIn("moves the item, untouched", intake)
+        self.assertNotIn("moves it, untouched", knowledge)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

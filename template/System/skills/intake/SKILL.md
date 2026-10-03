@@ -110,10 +110,13 @@ takes one explicitly, and refuses without it.
      ```sh
      python3 System/skills/intake/intake.py file-reading --file "Zones/<Zone>/Inbox/<file>" [--title "<title of the work>"]
      ```
-     It moves the item, untouched, into `Wikis/Knowledge/raw/<slug>.<ext>`
-     and writes a draft source page with no zone and no parties, the author
-     and date filled from the mail where it has them. It prints
-     `<slug>\t<raw path>\t<page path>`. Then the `knowledge` skill, *Ingest*,
+     It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`: a file
+     untouched, a mail with its recipients taken out first. The recipient
+     headers and `Received` lines go, and any recipient address in the text
+     becomes `you@removed.invalid`, because Knowledge is read in every zone;
+     attachments stay byte for byte. It writes a draft source page with no
+     zone and no parties, the author and date filled from the mail where it
+     has them, and prints `<slug>\t<raw path>\t<page path>`. Then the `knowledge` skill, *Ingest*,
      from step 4: check the author and date, rate the confidence, write the
      summary, the concept and entity pages, the index, the log, the commit.
      A slug already taken is refused: pass `--slug` with a distinguishing

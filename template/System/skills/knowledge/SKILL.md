@@ -89,10 +89,12 @@ project, never here.
      `.md`, unedited.
    - **An item waiting in a zone's Inbox**, sorted as something to read by
      the `intake` skill: `python3 System/skills/intake/intake.py file-reading
-     --file "Zones/<Zone>/Inbox/<file>" [--title "<title>"]` moves it,
-     untouched, into `raw/`, makes the slug, and writes a draft source page
-     with the author and date filled from the mail where it has them. Carry
-     on from step 4, and check those two against the text.
+     --file "Zones/<Zone>/Inbox/<file>" [--title "<title>"]` moves it into
+     `raw/`, makes the slug, and writes a draft source page with the author
+     and date filled from the mail where it has them. A file goes in
+     untouched; a mail goes in with its recipients taken out, so the frozen
+     copy says nothing about who received it. Carry on from step 4, and
+     check the author and date against the text.
    - Name the frozen file after the source's slug (below) plus its real
      extension: `raw/<slug>.pdf`, `raw/<slug>.txt`. Once written, a raw file
      is never edited again: correct the source page, never the original.

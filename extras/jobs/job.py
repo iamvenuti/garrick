@@ -64,7 +64,6 @@ import agent  # noqa: E402
 EXIT_LOGIN = 4
 EXIT_LOCKED = 75
 EXIT_TIMEOUT = 124
-MAX_LOG_BYTES = 1024 * 1024
 SLACK = 600  # two sign-in checks of up to 90 s each, the watchdog's grace, a slow start
 
 
@@ -87,11 +86,6 @@ def number(name: str, default: float, warnings: List[str]) -> float:
         warnings.append("job: %s is %r, not a number of zero or more; using %g\n" % (name, raw, default))
         return default
     return value
-
-
-def rotate(path: Path) -> None:
-    if path.exists() and path.stat().st_size > MAX_LOG_BYTES:
-        path.replace(path.with_name(path.name + ".1"))
 
 
 def take_lock(lock: Path, hold: float) -> bool:
@@ -256,7 +250,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         # Only the run that holds the lock touches its files: a fire that is
         # skipped must not rotate the log of the run it found still going.
-        rotate(log_path)
+        agent.rotate(log_path)
         items_file.unlink(missing_ok=True)
         with log_path.open("a", encoding="utf-8") as log:
             start = time.time()

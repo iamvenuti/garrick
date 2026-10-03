@@ -287,6 +287,15 @@ class RunTest(FakeAssistants):
         self.assertEqual([], self.calls())
         self.assertEqual(0, agent.run("sonnet", "Sweep.", job="whats-open_2")[0])
 
+    def test_the_codex_transcript_is_rotated_like_the_log(self):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        self.jobs.mkdir(parents=True)
+        transcript = self.jobs / "manual.transcript.log"
+        transcript.write_text("x" * (agent.MAX_LOG_BYTES + 1))
+        self.assertEqual(0, agent.run("sonnet", "Sweep.")[0])
+        self.assertEqual(agent.MAX_LOG_BYTES + 1, (self.jobs / "manual.transcript.log.1").stat().st_size)
+        self.assertEqual("the whole run, prompt included\n", transcript.read_text())
+
     def test_unknown_harness_and_tier(self):
         os.environ["GARRICK_HARNESS"] = "other"
         self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "x")[0])

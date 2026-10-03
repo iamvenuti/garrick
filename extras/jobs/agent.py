@@ -77,6 +77,7 @@ EXIT_MISSING = 127
 DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}
 DEFAULT_MAX_CALL_USD = 5.0
 JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
+MAX_LOG_BYTES = 1024 * 1024
 
 
 # --------------------------------------------------------------------------- settings
@@ -122,6 +123,16 @@ def caps() -> Dict[str, float]:
         "calls_hour": _number("GARRICK_CAP_CALLS_HOUR", DEFAULT_CAPS["calls_hour"]),
         "cost_day": _number("GARRICK_CAP_COST_DAY", DEFAULT_CAPS["cost_day"]),
     }
+
+
+def rotate(path: Path) -> None:
+    """Past 1 MB, the file becomes `<name>.1`, replacing the one before, so a
+    log never holds more than two generations."""
+    try:
+        if path.stat().st_size > MAX_LOG_BYTES:
+            path.replace(path.with_name(path.name + ".1"))
+    except OSError:
+        pass  # not there yet, or another run moved it first
 
 
 # --------------------------------------------------------------------------- ledger
@@ -302,9 +313,11 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
     else:
         # Codex prints the whole run, prompt included. A job greps its answer for
         # sentinel lines the prompt also contains, so it gets the final message
-        # alone and the transcript goes to a file beside the log.
+        # alone and the transcript goes to a file beside the log. It holds what
+        # the run read, zone material included, so it is rotated like the log.
         transcript = Path(os.environ.get("GARRICK_TRANSCRIPT") or jobs_dir() / ("%s.transcript.log" % job))
         transcript.parent.mkdir(parents=True, exist_ok=True)
+        rotate(transcript)
         with tempfile.TemporaryDirectory() as tmp:
             last = Path(tmp) / "last.txt"
             try:

@@ -43,7 +43,8 @@ use rather than a bill. Codex reports neither turns nor cost, so its lines
 carry none and only the call caps hold it.
 
 Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached,
-nothing was called), 64 (usage), 127 (the assistant is not installed).
+nothing was called), 64 (usage, or Claude's deny profile is missing or not
+JSON, and nothing was called), 127 (the assistant is not installed).
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -202,6 +203,19 @@ def parse_claude_output(stdout: str) -> dict:
             "is_error": False, "parsed": False}
 
 
+def profile_problem(path: Path) -> Optional[str]:
+    """Why the deny profile cannot be used, or None. Given a settings file that
+    is not there, Claude carries on without its deny list, so the runner
+    checks first."""
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "is missing"
+    except (OSError, ValueError):
+        return "is not readable JSON"
+    return None
+
+
 def claude_command(tier: str, prompt: str, allow: List[str], budget: float, profile: Path = PROFILE) -> List[str]:
     # The allow list is the whole truth. With nobody to ask, the default mode
     # refuses every tool that needs permission and is not on the list. It is
@@ -239,6 +253,12 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
     if tier not in TIERS:
         print("agent: tier %r; use %s" % (tier, ", ".join(TIERS)), file=sys.stderr)
         return EXIT_USAGE, ""
+    profile = PROFILE
+    problem = profile_problem(profile) if h == "claude" else None
+    if problem:
+        print("agent: the deny profile %s %s, so nothing was called. Copy headless-settings.json "
+              "from Garrick's extras/jobs/ beside agent.py." % (profile, problem), file=sys.stderr)
+        return EXIT_USAGE, ""
     job = job or os.environ.get("GARRICK_JOB") or "manual"
     ledger = ledger_path()
     now = time.time()
@@ -250,7 +270,8 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
 
     start = time.time()
     if h == "claude":
-        cmd = claude_command(tier, prompt, list(allow), _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD))
+        cmd = claude_command(tier, prompt, list(allow), _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD),
+                             profile)
         try:
             proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         except FileNotFoundError:

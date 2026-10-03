@@ -263,6 +263,19 @@ class RunTest(FakeAssistants):
         self.assertIsNone(line["turns"])
         self.assertIsNone(line["cost_usd"])
 
+    def test_no_deny_profile_no_call(self):
+        broken = self.tmp / "headless-settings.json"
+        broken.write_text('{"permissions": {"deny": ["WebFetch",]}}')     # a trailing comma
+        for profile in (self.tmp / "nowhere" / "headless-settings.json", broken):
+            with mock.patch.object(agent, "PROFILE", profile):
+                self.assertEqual((agent.EXIT_USAGE, ""), agent.run("sonnet", "Sweep.", allow=["Read"]))
+        self.assertEqual([], self.calls())
+        self.assertEqual([], self.ledger())
+        self.assertIn("deny profile", sys.stderr.getvalue())
+        os.environ["GARRICK_HARNESS"] = "codex"                          # Codex loads no profile
+        with mock.patch.object(agent, "PROFILE", self.tmp / "nowhere" / "headless-settings.json"):
+            self.assertEqual(0, agent.run("sonnet", "Sweep.")[0])
+
     def test_unknown_harness_and_tier(self):
         os.environ["GARRICK_HARNESS"] = "other"
         self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "x")[0])

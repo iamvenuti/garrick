@@ -88,6 +88,7 @@ agent.report_items(handled)    # how much it did, for the idle alarm
 | 4 | The assistant could not sign in, twice, five minutes apart; the job did not run |
 | 6 | A connector the job needs is missing |
 | 8 | A spend limit was reached; nothing was called |
+| 64 | The command was wrong, or Claude's deny profile is missing or not JSON; nothing was called |
 | 75 | The previous run still holds the lock; this one was skipped |
 | 124 | The watchdog stopped a run that went past its time limit, 25 minutes by default |
 

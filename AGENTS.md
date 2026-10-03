@@ -22,7 +22,7 @@ Instructions for any assistant working on this repository. This is the source of
 
 ## Placeholders
 
-- `{{UPPER_CASE}}` is filled by a script. The installer fills `{{ZONE}}` in `template/Zones/_zone/`, once per zone. `System/tools/scaffold.py` fills `{{ZONE}}`, `{{PROJECT}}`, `{{THREAD}}`, `{{PARTY}}` and `{{DATE}}` in `template/System/templates/` when a project or a thread is started, and `{{ZONE}}` for a zone added later.
+- `{{UPPER_CASE}}` is filled by a script. The installer fills `{{ZONE}}` in `template/System/templates/zone/`, once per zone. `System/tools/scaffold.py` fills `{{ZONE}}`, `{{PROJECT}}`, `{{THREAD}}`, `{{PARTY}}` and `{{DATE}}` in `template/System/templates/` when a project or a thread is started, and `{{ZONE}}` for a zone added later.
 - `<angle brackets>` are filled by the user, or by their assistant on their behalf.
 
 Never leave a third kind. A file no script can finish and the user cannot recognise as theirs to fill is a broken install.

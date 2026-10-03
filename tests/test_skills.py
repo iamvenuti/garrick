@@ -270,7 +270,7 @@ class SkillsTest(unittest.TestCase):
     def test_one_todo_line_format(self):
         """Wrap and finish find a thread's open actions by the thread the line names,
         so the zone's list and every skill that writes to it use the same line."""
-        writers = [REPO / "template" / "Zones" / "_zone" / "Todo.md"] + [
+        writers = [REPO / "template" / "System" / "templates" / "zone" / "Todo.md"] + [
             SKILLS / name / "SKILL.md" for name in ("threads", "meetings", "interview")]
         for path in writers:
             lines = re.findall(r"- \[ \] <action> · .*? · <date>", flat(path.read_text(encoding="utf-8")))
@@ -301,7 +301,7 @@ class SkillsTest(unittest.TestCase):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",
                      SKILLS / "threads" / "SKILL.md", REPO / "template" / "System" / "rules.md",
-                     REPO / "template" / "AGENTS.md", REPO / "template" / "Zones" / "_zone" / "Todo.md",
+                     REPO / "template" / "AGENTS.md", REPO / "template" / "System" / "templates" / "zone" / "Todo.md",
                      REPO / "AGENTS.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
@@ -338,7 +338,7 @@ class RepositoryInstructionsTest(unittest.TestCase):
                     found.update(re.findall(r"\{\{[A-Z][A-Z0-9_]*\}\}", path.read_text(encoding="utf-8")))
             return found
 
-        zone, templates = used(REPO / "template" / "Zones" / "_zone"), used(REPO / "template" / "System" / "templates")
+        zone, templates = used(REPO / "template" / "System" / "templates" / "zone"), used(REPO / "template" / "System" / "templates")
         self.assertTrue(zone and templates)
         for name in zone:
             self.assertIn("`%s`" % name, installer[0], name)

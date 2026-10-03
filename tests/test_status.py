@@ -72,7 +72,11 @@ class TestMetadataOnly(StatusCase):
         html = self.page()
         self.assertNotIn("private figure", html)
         self.assertNotIn("Drafting", html)          # the Where it stands line
-        self.assertNotIn("260310-acme-kickoff", html)  # a link in the body
+        self.assertNotIn("Draws on", html)          # the words around a link
+        bare = self.page(show_graph=False)
+        self.assertNotIn("private figure", bare)
+        self.assertNotIn("260310-acme-kickoff", bare)  # without the graph, not even a link's target
+        self.assertNotIn("graph-data", bare)
 
     def test_done_threads_are_counted_not_listed(self):
         note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
@@ -80,6 +84,70 @@ class TestMetadataOnly(StatusCase):
         html = self.page()
         self.assertNotIn(">Market Sizing<", html)
         self.assertIn("1 done", html)
+
+
+def graph_data(html):
+    start = html.index('id="graph-data">') + len('id="graph-data">')
+    return json.loads(html[start:html.index("</script>", start)])
+
+
+class TestGraph(StatusCase):
+    def node(self, data, name):
+        return next(i for i, n in enumerate(data["nodes"]) if n["n"] == name)
+
+    def test_a_link_becomes_a_line(self):
+        data = graph_data(self.page())
+        pricing, kickoff = self.node(data, "Pricing"), self.node(data, "Acme kick-off")
+        self.assertIn([min(pricing, kickoff), max(pricing, kickoff)], data["edges"])
+
+    def test_links_resolve_by_path_suffix_and_name(self):
+        write(self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md",
+              thread_note("Birch Entry", "Market Sizing", "birch", "See [[Meetings/wiki/sources/260312-birch-kickoff|the kick-off]]."))
+        data = graph_data(self.page())
+        a, b = self.node(data, "Market Sizing"), self.node(data, "Birch kick-off")
+        self.assertIn([min(a, b), max(a, b)], data["edges"])
+
+    def test_names_and_kinds_only(self):
+        html = self.page()
+        data = graph_data(html)
+        kinds = dict((i, k) for i, k in data["kinds"])
+        by_name = {n["n"]: kinds[n["k"]] for n in data["nodes"]}
+        self.assertEqual("project", by_name["Acme Review"])
+        self.assertEqual("thread", by_name["Pricing"])
+        self.assertEqual("meeting", by_name["Acme kick-off"])
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertNotIn("Decisions.", html)
+
+    def test_inboxes_raw_and_catalogues_stay_out(self):
+        write(self.root / "Zones" / "Work" / "Inbox" / "Note.md", "# A dropped note\n")
+        names = {n["n"] for n in graph_data(self.page())["nodes"]}
+        self.assertNotIn("A dropped note", names)
+        self.assertNotIn("Note", names)
+        self.assertNotIn("index", names)
+        self.assertNotIn("260310-acme-kickoff.txt", names)
+
+    def test_threads_carry_the_phrase_to_say(self):
+        data = graph_data(self.page())
+        self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])
+
+    def test_no_field_the_layout_writes(self):
+        layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg"}
+        for n in graph_data(self.page())["nodes"]:
+            self.assertEqual(set(), layout & set(n))
+
+
+class TestLayout(StatusCase):
+    def test_cards_can_move_and_hide(self):
+        html = self.page()
+        self.assertIn('data-slot="top"', html)
+        self.assertGreaterEqual(html.count('class="grip"'), 6)
+        self.assertIn('id="reset-view"', html)
+
+    def test_needs_attention_is_pinned(self):
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        html = self.page()
+        start = html.index('id="attention"')
+        self.assertNotIn('class="grip"', html[start:html.index("</details>", start)])
 
 
 class TestSelfContained(StatusCase):

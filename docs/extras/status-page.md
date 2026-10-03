@@ -4,6 +4,7 @@ One page that answers two questions before you open anything: is anything wrong,
 
 ## What it shows
 
+- **A graph of the workspace**: every note in your zones and wikis, and the links between them. Each zone and wiki starts in its own region, so a wall reads as open space. Threads that have gone quiet carry an amber or red ring, parked ones are faded. Click a note for its links, a button to open it or its project, and, on a thread, the phrase to say ("open Carrier Choice"). Double-click opens it. It turns slowly when left alone; a hover, a drag, an open panel or your system's reduced-motion setting stops it. *Projects and threads* and *Everything* switch how much it shows.
 - **Threads**, one column per zone: every live thread with its project, its party and how long since its note was updated, oldest first. The bar fills toward sixty days and turns amber after two weeks, red after six. Threads you have parked ("park X") sit in a folded *Parked* group at the foot of their zone, out of the counts.
 - **Checks**: what `System/tools/check.py` finds, run as the page is built, grouped by check.
 - **Open actions**: the unticked items in each zone's `Todo.md`.
@@ -11,11 +12,13 @@ One page that answers two questions before you open anything: is anything wrong,
 - **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps.
 - **Repositories and wikis**: what is not yet committed, and the newest entry in each wiki's log.
 
-A sidebar holds the overall state, a *problems only* switch that hides everything healthy, and a light, dark or automatic theme. Every section folds, and the page remembers which ones you folded. That preference is kept in your browser and nowhere else.
+![The graph on the demo workspace, with a thread selected](../assets/status-graph.png)
+
+A sidebar holds the overall state, a *problems only* switch that hides everything healthy, and a light, dark or automatic theme. Every section folds. Every card except *Needs attention* can be dragged by the grip in its header to another place on the page, or hidden with its ×; a hidden card is dimmed in the sidebar, and clicking it there brings it back. *Reset view* puts everything back as built and keeps your theme. The page remembers all of this in your browser and nowhere else, so each browser keeps its own.
 
 ## What it never does
 
-**It never shows what a note says.** Names, party tags, dates and counts only, the same frontmatter that "what's open" reads. The page is the one place that shows every zone at once, and it holds nothing a wall would have to stop.
+**It never shows what a note says.** Names, party tags, dates and counts only, the same frontmatter that "what's open" reads. The graph reads one thing more from a note: the targets of its `[[links]]`, which it draws as lines. The words around a link never reach the page. Pass `--no-graph` and the page reads frontmatter alone. The page is the one place that shows every zone at once, and it holds nothing a wall would have to stop.
 
 **It stores nothing.** It reads files the workspace and the jobs extra already keep, and writes only itself. Delete it and nothing is lost.
 

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """A status page for a Garrick workspace. An optional extra.
 
-    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT]
+    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT] [--no-graph]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
 moved, what the check found, open actions, what is waiting in the inboxes,
 and, if you run scheduled jobs, how they ran and what the assistant spent.
+A graph of the notes and the links between them, zone by zone, turns slowly
+at the top; click a note to open it or copy what to say about it. Every card
+can be dragged elsewhere or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
 already keep, and writes nothing but itself. It runs no server, loads nothing
@@ -21,7 +24,9 @@ folder is kept out of two things: the workspace's git history (the root
 wall check treats as shared by every side (`check.py` never reads it as such,
 so whatever the page repeats can never be copied across a wall unnoticed).
 It shows metadata only: names, party tags, dates and counts, never a line of
-what a note says.
+what a note says. The graph reads one more thing from a note, the targets of
+its [[links]], and draws them as lines; the words around a link never reach
+the page. Pass --no-graph to leave it out.
 
 **Links open the files themselves**, in whatever app you use for Markdown.
 Pass `--obsidian VAULT` if you opened the workspace root in Obsidian as a vault
@@ -243,6 +248,84 @@ def wikis(ws: Path) -> List[Tuple[str, Path, str]]:
     return out
 
 
+WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
+SKIP_DIRS = {"Inbox", "raw", "archive", "Archive", "generated"}
+# What a note is, in the order the legend shows them. Colours are fixed so a
+# kind looks the same in every workspace; none is amber or red, which the
+# rings use for threads gone quiet.
+KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#2a78d6"), ("todo", "open actions", "#c0399a"),
+         ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("person", "person", "#13a38a"),
+         ("knowledge", "knowledge", "#7c9a2d")]
+
+
+def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict:
+    """Every note in the zones and the wikis, and the [[links]] between them.
+    From a note it keeps its title, kind, place, party tags and, for a thread,
+    how long since it moved; from its body only the targets of its links."""
+    places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
+    places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
+    parked = {(r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
+    names = short_names(T)
+    notes = []
+    for place, root in places:
+        for folder, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")) and d not in SKIP_DIRS)
+            for f in sorted(files):
+                if f.endswith(".md") and f != "AGENTS.md" and not f.startswith((".", "_")) \
+                        and not (folder == str(root) and f in ("index.md", "log.md") and root.name == "wiki"):
+                    notes.append((place, root, Path(folder) / f))
+    rel = {path: path.relative_to(ws).with_suffix("").as_posix() for _, _, path in notes}
+    by_rel = {r: p for p, r in rel.items()}
+    nodes, index = [], {}
+    kinds = [k for k, _, _ in KINDS]
+    for place, root, path in notes:
+        fm = frontmatter(path)
+        parts = path.relative_to(root).parts
+        kind = str(fm.get("type", "")).lower()
+        project = parts[0] if len(parts) > 1 and root.parent.name == "Zones" else ""
+        if path.name == "Todo.md" and len(parts) == 1:
+            kind = "todo"
+        elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
+            kind = "project"
+        elif kind in ("source", "concept", "entity", "summary") or root.parent.name == "Knowledge":
+            kind = "knowledge"
+        elif kind not in kinds:
+            kind = "note"
+        thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
+        moving = kind == "thread" and str(fm.get("status", "")).lower() not in ("done", "parked")
+        days = (now.date() - as_date(fm.get("updated", ""))).days if moving and as_date(fm.get("updated", "")) else None
+        party = tags(str(fm.get("party") or fm.get("parties") or "").split(" #")[0])
+        # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
+        # i, adj and deg to each node in the browser, so none of those is used here.
+        index[path] = len(nodes)
+        nodes.append({"n": fm.get("title") or path.stem, "k": kinds.index(kind), "z": place, "p": project,
+                      "t": party, "d": days, "s": 1 if (project, thread) in parked else 0,
+                      "c": 1 if kind in ("project", "thread", "todo") else 0, "h": 1 if kind == "project" else 0,
+                      "w": names.get((project, thread), "") if thread else "", "u": link(path)})
+    by_base: Dict[str, Path] = {}
+    for p in sorted(rel, key=lambda q: len(rel[q])):
+        by_base.setdefault(p.stem.lower(), p)
+    edges = set()
+    for _, _, path in notes:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for target in WIKILINK.findall(text):
+            target = target.strip().rstrip("/")
+            target = target[:-3] if target.endswith(".md") else target
+            hit = by_rel.get(target)
+            if hit is None:
+                ends = [p for p, r in rel.items() if r.endswith("/" + target)]
+                hit = min(ends, key=lambda q: len(rel[q])) if ends else by_base.get(target.split("/")[-1].lower())
+            if hit is not None and hit != path:
+                a, b = index[path], index[hit]
+                edges.add((min(a, b), max(a, b)))
+    used = sorted({n["k"] for n in nodes})
+    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS],
+            "kinds": [[i, KINDS[i][1]] for i in used], "mode": "all" if len(nodes) <= 150 else "core"}
+
+
 def schedules() -> Dict[str, Tuple[str, dt.timedelta]]:
     """Job name -> (schedule in words, how long before a missing run is late),
     from launchd jobs that run job.py. Elsewhere schedules are unknown."""
@@ -414,9 +497,18 @@ def copy(label: str, text: str, say: str) -> str:
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
 
 
-def card(id_: str, title: str, meta: str, body: str, open_: bool = True) -> str:
-    return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span></summary>'
-            '<div class="body">%s</div></details>' % (id_, " open" if open_ else "", CHEV, E(title), E(meta), body))
+GRIP = ('<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/>'
+        '<circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></g></svg>')
+CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+
+
+def card(id_: str, title: str, meta: str, body: str, open_: bool = True, fixed: bool = False) -> str:
+    """A folding card. Unless fixed, its header has a grip to drag it elsewhere
+    and a button to hide it; the browser remembers both."""
+    tools = "" if fixed else ('<span class="tools"><span class="grip" draggable="true" title="Drag to move" aria-hidden="true">%s</span>'
+                              '<button class="hide" type="button" title="Hide this card" aria-label="Hide %s">%s</button></span>' % (GRIP, E(title), CLOSE))
+    return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span>%s</summary>'
+            '<div class="body">%s</div></details>' % (id_, " open" if open_ else "", CHEV, E(title), E(meta), tools, body))
 
 
 def meter(value: float, cap: float, label: str, right: str) -> str:
@@ -515,13 +607,41 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
-@media (hover:none){.acts{opacity:1}}
+@media (hover:none){.acts{opacity:1}.head .tools{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
 .only [data-ok="1"]{display:none}
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
+.slot{display:flex;flex-direction:column;gap:16px;min-width:0}.slot.full{grid-column:span 12}.slot .card{grid-column:auto}
+.slot:not(:has(>.card:not([hidden]))){display:none}
+.grid:not(:has(.stack.r>.card:not([hidden]))) .stack.l,.grid:not(:has(.stack.l>.card:not([hidden]))) .stack.r{grid-column:span 12}
+.stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
+.head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
+.head:hover .tools,.head:focus-within .tools{opacity:1}
+.grip,.hide{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--muted);border:0;background:none;padding:0;cursor:pointer}
+.grip{cursor:grab}.grip:hover,.hide:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg{width:14px;height:14px}
+.dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
+.ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
+nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-size:10.5px;color:var(--muted)}
+.hint{font-size:11.5px;color:var(--muted);margin:0}
+.gwrap{position:relative;height:560px;border-radius:10px;background:var(--raise);border:1px solid var(--line);overflow:hidden}
+.gwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.gwrap canvas.drag{cursor:grabbing}.gwrap canvas.hot{cursor:pointer}
+.gbar{position:absolute;left:10px;top:10px;display:flex;gap:6px;align-items:center}
+.gbar .gseg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
+.gbar button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer}
+.gbar button.on{background:var(--wash);color:var(--ink)}.gbar>button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
+.gpop{position:absolute;right:10px;top:10px;width:290px;max-height:calc(100% - 20px);overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:12.5px}
+.gpop h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}
+.gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
+.gpop .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gpop .gacts a.act:hover{text-decoration:none}
+.gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
+.gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:12.5px;padding:4px;border-radius:6px;cursor:pointer}
+.gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
+.gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
+.legend i.ring{background:none;border-radius:50%;border:2px solid}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.l{grid-column:span 12}}
 @media (max-width:820px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;flex-wrap:wrap}nav .sub{display:none}.controls{margin-top:0}main{padding:16px}
-.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}}
+.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
+.gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
 """
 
 JS = r"""
@@ -537,14 +657,160 @@ var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);
 var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
 function put(text){if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
-document.querySelectorAll('button[data-copy]').forEach(function(b){b.addEventListener('click',function(){put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})})});
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
 var links={};document.querySelectorAll('nav a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});
 if('IntersectionObserver' in window){var io=new IntersectionObserver(function(es){es.forEach(function(x){if(x.isIntersecting&&links[x.target.id]){Object.keys(links).forEach(function(k){links[k].classList.remove('on')});links[x.target.id].classList.add('on')}})},{rootMargin:'-20% 0px -70% 0px'});Object.keys(links).forEach(function(id){var t=document.getElementById(id);if(t)io.observe(t)})}
 })();
 """
 
 
-def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None) -> str:
+# Where each card sits and which are hidden: a view preference like the theme
+# and the folds, kept in the browser and nowhere else. A card the stored
+# layout does not know stays where the page put it.
+LAYOUT_JS = r"""
+(function(){
+var KEY='garrick-status-layout',st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+var slots={};document.querySelectorAll('[data-slot]').forEach(function(s){slots[s.dataset.slot]=s});
+function cards(){return Array.prototype.slice.call(document.querySelectorAll('[data-slot]>.card[id]'))}
+function inSlot(el){return el&&el.parentNode&&el.parentNode.hasAttribute&&el.parentNode.hasAttribute('data-slot')}
+var L=null;try{L=JSON.parse(st.get(KEY)||'null')}catch(e){}
+if(L&&L.v===1){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c[k]||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))s.appendChild(el)})});
+(L.h||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))el.hidden=true})}
+function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
+st.set(KEY,JSON.stringify({v:1,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
+function sync(){var h=cards().filter(function(e){return e.hidden});
+document.querySelectorAll('nav a[href^="#"]').forEach(function(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');a.classList.toggle('off',!!(c&&c.hidden))});
+var n=document.getElementById('hidden-note');if(n){n.hidden=!h.length;n.textContent=h.length+' card'+(h.length>1?'s':'')+' hidden. Click one in the list above to bring it back.'}}
+function toast(t){var el=document.getElementById('toast');if(!el)return;el.textContent=t;el.style.opacity=1;setTimeout(function(){el.style.opacity=0},2600)}
+document.addEventListener('click',function(e){
+var b=e.target.closest('.head .hide,.head .grip');if(b){e.preventDefault();e.stopPropagation();
+if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from the sidebar, or Reset view.')}return}
+var a=e.target.closest('nav a[href^="#"]');if(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');if(c&&c.hidden){c.hidden=false;c.open=true;save()}}},true);
+var drag=null,ph=document.createElement('div');ph.className='ph';
+document.addEventListener('dragstart',function(e){var g=e.target.closest&&e.target.closest('.grip');if(!g)return;drag=g.closest('.card');
+e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',drag.id);e.dataTransfer.setDragImage(drag.querySelector('summary'),24,20)}catch(x){}
+ph.style.height=Math.min(drag.offsetHeight,140)+'px';
+setTimeout(function(){if(!drag)return;document.body.classList.add('dragging');drag.parentNode.insertBefore(ph,drag);drag.classList.add('lifted')},0)});
+document.addEventListener('dragover',function(e){if(!drag)return;var s=e.target.closest&&e.target.closest('[data-slot]');if(!s)return;e.preventDefault();e.dataTransfer.dropEffect='move';
+var before=null;Array.prototype.forEach.call(s.children,function(c){if(before||c===ph||c===drag||c.hidden||!c.classList.contains('card'))return;var r=c.getBoundingClientRect();if(e.clientY<r.top+r.height/2)before=c});
+if(before){if(ph.nextSibling!==before)s.insertBefore(ph,before)}else if(s.lastElementChild!==ph)s.appendChild(ph)});
+document.addEventListener('drop',function(e){if(!drag)return;e.preventDefault();if(ph.parentNode)ph.parentNode.insertBefore(drag,ph);end();save()});
+document.addEventListener('dragend',function(){if(drag)end()});
+function end(){document.body.classList.remove('dragging');if(drag)drag.classList.remove('lifted');if(ph.parentNode)ph.parentNode.removeChild(ph);drag=null}
+var r=document.getElementById('reset-view');if(r)r.onclick=function(){try{var ks=[];for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);
+if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme')ks.push(k)}ks.forEach(function(k){localStorage.removeItem(k)})}catch(x){}
+try{history.replaceState(null,'',location.pathname+location.search)}catch(x){}location.reload()};
+sync();
+})();
+"""
+
+# The graph: a force layout on a canvas, written here because the page loads
+# nothing from the network. Each zone and wiki starts in its own sector, so a
+# zone reads as a cluster. It turns slowly when left alone and stops for a
+# hover, a drag, an open panel, or the system's reduced-motion setting.
+GRAPH_JS = r"""
+(function(){
+var src=document.getElementById('graph-data'),cv=document.getElementById('gcv');if(!src||!cv)return;
+var G=JSON.parse(src.textContent),wrap=cv.parentNode,ctx=cv.getContext('2d'),pop=document.getElementById('gpop');
+var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0';
+var N=G.nodes,hubOf={},seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
+N.forEach(function(n,i){n.i=i;n.adj=[];if(n.h)hubOf[n.z+'/'+n.p]=n});
+G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
+var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
+N.forEach(function(n){var a=places.indexOf(n.z)/Math.max(1,places.length)*6.283,r=150+rnd()*80;n.ax=Math.cos(a)*200;n.ay=Math.sin(a)*200;a+=(rnd()-.5)*.6;
+n.x=Math.cos(a)*r;n.y=Math.sin(a)*r;n.vx=n.vy=0;n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
+var V=[],E=[],alpha=1,theta=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,running=false,last=0,idle=0,C={};
+function visible(n){return mode==='all'||n.c}
+function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
+N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});
+document.querySelectorAll('.gseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)})}
+function step(){var L=70,S=900,i,j,a,b,dx,dy,d2,k,m;
+for(i=0;i<V.length;i++){a=V[i];for(j=i+1;j<V.length;j++){b=V[j];dx=b.x-a.x;dy=b.y-a.y;d2=dx*dx+dy*dy||1;if(d2>360000)continue;
+k=S*alpha/d2;a.vx-=dx*k;a.vy-=dy*k;b.vx+=dx*k;b.vy+=dy*k;
+m=a.r+b.r+(a.h&&b.h?55:a.h||b.h?28:14);if(d2<m*m){k=(m-Math.sqrt(d2))/Math.sqrt(d2)*.25;a.x-=dx*k;a.y-=dy*k;b.x+=dx*k;b.y+=dy*k}}}
+E.forEach(function(e){a=N[e[0]];b=N[e[1]];dx=b.x+b.vx-a.x-a.vx;dy=b.y+b.vy-a.y-a.vy;var d=Math.sqrt(dx*dx+dy*dy)||1;
+k=(d-L)/d*alpha*.3/Math.max(1,Math.min(a.deg,b.deg));a.vx+=dx*k;a.vy+=dy*k;b.vx-=dx*k;b.vy-=dy*k});
+V.forEach(function(n){var g=n.deg?.012:.06;n.vx-=(n.x-n.ax)*g*alpha;n.vy-=(n.y-n.ay)*g*alpha;if(n===drag)return;n.vx*=.6;n.vy*=.6;n.x+=n.vx;n.y+=n.vy});
+var mx=0,my=0;V.forEach(function(n){mx+=n.x;my+=n.y});mx/=V.length||1;my/=V.length||1;if(!drag)V.forEach(function(n){n.x-=mx;n.y-=my});
+alpha=Math.max(0,alpha-(alpha>.02?.005:.0005))}
+function toScreen(n){var c=Math.cos(theta),s=Math.sin(theta);return[W/2+px+scale*(n.x*c-n.y*s),H/2+py+scale*(n.x*s+n.y*c)]}
+function toWorld(x,y){var c=Math.cos(theta),s=Math.sin(theta),u=(x-W/2-px)/scale,v=(y-H/2-py)/scale;return[u*c+v*s,-u*s+v*c]}
+function fit(now){if(!W||!H)return;var R=60;V.forEach(function(n){R=Math.max(R,Math.sqrt(n.x*n.x+n.y*n.y)+n.r)});var t=Math.min(W,H)/2/(R+30);
+if(now){scale=t;px=py=0}else{scale+=(t-scale)*.08;px*=.9;py*=.9}}
+function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
+function fill(n){return G.colors[n.k]||C['--muted']}
+function ring(n){return n.d==null||n.s?null:n.d>45?C['--critical']:n.d>14?C['--warning']:null}
+function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+var f=sel||hover,near={};if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
+var P={};V.forEach(function(n){P[n.i]=toScreen(n)});
+E.forEach(function(e){var a=P[e[0]],b=P[e[1]],hot=f&&(e[0]===f.i||e[1]===f.i);
+ctx.globalAlpha=f&&!hot?.12:(N[e[0]].s||N[e[1]].s)?.25:.55;ctx.strokeStyle=hot?C['--accent']:C['--base'];ctx.lineWidth=hot?1.6:1;
+ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()});
+var zs=Math.max(.7,Math.min(1.6,scale));
+V.forEach(function(n){var p=P[n.i],r=n.r*zs;ctx.globalAlpha=f&&!near[n.i]?.15:n.s?.3:1;
+ctx.fillStyle=fill(n);ctx.beginPath();ctx.arc(p[0],p[1],r,0,6.283);ctx.fill();
+var rc=ring(n);if(rc){ctx.strokeStyle=rc;ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(p[0],p[1],r+3.2,0,6.283);ctx.stroke()}
+if(n===sel){ctx.strokeStyle=C['--ink'];ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+(rc?6.4:3),0,6.283);ctx.stroke()}});
+ctx.textAlign='center';ctx.textBaseline='top';ctx.lineJoin='round';
+V.forEach(function(n){var show=n===f||(f&&near[n.i])||n.h||n.c||scale>1.4;if(!show)return;
+var p=P[n.i],big=n.h||n===f;ctx.globalAlpha=f&&!near[n.i]?.2:n.s?.45:1;
+ctx.font=(big?'600 12px ':'11px ')+'system-ui,-apple-system,sans-serif';var y=p[1]+n.r*zs+(ring(n)?7:4);
+ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,p[0],y);ctx.fillStyle=big?C['--ink']:C['--ink2'];ctx.fillText(n.n,p[0],y)});
+ctx.globalAlpha=1}
+function frame(t){if(!running)return;var dt=Math.min(64,t-(last||t));last=t;
+if(alpha>0){step();step()}if(auto)fit();
+idle+=dt;if(spin&&!hover&&!sel&&!drag&&idle>2500)theta+=dt*.00006;
+if((frame.k=(frame.k||0)+1)%30===0||!C['--ink'])colors();draw();requestAnimationFrame(frame)}
+function size(){var r=wrap.getBoundingClientRect();W=r.width;H=r.height;dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr}
+function start(){if(running)return;running=true;last=0;requestAnimationFrame(frame)}function stop(){running=false}
+function at(e){var r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,best=null,bd=1e9;
+V.forEach(function(n){var p=toScreen(n),d=Math.hypot(p[0]-x,p[1]-y);if(d<n.r*Math.max(.7,Math.min(1.6,scale))+5&&d<bd){bd=d;best=n}});return{x:x,y:y,n:best}}
+var down=null;
+cv.addEventListener('pointerdown',function(e){var h=at(e);idle=0;down={x:h.x,y:h.y,n:h.n,px:px,py:py,moved:false};if(h.n){drag=h.n;alpha=Math.max(alpha,.25)}cv.classList.add('drag');cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',function(e){var h=at(e);idle=0;
+if(down){if(Math.hypot(h.x-down.x,h.y-down.y)>4)down.moved=true;
+if(drag&&down.moved){var w=toWorld(h.x,h.y);drag.x=w[0];drag.y=w[1];drag.vx=drag.vy=0;alpha=Math.max(alpha,.2)}
+else if(!drag&&down.moved){auto=false;px=down.px+h.x-down.x;py=down.py+h.y-down.y}return}
+hover=h.n;cv.classList.toggle('hot',!!h.n);
+if(h.n){var n=h.n;cv.dataset.tip=n.n+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
+cv.addEventListener('pointerup',function(){cv.classList.remove('drag');if(!down)return;if(!down.moved){if(down.n)select(down.n);else close()}drag=null;down=null});
+cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dataset.tip}});
+cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
+cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
+var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k},{passive:false});
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
+function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
+var stt=n.s?'Parked':n.d==null?'':(n.d>45?'Untouched for ':n.d>14?'Aging: updated ':'Updated ')+n.d+' day'+(n.d===1?'':'s')+(n.d>45?'':' ago');
+var acts='<a class="act" href="'+esc(n.u)+'">Open</a>';if(hub&&hub!==n)acts+='<a class="act" href="'+esc(hub.u)+'">Open project</a>';
+if(n.w)acts+='<button class="act" type="button" data-copy="'+esc((n.s?'wake ':'open ')+n.w)+'" data-say="'+esc('Copied “'+(n.s?'wake ':'open ')+n.w+'”. Paste it to your assistant.')+'">Copy “'+esc((n.s?'wake ':'open ')+n.w)+'”</button>';
+var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
+var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">everything</small>')+'</button>'}).join('');
+pop.innerHTML='<button class="x" aria-label="Close">×</button><h4>'+esc(n.n)+'</h4><div class="muted">'+esc([kindName(n),n.z,n.p].filter(Boolean).join(' · '))+'</div>'
++(n.t.length?'<div style="margin-top:4px">'+n.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
++(stt?'<div class="ink2" style="margin-top:4px">'+esc(stt)+'</div>':'')+'<div class="gacts">'+acts+'</div>'
++(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
+pop.hidden=false;if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
+function close(){sel=null;pop.hidden=true}
+function glide(tx,ty){var sx=px,sy=py,t0=performance.now();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g)})(t0)}
+pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
+var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){mode='all';st.set('garrick-graph-mode',mode);rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
+document.querySelectorAll('.gseg button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true}});
+var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
+sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn()};spinBtn();
+document.getElementById('gfit').onclick=function(){auto=true;theta=0};
+rebuild();for(var i=0;i<400;i++)step();size();colors();fit(true);
+if('ResizeObserver' in window)new ResizeObserver(function(){size();if(auto)fit(true);draw()}).observe(wrap);
+if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting?start():stop()}).observe(wrap);else start();
+})();
+"""
+
+
+def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
+          show_graph: bool = True) -> str:
     now = now or dt.datetime.now()
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
@@ -580,7 +846,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
     # ---- sidebar
-    nav = [("overview", "Overview", worst, len(attn) or ""), ("threads", "Threads", "warning" if aging else "good", live)]
+    nav = [("overview", "Overview", worst, len(attn) or "")] + ([("graph", "Graph", "", "")] if show_graph else []) + \
+          [("threads", "Threads", "warning" if aging else "good", live)]
     navh = "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in nav)
     navh += "".join('<a class="sub" href="#zone-%s">%s<span class="n">%d</span></a>' % (re.sub(r"\W+", "-", z.lower()), E(z), len(T[z]["rows"])) for z in T)
     more = [("checks", "Checks", "critical" if C and (C.get("errors") or C.get("failed")) else "warning" if C and C.get("warnings") else "good",
@@ -595,7 +862,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
     aside = ('<aside><div class="brand"><h1>Workspace status</h1><p>Built %s · <span id="age">just now</span></p></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
-             '<div class="controls">%s<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
+             '<div class="controls">%s<p class="hint" id="hidden-note" hidden></p>'
+             '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
+             '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
              % (now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh,
                 copy("Copy the rebuild command", "python3 System/status/status.py --workspace %s --open" % ws,
@@ -622,7 +891,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     attn_card = ""
     if attn:
         attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join('<a href="%s">%s<span>%s</span></a>' % (h, ICON[k], E(t)) for k, t, h in attn))
+                                                       '<div class="attn">%s</div>' % "".join('<a href="%s">%s<span>%s</span></a>' % (h, ICON[k], E(t)) for k, t, h in attn),
+                                                       fixed=True)
 
     # ---- threads, one column per zone
     cols = ""
@@ -659,8 +929,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                  % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>over 45 days</span><span>· the bar is days since the thread note was updated, full at 60</span></div>')
-    threads_card = '<div class="full">%s</div>' % card("threads", "Threads", "%d live · %d parked · names, parties and dates only" % (live, parked_n),
-                                                       '<div class="zones">%s</div>%s' % (cols, legend))
+    threads_card = card("threads", "Threads", "%d live · %d parked · names, parties and dates only" % (live, parked_n),
+                        '<div class="zones">%s</div>%s' % (cols, legend))
 
     # ---- checks
     if C is None:
@@ -732,13 +1002,32 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         E(link(log)), E(name), E(head)) for name, log, head in W)
     wikis_card = card("wikis", "Wikis", "newest entry in each log", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
 
+    # ---- the graph
+    graph_card = ""
+    if show_graph:
+        GR = graph(ws, T, link, now)
+        core = sum(1 for n in GR["nodes"] if n["c"])
+        legend = "".join('<span><i style="background:%s"></i>%s</span>' % (GR["colors"][i], E(label)) for i, label in GR["kinds"])
+        legend = ('<div class="legend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
+                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked</span>'
+                  '<span>· click a note to open it or copy what to say, double-click to open it, drag to move, pinch or ⌘-scroll to zoom</span></div>' % legend)
+        data = json.dumps(GR, separators=(",", ":")).replace("</", "<\\/")
+        graph_card = card("graph", "Graph", "%d notes, %d links · %d projects and threads · names only" % (len(GR["nodes"]), len(GR["edges"]), core),
+                          '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in every zone and wiki, and the links between them"></canvas>'
+                          '<div class="gbar"><div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
+                          '<button data-m="all">Everything</button></div><button id="gspin"></button><button id="gfit">Fit</button></div>'
+                          '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
+
     left = checks_card + jobs_card + wikis_card
     right = todo_card + inbox_card + calls_card + repos_card
-    main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s%s<div class="stack l">%s</div><div class="stack">%s</div></div></main>'
-            % (top, attn_card, threads_card, left, right))
+    main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
+            '<div class="slot stack l" data-slot="left">%s</div><div class="slot stack r" data-slot="right">%s</div>'
+            '<div class="slot full" data-slot="bottom"></div></div></main>'
+            % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>Workspace status</title><style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s</script></body></html>' % (CSS, now.isoformat(timespec="seconds"), aside, main, JS))
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s</script></body></html>' % (
+                CSS, now.isoformat(timespec="seconds"), aside, main, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -747,6 +1036,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--out", help="where to write the page (default: System/generated/status.html)")
     ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
+    ap.add_argument("--no-graph", action="store_true", help="leave the graph out: the page then reads nothing but frontmatter")
     args = ap.parse_args(argv)
     ws = find_workspace(args.workspace)
     generated = ws / "System" / "generated"
@@ -763,7 +1053,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(build(ws, args.obsidian), encoding="utf-8")
+    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph), encoding="utf-8")
     os.replace(tmp, out)
     print(out)
     if args.open:

@@ -166,6 +166,21 @@ class TestGraph(StatusCase):
         data = graph_data(self.page())
         self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])
 
+    def test_todo_and_instructions_stay_out(self):
+        data = graph_data(self.page())
+        names = {n["n"] for n in data["nodes"]}
+        self.assertFalse({"Todo", "AGENTS"} & names)
+        self.assertNotIn("open actions", [label for _, label in data["kinds"]])
+
+    def test_legend_lists_only_drawn_kinds(self):
+        html = self.page()
+        data = graph_data(html)
+        self.assertEqual(sorted({n["k"] for n in data["nodes"]}), [i for i, _ in data["kinds"]])
+        legend = html[html.index('class="legend glegend"'):]
+        legend = legend[:legend.index("</div>")]
+        self.assertEqual([str(i) for i, _ in data["kinds"]], re.findall(r'data-k="(\d+)"', legend))
+        self.assertIn("drawn[s.dataset.k]", status.GRAPH_JS)    # and in the browser, only what the view draws
+
     def test_parked_threads_and_their_notes_are_marked(self):
         sizing = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing"
         write(sizing / "Market Sizing.md", thread_note("Birch Entry", "Market Sizing", "birch", status="parked"))
@@ -550,6 +565,17 @@ class TestFrontmatter(StatusCase):
     def test_the_fallback_reads_comments_and_block_lists_too(self):
         self.assertIsNone(status.workspace_lib(self.root))
         self.parked_with_comment_and_block_list()
+
+
+class TestOpenActions(StatusCase):
+    def test_each_zone_line_opens_its_todo(self):
+        html = self.page()
+        start = html.index('id="todo"')
+        block = html[start:html.index("</details>", start)]
+        url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
+        self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open</a>' % url, block)
+        vault = self.page(vault="My Work")
+        self.assertIn("file=Zones/Work/Todo\" title=\"Open Work/Todo.md\">Open</a>", vault)
 
 
 if __name__ == "__main__":

@@ -367,7 +367,7 @@ SKIP_DIRS = {"Inbox", "raw", "archive", "Archive", "generated"}
 # kind looks the same in every workspace; none is amber or red, which the
 # rings use for threads gone quiet. Threads take the brand blue, the light
 # theme's accent, which also draws the lines of a selected note.
-KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"), ("todo", "open actions", "#c0399a"),
+KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("person", "person", "#13a38a"),
          ("knowledge", "knowledge", "#7c9a2d")]
 
@@ -376,9 +376,10 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
-    A parked thread, with the notes in its folder, and a project with no live
-    thread left, with everything in it, are marked `s` and drawn only when the
-    page is asked to show them."""
+    Instructions (AGENTS.md) are not notes, and each zone's Todo.md has the
+    Open actions card, so neither is drawn. A parked thread, with the notes in
+    its folder, and a project with no live thread left, with everything in it,
+    are marked `s` and drawn only when the page is asked to show them."""
     places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
     names = short_names(T)
@@ -390,9 +391,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         for folder, dirs, files in os.walk(root):
             dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")) and d not in SKIP_DIRS)
             for f in sorted(files):
-                if f.endswith(".md") and f != "AGENTS.md" and not f.startswith((".", "_")) \
-                        and not (folder == str(root) and f in ("index.md", "log.md") and root.name == "wiki"):
-                    notes.append((place, root, Path(folder) / f))
+                if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
+                    continue
+                if folder == str(root) and (f in ("index.md", "log.md") and root.name == "wiki"
+                                            or f == "Todo.md" and root.parent.name == "Zones"):
+                    continue
+                notes.append((place, root, Path(folder) / f))
     rel = {path: path.relative_to(ws).with_suffix("").as_posix() for _, _, path in notes}
     by_rel = {r: p for p, r in rel.items()}
     nodes, index = [], {}
@@ -406,9 +410,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         kind = as_text(fm.get("type")).strip().lower()
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
-        if path.name == "Todo.md" and len(parts) == 1:
-            kind = "todo"
-        elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
+        if kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
             kind = "project"
         elif kind in ("source", "concept", "entity", "summary") or root.parent.name == "Knowledge":
             kind = "knowledge"
@@ -431,7 +433,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         index[path] = len(nodes)
         nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
-                      "c": 1 if kind in ("project", "thread", "todo") else 0, "h": 1 if kind == "project" else 0,
+                      "c": 1 if kind in ("project", "thread") else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
@@ -826,6 +828,7 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
 nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-size:10.5px;color:var(--muted)}
 .hint{font-size:11.5px;color:var(--muted);margin:0}
+.zt{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.zt .act{margin-left:auto;align-self:center}a.act:hover{text-decoration:none}
 .gwrap{position:relative;height:560px;border-radius:10px;background:var(--raise);border:1px solid var(--line);overflow:hidden}
 .gwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.gwrap canvas.drag{cursor:grabbing}.gwrap canvas.hot{cursor:pointer}
 .gbar{position:absolute;left:10px;top:10px;display:flex;gap:6px;align-items:center}
@@ -973,6 +976,7 @@ var V=[],E=[],alpha=1,theta=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,dr
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)}
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});
+var drawn={};V.forEach(function(n){drawn[n.k]=1});document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.gseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)})}
 function step(){var L=70,S=900,i,j,a,b,dx,dy,d2,k,m;
 for(i=0;i<V.length;i++){a=V[i];for(j=i+1;j<V.length;j++){b=V[j];dx=b.x-a.x;dy=b.y-a.y;d2=dx*dx+dy*dy||1;if(d2>360000)continue;
@@ -1197,8 +1201,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     tb = ""
     for z, t in TD.items():
         scale = max(list(t["counts"].values()) + [1]) * 1.08
-        tb += '<div style="margin:8px 0 2px"><b><a href="%s">%s</a></b> <span class="muted" style="font-size:12px">changed %s</span></div>' % (
-            E(link(t["file"])), E(z), age(t["when"], now))
+        tb += ('<div class="zt"><b><a href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>'
+               '<a class="act" href="%s" title="Open %s/Todo.md">Open</a></div>' % (E(link(t["file"])), E(z), age(t["when"], now), E(link(t["file"])), E(z)))
         if not t["counts"]:
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
@@ -1254,8 +1258,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if show_graph:
         GR = graph(ws, T, link, now)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        legend = "".join('<span><i style="background:%s"></i>%s</span>' % (GR["colors"][i], E(label)) for i, label in GR["kinds"])
-        legend = ('<div class="legend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
+        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E(label)) for i, label in GR["kinds"])
+        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
                   '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked, when shown</span>'
                   '<span>· click a note to open it or copy what to say, double-click to open it, drag to move, pinch or ⌘-scroll to zoom</span></div>' % legend)
         data = script_json(GR)

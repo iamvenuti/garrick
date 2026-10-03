@@ -94,19 +94,19 @@ PLAN = [
     ("2026-09-02 11:05", "Wikis", "Meetings: ingest 260902-acme-kick-off, Acme kick-off", [
         M + "raw/260902-acme-kick-off.txt", M + "wiki/sources/260902-acme-kick-off.md",
         M + "wiki/people/dana-whitlock.md", M + "wiki/people/owen-pike.md"]),
-    ("2026-09-02 11:08", "Zones/Work", "Work: actions from Acme kick-off", [
-        todo("Supplier map to Dana", "Freight options brief, first draft")]),
-    ("2026-09-02 11:20", "Zones/Work", "New project Acme Review (acme), first thread Supplier Map", [
+    ("2026-09-02 11:08", "Zones/Work", "New project Acme Review (acme), first thread Supplier Map", [
         project("Work", "Acme Review", "acme", "Supplier Map")]),
-    ("2026-09-02 11:24", "Zones/Work", "Acme Review: new thread Freight Terms", [
+    ("2026-09-02 11:12", "Zones/Work", "Acme Review: new thread Freight Terms", [
         thread("Work", "Acme Review", "Freight Terms")]),
+    ("2026-09-02 11:20", "Zones/Work", "Work: actions from Acme kick-off", [
+        todo("Supplier map to Dana", "Freight options brief, first draft")]),
     ("2026-09-04 12:30", "Wikis", "Meetings: ingest 260904-birch-kick-off, Birch kick-off", [
         M + "raw/260904-birch-kick-off.vtt", M + "wiki/sources/260904-birch-kick-off.md",
         M + "wiki/people/theo-marsh.md", M + "wiki/people/iris-bell.md"]),
-    ("2026-09-04 12:34", "Zones/Work", "Work: actions from Birch kick-off", [
-        todo("Market sizing memo")]),
-    ("2026-09-04 12:40", "Zones/Work", "New project Birch Entry (birch), first thread Market Sizing", [
+    ("2026-09-04 12:34", "Zones/Work", "New project Birch Entry (birch), first thread Market Sizing", [
         project("Work", "Birch Entry", "birch", "Market Sizing")]),
+    ("2026-09-04 12:40", "Zones/Work", "Work: actions from Birch kick-off", [
+        todo("Market sizing memo")]),
     ("2026-09-04 16:10", "Zones/Work", "Acme Review: supplier list received from Owen", [
         ACME + "Sources/Acme supplier list.csv"]),
     ("2026-09-07 08:30", "Wikis", "Knowledge: ingested Freight Rate Outlook, Autumn 2026 (Pellow & Strand Research)", [

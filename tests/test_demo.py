@@ -7,6 +7,8 @@ Builds Sam Rivera's workspace into a temporary folder and checks what the
 four mails waiting in the Work zone's Inbox (one to read, one conversation,
 one with a file for Acme Review, one that sits on both sides of the wall), and
 the wall between Acme and Birch holding around the two Cobalt Freight calls.
+Also that the month around them keeps the workspace's own rules: every to-do
+line names its thread.
 """
 
 from __future__ import annotations
@@ -179,6 +181,24 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(users, [])
         acme_note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Freight Terms" / "Freight Terms.md"
         self.assertIn(ACME_SIDE, acme_note.read_text(encoding="utf-8"))
+
+    def test_todo_lines_name_their_thread(self):
+        """Wraps and finishes find a thread's actions by `<project>, <thread>`, so every
+        line names a thread that exists, or else a party or person in the context file."""
+        ctx = load_context(self.root)
+        names = {entry["party"] for entry in ctx["parties"].values()} | {person["name"] for person in ctx["people"]}
+        for zone in ("Work", "Personal"):
+            lines = [l for l in (self.root / "Zones" / zone / "Todo.md").read_text(encoding="utf-8").splitlines()
+                     if l.startswith("- [")]
+            self.assertTrue(lines, zone)
+            for line in lines:
+                middle = line.split(" · ")[1]
+                if ", " in middle:
+                    project, thread = middle.split(", ", 1)
+                    note = self.root / "Zones" / zone / project / "Threads" / thread / (thread + ".md")
+                    self.assertTrue(note.is_file(), line)
+                else:
+                    self.assertIn(middle, names, line)
 
     def test_check_catches_a_breach(self):
         copy = self.base / "breach"

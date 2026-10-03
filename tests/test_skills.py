@@ -114,6 +114,19 @@ class SkillsTest(unittest.TestCase):
         self.assertEqual({"interview me", "get to know me", "ask me about my work",
                           "help me set up my workspace", "where do i start"}, triggers(SKILLS / "interview"))
 
+    def test_interview_commits_by_name_and_names_its_record_one_way(self):
+        """The record is `YYMMDD - <Topic>.md` throughout, and is committed on its own:
+        step 2 has already committed the context change by then."""
+        text = (SKILLS / "interview" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("<topic>", text)
+        self.assertEqual(3, text.count("System/interviews/YYMMDD - <Topic>.md"))
+        on_a_yes = flat(section(text, "## On a yes"))
+        for needle in ("Every commit stages its files by name, never `git add -A`", "git add -- System/context.md",
+                       'git -C "Zones/<Zone>" add -- Todo.md',
+                       'git add -- "System/interviews/YYMMDD - <Topic>.md"', "commit it on its own"):
+            self.assertIn(needle, on_a_yes, needle)
+        self.assertNotIn("with the context change", on_a_yes)
+
     def test_meetings_files_pasted_notes(self):
         """The first session pastes notes of a call; the skill saves them as a transcript and files them."""
         for phrase in ("file these notes", "file these as notes of a conversation", "file this transcript"):

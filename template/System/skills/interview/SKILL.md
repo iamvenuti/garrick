@@ -31,7 +31,7 @@ All paths are relative to the workspace root.
 
 | What | Path |
 |---|---|
-| The interview record | `System/interviews/YYMMDD - <topic>.md` |
+| The interview record | `System/interviews/YYMMDD - <Topic>.md` |
 | Me, Zones, Parties, Walls, People, Aliases | `System/context.md` |
 | The zones | the folders under `Zones/` |
 | New zones, projects and threads | `System/tools/scaffold.py`, as the `threads` skill's *New zone* and *New* procedures run it |
@@ -45,7 +45,7 @@ All paths are relative to the workspace root.
    with Work and Personal zones, and two parties so far, Acme and Birch. Still
    right?"
 2. **Settle the topic.** If the user named one ("interview me about the Birch
-   work"), that is the topic. Otherwise it is "getting started".
+   work"), that is the topic. Otherwise it is "Getting started".
 3. **Start the record**: `System/interviews/YYMMDD - <Topic>.md`, today's date,
    with this header, and save it before asking anything:
    ```markdown
@@ -145,24 +145,39 @@ path.
 ## On a yes
 
 The user may accept all of it, part of it, or change it first. Apply only what
-was accepted, in this order:
+was accepted, in this order. Every commit stages its files by name, never
+`git add -A`: the record waits unfinished in the root's repository until
+step 6, and another session may have changes of its own in any repository.
 
-1. **Zones**, if the proposal adds one, through the `threads` skill's *New
-   zone* procedure: before anything names them.
+1. **Zones**, if the proposal adds any, one at a time through the `threads`
+   skill's *New zone* procedure, before anything names them.
 2. **Parties, Walls, People, Aliases.** Re-read `System/context.md` right
-   before editing it, then add the rows. Commit in the workspace root's
-   repository: "Interview: four parties, one wall".
+   before editing it, then add the rows. Commit it alone in the workspace
+   root's repository:
+   ```sh
+   git add -- System/context.md
+   git commit -m "Interview: four parties, one wall"
+   ```
 3. **Projects and threads**, through the scaffolding script, one at a time, as
    the `threads` skill's *New* procedure says. When it refuses a name, relay
-   the reason and offer a fix. One commit per zone.
+   the reason and offer a fix. Each is committed in its zone as that
+   procedure says, by name.
 4. **Open actions.** Re-read each zone's `Todo.md` and append under `## Inbox`
    as `- [ ] <action> · <project>, <thread> · <date>`, naming the thread just
-   set up for it, or the party or person when no thread fits. Commit with
-   that zone's other changes.
+   set up for it, or the party or person when no thread fits. Commit each
+   zone's list in its own repository:
+   ```sh
+   git -C "Zones/<Zone>" add -- Todo.md
+   git -C "Zones/<Zone>" commit -m "Interview: open actions"
+   ```
 5. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
    plain words.
 6. **Close the record**: add `## Set up` with what was created and the commit
-   hashes, and commit it with the context change, or on its own.
+   hashes, then commit it on its own in the workspace root's repository:
+   ```sh
+   git add -- "System/interviews/YYMMDD - <Topic>.md"
+   git commit -m "Interview: <Topic>, set up"
+   ```
 
 Never push. That leaves the machine and needs its own yes.
 

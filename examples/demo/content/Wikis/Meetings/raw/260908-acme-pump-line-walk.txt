@@ -1,0 +1,20 @@
+Acme Corp: pump line walk-through
+Tuesday 8 September 2026, 10:00 to 11:15. Acme's plant, the pump line.
+Speakers: Hana Croft, Owen Pike, Sam Rivera
+
+Hana Croft: This is the whole line, casting store to test bay. Ask anything.
+Sam Rivera: Which parts can stop it?
+Hana Croft: Any of them, in theory. In practice three: the seal kits, the motor housings and the control boards.
+Owen Pike: The three that come from one supplier each.
+Sam Rivera: How much stock do you hold of each?
+Hana Croft: Housings, about five weeks. Boards, four. Seal kits, two, sometimes less.
+Sam Rivera: Why so little on the seal kits?
+Hana Croft: They age on the shelf. Rubber goes hard. We buy little and often.
+Sam Rivera: Has the line ever stopped for one of them?
+Hana Croft: Twice in two years. Three days in March last year waiting on control boards, and a day in June when a seal-kit delivery went to the wrong site.
+Sam Rivera: And if a part runs out, is there anything you can fit instead?
+Hana Croft: For a housing, sometimes, from the old casting stock. For a board, no. For a seal kit, never. Seal kits are the one part I can't work around. No kit, no pump.
+Owen Pike: I can get you the stoppage log. It has every hour we lost and why.
+Hana Croft: Send it to him by Thursday, Owen.
+Owen Pike: Thursday.
+Sam Rivera: Thanks. I'll put the stock cover for each of the three on the map, so Dana sees how long we'd have.

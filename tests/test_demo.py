@@ -7,8 +7,8 @@ Builds Sam Rivera's workspace into a temporary folder and checks what the
 four mails waiting in the Work zone's Inbox (one to read, one conversation,
 one with a file for Acme Review, one that sits on both sides of the wall), and
 the wall between Acme and Birch holding around the two Cobalt Freight calls.
-Also that the month around them keeps the workspace's own rules: every to-do
-line names its thread.
+Also that the month around them keeps the workspace's own rules: person pages
+say who someone is and nothing more, and every to-do line names its thread.
 """
 
 from __future__ import annotations
@@ -199,6 +199,25 @@ class DemoTest(unittest.TestCase):
                     self.assertTrue(note.is_file(), line)
                 else:
                     self.assertIn(middle, names, line)
+
+    def test_person_pages_say_who_and_nothing_more(self):
+        """A person page is read on both sides of every wall, so it holds who someone is
+        and which party, and nothing learned in a meeting. Every meeting links its people."""
+        ctx = load_context(self.root)
+        wiki = self.root / "Wikis" / "Meetings" / "wiki"
+        people = {p.stem: p for p in (wiki / "people").glob("*.md")}
+        for page in (wiki / "sources").glob("*.md"):
+            links = parse_frontmatter(page).get("people") or []
+            self.assertTrue(links, page.name)
+            for link in links:
+                self.assertIn(link.strip("[]").split("/")[-1], people, page.name)
+        self.assertEqual({p["name"] for p in ctx["people"]}, {parse_frontmatter(p)["title"] for p in people.values()})
+        for slug, path in people.items():
+            fm = parse_frontmatter(path)
+            self.assertIn(fm.get("party"), ctx["parties"], slug)
+            body = [l for l in path.read_text(encoding="utf-8").split("---", 2)[2].splitlines() if l.strip()]
+            self.assertEqual(["# " + fm["title"]], body[:1], slug)
+            self.assertEqual(2, len(body), slug)  # the heading, then one paragraph
 
     def test_check_catches_a_breach(self):
         copy = self.base / "breach"

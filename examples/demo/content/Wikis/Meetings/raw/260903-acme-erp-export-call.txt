@@ -1,0 +1,16 @@
+Acme Corp: ERP export call
+Thursday 3 September 2026, 08:45 to 09:00. Phone.
+Speakers: Owen Pike, Sam Rivera
+
+Sam Rivera: Morning, Owen. A quick one on the supplier list, before you pull it.
+Owen Pike: Go ahead. I was going to run it this afternoon.
+Sam Rivera: What will it hold?
+Owen Pike: Supplier, part, category, tier, whether it's single source, and last year's spend. Plus a notes column the buyers fill in by hand.
+Sam Rivera: And tier two?
+Owen Pike: Not in the ERP at all. Where we know a tier-two supplier, it's in the notes. Don't expect much.
+Sam Rivera: That's fine. I'd rather leave a gap than guess. What about the duplicates you mentioned?
+Owen Pike: About forty records came over twice from the old system. I'll take them out before I send it, and keep a list of what I merged in case you want it.
+Sam Rivera: Please keep the list. Pump line only?
+Owen Pike: Pump line only. Everything else would triple the file.
+Sam Rivera: Then tomorrow as planned.
+Owen Pike: Tomorrow. Friday the fourth, by the end of the day.

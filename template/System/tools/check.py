@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from garrick_lib import (  # noqa: E402
     INBOX,
     MEDIA_EXTS,
+    WALL_HOOK_MARK,
     has_wall_hook,
     install_wall_hook,
     is_domain,
@@ -65,6 +66,7 @@ CHECKS = [
     ("placeholders", "Unfinished install"),
     ("context", "Context"),
     ("zones", "Zones"),
+    ("hooks", "Commit hooks"),
     ("names", "Names"),
     ("projects", "Projects"),
     ("threads", "Threads"),
@@ -86,6 +88,7 @@ EAR_GROUP = {
     "placeholders": "{n} files still hold installer placeholders",
     "context": "the context file has {n} problems",
     "zones": "the zone folders have {n} gaps",
+    "hooks": "git skips the hooks of {n} repositories",
     "names": "{n} names are hard to say or sound alike",
     "projects": "{n} things need fixing in project hub notes",
     "threads": "{n} things need fixing in thread notes",
@@ -522,6 +525,60 @@ def check_zones(ws: Workspace) -> List[Finding]:
         if not (zone / INBOX).is_dir():
             out.append(Finding(WARNING, "zones", r, "has no %s/ folder; mail and files for this zone have nowhere to land" % INBOX,
                                "The %s zone has no inbox" % zone.name))
+    return out
+
+
+def hooks_elsewhere(repo: Path) -> Optional[Tuple[str, Path]]:
+    """(the setting, the folder it names) when `core.hooksPath` sends git
+    anywhere but the repository's own hooks folder, whichever config sets it:
+    the repository's, the user's or the system's. None when it is unset, names
+    the repository's own hooks, or `repo` is not the top of a repository."""
+    if not _own_repo(repo):
+        return None
+    value = (_git(["config", "--get", "core.hooksPath"], repo) or "").strip()
+    if not value:
+        return None
+    common = (_git(["rev-parse", "--git-common-dir"], repo) or "").strip() or ".git"
+    own = repo / common / "hooks"
+    where = Path(os.path.expanduser(value))
+    if not where.is_absolute():
+        where = repo / where  # git reads a relative hooks path from the top of the working tree
+    try:
+        if os.path.samefile(where, own):
+            return None
+    except OSError:
+        if os.path.realpath(where) == os.path.realpath(own):
+            return None
+    return value, where
+
+
+def check_hooks(ws: Workspace) -> List[Finding]:
+    """A zone's wall check sits in its own .git/hooks, and git runs the hooks
+    there only while `core.hooksPath` is unset or names that folder. Set
+    anywhere else, in the repository, for the user or for the whole machine,
+    every commit skips the check and nothing says so."""
+    out = []
+    wikis = ws.root / "Wikis"
+    repos = [(z, True) for z in ws.zones] + [(w, False) for w in [wikis] + visible_dirs(wikis)]
+    for repo, is_zone in repos:
+        if not (repo / ".git").exists():
+            continue
+        found = hooks_elsewhere(repo)
+        if found is None:
+            continue
+        value, where = found
+        hook = where / "pre-commit"
+        try:
+            if is_zone and WALL_HOOK_MARK in hook.read_text(encoding="utf-8", errors="replace") and os.access(hook, os.X_OK):
+                continue  # the folder it names runs the wall check too
+        except OSError:
+            pass
+        what = "the wall check in its .git/hooks" if is_zone else "any hook in its own .git/hooks"
+        out.append(Finding(WARNING, "hooks", rel(ws, repo),
+                           "git takes its hooks from %s (core.hooksPath), so %s never runs before a commit; "
+                           "run `git config core.hooksPath .git/hooks` in %s" % (value, what, rel(ws, repo)),
+                           ("Git skips the wall check in the %s zone" % repo.name) if is_zone
+                           else "Git skips the hooks of the %s repository" % repo.name))
     return out
 
 
@@ -1299,10 +1356,10 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     return out
 
 
-def _zone_repo(zone: Path) -> bool:
-    """Is `zone` the top of its own git repository?"""
-    top = _git(["rev-parse", "--show-toplevel"], zone) if (zone / ".git").exists() else None
-    return top is not None and Path(top.strip()).resolve() == zone.resolve()
+def _own_repo(folder: Path) -> bool:
+    """Is `folder` the top of its own git repository?"""
+    top = _git(["rev-parse", "--show-toplevel"], folder) if (folder / ".git").exists() else None
+    return top is not None and Path(top.strip()).resolve() == folder.resolve()
 
 
 def check_inbox(ws: Workspace) -> List[Finding]:
@@ -1314,7 +1371,7 @@ def check_inbox(ws: Workspace) -> List[Finding]:
         inbox = zone / INBOX
         if not inbox.is_dir():
             continue
-        if _zone_repo(zone):
+        if _own_repo(zone):
             listing = _git(["ls-files", "-z", "--", INBOX], zone) or ""
             for name in sorted(n for n in listing.split("\0") if n and Path(n).name != ".gitkeep"):
                 out.append(Finding(ERROR, "inbox", rel(ws, zone / name),
@@ -1455,7 +1512,7 @@ def check_generated(ws: Workspace) -> List[Finding]:
 
 
 ALL_CHECKS = [
-    check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_names,
+    check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_hooks, check_names,
     check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_walls,
     check_sources, check_inbox, check_knowledge, check_raw, check_generated,
 ]

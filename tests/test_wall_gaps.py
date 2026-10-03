@@ -7,14 +7,25 @@ from each other, as in fixtures.py.
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from fixtures import build_workspace, write
+from fixtures import HAVE_GIT, build_workspace, git, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
+from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
+
+# The checker runs git as the user would; these keep the user's own config out.
+NO_USER_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def real_repo(folder: Path) -> None:
+    shutil.rmtree(folder / ".git", ignore_errors=True)
+    git(folder, "init", "-q")
 
 
 class GapCase(unittest.TestCase):
@@ -76,6 +87,54 @@ class TestLinkIndex(GapCase):
         self.assertEqual(["Wikis/Knowledge/wiki/concepts/leak.md"], [f.path for f in found])
         # Once per file to index it, and a few per finding: never once per file per link.
         self.assertLess(len(calls), 4 * n, len(calls))
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestHooksPath(GapCase):
+    """core.hooksPath set anywhere but a repository's own hooks folder means
+    its wall check never runs: from the repository's config, the user's or the
+    system's."""
+
+    def setUp(self):
+        super().setUp()
+        env = mock.patch.dict(os.environ, NO_USER_GIT)
+        env.start()
+        self.addCleanup(env.stop)
+        real_repo(self.work)
+        install_wall_hook(self.work)
+        real_repo(self.root / "Wikis")
+
+    def test_own_hooks_are_clean(self):
+        self.assertClean("hooks")
+        git(self.work, "config", "core.hooksPath", ".git/hooks")
+        self.assertClean("hooks")
+        git(self.work, "config", "core.hooksPath", str(self.work / ".git" / "hooks"))
+        self.assertClean("hooks")
+
+    def test_repository_setting(self):
+        git(self.work, "config", "core.hooksPath", "/nowhere/hooks")
+        found = self.findings("hooks", "warning")
+        self.assertEqual(["Zones/Work"], [f.path for f in found])
+        self.assertIn("/nowhere/hooks", found[0].message)
+        self.assertIn("wall check", found[0].message)
+        self.assertIn("git config core.hooksPath .git/hooks", found[0].message)
+        self.assertEqual("Git skips the wall check in the Work zone", found[0].ear)
+
+    def test_user_setting_reaches_every_repository(self):
+        config = write(self.root.parent / "user.gitconfig", "[core]\n\thooksPath = ~/.githooks\n")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config)}):
+            found = self.findings("hooks", "warning")
+            self.assertEqual(["Wikis", "Zones/Work"], sorted(f.path for f in found))  # Personal is not a repository here
+            git(self.work, "config", "core.hooksPath", ".git/hooks")  # the fix the message gives
+            self.assertEqual(["Wikis"], [f.path for f in self.findings("hooks")])
+
+    def test_a_folder_that_runs_the_wall_check_is_fine(self):
+        shared = self.root.parent / "hooks"
+        write(shared / "pre-commit", WALL_HOOK).chmod(0o755)
+        git(self.work, "config", "core.hooksPath", str(shared))
+        self.assertClean("hooks")
+        (shared / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        self.assertEqual(["Zones/Work"], [f.path for f in self.findings("hooks")])
 
 
 if __name__ == "__main__":

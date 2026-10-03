@@ -281,7 +281,7 @@ class TestGraph(StatusCase):
         js = status.GRAPH_JS
         self.assertIn("var BIG=400;", js)
         self.assertIn("if(V.length>BIG){var t=tree();V.forEach(function(n){shove(t,n,S)})}", js)
-        self.assertIn("if(q.s*q.s<.81*d2)", js)                       # a far group pushes as one, from its centre
+        self.assertIn("if(!inside&&q.s*q.s<.81*d2)", js)              # a far group pushes as one, from its centre
         self.assertIn("for(var i=0;i<(V.length>BIG?160:400);i++)step();", js)
 
     def test_a_still_graph_stops_drawing(self):

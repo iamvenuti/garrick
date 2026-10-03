@@ -230,6 +230,23 @@ class SkillsTest(unittest.TestCase):
             self.assertIn("`check.py` warns when", text)
         self.assertNotIn("does not rely on you", threads)
 
+    def test_rules_own_the_memory_pointer_and_the_generated_folder(self):
+        """"Close X" means wrap, and a parked thread keeps its pointer; the rule for
+        System/generated/ lives in the rules, and the root AGENTS.md points to it."""
+        rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
+        threads = flat(section(rules, "## Threads"))
+        self.assertIn("one entry per live or parked thread", threads)
+        self.assertIn("Delete the entry when the thread is finished.", threads)
+        self.assertNotIn("when the thread closes", threads)
+        files = flat(section(rules, "## Files"))
+        self.assertIn("**`System/generated/` belongs to the tools**", files)
+        self.assertIn("Never edit one, never file anything there, and never commit it.", files)
+        agents = (REPO / "template" / "AGENTS.md").read_text(encoding="utf-8")
+        row = [line for line in agents.splitlines() if line.startswith("| `System/generated/` |")]
+        self.assertEqual(1, len(row), row)
+        self.assertIn("*Files* in `System/rules.md`", row[0])
+        self.assertNotIn("never edit", row[0].lower())
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

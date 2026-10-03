@@ -325,7 +325,8 @@ stay exactly where they are.
 4. **Add a dated entry** below the `---`: "Parked." or "Woken.", with the reason
    if the user gave one.
 5. **Commit** in the zone's repository: "Acme, Pricing: parked".
-6. **Keep the memory pointer**, if there is one. A parked thread is not closed.
+6. **Keep the memory pointer**, if there is one. A parked thread is not
+   finished.
 
 Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
 

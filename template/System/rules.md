@@ -47,7 +47,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 - **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
 - **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken.
 - **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it.
-- **If your assistant has a memory of its own**, keep one entry per live thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread closes.
+- **If your assistant has a memory of its own**, keep one entry per live or parked thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread is finished.
 
 ## Voice
 
@@ -73,6 +73,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **Instruction files point, they do not restate.** An `AGENTS.md` routes to the file that owns a fact; it never copies it, holds status, or keeps a hand-written list of projects or skills.
 - **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud.
 - **Raw is never edited.** Anything in a wiki's `raw/` folder is the record. Summaries go in `wiki/`.
+- **`System/generated/` belongs to the tools**: pages a tool rebuilds, such as the status page. Never edit one, never file anything there, and never commit it. The next build replaces what is there, and `check.py` reports a generated page that is committed.
 
 ## Secrets
 

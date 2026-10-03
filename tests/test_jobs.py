@@ -309,9 +309,16 @@ class JobTest(FakeAssistants):
     def test_a_held_lock_skips_the_run(self):
         self.jobs.mkdir(parents=True)
         (self.jobs / "tidy.lock").mkdir()
+        running = "x" * (1024 * 1024 + 1)                  # the running job's log, due for rotation
+        (self.jobs / "tidy.log").write_text(running)
+        (self.jobs / "tidy.items").write_text("4\n")
         r = self.job("tidy", "--", sys.executable, "-c", "print('ran')")
         self.assertEqual(75, r.returncode)
-        self.assertNotIn("ran", (self.jobs / "tidy.log").read_text())
+        log = (self.jobs / "tidy.log").read_text()
+        self.assertNotIn("ran", log)
+        self.assertTrue(log.startswith(running))           # a skipped fire neither rotates its log
+        self.assertFalse((self.jobs / "tidy.log.1").exists())
+        self.assertEqual("4\n", (self.jobs / "tidy.items").read_text())  # nor deletes its count
 
     def test_the_watchdog_stops_a_run(self):
         started = time.time()

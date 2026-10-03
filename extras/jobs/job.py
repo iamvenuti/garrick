@@ -192,17 +192,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     lastwork = jobs / ("%s.lastwork" % name)
     cwd = Path(args.cwd or os.environ.get("GARRICK_WORKSPACE") or Path.home()).expanduser()
     stale = args.timeout + 600
-    rotate(log_path)
-    items_file.unlink(missing_ok=True)
 
     lock = jobs / ("%s.lock" % name)
-    with log_path.open("a", encoding="utf-8") as log:
-        if not take_lock(lock, stale):
+    if not take_lock(lock, stale):
+        with log_path.open("a", encoding="utf-8") as log:
             log.write("===== %s  %s  skipped: the previous run still holds the lock =====\n\n" % (stamp(), name))
-            return EXIT_LOCKED
-        agent_lock = jobs / "agent.lock"
-        held_agent = False
-        try:
+        return EXIT_LOCKED
+    agent_lock = jobs / "agent.lock"
+    held_agent = False
+    try:
+        # Only the run that holds the lock touches its files: a fire that is
+        # skipped must not rotate the log of the run it found still going.
+        rotate(log_path)
+        items_file.unlink(missing_ok=True)
+        with log_path.open("a", encoding="utf-8") as log:
             start = time.time()
             log.write("===== %s  %s  start =====\n" % (stamp(start), name))
             log.writelines(warnings)
@@ -248,10 +251,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                                         "seconds": round(now - start), "items": items,
                                         "idle_days": idle}, sort_keys=True) + "\n", encoding="utf-8")
             return code
-        finally:
-            if held_agent:
-                shutil.rmtree(agent_lock, ignore_errors=True)
-            shutil.rmtree(lock, ignore_errors=True)
+    finally:
+        if held_agent:
+            shutil.rmtree(agent_lock, ignore_errors=True)
+        shutil.rmtree(lock, ignore_errors=True)
 
 
 if __name__ == "__main__":

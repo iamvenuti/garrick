@@ -49,10 +49,15 @@ MAIL = ("Zones/Work/Inbox/Freight Ledger Weekly.eml",
 
 # Files whose history is replayed line by line: a list item or table row that
 # links to a page not yet written is left out until that page exists. So the
-# wiki indexes, logs, concept and entity pages grow as the month goes on.
+# wiki indexes, logs, concept and entity pages grow as the month goes on. A file
+# the plan names more than once, such as a hub note, is written the same way.
 LEDGER_DIRS = ("Wikis/Knowledge/wiki/concepts", "Wikis/Knowledge/wiki/entities")
-LEDGER_FILES = ("Wikis/Meetings/wiki/index.md", "Wikis/Meetings/wiki/log.md",
-                "Wikis/Knowledge/wiki/index.md", "Wikis/Knowledge/wiki/log.md")
+LEDGER_FILES = ("Wikis/Meetings/wiki/index.md", "Wikis/Meetings/wiki/log.md", "Wikis/Knowledge/wiki/log.md")
+# Rebuilt from the pages at every Knowledge commit, as the knowledge skill keeps it:
+# every page, newest first, each dated the day it last changed.
+KNOWLEDGE_INDEX = "Wikis/Knowledge/wiki/index.md"
+KNOWLEDGE_KINDS = (("sources", "source"), ("concepts", "concept"), ("entities", "entity"))
+UPDATED_RE = re.compile(r"(?m)^updated: \d{4}-\d{2}-\d{2}$")
 
 
 def project(zone, name, party, thread):
@@ -245,6 +250,45 @@ def is_ledger(rel):
     return rel in LEDGER_FILES or any(rel.startswith(d + "/") for d in LEDGER_DIRS)
 
 
+def as_far_as(final, rel, files, before, date):
+    """`final` as far as the month has got. A page not finished yet is dated the
+    day it last changed: `updated:` moves to `date` only when the rest moved."""
+    text = ledger_text(final, rel, files)
+    if text == final:
+        return final
+    if before is not None and UPDATED_RE.sub("", before) == UPDATED_RE.sub("", text):
+        return before
+    return UPDATED_RE.sub("updated: " + date, text)
+
+
+def knowledge_index(root):
+    """The Knowledge wiki's index, from its pages: newest first, then sources,
+    concepts and entities, each by name."""
+    wiki = root / "Wikis" / "Knowledge" / "wiki"
+    rows = []
+    for order, (folder, kind) in enumerate(KNOWLEDGE_KINDS):
+        for page in sorted((wiki / folder).glob("*.md")):
+            text = page.read_text(encoding="utf-8")
+            updated = re.search(r"(?m)^updated: (\S+)$", text).group(1)
+            name = re.search(r"(?m)^# (.+)$", text).group(1).strip()
+            rows.append((updated, order, name.lower(), "| [[wiki/%s/%s\\|%s]] | %s | %s |" % (folder, page.stem, name, kind, updated)))
+    rows.sort(key=lambda r: (r[1], r[2]))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    head = ["# Index", "", "Every page, newest first.", "", "| Page | Type | Updated |", "|---|---|---|"]
+    return "\n".join(head + [r[3] for r in rows]) + "\n"
+
+
+def plan_paths():
+    """How many times the plan names each file, by its path in the workspace."""
+    count = {}
+    for _, repo, _, actions in PLAN:
+        for action in actions:
+            if isinstance(action, str):
+                rel = (Path(repo) / action).as_posix() if repo else action
+                count[rel] = count.get(rel, 0) + 1
+    return count
+
+
 # --------------------------------------------------------------------------- to-do lists
 
 
@@ -341,9 +385,11 @@ def build(target):
     root = target.resolve()
 
     todos = {z: TodoList((CONTENT / "Zones" / z / "Todo.md").read_text(encoding="utf-8")) for z in ("Work", "Personal")}
+    named = plan_paths()
     copied = set()
     for when, repo, message, actions in PLAN:
         repo_dir = root / repo if repo else root
+        date = when.split(" ")[0]
         touched = set()
         for action in actions:
             if isinstance(action, str):
@@ -353,7 +399,12 @@ def build(target):
                     raise BuildError(f"the plan names {rel}, which is not in content/")
                 dst = root / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src, dst)
+                if named[rel] > 1:  # finished at its last naming; until then, as far as the month has got
+                    before = dst.read_text(encoding="utf-8") if dst.is_file() else None
+                    dst.write_text(as_far_as(src.read_text(encoding="utf-8"), rel, present(root), before, date),
+                                   encoding="utf-8")
+                else:
+                    shutil.copyfile(src, dst)
                 copied.add(rel)
                 touched.add(rel)
             elif action[0] == "project":
@@ -381,12 +432,13 @@ def build(target):
             for src in sorted(CONTENT.rglob("*.md")):
                 rel = src.relative_to(CONTENT).as_posix()
                 if rel.startswith(wiki) and is_ledger(rel) and (rel in LEDGER_FILES or (root / rel).exists()):
-                    final = src.read_text(encoding="utf-8")
-                    text = ledger_text(final, rel, files)
-                    if text != final:  # not finished yet: it was last updated today
-                        text = re.sub(r"(?m)^updated: \d{4}-\d{2}-\d{2}$", "updated: " + when.split(" ")[0], text)
-                    (root / rel).write_text(text, encoding="utf-8")
+                    path = root / rel
+                    before = path.read_text(encoding="utf-8") if path.is_file() else None
+                    path.write_text(as_far_as(src.read_text(encoding="utf-8"), rel, files, before, date), encoding="utf-8")
                     copied.add(rel)
+            if wiki == "Wikis/Knowledge/":
+                (root / KNOWLEDGE_INDEX).write_text(knowledge_index(root), encoding="utf-8")
+                copied.add(KNOWLEDGE_INDEX)
 
         run(["git", "add", "-A"], repo_dir, when, f"staging for {message!r}")
         run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message], repo_dir, when, f"commit {message!r}")

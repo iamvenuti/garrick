@@ -34,6 +34,18 @@ def triggers(skill: Path) -> set:
     return {re.sub(r"[.,;:!?]+$", "", f.strip().lower()) for f in found}
 
 
+def section(text: str, heading: str) -> str:
+    """A skill's section, from its heading to the next heading of the same level."""
+    level = heading.split(" ", 1)[0]
+    body = text.split("\n" + heading + "\n", 1)[1]
+    return re.split(r"\n%s " % re.escape(level), body, maxsplit=1)[0]
+
+
+def flat(text: str) -> str:
+    """Text with every run of white space as one space, so wrapping never matters."""
+    return " ".join(text.split())
+
+
 class SkillsTest(unittest.TestCase):
     def skills(self):
         return sorted(p.parent for p in SKILLS.glob("*/SKILL.md"))
@@ -80,9 +92,25 @@ class SkillsTest(unittest.TestCase):
         self.assertEqual({"interview me", "get to know me", "ask me about my work",
                           "help me set up my workspace", "where do i start"}, triggers(SKILLS / "interview"))
 
+    def test_meetings_files_pasted_notes(self):
+        """The first session pastes notes of a call; the skill saves them as a transcript and files them."""
+        for phrase in ("file these notes", "file these as notes of a conversation", "file this transcript"):
+            self.assertIn(phrase, triggers(SKILLS / "meetings"), phrase)
+        text = (SKILLS / "meetings" / "SKILL.md").read_text(encoding="utf-8")
+        pasted = flat(section(text, "## Notes pasted in"))
+        for needle in ("**Save what was pasted, unedited**", "`Wikis/Meetings/raw/inbox/<YYMMDD-slug>.txt`",
+                       "not the request around them", "**Confirm date, zone and parties**",
+                       "exactly as a dropped one**: *Ingest a transcript*, from step 4 on"):
+            self.assertIn(needle, pasted, needle)
+        missing = flat(text.split("**No transcript yet, but the user names a meeting**", 1)[1].split("\n\n", 1)[0])
+        for needle in ("offer both routes", "drop the transcript in `Wikis/Meetings/raw/inbox/`",
+                       "paste the notes or the transcript into the conversation (*Notes pasted in*)"):
+            self.assertIn(needle, missing, needle)
+        self.assertNotIn("drop the transcript in the inbox first", flat(text))
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
-                     REPO / "template" / "System" / "rules.md"):
+                     SKILLS / "meetings" / "SKILL.md", REPO / "template" / "System" / "rules.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
             self.assertNotIn("–", text, path)

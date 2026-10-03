@@ -135,6 +135,41 @@ class LandTest(unittest.TestCase):
             ingest.land(self.ws.root, f, "2026-03-10", "   ")
 
 
+class PastedNotesTest(unittest.TestCase):
+    """Notes pasted into the conversation: the skill saves them unedited as
+    raw/inbox/<YYMMDD-slug>.txt, the way land names a raw record, and lands
+    that file like any dropped one."""
+
+    PASTED = "Marta: nine percent on the renewal.\r\n\r\n  - Dana sends the forecast  \n\tno date set\n".encode("utf-8")
+
+    def setUp(self):
+        self.ws = TempWorkspace()
+        self.inbox = self.ws.meetings / "raw" / "inbox" / "260915-cobalt-renewal.txt"
+        self.inbox.write_bytes(self.PASTED)
+
+    def tearDown(self):
+        self.ws.close()
+
+    def test_the_skill_names_the_file_as_land_does(self):
+        text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        pasted = text.split("\n## Notes pasted in\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("`Wikis/Meetings/raw/inbox/<YYMMDD-slug>.txt`", pasted)
+        self.assertIn("(`260915-cobalt-renewal.txt`)", pasted)
+        self.assertEqual("260915-cobalt-renewal", ingest.build_slug("2026-09-15", "Cobalt renewal", taken=set()))
+
+    def test_lands_under_its_own_name_byte_for_byte(self):
+        slug, dest = ingest.land(self.ws.root, self.inbox, "2026-09-15", "Cobalt renewal")
+        self.assertEqual("260915-cobalt-renewal", slug)
+        self.assertEqual(self.ws.meetings / "raw" / "260915-cobalt-renewal.txt", dest)
+        self.assertEqual(self.PASTED, dest.read_bytes())
+        self.assertFalse(self.inbox.exists())
+
+    def test_a_date_corrected_on_confirming_names_the_record(self):
+        slug, dest = ingest.land(self.ws.root, self.inbox, "2026-09-16", "Cobalt renewal")
+        self.assertEqual("260916-cobalt-renewal", slug)
+        self.assertEqual(self.PASTED, dest.read_bytes())
+
+
 class PersonTest(unittest.TestCase):
     def setUp(self):
         self.ws = TempWorkspace()

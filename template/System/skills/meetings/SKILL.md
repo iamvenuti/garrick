@@ -2,13 +2,15 @@
 name: meetings
 description: >
   Turn a conversation into a page in the Meetings wiki, and brief for an
-  upcoming meeting. A conversation is a call's transcript or a mail exchange
-  with people; the intake skill hands each one here from the inboxes. Use
-  when the user says "ingest this transcript", "file this transcript",
-  "import the meeting with X", "log this call", "prep me for X", "brief me
-  for X", or "who am I meeting with". Also use right after a call ends, once
-  its transcript is in Wikis/Meetings/raw/inbox/. A request to process the
-  inbox goes to the intake skill, which calls this one.
+  upcoming meeting. A conversation is a call's transcript, notes of a call
+  pasted into the chat, or a mail exchange with people; the intake skill
+  hands each one here from the inboxes. Use when the user says "ingest this
+  transcript", "file this transcript", "file these notes", "file these as
+  notes of a conversation", "import the meeting with X", "log this call",
+  "prep me for X", "brief me for X", or "who am I meeting with". Also use
+  right after a call ends, once its transcript is in
+  Wikis/Meetings/raw/inbox/. A request to process the inbox goes to the
+  intake skill, which calls this one.
 ---
 
 # Meetings
@@ -56,6 +58,9 @@ different one.
 what each item is, and hands each conversation here: a transcript to
 *Ingest a transcript*, a mail exchange to *File a mail*. Asked directly for
 one transcript ("file this transcript"), start at *Ingest a transcript*.
+Notes or a transcript pasted into the conversation ("file these as notes of
+a conversation", then the text) start at *Notes pasted in*, which saves
+them to the inbox first.
 
 ## Ingest a transcript
 
@@ -157,9 +162,42 @@ Written: the same, then the page's path, the actions added, and the commit
 hashes.
 
 **No transcript yet, but the user names a meeting** ("log the call with
-Acme"): ask them to drop the transcript in the inbox first; there is nothing
-to ingest without one. If they have a recorder connector such as `plaud`
-that can place it there, say so as the optional route, not the only one.
+Acme"): there is nothing to ingest without the words of the call, so offer
+both routes: drop the transcript in `Wikis/Meetings/raw/inbox/`, or paste
+the notes or the transcript into the conversation (*Notes pasted in*). If
+they have a recorder connector such as `plaud` that can place a transcript
+in the inbox, say so as an option, not the only way. Spoken: "Drop the
+transcript in the inbox, or paste your notes here, and I'll file them."
+
+## Notes pasted in
+
+"File these as notes of a conversation in Work for acme. The call was on 15
+September", then the notes; or a whole transcript, pasted. What was pasted
+is the raw record, so it is saved before it is summarised, and from then on
+it is a dropped file like any other.
+
+1. **Date and title**, as in *Ingest a transcript*, step 2, from the request
+   or the notes. Never today's date unless the user said the call was
+   today. No date anywhere: ask.
+2. **Save what was pasted, unedited**, as
+   `Wikis/Meetings/raw/inbox/<YYMMDD-slug>.txt`: the meeting's date, then
+   the title in lower case with hyphens between the words, the way
+   `ingest.py land` names a raw record (`260915-cobalt-renewal.txt`). The
+   notes or the transcript and nothing else: not the request around them,
+   no heading or date line added, not a word tidied. A WebVTT transcript
+   (its first line is `WEBVTT`) is saved as `.vtt`. A file by that name
+   already waiting: add `-2`.
+3. **Confirm date, zone and parties**, never guessed, as in *Ingest a
+   transcript*, steps 2 and 3. What the request says counts ("in Work for
+   acme"). Say it back in one line and wait: "A call with Acme on Tuesday
+   the 15th, filed in Work. Right?"
+4. **Ingest the saved file exactly as a dropped one**: *Ingest a
+   transcript*, from step 4 on. `land` takes it out of the inbox and names
+   the record from the date and title it is given, so a date corrected in
+   step 3 is the date the record carries.
+
+The raw record is what was pasted, slips and all. A correction goes on the
+meeting page, never into the record.
 
 ## File a mail
 
@@ -306,10 +344,11 @@ asked for the detail.
 ## What this skill does not do
 
 - **It does not transcribe audio or talk to a recorder.** The inbox folder
-  is the whole interface: any app that can export `.txt`, `.md` or `.vtt`
-  works. A recorder connector (for example the `plaud` skill) is an optional
-  convenience that places a file in the inbox for you; without one, place it
-  yourself.
+  is the whole interface, and notes pasted into the conversation go through
+  it too: any app that can export `.txt`, `.md` or `.vtt` works. A recorder
+  connector (for example the `plaud` skill) is an optional convenience that
+  places a file in the inbox for you; without one, place it yourself, or
+  paste the text.
 - **It never talks to a mail provider, and holds no credentials.** A zone's
   `Inbox/` is the whole interface for mail. Getting mail there, by hand, by
   a rule, by a script or by the assistant's own connector, is outside this
@@ -318,9 +357,10 @@ asked for the detail.
 - **It never guesses zone or parties.** Unclear, it asks; it never invents
   an answer to keep moving. A domain names a party only when Parties says
   so, and webmail never does.
-- **It never edits `raw/`.** A landed file is moved once, by `ingest.py
-  land` or `intake.py file-conversation`, and never opened for writing again. A correction
-  goes in the summary, never the source.
+- **It never edits `raw/`.** Pasted notes are written into `raw/inbox/`
+  once, as pasted. A landed file is moved once, by `ingest.py land` or
+  `intake.py file-conversation`, and never opened for writing again. A
+  correction goes in the summary, never the source.
 - **It never decides a wall for the user.** It only checks the Walls table
   and says that something was held back, never what.
 - **`prep` never writes anything**, to a page, a project or anywhere else.

@@ -20,7 +20,7 @@ It also refuses certain targets outright: your home folder itself or any folder 
 
 ## Your existing setup is untouched
 
-If you already have Claude Code or Codex configured, a Garrick install changes none of it. Your existing projects, your existing settings, your existing skills: none of them are read, moved, or referenced. A demo workspace at `~/Garrick-demo` and a real one at `~/Garrick` (or wherever you choose) sit side by side with nothing shared between them except the version of the assistant you're running.
+If you already have Claude Code or Codex configured, a Garrick install changes none of it. Your existing projects, your existing settings, your existing skills: none of them are read, moved, or referenced. A demo workspace at `~/Garrick-demo` and a real one at `~/Garrick` (or wherever you choose) sit side by side and share nothing but the assistant itself: its version, and the user-level settings, instructions and connectors it loads in every folder.
 
 ## Remove it by deleting the folder
 

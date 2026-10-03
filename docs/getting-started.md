@@ -35,7 +35,7 @@ System/
   context.md            who you are and who you deal with, filled in from your answers
   templates/            the project and thread notes scaffold.py copies
   tools/                scaffold.py, check.py, and garrick_lib.py, which they share
-  skills/               threads, intake, meetings, knowledge
+  skills/               threads, intake, meetings, knowledge, interview
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
   Knowledge/            published material you study, empty until you feed it
@@ -108,6 +108,8 @@ Tests the workspace against every rule a machine can check:
 - names that cannot be said aloud, or siblings that sound alike;
 - project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`;
 - deliverables without a date prefix;
+- a link or a path in a live thread's Resume here block that leads nowhere (a warning; parked threads are skipped);
+- a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
 - meeting and mail pages missing a zone or parties;
 - anything committed from a zone's `Inbox/` (the pre-commit hook refuses it too), a recording there instead of its transcript, or a copy left behind after an item was filed;
 - a file in a project's `Sources/` that came from mail with no finished page in Meetings: an attachment, found by its exact bytes, or a whole saved mail;

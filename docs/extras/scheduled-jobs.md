@@ -5,7 +5,7 @@ Nothing in core Garrick runs on its own. There's no cron entry, no launchd job a
 Two kinds of thing can run on a schedule, and they need different amounts of care:
 
 - **A script**, such as `System/tools/check.py` or the [mail fetcher](ways-in.md). It does the same thing every time and calls no assistant.
-- **An assistant**, given a prompt and nobody to answer its questions. `extras/jobs/` holds what that needs: a runner, a wrapper, a spend ledger with caps, a profile that stops it sending anything, and one example job.
+- **An assistant**, given a prompt and nobody to answer its questions. `extras/jobs/` holds what that needs: a runner, a wrapper, a spend ledger with caps, for Claude, a profile that denies the sending, sharing and deleting tools it names, and one example job.
 
 ## A script on a schedule
 
@@ -23,7 +23,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
 
 ### Set it up
 
-1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and the deny profile stops any job from changing them.
+1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and, for Claude, the deny profile refuses any edit to them.
 2. **Run the example once by hand**, from the workspace:
    ```sh
    python3 System/jobs/job.py whats-open --agent --cwd ~/Garrick -- \
@@ -37,9 +37,9 @@ The example reads one zone per assistant call, so no single turn ever holds two 
 
 ### What an unattended assistant may do
 
-With nobody watching, a job gets the least it needs and is denied anything that leaves the machine.
+With nobody watching, a job gets the least it needs, and Claude is denied the ways out of the machine that the profile names.
 
-- **An allow list per call.** A job names the tools it needs: `--allow Read`, `--allow Grep`. Claude refuses the rest.
+- **An allow list per call.** A job names the tools it needs: `--allow Read`, `--allow Grep`. Claude refuses other tools, with one exception: the runner accepts file edits (`--permission-mode acceptEdits`), so a job can change files outside `System/` unless its prompt keeps it from doing so.
 - **A deny list on every call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; network and shell tools such as `curl`, `ssh`, `git push` and `rm`; and any edit under `System/`, inside `.git/`, or to the assistants' own settings. A deny beats an allow, so a job that lists one of these by mistake is still refused. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
 - **Only user and project settings.** Each call loads `--setting-sources user,project`. Allow rules you saved for your own sessions in a project's `.claude/settings.local.json` would otherwise apply to the job too. Tested with Claude Code 2.1.287: a job allowed only `Read`, started in a folder whose local settings allowed `python3`, ran `python3`; with `user,project` it was refused. Loading `user` alone goes too far: the job no longer reads the workspace's `AGENTS.md`.
 

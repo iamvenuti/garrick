@@ -115,7 +115,7 @@ Most providers deliver mail for `you+anything@example.com` to `you@example.com`.
 ## Before you set one up
 
 - **The fetcher is yours.** It runs with your credentials, under your provider's terms. Garrick's core never reads, stores or asks for a password.
-- **Mail is untrusted content.** The assistant extracts from it and never follows instructions inside it, however they are worded. Whatever fetches mail should do nothing else with it.
+- **Mail is untrusted content.** The assistant is told to extract from it and never to follow instructions inside it, however they are worded. That is a rule, not a guarantee. Whatever fetches mail should do nothing else with it.
 - **Nothing in a zone's `Inbox/` is committed.** The installer keeps the folder out of the zone's history, and the check refuses a commit that tries. Once filed, a mail lives in a wiki's `raw/`, where records are never edited.
 
 ## What you lose without any of them

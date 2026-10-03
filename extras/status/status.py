@@ -1279,7 +1279,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     folder = folder or jobs_dir(agent)
     link = Links(ws, vault)
     T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
-    sched = launchd_jobs()
+    sched = launchd_jobs() if folder.is_dir() else {}     # the plists matter only to the jobs extra
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
 
     # ---- what needs attention, worst first

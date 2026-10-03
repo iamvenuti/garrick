@@ -807,8 +807,34 @@ def shingles(tokens: List[str]) -> Iterable[int]:
 
 @dataclass
 class QuoteIndex:
-    owners: Dict[int, set]  # shingle -> the finished meeting pages whose page or raw record holds it
-    common: set  # shingles in material that crosses every wall: System/ (not System/generated/), Knowledge, instruction files
+    """Where each run of words was said, and which runs are common wording.
+
+    `owners` maps a shingle to the finished meeting pages whose page or raw
+    record holds it. `common` holds the shingles that also appear in one of
+    the shared files (SHARED_FILES, SHARED_FOLDERS), which every side reads,
+    so repeating one is never evidence of a leak."""
+    owners: Dict[int, set]
+    common: set
+
+
+# The files every side reads, whose wording is common rather than a leak: the
+# instruction files, the rules and the context, the skills, templates and
+# tools, and the Knowledge wiki, which holds published material. A list, not
+# "System/ and whatever is in it": an interview record, a page a tool rebuilds
+# into System/generated/ or a note dropped into System/ can carry what one
+# party said, and would then exempt whatever it repeats from the wall check.
+SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md")
+SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Knowledge")
+
+
+def shared_files(ws: Workspace) -> List[Path]:
+    """Every shared file that exists: SHARED_FILES, and all under SHARED_FOLDERS."""
+    out = [ws.root / name for name in SHARED_FILES]
+    for name in SHARED_FOLDERS:
+        folder = ws.root / name
+        if folder.is_dir():
+            out += list(walk_files(folder))
+    return [p for p in out if p.is_file()]
 
 
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
@@ -836,14 +862,10 @@ def quote_index(ws: Workspace) -> QuoteIndex:
             for h in shingles(words(text)):
                 owners.setdefault(h, set()).add(page)
     common: set = set()
-    # Wording found in material every side reads is common wording, not a
-    # leak. Generated output is not that material: a page that gathers every
-    # zone would otherwise exempt whatever it repeats from the wall check.
-    shared = [ws.root / "AGENTS.md"] + [p for p in walk_files(ws.root / "System") if not is_generated(ws, p)]
-    shared += list(walk_files(ws.root / "Wikis" / "Knowledge")) if (ws.root / "Wikis" / "Knowledge").is_dir() else []
-    shared += [ws.root / "Wikis" / "AGENTS.md", ws.root / "Wikis" / "Meetings" / "AGENTS.md"]
-    for path in shared:
-        if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
+    # Wording also found in a shared file is common wording, not a leak. No
+    # other file counts, however widely it is read: see SHARED_FILES.
+    for path in shared_files(ws):
+        if path.suffix.lower() in TEXT_SUFFIXES:
             common.update(h for h in shingles(words(read_text(path) or "")) if h in owners)
     ws.quote_index = QuoteIndex(owners, common)
     return ws.quote_index
@@ -982,8 +1004,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                                "names %s, or one of its people; a wall stands between %s and %s" % (party_name(ws, b), a, b),
                                "A note in %s names %s" % (where, party_name(ws, b))))
 
-    # Quotes. Wording also found on the near side of the wall, or in material
-    # that crosses every wall, is not evidence of a leak.
+    # Quotes. Wording also found on the near side of the wall, or in one of
+    # the shared files every side reads, is not evidence of a leak.
     index = quote_index(ws)
     lifted: Dict[Path, int] = {}
     for h in set(shingles(words(text))):

@@ -7,6 +7,7 @@ from each other, as in fixtures.py.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from fixtures import GIT_ENV, HAVE_GIT, TOOLS, build_workspace, commit_all, git, meeting_page, write
@@ -164,10 +166,55 @@ class TestQuotes(WallCase):
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "the Oslo depot signed before the tenth of November at any price\n")
         self.assertEqual([], self.walls())
 
+    def assertSharedCrosses(self, *names):
+        """Wording in each of these files, one at a time, crosses every wall."""
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", SECRET + "\n")
+        for name in names:
+            with self.subTest(name):
+                path = self.root / name
+                before = path.read_bytes() if path.is_file() else None
+                write(path, (before.decode() if before else "") + "\nReminder: " + SECRET + ".\n")
+                try:
+                    self.assertEqual([], self.walls())
+                finally:
+                    if before is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(before)
+        self.assertEqual(1, len(self.walls()))  # each file put back: a quote again
+
     def test_system_wording_crosses_every_wall(self):
+        # Only the files in System/ that every side reads by design.
+        self.assertSharedCrosses("System/rules.md", "System/context.md", "System/skills/threads/SKILL.md",
+                                 "System/templates/thread/Thread.md", "System/tools/README.md")
+
+    def test_instruction_files_cross_every_wall(self):
+        self.assertSharedCrosses("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md")
+
+    def test_other_system_files_exempt_nothing(self):
+        # A file dropped into System/ is not one every side reads by design.
         write(self.root / "System" / "notes.md", "Reminder: " + SECRET + ".\n")
         write(self.acme / "Threads" / "Pricing" / "Notes.md", SECRET + "\n")
-        self.assertEqual([], self.walls())
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertIn("260314-birch-call", found[0].message)
+        self.assertNoLeak(found, *SECRET_WORDS)
+
+    def test_interview_record_exempts_nothing(self):
+        # The interview keeps its record in System/interviews/, in the user's own
+        # words. A confidence that slips into it must not become common wording.
+        write(self.root / "System" / "interviews" / "261003 - Getting started.md",
+              "# Interview: Getting started\n\n## 2. Whose confidences you hold\n\n" + SECRET + ".\n")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", SECRET + "\n")
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Notes.md", found[0].path)
+        self.assertIn("260314-birch-call", found[0].message)
+        self.assertNoLeak(found, *SECRET_WORDS)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(1, check.main(["--root", str(self.root)]))
+        self.assertNotIn("No problems found.", buf.getvalue())
 
     def test_generated_pages_exempt_nothing(self):
         # A page that gathers every zone, kept in System/generated/, must not
@@ -268,6 +315,24 @@ class TestStaged(WallCase):
         self.assertIn("260314-birch-call", res.stderr)
         for word in SECRET_WORDS:
             self.assertNotIn(word, res.stderr.lower())
+
+    def test_interview_record_does_not_open_the_hook(self):
+        page = meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", SECRET + ".")
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md", page)
+        write(self.root / "System" / "interviews" / "261003 - Getting started.md",
+              "# Interview: Getting started\n\n## 2. Whose confidences you hold\n\n" + SECRET + ".\n")
+        write(self.acme / "Deliverables" / "260302 - Board note.md", SECRET + "\n")
+        git(self.zone, "add", "-A")
+        head = git(self.zone, "rev-parse", "HEAD")
+        res = _run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Board note"], self.zone)
+        self.assertEqual(1, res.returncode, res.stderr)
+        lines = res.stderr.strip().splitlines()
+        self.assertEqual(1, len(lines), res.stderr)
+        self.assertTrue(lines[0].startswith("Commit refused: Zones/Work/Acme Review/Deliverables/260302 - Board note.md "
+                                            "repeats wording from meeting 260314-birch-call"), lines[0])
+        for word in SECRET_WORDS:
+            self.assertNotIn(word, res.stderr.lower())
+        self.assertEqual(head, git(self.zone, "rev-parse", "HEAD"))
 
     def test_hook_blocks_and_no_verify_overrides(self):
         self.assertTrue(has_wall_hook(self.zone))

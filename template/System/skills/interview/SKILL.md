@@ -99,11 +99,14 @@ After every answer, re-read the record and append:
 Follow-ups go under the same heading. Save after every answer, so stopping at
 any point loses nothing.
 
-**Who and what kind, never what a party said in confidence.** Everything in
-`System/` can be read from any project, on either side of any wall. If an
-answer carries a party's numbers, plans or words, write who and what kind
-only ("Birch shared its launch figures with me"), and tell the user you did.
-Never write a password, an account number or any other secret.
+**Who and what kind, never what a party said in confidence.** The record
+sits in `System/`, where any project can read it, on either side of any wall.
+If an answer carries a party's numbers, plans or words, write who and what
+kind only ("Birch shared its launch figures with me"), and tell the user you
+did. No check reads the record, so this rule is all that guards it. Nor is
+the record wording every side shares: the wall check still refuses a project
+note that repeats a walled meeting, whatever the record says. Never write a
+password, an account number or any other secret.
 
 ## "Stop", "that's enough", "propose it"
 

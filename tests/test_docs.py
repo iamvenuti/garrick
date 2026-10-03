@@ -75,6 +75,23 @@ class DocCommandsTest(unittest.TestCase):
         self.assertEqual(shared, {}, "one folder, two different commands: the second stops with 'not empty'")
 
 
+class FirstStepsTest(unittest.TestCase):
+    """What a newcomer reads in docs/ stays true of the product it describes."""
+
+    def test_one_name_for_claudes_code_tab(self):
+        for page, text in documents():
+            if page.startswith("docs/"):
+                self.assertNotRegex(text, r"\bCode (mode|view|icon)\b", f"{page}: call it the Code tab")
+
+    def test_the_commands_to_approve_are_garricks_own(self):
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        table = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        scripts = re.findall(r"`python3 (System/\S+\.py)`", table)
+        self.assertGreaterEqual(len(scripts), 4)
+        for script in scripts:
+            self.assertTrue((REPO / "template" / script).is_file(), f"first-steps.md names {script}, which is not shipped")
+
+
 DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
 

@@ -1,6 +1,6 @@
 # Desktop first steps
 
-Use Garrick in a normal app window. Choose **Claude's desktop app in Code mode** or **Codex in the ChatGPT desktop app**. After installation, you ask the assistant to manage the files and run Garrick's tools. You do not need Obsidian, cmux or a mail connection.
+Use Garrick in a normal app window. Choose **the Code tab of Claude's desktop app** or **Codex in the ChatGPT desktop app**. After installation, you ask the assistant to manage the files and run Garrick's tools. You do not need Obsidian, cmux or a mail connection.
 
 Allow about 30 minutes to prepare the Mac, longer if downloads or account setup take time. Then follow [Your first useful session](first-session.md) to turn one conversation into a brief and a saved next action. A [guided session](guided-session.md) combines setup and that first piece of work in up to two hours.
 
@@ -25,7 +25,9 @@ Open Terminal: press Command and Space, type `Terminal`, and press Return. Copy 
 xcode-select --install
 ```
 
-Accept the installation prompt and let it finish. If the tools are already installed, continue. Check them with:
+A window asks whether to install the command line developer tools, with three buttons: **Get Xcode**, **Not Now** and **Install**. Click **Install**, not Get Xcode, which is a much larger app you don't need, then agree to the licence. The Mac may ask for its password. The download and installation take 5 to 15 minutes. On a Mac managed by your employer, the IT team may need to do this for you.
+
+If Terminal says the tools are already installed, carry on. Check them with:
 
 ```sh
 git --version
@@ -36,7 +38,7 @@ Both should print a version. Python must be 3.9 or later.
 
 ## 3. Download and install Garrick
 
-On the [Garrick repository page](https://github.com/iamvenuti/garrick), choose **Code**, then **Download ZIP**. Open the ZIP in Downloads. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
+On the [Garrick repository page](https://github.com/iamvenuti/garrick), choose **Code**, then **Download ZIP**. Safari usually unzips the download for you, so look in Downloads for a folder called **garrick-main**. If you see only `garrick-main.zip`, double-click it to unzip it. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
 
 For self-guided setup, run these commands in Terminal. If Finder gave the downloaded folder a different name, type `cd ` and drag that folder into Terminal to supply its path.
 
@@ -45,9 +47,11 @@ cd ~/Downloads/garrick-main
 python3 install.py
 ```
 
-Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones and parties you need for your first project; you can add more through the assistant later. A wall is an explicit pair of parties whose information must stay apart. Two folders alone do not create one. [Getting started](getting-started.md#install) explains the questions.
+macOS may ask whether Terminal may access files in your Downloads folder. Click **Allow**: the installer runs from there, and puts the workspace itself in your home folder.
 
-You can close Terminal when installation finishes. The assistant can run the tools for everyday work, asking you to approve commands according to your app settings.
+Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones and parties you need for your first project. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](getting-started.md#another-zone). A wall is an explicit pair of parties whose information must stay apart. Two folders alone do not create one. [Getting started](getting-started.md#install) explains the questions.
+
+You can close Terminal when installation finishes. The assistant runs the tools for everyday work, and asks you to approve commands as your app settings say. [The commands it asks to approve](#the-commands-it-asks-to-approve) explains them.
 
 ## 4. Open the workspace in your app
 
@@ -57,13 +61,13 @@ Follow just the section for the assistant you chose. Select the **installed work
 
 Open Claude and sign in. Under **Settings > Privacy**, review **Help improve Claude** and turn it off before using confidential material on a personal account. This controls training use; it does not make the assistant run offline. See [Claude's desktop guide](https://code.claude.com/docs/en/desktop) for current app behaviour.
 
-![The Claude app's Code view, with the four things to click marked in red: the Code icon at the top, New in the sidebar, then Local and the Garrick folder above the box where you type.](assets/desktop-code-tab.png)
+![The Claude app's Code tab, with steps 1 to 4 marked in red: the Code tab at the top, New in the sidebar, then Local and the Garrick folder above the box where you type. Below the box the mode reads Auto, which step 5 changes to Accept edits.](assets/desktop-code-tab.png)
 
-1. Click the **Code** icon, `</>`, at the top of the Claude window. The speech-bubble icon beside it is ordinary chat, which can't see your files.
+1. Click the **Code** tab, `</>`, at the top of the Claude window. The speech-bubble tab beside it is ordinary chat, which can't see your files.
 2. Click **+ New** at the top of the left sidebar. The choices below can only be made before a session's first message, so always start from New.
 3. Above the box where you type, click the first button and choose **Local**. It runs Claude on your Mac with your own files. The other choices run somewhere else and don't see your workspace.
 4. Click the folder button beside it and choose your `Garrick` folder (Command, Shift and H jumps to your home folder). Choose the whole folder, not a zone inside it: the rules and skills live at its top. The button then reads **Garrick**, as in the picture.
-5. Below the box, next to the microphone, click the mode and choose **Accept edits**. Claude then writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
+5. Below the box, next to the microphone, click the mode and choose **Accept edits**. The picture shows **Auto**; change it. With Accept edits, Claude writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
 6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
 
 Two things to leave alone. Don't turn on "Allow bypass permissions mode" in Settings, which lets Claude run anything without asking. And if the app suggests creating a `CLAUDE.md`, don't: Garrick's instructions live in `AGENTS.md`, and a `CLAUDE.md` in the folder makes Claude stop reading them.
@@ -81,9 +85,27 @@ Open the ChatGPT desktop app and sign in to the account and workspace you chose.
 2. Above the box where you type, click **Choose project** and create a new project.
 3. Name it `Garrick`. Under **Source folders**, click **Add folder** and choose your `Garrick` folder, the whole folder, not a zone inside it. Leave **This computer** selected: it runs on your Mac with your own files.
 4. Click **Create project**.
-5. The setting below the box (**Approve for me** in the picture) decides what Codex does without asking. Choose a stricter one if you'd rather approve each step.
+5. The setting below the box (**Approve for me** in the picture) decides what Codex does without asking you. Click it and choose the setting whose description says Codex works inside your workspace on its own but asks before it runs commands outside the workspace or reaches the internet. It is the closest match to Accept edits in Claude. The names of these settings change between versions, so go by the description. If none fits, choose the one that asks more often.
 6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
 
+### The commands it asks to approve
+
+Whichever assistant you use, a first session asks you to approve around fifteen commands. Each shows a line you may not be able to judge, but most are Garrick's own tools, or git saving history on your Mac:
+
+| A command that starts with | Does this |
+|---|---|
+| `python3 System/tools/scaffold.py` | Makes a zone, project or thread folder from its template |
+| `python3 System/skills/intake/intake.py` | Reads what waits in an inbox and files it where it belongs |
+| `python3 System/skills/meetings/ingest.py` | Files a conversation in the Meetings wiki |
+| `python3 System/tools/check.py` | Runs the workspace check. It changes nothing |
+| `git -C Zones/…` or `git -C Wikis …` | Saves what changed in a zone's or a wiki's history, on your Mac |
+
+None of these sends anything off your Mac. Read anything else before you approve it, above all a command that reaches the internet or works outside your Garrick folder.
+
+You can allow these once rather than every time:
+
+- **Claude.** When it asks to run one of them, choose the answer that stops it asking again, rather than the one that allows it this time only. That answer names the start of the command, such as `python3 System/tools/scaffold.py`, and holds for this folder alone. From then on, commands that start the same way run without asking.
+- **Codex.** The setting from step 5 decides. With one that lets Codex work inside the workspace on its own, it runs the tools without asking. If it still asks before each git commit, approve those: they only save history on your Mac.
 
 ## 5. Do one useful piece of work
 
@@ -101,5 +123,5 @@ Once the workflow works at your desk, [phone access](extras/phone-access.md) can
 
 - **The assistant cannot see your work:** check the selected folder. It must be the installed Garrick workspace and the session must run on this computer.
 - **Claude does not follow the workspace instructions:** check for a `CLAUDE.md` inside or above the workspace. Ask the assistant to run the workspace check; do not remove an existing file without understanding what uses it.
-- **The Code or Codex mode is unavailable:** check the current plan and workspace access with the provider or your administrator.
+- **The Code tab or Codex is unavailable:** check the current plan and workspace access with the provider or your administrator.
 - **A command fails:** copy its error into your app or show it to the facilitator. Do not repeat installation into a partly created workspace without checking it first.

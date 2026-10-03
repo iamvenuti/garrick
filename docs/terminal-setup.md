@@ -33,7 +33,9 @@ Back in `~/garrick-source`, run:
 python3 install.py
 ```
 
-Start your assistant in the folder it creates (`~/Garrick` by default). Follow [Your first useful session](first-session.md). [Getting started](getting-started.md) documents config files, scaffold commands, repository boundaries and the checks.
+Start your assistant in the folder it creates (`~/Garrick` by default). Follow [Your first useful session](first-session.md). [Getting started](getting-started.md) documents config files, scaffold commands, adding a zone, repository boundaries and the checks.
+
+The first session asks you to approve the workspace's own scripts and git. [The commands it asks to approve](first-steps.md#the-commands-it-asks-to-approve) lists what each does. In Claude Code, answer the prompt with the option that stops it asking again for that command in this folder. In Codex, choose an approval setting that lets it work inside the workspace without asking, and still asks before it reaches the internet or works outside the folder.
 
 ## Add tools when useful
 

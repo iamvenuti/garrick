@@ -16,7 +16,7 @@ Choose a real project and one question you need answered. Keep the first session
 
 > Create a project called Supplier Review in Work, for the party acme, with a thread called Next Call. Ask me for any missing details, one question at a time.
 
-Replace those names with your own. The assistant can add a missing party to your context and ask which existing parties need a wall. A party can represent an internal project as well as a company. Two internal projects need distinct tags and an explicit wall if their information must stay apart.
+Replace those names with your own. The assistant can add a missing party to your context and ask which existing parties need a wall. If the work belongs in a zone you don't have yet, ask for that first: "add a zone called Garden, for the house and the garden." A party can represent an internal project as well as a company. Two internal projects need distinct tags and an explicit wall if their information must stay apart.
 
 ## 2. Give it one conversation
 
@@ -38,7 +38,7 @@ Check the brief against the source. The assistant should apply the declared wall
 
 > The next action is [your actual next action], due [date]. Wrap Next Call, and run the workspace check. Explain any problem in plain language.
 
-The assistant updates the resume note and saves changes to the appropriate local git repositories. It may ask you to approve commands. “Commit” here means saving local history; Garrick's rules require separate approval to publish or send.
+The assistant updates the resume note and saves changes to the appropriate local git repositories. It may ask you to approve commands; [the commands it asks to approve](first-steps.md#the-commands-it-asks-to-approve) says what each one does and how to allow them once. “Commit” here means saving local history; Garrick's rules require separate approval to publish or send.
 
 ## 5. Open a fresh chat and resume
 

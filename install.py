@@ -518,14 +518,22 @@ def ask(prompt, default=None):
     return answer or (default or "")
 
 
+def home_relative(answer):
+    """A folder typed at the question. A relative one goes in the home folder, not in
+    the folder the installer was started from, which is usually Garrick's own."""
+    p = Path(answer).expanduser()
+    return p if p.is_absolute() else Path.home() / p
+
+
 def interview(pl, target=None, force=False):
     print("Garrick setup. A few questions, one at a time. Press Enter to accept what is in [brackets].\n")
 
     while True:
-        if not target:
-            target = ask("Where should the workspace go?", suggestion())
+        # --target keeps its usual meaning, relative to the current folder.
+        folder = Path(target).expanduser() if target else home_relative(
+            ask("Where should the workspace go?", suggestion()))
         try:
-            check_target(Path(target), force=force)
+            root = check_target(folder, force=force)
             break
         except InstallError as exc:
             print(exc, "\n")
@@ -625,12 +633,12 @@ def interview(pl, target=None, force=False):
 
     cfg = {"owner": {"name": name, "description": desc}, "zones": zones, "parties": parties,
            "walls": walls, "people": people, "aliases": aliases}
-    print(f"Ready to install in {target}: {count(zones, 'zone', 'zones')}, "
+    print(f"Ready to install in {root}: {count(zones, 'zone', 'zones')}, "
           f"{count(parties, 'party', 'parties')}, {count(walls, 'wall', 'walls')}.")
     if ask("Go ahead? (y/n)", "y").lower() not in ("y", "yes"):
         print("Nothing was written.")
         sys.exit(1)
-    return cfg, target
+    return cfg, root
 
 
 # --------------------------------------------------------------------------- main

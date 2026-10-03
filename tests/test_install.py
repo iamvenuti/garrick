@@ -429,6 +429,34 @@ class InteractiveTest(unittest.TestCase):
         finally:
             box.close()
 
+    # Every answer after the folder: a name, a line, the default zones, and nothing else.
+    SHORT = ["Sam Rivera", "Independent advisor", "", "", "", "", "", "", "y"]
+
+    def test_a_typed_folder_goes_in_the_home_folder(self):
+        box = Sandbox()
+        try:
+            r = run([INSTALL], box.env, cwd=box.work, stdin="\n".join(["ws-here"] + self.SHORT) + "\n")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            target = box.home / "ws-here"
+            self.assertTrue((target / "AGENTS.md").is_file())
+            self.assertFalse((box.work / "ws-here").exists())
+            # The confirmation shows where it will go, not the words typed.
+            self.assertIn(f"Ready to install in {target}: 2 zones, 0 parties, 0 walls.", r.stdout)
+        finally:
+            box.close()
+
+    def test_the_target_option_stays_relative_to_the_current_folder(self):
+        box = Sandbox()
+        try:
+            r = run([INSTALL, "--target", "ws-there"], box.env, cwd=box.work, stdin="\n".join(self.SHORT) + "\n")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            target = box.work / "ws-there"
+            self.assertTrue((target / "AGENTS.md").is_file())
+            self.assertFalse((box.home / "ws-there").exists())
+            self.assertIn(f"Ready to install in {target}: 2 zones", r.stdout)
+        finally:
+            box.close()
+
 
 class ScaffoldTest(unittest.TestCase):
     @classmethod

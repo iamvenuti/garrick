@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -47,6 +48,17 @@ def stamp(t):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
 
 
+def luminance(hexa):
+    def lin(c):
+        c = int(c, 16) / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    h = hexa.lstrip("#")
+    return 0.2126 * lin(h[0:2]) + 0.7152 * lin(h[2:4]) + 0.0722 * lin(h[4:6])
+
+
+def contrast(a, b):
+    la, lb = sorted((luminance(a), luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
 
 
 class StatusCase(unittest.TestCase):
@@ -178,7 +190,10 @@ class TestSelfContained(StatusCase):
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
         self.assertNotIn("<script src", html)
-        self.assertNotIn("<link", html)
+        links = re.findall(r"<link[^>]*>", html)
+        self.assertEqual(1, len(links))                      # the tab icon, carried in the page
+        self.assertIn('rel="icon" type="image/svg+xml" href="data:image/svg+xml,', links[0])
+        self.assertNotRegex(html, r"<[^>]+\ssrc=")
 
     def test_file_links_by_default(self):
         html = self.page()
@@ -314,6 +329,36 @@ class TestJobs(StatusCase):
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
 
+
+
+class TestNameAndMark(StatusCase):
+    def test_called_garricks_status(self):
+        html = self.page()
+        self.assertIn("<title>Garrick&#x27;s Status</title>", html)
+        self.assertIn("<h1>Garrick&#x27;s Status</h1>", html)
+
+    def test_mark_beside_the_heading_and_in_the_tab(self):
+        html = self.page()
+        brand = html[html.index('<div class="brand">'):html.index("<h1>")]
+        self.assertIn('class="mark" aria-hidden="true"', brand)
+        self.assertIn('fill="#3D73E0"', brand)
+        self.assertEqual(4, brand.count("<path"))           # Gr and the small ai
+        icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml,([^"]+)">', html)
+        svg = urllib.parse.unquote(icon.group(1))
+        self.assertTrue(svg.startswith('<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'))
+        self.assertIn('fill="#3D73E0"', svg)
+        self.assertEqual(2, svg.count("<path"))             # the favicon cut: Gr alone
+
+    def test_accent_is_the_brand_blue_and_readable(self):
+        light = re.search(r":root\{[^}]*--accent:(#[0-9a-f]{6})", status.CSS).group(1)
+        self.assertEqual(status.BRAND.lower(), light)
+        dark = re.findall(r'color-scheme:dark;[^}]*?--page:(#[0-9a-f]{6});[^}]*?--surface:(#[0-9a-f]{6});--raise:(#[0-9a-f]{6});'
+                          r'[^}]*?--accent:(#[0-9a-f]{6})', status.CSS)
+        self.assertEqual(2, len(dark))                      # the automatic dark theme and the chosen one agree
+        self.assertEqual(dark[0], dark[1])
+        page, surface, raise_, accent = dark[0]
+        for bg in (page, surface, raise_):
+            self.assertGreaterEqual(contrast(accent, bg), 4.5, "%s on %s" % (accent, bg))
 
 
 class TestWikisAndRepos(StatusCase):

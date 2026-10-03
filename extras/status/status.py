@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A status page for a Garrick workspace. An optional extra.
+"""Garrick's Status: a status page for a Garrick workspace. An optional extra.
 
     python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT] [--no-graph]
 
@@ -59,6 +59,7 @@ from typing import Dict, List, Optional, Tuple
 sys.dont_write_bytecode = True
 
 E = html.escape
+NAME = "Garrick's Status"     # what the page is called; its files and flags keep their names
 DAYS = 14
 EXIT = {0: "ok", 3: "answer incomplete", 4: "could not sign in", 6: "missing connector", 8: "spending cap",
         64: "bad arguments", 75: "skipped, still running", 124: "timed out", 127: "command not found"}
@@ -359,8 +360,9 @@ WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
 SKIP_DIRS = {"Inbox", "raw", "archive", "Archive", "generated"}
 # What a note is, in the order the legend shows them. Colours are fixed so a
 # kind looks the same in every workspace; none is amber or red, which the
-# rings use for threads gone quiet.
-KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#2a78d6"), ("todo", "open actions", "#c0399a"),
+# rings use for threads gone quiet. Threads take the brand blue, the light
+# theme's accent, which also draws the lines of a selected note.
+KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"), ("todo", "open actions", "#c0399a"),
          ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("person", "person", "#13a38a"),
          ("knowledge", "knowledge", "#7c9a2d")]
 
@@ -627,6 +629,49 @@ def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = Tr
     return " ".join(shlex.quote(w) for w in words + ["--open"])
 
 
+# Garrick's mark: a white Gr on brand blue, like an element tile, and a small
+# "ai" in the full mark. The letters are outlines of Baskervville, a Baskerville
+# revival released under the SIL Open Font License, so the page carries them as
+# paths and needs no font. The favicon cut is Gr alone, larger and centred:
+# the "ai" cannot be read at 16 pixels.
+BRAND = "#3D73E0"
+_G = ("M397 -11Q325 -11 263.5 15.5Q202 42 157.0 90.5Q112 139 87.0 204.5Q62 270 62 348Q62 427 88.0 495.5Q114 564 160.5 615.0"
+      "Q207 666 269.0 695.0Q331 724 403 724Q436 724 468.0 717.5Q500 711 536 692Q558 681 570.0 677.0Q582 673 592 673Q621 673 621 710"
+      "H646L644 595L646 478H621Q619 543 590.5 591.5Q562 640 513.5 667.0Q465 694 402 694Q289 694 226.5 604.0Q164 514 164 350"
+      "Q164 190 224.5 104.5Q285 19 398 19Q451 19 495.0 36.5Q539 54 565.5 83.0Q592 112 592 146V174Q592 218 571.5 237.0Q551 256 496 261"
+      "L453 265V289L619 285L773 289V265L728 261Q667 255 667 174V156Q667 118 689 79L703 54L680 39Q656 75 629 75Q619 75 611.5 71.5"
+      "Q604 68 576 48Q533 17 490.0 3.0Q447 -11 397 -11Z")
+_R = ("M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V329Q116 378 97.5 395.5Q79 413 28 413V436Q68 436 105.5 439.0"
+      "Q143 442 186 448L175 333H186V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM184 269 173 312"
+      "Q194 391 228.0 422.5Q262 454 304 454Q344 454 358.0 434.0Q372 414 372 394Q372 372 359.0 358.0Q346 344 323 344Q305 344 293.0 353.5"
+      "Q281 363 281 378Q281 383 282.0 387.0Q283 391 284 398Q285 402 285.5 405.0Q286 408 286 410Q286 420 272 420Q254 420 236.5 399.5"
+      "Q219 379 205.0 345.0Q191 311 184 269Z")
+_A = ("M405 -11Q362 -11 343.5 16.0Q325 43 325 104V320Q325 379 302.5 404.0Q280 429 227 429Q191 429 169.5 420.0Q148 411 148 396"
+      "Q148 392 149.5 387.5Q151 383 152 377Q157 357 157 349Q157 333 144.5 321.5Q132 310 112 310Q93 310 81.0 323.5Q69 337 69 358"
+      "Q69 386 91.5 407.5Q114 429 153.5 441.5Q193 454 244 454Q323 454 359.0 416.5Q395 379 395 296V116Q395 65 403.0 44.5Q411 24 430 24"
+      "Q444 24 455.5 33.5Q467 43 472 59L490 52Q472 -11 405 -11ZM163 -11Q112 -11 81.0 14.0Q50 39 50 79Q50 117 81.0 151.5Q112 186 180 223"
+      "Q210 240 247.0 256.5Q284 273 329 289L330 270Q233 230 180.5 182.0Q128 134 128 87Q128 58 145.0 42.0Q162 26 193 26Q221 26 248.5 40.5"
+      "Q276 55 297.5 78.5Q319 102 328 130L334 97Q309 47 263.5 18.0Q218 -11 163 -11Z")
+_I = ("M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V332Q116 377 98.0 395.0Q80 413 35 413H28V436Q78 436 114.5 438.5"
+      "Q151 441 186 448V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM132 554Q106 554 91.0 572.0Q76 590 76 615"
+      "Q76 641 91.0 658.5Q106 676 132 676Q161 676 174.5 658.5Q188 641 188 615Q188 590 174.5 572.0Q161 554 132 554Z")
+
+
+def mark(full: bool = True, attrs: str = "", image: bool = False) -> str:
+    """The mark as SVG: the full one with "ai", or the favicon cut. An SVG
+    used as an image needs its namespace; one inside the page does not."""
+    glyphs = ([(_G, 8.28, 48.54, 0.04384), (_R, 42.69, 48.54, 0.04384), (_A, 50.99, 60.86, 0.01310), (_I, 57.41, 60.86, 0.01310)]
+              if full else [(_G, 2.08, 49.50, 0.04910), (_R, 40.62, 49.50, 0.04910)])
+    paths = "".join('<path d="%s" fill="#fff" transform="translate(%.2f %.2f) scale(%.5f -%.5f)"/>' % (d, x, y, k, k)
+                    for d, x, y, k in glyphs)
+    return ('<svg viewBox="0 0 64 64"%s%s><rect width="64" height="64" rx="3.5" fill="%s"/>%s</svg>'
+            % (' xmlns="http://www.w3.org/2000/svg"' if image else "", attrs, BRAND, paths))
+
+
+def favicon() -> str:
+    """The tab icon, carried in the page as a data URI: nothing is fetched."""
+    return '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%s">' % urllib.parse.quote(mark(full=False, image=True), safe="")
+
 
 GRIP = ('<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/>'
         '<circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></g></svg>')
@@ -653,18 +698,18 @@ def meter(value: float, cap: float, label: str, right: str) -> str:
 
 CSS = r"""
 :root{color-scheme:light;--page:#f4f3f0;--side:#ecebe6;--surface:#fcfcfb;--raise:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
---line:rgba(11,11,11,.10);--grid:#e1e0d9;--base:#c3c2b7;--accent:#2a78d6;--track:#cde2fb;--wash:rgba(42,120,214,.10);
+--line:rgba(11,11,11,.10);--grid:#e1e0d9;--base:#c3c2b7;--accent:#3d73e0;--track:#cfdcf7;--wash:rgba(61,115,224,.10);
 --good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--none:#e6e5df;--shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.04)}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#3987e5;--track:#0d366b;--wash:rgba(57,135,229,.14);--none:#2a2a28;--shadow:none}}
+--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none}}
 :root[data-theme="dark"]{color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#3987e5;--track:#0d366b;--wash:rgba(57,135,229,.14);--none:#2a2a28;--shadow:none}
+--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:18px}
-.brand{padding:0 8px}.brand h1{font-size:15px;margin:0}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.brand h1{font-size:15px;margin:0}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
 .overall{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
 .overall svg{width:22px;height:22px;flex:none}.overall b{display:block;font-size:13px}.overall span{color:var(--ink2);font-size:12px}
 nav{display:flex;flex-direction:column;gap:1px}
@@ -1006,13 +1051,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     more += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
     navh += "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in more)
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
-    aside = ('<aside><div class="brand"><h1>Workspace status</h1><p>Built %s · <span id="age">just now</span></p></div>'
+    aside = ('<aside><div class="brand">%s<div><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
              '<div class="controls">%s<p class="hint" id="hidden-note" hidden></p>'
              '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh,
+             % (mark(attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall),
+                live, "" if live == 1 else "s", week, navh,
                 copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out),
                      "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'class="act wide"')))
 
@@ -1176,9 +1222,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<div class="slot full" data-slot="bottom"></div></div></main>'
             % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Workspace status</title><style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
+            '<title>%s</title>%s<style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s</script></body></html>' % (
-                CSS, now.isoformat(timespec="seconds"), aside, main, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
+                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

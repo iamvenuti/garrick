@@ -103,10 +103,10 @@ any point loses nothing.
 sits in `System/`, where any project can read it, on either side of any wall.
 If an answer carries a party's numbers, plans or words, write who and what
 kind only ("Birch shared its launch figures with me"), and tell the user you
-did. No check reads the record, so this rule is all that guards it. Nor is
-the record wording every side shares: the wall check still refuses a project
-note that repeats a walled meeting, whatever the record says. Never write a
-password, an account number or any other secret.
+did. No check reads the record, so this rule is all that guards it. And the
+wall check does not count the record as wording every side shares: it still
+refuses a project note that repeats a walled meeting, whatever the record
+says. Never write a password, an account number or any other secret.
 
 ## "Stop", "that's enough", "propose it"
 

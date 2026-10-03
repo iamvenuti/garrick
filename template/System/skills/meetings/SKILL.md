@@ -181,12 +181,12 @@ it is a dropped file like any other.
    today. No date anywhere: ask.
 2. **Save what was pasted, unedited**, as
    `Wikis/Meetings/raw/inbox/<YYMMDD-slug>.txt`: the meeting's date, then
-   the title in lower case with hyphens between the words, the way
-   `ingest.py land` names a raw record (`260915-cobalt-renewal.txt`). The
-   notes or the transcript and nothing else: not the request around them,
-   no heading or date line added, not a word tidied. A WebVTT transcript
-   (its first line is `WEBVTT`) is saved as `.vtt`. A file by that name
-   already waiting: add `-2`.
+   the title as lower-case letters and digits with hyphens between the
+   words, the way `ingest.py land` names a raw record
+   (`260915-cobalt-renewal.txt`). The notes or the transcript and nothing
+   else: not the request around them, no heading or date line added, not a
+   word tidied. A WebVTT transcript (its first line is `WEBVTT`) is saved as
+   `.vtt`. A file by that name already waiting: add `-2`.
 3. **Confirm date, zone and parties**, never guessed, as in *Ingest a
    transcript*, steps 2 and 3. What the request says counts ("in Work for
    acme"). Say it back in one line and wait: "A call with Acme on Tuesday

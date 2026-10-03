@@ -3,6 +3,9 @@ contact_links:
   - name: Questions and feedback
     url: https://github.com/iamvenuti/garrick/discussions
     about: Ask how something works, or say how it went for you. Use invented names, never a real client's.
+  - name: Something Garrick should do, or do differently
+    url: https://github.com/iamvenuti/garrick/discussions/categories/ideas
+    about: Say what you would change and why. Ideas are talked through there first; the ones taken up become issues.
   - name: A way the wall check could be bypassed
     url: https://github.com/iamvenuti/garrick/security/advisories/new
     about: Report it privately, not as an issue. See SECURITY.md.

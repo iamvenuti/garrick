@@ -34,3 +34,8 @@ body:
       description: Output of `python3 --version`, `git --version`, and `claude --version` or `codex --version`. If you use the Claude or ChatGPT desktop app instead, give the version its About window shows (in the app menu, choose About).
     validations:
       required: true
+  - type: input
+    id: garrick
+    attributes:
+      label: Which Garrick
+      description: The day you downloaded the ZIP, or for a clone the output of `git -C ~/garrick-source log -1 --format=%h`. It tells whether the bug is already fixed.

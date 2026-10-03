@@ -2,7 +2,7 @@
 
 Questions and feedback, including how Garrick worked for you, go to [Discussions](https://github.com/iamvenuti/garrick/discussions).
 
-Garrick is early and run by one person, so the fastest route in is an issue before a pull request. Say what you want to change and why; a short answer comes back before you spend an afternoon on code.
+Garrick is early and run by one person, so the fastest route in is an idea before a pull request. Post it in [Ideas](https://github.com/iamvenuti/garrick/discussions/categories/ideas), saying what you want to change and why; a short answer comes back before you spend an afternoon on code. Ideas taken up become issues labelled `enhancement`. A fix for an open issue needs no idea first.
 
 ## Ground rules
 

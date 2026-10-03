@@ -104,6 +104,14 @@ class FeedbackTest(unittest.TestCase):
         urls = re.findall(r"^\s*url:\s*(\S+)", (FORMS / "config.yml").read_text(encoding="utf-8"), re.M)
         self.assertEqual(urls[0], DISCUSSIONS)
 
+    def test_ideas_have_a_way_in(self):
+        """Blank issues are off and no form fits a proposed change, so the chooser
+        and CONTRIBUTING.md both send ideas to the Ideas category."""
+        ideas = f"{DISCUSSIONS}/categories/ideas"
+        urls = re.findall(r"^\s*url:\s*(\S+)", (FORMS / "config.yml").read_text(encoding="utf-8"), re.M)
+        self.assertIn(ideas, urls)
+        self.assertIn(f"]({ideas})", (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8"))
+
     def test_readme_and_contributing_point_there(self):
         readme = (REPO / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"]({DISCUSSIONS})", readme.split("\n## Contributing\n", 1)[1].split("\n## ", 1)[0])

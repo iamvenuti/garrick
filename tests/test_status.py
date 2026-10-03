@@ -164,6 +164,25 @@ class TestGraph(StatusCase):
         self.assertNotIn("index", names)
         self.assertNotIn("260310-acme-kickoff.txt", names)
 
+    def test_projects_and_threads_named_like_skipped_folders_stay(self):
+        work = self.root / "Zones" / "Work"
+        write(work / "Archive" / "Archive.md", project_hub("Work", "Archive", "acme"))
+        write(work / "Archive" / "Threads" / "raw" / "raw.md", thread_note("Archive", "raw", "acme"))
+        write(work / "Archive" / "Threads" / "Generated" / "Generated.md", thread_note("Archive", "Generated", "acme"))
+        write(work / "Acme Review" / "Deliverables" / "archive" / "Old memo.md", "# Old memo\n")
+        write(work / "Acme Review" / "Threads" / "Pricing" / "Archive" / "Pricing v1.md", "# Pricing v1\n")
+        names = {n["n"] for n in graph_data(self.page())["nodes"]}
+        self.assertTrue({"Archive", "raw", "Generated"} <= names)
+        self.assertFalse({"Old memo", "Pricing v1"} & names)        # an archive folder below them still stays out
+
+    def test_a_link_in_a_table_keeps_its_line(self):
+        write(self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md",
+              thread_note("Birch Entry", "Market Sizing", "birch",
+                          "| Source | Use |\n|---|---|\n| [[260312-birch-kickoff\\|the kick-off]] | sizing |"))
+        data = graph_data(self.page())
+        a, b = self.node(data, "Market Sizing"), self.node(data, "Birch kick-off")
+        self.assertIn([min(a, b), max(a, b)], data["edges"])
+
     def test_threads_carry_the_phrase_to_say(self):
         data = graph_data(self.page())
         self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])

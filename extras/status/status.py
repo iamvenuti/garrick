@@ -362,7 +362,24 @@ def wikis(ws: Path) -> List[dict]:
 
 
 WIKILINK = re.compile(r"\[\[([^\]|#^]+)")
-SKIP_DIRS = {"Inbox", "raw", "archive", "Archive", "generated"}
+# Folders that hold no notes of their own: an inbox, raw records, superseded
+# versions, generated pages. Compared without regard to case.
+SKIP_DIRS = {"inbox", "raw", "archive", "generated"}
+
+
+def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
+    """Whether the graph reads the folder `name` inside `folder`. A zone's own
+    Inbox is left out. A project or a thread is read whatever it is called, so
+    one named Archive or raw stays on the graph; anywhere else a folder named
+    for an inbox, raw records, old versions or generated pages is left out."""
+    if name.startswith((".", "_")):
+        return False
+    depth = Path(folder).relative_to(root).parts
+    if in_zone and not depth:
+        return name != "Inbox"                                # every other folder here is a project
+    if in_zone and len(depth) == 2 and depth[1] == "Threads":
+        return True                                           # a thread
+    return name.casefold() not in SKIP_DIRS
 # What a note is, in the order the legend shows them. Colours are fixed so a
 # kind looks the same in every workspace; none is amber or red, which the
 # rings use for threads gone quiet. Threads take the brand blue, the light
@@ -388,8 +405,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
     asleep = {(zone, project) for zone, project, _ in held} - awake
     notes = []
     for place, root in places:
+        in_zone = root.parent.name == "Zones"
         for folder, dirs, files in os.walk(root):
-            dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")) and d not in SKIP_DIRS)
+            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone))
             for f in sorted(files):
                 if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
                     continue
@@ -445,7 +463,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         except OSError:
             continue
         for target in WIKILINK.findall(text):
-            target = target.strip().rstrip("/")
+            # In a Markdown table the alias's pipe is escaped, [[x\|alias]]: drop the backslash.
+            target = target.strip().rstrip("\\").strip().rstrip("/")
             target = target[:-3] if target.endswith(".md") else target
             hit = by_rel.get(target)
             if hit is None:

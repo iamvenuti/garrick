@@ -75,5 +75,29 @@ class DocCommandsTest(unittest.TestCase):
         self.assertEqual(shared, {}, "one folder, two different commands: the second stops with 'not empty'")
 
 
+DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"
+FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
+
+
+class FeedbackTest(unittest.TestCase):
+    """Someone invited to try Garrick has a place to ask and to say how it went, and
+    every way in points there. Bug reports work for desktop app users too."""
+
+    def test_the_issue_chooser_offers_discussions_first(self):
+        urls = re.findall(r"^\s*url:\s*(\S+)", (FORMS / "config.yml").read_text(encoding="utf-8"), re.M)
+        self.assertEqual(urls[0], DISCUSSIONS)
+
+    def test_readme_and_contributing_point_there(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"]({DISCUSSIONS})", readme.split("\n## Contributing\n", 1)[1].split("\n## ", 1)[0])
+        contributing = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertIn(f"]({DISCUSSIONS})", contributing.split("\n## ", 1)[0])  # in its opening
+
+    def test_the_bug_form_takes_a_desktop_app_version(self):
+        versions = (FORMS / "bug.yml").read_text(encoding="utf-8").split("id: versions", 1)[1]
+        self.assertIn("About window", versions)
+        self.assertIn("required: true", versions)
+
+
 if __name__ == "__main__":
     unittest.main()

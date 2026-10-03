@@ -94,6 +94,8 @@ Early, for macOS. See the [changelog](CHANGELOG.md).
 
 ## Contributing
 
+Ask questions and give feedback in [Discussions](https://github.com/iamvenuti/garrick/discussions).
+
 Issues and ideas are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first. Report a bypass of a documented check through [SECURITY.md](SECURITY.md), using fictional data.
 
 ## Licence

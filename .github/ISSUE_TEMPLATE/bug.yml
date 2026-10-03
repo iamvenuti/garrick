@@ -31,6 +31,6 @@ body:
     id: versions
     attributes:
       label: Versions
-      description: Output of `python3 --version`, `git --version`, and `claude --version` or `codex --version`.
+      description: Output of `python3 --version`, `git --version`, and `claude --version` or `codex --version`. If you use the Claude or ChatGPT desktop app instead, give the version its About window shows (in the app menu, choose About).
     validations:
       required: true

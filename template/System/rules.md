@@ -23,7 +23,7 @@ When there are several good ways to do something, name two or three, recommend o
 - **Cross-zone work happens only when asked**, and only for that request. The answer stays in the conversation unless the user says where to write it.
 - **The Knowledge wiki crosses every wall.** It holds published material, which carries nobody's confidence.
 - When you cannot tell whether a wall applies, ask.
-- **The walls are checked again before every commit.** Each zone's git hook runs `System/tools/check.py --staged --walls-only`, which refuses a commit whose project files link to, name or quote a party on the far side of a wall. When it refuses, take the material out and commit again. Never bypass it with `git commit --no-verify` unless the user explicitly asks.
+- **The walls are checked again before every commit.** Each zone's git hook runs `System/tools/check.py --staged --walls-only`, which refuses a commit whose project files link to, name or quote a party on the far side of a wall. When it refuses, take the material out and commit again. Never bypass it with `git commit --no-verify` unless the user explicitly asks. Git skips the hook when its `core.hooksPath` setting sends commits past it, and `check.py` warns when it does.
 
 ## Ways in
 

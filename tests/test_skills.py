@@ -219,6 +219,17 @@ class SkillsTest(unittest.TestCase):
         self.assertIn("reports only the installer's placeholders", text)
         self.assertNotIn("unfinished install", text)
 
+    def test_the_hook_is_only_as_good_as_git_running_it(self):
+        """A `core.hooksPath` setting sends commits past the zone's hook; the check warns
+        then, and neither the rules nor the threads skill promises more than that."""
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"),
+                             "## Zones and walls"))
+        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        for text in (rules, threads):
+            self.assertIn("Git skips the hook when its `core.hooksPath` setting sends commits past it", text)
+            self.assertIn("`check.py` warns when", text)
+        self.assertNotIn("does not rely on you", threads)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

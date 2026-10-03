@@ -451,12 +451,13 @@ Knowledge wiki needs no check: it carries nobody's confidence.
    walled off from Acme. Write it anyway?"
 9. **Can't tell** whether a wall applies: ask.
 
-**The same check runs again before every commit, and it does not rely on you.**
-Each zone's pre-commit hook runs `System/tools/check.py --staged --walls-only`
-on the files being committed. A link to a walled meeting, the name of a party,
-person or alias on the far side of a wall, or eight words in a row lifted from
-a walled meeting page or its transcript stops the commit, with one line naming
-the file and the wall. When it refuses:
+**The same check runs again before every commit, whenever git runs the
+hook.** Each zone's pre-commit hook runs
+`System/tools/check.py --staged --walls-only` on the files being committed. A
+link to a walled meeting, the name of a party, person or alias on the far
+side of a wall, or eight words in a row lifted from a walled meeting page or
+its transcript stops the commit, with one line naming the file and the wall.
+When it refuses:
 
 - **Take the material out** of that file and commit again. Tell the user a wall
   held something back, as in step 7, and nothing more.
@@ -464,6 +465,11 @@ the file and the wall. When it refuses:
   in this request. Yes once is not yes next time.
 - **If the refusal looks wrong** (a walled party named in a published context,
   say), tell the user which file and which wall, and let them decide.
+
+Git skips the hook when its `core.hooksPath` setting sends commits past it,
+and then nothing checks the walls at commit time. `check.py` warns when that
+is so: tell the user what it says, and until it is fixed treat this
+procedure as the only check.
 
 The wall is between parties, not between the user and their own memory. It
 decides what is written into a project, never what the user may know.

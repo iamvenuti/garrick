@@ -46,8 +46,11 @@ Knowledge commit never touches a Meetings file, and the other way round.
 **Nothing from a conversation or a project ever goes into Knowledge.** A
 conversation carries someone's confidence; Knowledge carries none, which is
 what lets it cross every wall. Mixing the two would let a wall be laundered
-through a "published" page. So a Knowledge page never has `parties` or a
-`zone`, and `System/tools/check.py` treats one that does as an error.
+through a "published" page. So a Knowledge page never has `parties`, a
+`party` or a `zone`, and `System/tools/check.py` treats one that does as an
+error. The check also warns when a Knowledge page, or the raw record behind
+it, shares a run of eight words with a finished meeting page or its
+transcript: that is what a conversation filed as reading looks like.
 
 Before ingesting anything, ask: did this come from something published, or
 from something said to the user? A report, an article, a paper, a vendor's
@@ -116,9 +119,10 @@ project, never here.
      it for its weakest claim and let the attribution (below) carry the
      rest of the distinction.
    - Missing author or date: ask the user, or write the source page with
-     what is known and say plainly what is missing. Do not leave a
-     placeholder the checker would treat as an unfinished install. Write
-     prose ("author not stated") instead of an empty field.
+     what is known and say plainly what is missing. Write prose ("author
+     not stated"), never an empty field or an angle-bracket line left from
+     the draft. The checker reports only the installer's placeholders, the
+     capitals in double braces, so nothing would catch either.
 5. **Write the source page**, `wiki/sources/<slug>.md`:
 
    ```yaml
@@ -170,9 +174,11 @@ project, never here.
       Knowledge/wiki/index.md Knowledge/wiki/log.md
     git -C Wikis commit -m "Knowledge: ingested <title> (<author or vendor>)"
     ```
-11. **Check it.** `python3 System/tools/check.py` catches an unfinished
-    install, a link that reaches into Meetings, and a raw file changed after
-    its first commit. Run it before telling the user the ingest is done.
+11. **Check it.** `python3 System/tools/check.py` catches a page that
+    carries `parties`, a `party` or a `zone`, a link that reaches into
+    Meetings, and a raw file changed after its first commit, and warns about
+    wording shared with a meeting. Run it before telling the user the ingest
+    is done.
 
 ### Concept page schema
 
@@ -264,7 +270,8 @@ failover time. That's their number, unverified. Nothing independent yet."
 - **It never writes conversation or project material into Knowledge**,
   however it arrives: file, mail, dictation, or a quote from earlier in the
   session. It redirects to Meetings instead, and asks when it cannot tell
-  which the material is. It never gives a page `parties` or a `zone`.
+  which the material is. It never gives a page `parties`, a `party` or a
+  `zone`.
 - **It never edits `raw/`.** A source that needs correcting gets a corrected
   summary; the frozen original stays as it was fetched or handed over.
 - **It never turns a vendor's claim into a fact** by dropping the

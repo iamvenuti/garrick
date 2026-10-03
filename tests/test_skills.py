@@ -207,6 +207,18 @@ class SkillsTest(unittest.TestCase):
         self.assertNotIn("moves the item, untouched", intake)
         self.assertNotIn("moves it, untouched", knowledge)
 
+    def test_knowledge_says_what_the_check_holds_it_to(self):
+        """`parties`, `party` and `zone` are errors on a Knowledge page; wording shared
+        with a meeting is a warning; and only the installer's placeholders are flagged."""
+        text = flat((SKILLS / "knowledge" / "SKILL.md").read_text(encoding="utf-8"))
+        boundary = flat(section((SKILLS / "knowledge" / "SKILL.md").read_text(encoding="utf-8"),
+                                "## The boundary: what may not come in here"))
+        for needle in ("never has `parties`, a `party` or a `zone`", "treats one that does as an error",
+                       "shares a run of eight words with a finished meeting page or its transcript"):
+            self.assertIn(needle, boundary, needle)
+        self.assertIn("reports only the installer's placeholders", text)
+        self.assertNotIn("unfinished install", text)
+
     def test_parked_threads_are_not_live(self):
         text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "

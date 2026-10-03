@@ -191,8 +191,8 @@ aloud; a domain said as its name; dates as a day and a date.
   asks one short question. It never guesses across a wall.
 - **It never puts a mail itself into a project.** The mail is a
   conversation, in Meetings; only its attachment goes to `Sources/`.
-- **It never gives a Knowledge page parties or a zone.** Knowledge carries
-  nobody's confidence; that is why it may be used anywhere.
+- **It never gives a Knowledge page parties, a party or a zone.** Knowledge
+  carries nobody's confidence; that is why it may be used anywhere.
 - **It never edits a raw record**, and never commits anything from an Inbox.
 - **It never sends, replies to or forwards anything.** It files what arrived.
 - **It never touches an item it was not asked about.** Processing the inbox

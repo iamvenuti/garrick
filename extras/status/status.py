@@ -728,7 +728,7 @@ def meter(value: float, cap: float, label: str, right: str) -> str:
 # --------------------------------------------------------------------------- the page
 
 CSS = r"""
-:root{color-scheme:light;--page:#f4f3f0;--side:#ecebe6;--surface:#fcfcfb;--raise:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
+:root{color-scheme:light;--display:"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif;--page:#f4f3f0;--side:#ecebe6;--surface:#fcfcfb;--raise:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
 --line:rgba(11,11,11,.10);--grid:#e1e0d9;--base:#c3c2b7;--accent:#3d73e0;--track:#cfdcf7;--wash:rgba(61,115,224,.10);
 --good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--none:#e6e5df;--shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.04)}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
@@ -740,7 +740,7 @@ body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:18px}
-.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.brand h1{font-size:15px;margin:0}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.brand h1{font:600 18px/1.15 var(--display);margin:0;letter-spacing:.005em}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
 .overall{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
 .overall svg{width:22px;height:22px;flex:none}.overall b{display:block;font-size:13px}.overall span{color:var(--ink2);font-size:12px}
 nav{display:flex;flex-direction:column;gap:1px}
@@ -760,7 +760,7 @@ main{padding:26px 30px 80px;min-width:0}
 .top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(4,minmax(140px,1fr));gap:14px;margin-bottom:18px}
 .hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
 .hero{display:flex;flex-direction:column;justify-content:space-between}
-.hero .fig{font-size:48px;font-weight:650;line-height:1;letter-spacing:-.03em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
+.hero .fig{font:600 52px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
 .hero .lbl,.tile .lbl{color:var(--ink2);font-size:12px}.hero .lbl{font-size:14px;margin-top:6px}
 .tile .val{font-size:26px;font-weight:620;letter-spacing:-.02em;margin:4px 0 8px;display:flex;align-items:baseline;gap:8px}
 .tile .val small{font-size:12px;font-weight:500;color:var(--muted)}.tile .sub{font-size:12px;color:var(--muted);margin-top:6px}
@@ -770,7 +770,7 @@ main{padding:26px 30px 80px;min-width:0}
 .full{grid-column:span 12}.stack{grid-column:span 5;display:flex;flex-direction:column;gap:16px;min-width:0}.stack.left{grid-column:span 7}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:16px}
 summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
-.head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font-size:14px;margin:0;font-weight:640}
+.head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font:600 16px/1.2 var(--display);margin:0}
 .head .meta{color:var(--muted);font-size:12px;margin-left:auto;text-align:right}
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}

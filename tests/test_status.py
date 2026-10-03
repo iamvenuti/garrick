@@ -472,6 +472,16 @@ class TestNameAndMark(StatusCase):
         self.assertIn('fill="#3D73E0"', svg)
         self.assertEqual(2, svg.count("<path"))             # the favicon cut: Gr alone
 
+    def test_display_headings_in_baskerville(self):
+        # Garrick's typeface, from fonts already on the machine: nothing is fetched.
+        stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
+        self.assertIn("--display:%s;" % stack, status.CSS)
+        for rule in (r"\.brand h1\{[^}]*", r"\.head h2\{[^}]*", r"\.hero \.fig\{[^}]*"):
+            self.assertIn("var(--display)", re.search(rule, status.CSS).group(0))
+        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui', status.CSS)
+        self.assertNotIn("@font-face", status.CSS)
+        self.assertNotIn("url(", status.CSS)
+
     def test_accent_is_the_brand_blue_and_readable(self):
         light = re.search(r":root\{[^}]*--accent:(#[0-9a-f]{6})", status.CSS).group(1)
         self.assertEqual(status.BRAND.lower(), light)

@@ -6,7 +6,7 @@ Garrick installs the inbox folder and the schema a meeting page has to meet (`Wi
 
 ## How to use it
 
-Export or copy the recording's transcript (not the audio; the transcript is what gets summarized and quoted) into `Wikis/Meetings/raw/inbox/`, named however your recorder names it. Then say "process the inbox": the `intake` skill sees a transcript, which is always a conversation, and the `meetings` skill files it. Mail and other files have their own page, [ways in](ways-in.md).
+Export or copy the recording's transcript (not the audio; the transcript is what gets summarised and quoted) into `Wikis/Meetings/raw/inbox/`, named however your recorder names it. Then say "process the inbox": the `intake` skill sees a transcript, which is always a conversation, and the `meetings` skill files it. Mail and other files have their own page, [ways in](ways-in.md).
 
 To file one by hand instead, from the workspace root:
 

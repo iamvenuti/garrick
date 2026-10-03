@@ -21,7 +21,7 @@ Garrick is early and run by one person, so the fastest route in is an issue befo
 python3 -m unittest discover -s tests
 ```
 
-The suite takes about two minutes. CI runs it on macOS with the system Python and a current one.
+The suite takes three to four minutes on the system Python. CI runs it on macOS with the system Python and a current one.
 
 Keep commits small, with a subject line that says what changed.
 

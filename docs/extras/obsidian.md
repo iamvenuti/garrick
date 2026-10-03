@@ -2,7 +2,7 @@
 
 Add it when you want to browse the notes yourself. It works with either the [desktop](../first-steps.md) or [terminal](../terminal-setup.md) route. A terminal assistant plus Obsidian needs no provider desktop app. Obsidian reads the files you open; it does not enforce Garrick's information boundaries.
 
-A Garrick workspace is Markdown files with YAML frontmatter and `[[wikilinks]]` between them, which is exactly what Obsidian is built to read. Nothing in the install writes an `.obsidian/` folder or any Obsidian-specific configuration. The wikilinks are plain text and mean the same thing whether or not Obsidian ever opens the workspace: the assistant follows them, and `System/tools/check.py` resolves them the way Obsidian does when it audits the walls.
+A Garrick workspace is Markdown files with YAML frontmatter and `[[wikilinks]]` between them, which is exactly what Obsidian is built to read. The install writes no `.obsidian/` folder and no Obsidian settings; its only concession to Obsidian is two lines in its `.gitignore` files, described below. The wikilinks are plain text and mean the same thing whether or not Obsidian ever opens the workspace: the assistant follows them, and `System/tools/check.py` resolves them the way Obsidian does when it audits the walls.
 
 ## How to use it
 

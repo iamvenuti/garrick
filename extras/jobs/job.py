@@ -7,8 +7,9 @@ The name is letters, digits, hyphens and underscores, and not `agent`. The
 scheduler (launchd, cron) runs this, and this runs the job. One place for
 everything a run needs when nobody is watching it:
 
-1. **A log**, `<name>.log` in the jobs folder, rotated at 1 MB with one older
-   generation kept.
+1. **A log**, `<name>.log` in the jobs folder (~/Library/Logs/garrick-jobs/
+   on a Mac, or GARRICK_JOBS_DIR), rotated at 1 MB with one older generation
+   kept.
 2. **A heartbeat**, `<name>.heartbeat.json`: when the last run finished, its
    exit code, how long it took, how much it did. A scheduler lists a job as
    loaded whether or not it has ever worked; the heartbeat says whether it ran.

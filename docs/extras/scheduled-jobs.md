@@ -30,7 +30,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
      python3 System/jobs/whats_open.py --workspace ~/Garrick --zone Work
    ```
    The brief lands in `~/Library/Logs/garrick-jobs/briefs/`, with the log and the heartbeat beside it.
-3. **Schedule it.** Copy `System/jobs/launchd/garrick.whats-open.plist` to `~/Library/LaunchAgents/`, replace every `<you>` with your macOS user name, and load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist`. Set `GARRICK_HARNESS` in the plist to `claude` or `codex`.
+3. **Schedule it.** Copy `System/jobs/launchd/garrick.whats-open.plist` to `~/Library/LaunchAgents/` and edit the copy. The plist is XML, so it writes `<you>` as `&lt;you&gt;`: search for that. If your workspace is not `~/Garrick`, first replace each `/Users/&lt;you&gt;/Garrick` with its full path. Then replace every other `&lt;you&gt;` with your macOS user name, and set `GARRICK_HARNESS` to `claude` or `codex`. Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist`. Whatever stops a run before `job.py` can write its own log, such as a path left wrong, goes to `whats-open.launchd.log` beside that log. launchd does not create the folder, which is why step 2 comes first. If not even that file appears, `launchctl print gui/$(id -u)/garrick.whats-open` shows how launchd last ran the job.
 4. **See what it did**: `python3 System/jobs/agent.py ledger` lists the last 24 hours of calls, by job, with their cost and any tool the assistant was refused.
 
 The example reads one zone per assistant call, so no single turn ever holds two zones, and writes one brief per zone outside the workspace. A zone with nothing open costs no call.

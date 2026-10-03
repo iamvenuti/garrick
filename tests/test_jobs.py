@@ -250,6 +250,9 @@ class ProfileTest(unittest.TestCase):
         self.assertTrue(args[1].endswith("System/jobs/job.py"))
         self.assertIn("--agent", args)
         self.assertIn("--", args)
+        # What job.py cannot log itself lands beside the jobs' logs, never in the log job.py rotates.
+        for key in ("StandardOutPath", "StandardErrorPath"):
+            self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/whats-open.launchd.log", plist[key])
 
 
 class RunTest(FakeAssistants):

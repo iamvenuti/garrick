@@ -2,14 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   An example launchd job: the what's-open brief for the Work zone, every
-  morning at 06:30. Copy it to ~/Library/LaunchAgents/, replace every &lt;you&gt;
-  (written that way because this is XML) with your macOS user name;
-  launchd does not expand ~. Then load it:
+  morning at 06:30. Copy it to ~/Library/LaunchAgents/ and edit the copy.
+  If your workspace is not ~/Garrick, replace each /Users/&lt;you&gt;/Garrick
+  with its full path. Then replace every other &lt;you&gt; (written that way
+  because this is XML) with your macOS user name; launchd does not expand ~.
+  Load it:
 
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist
 
   Unload with `launchctl bootout gui/$(id -u)/garrick.whats-open`.
   PATH must include the folder your assistant's command is installed in.
+  Whatever job.py cannot write to its own log, such as the error from a path
+  left wrong, goes to whats-open.launchd.log in the jobs' log folder.
+  launchd does not create that folder: run the job once by hand first.
 -->
 <plist version="1.0">
 <dict>
@@ -38,6 +43,10 @@
     <key>GARRICK_HARNESS</key>
     <string>claude</string>
   </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/whats-open.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/whats-open.launchd.log</string>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

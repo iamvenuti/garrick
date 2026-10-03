@@ -7,6 +7,7 @@ and git's global config pointed at temporary files, so nothing on the machine
 running the tests is read or written.
 """
 
+import importlib.util
 import json
 import os
 import shutil
@@ -15,6 +16,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+sys.dont_write_bytecode = True  # importing install.py leaves no __pycache__ behind
 
 REPO = Path(__file__).resolve().parent.parent
 INSTALL = REPO / "install.py"
@@ -22,9 +26,28 @@ EXAMPLE = REPO / "examples" / "acme.json"
 OPEN = "{" * 2
 
 
-def run(args, env, cwd=None, stdin=None):
+def run(args, env, cwd=None, stdin=None, timeout=300):
+    # The timeout turns a question asked forever into a failure instead of a hung suite.
     return subprocess.run([sys.executable] + [str(a) for a in args], cwd=cwd, env=env,
-                          input=stdin, capture_output=True, text=True)
+                          input=stdin, capture_output=True, text=True, timeout=timeout)
+
+
+def load_installer():
+    """install.py as a module, so a test can point its REPO somewhere else."""
+    spec = importlib.util.spec_from_file_location("garrick_install", INSTALL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def ignores_capitals(folder):
+    """True when the disk holding `folder` treats Name and NAME as one, as a Mac's usually does."""
+    probe = Path(folder) / "CapitalsProbe"
+    probe.mkdir()
+    try:
+        return (Path(folder) / "capitalsprobe").exists()
+    finally:
+        probe.rmdir()
 
 
 def git(repo, *args):
@@ -253,6 +276,123 @@ class RefusalTest(unittest.TestCase):
             target, r = self.box.install(label, config=self.box.config(label, **change))
             self.assertEqual(r.returncode, 1, label)
             self.assertFalse(target.exists(), label)
+
+
+class TargetIdentityTest(unittest.TestCase):
+    """The target is compared with the home folder, the protected folders and Garrick's
+    own folder by identity, not by spelling: a symlink, or a name that differs only in
+    capitals on a Mac's disk, is still the same folder."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name).resolve()
+        self.home = self.base / "home"
+        (self.home / "Documents").mkdir(parents=True)
+        self.code = self.base / "code"
+        self.source = self.code / "garrick-source"
+        (self.source / "template").mkdir(parents=True)
+        self.installer = load_installer()
+        self.installer.REPO = self.source
+        patch = mock.patch.dict(os.environ, {"HOME": str(self.home)})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def refused(self, target, force=False):
+        with self.assertRaises(self.installer.InstallError) as caught:
+            self.installer.check_target(Path(target), force=force)
+        return str(caught.exception)
+
+    def test_the_source_folder_itself(self):
+        self.assertEqual(self.refused(self.source),
+                         f"{self.source} is the Garrick folder this installer runs from. "
+                         "Pick a new folder outside it, such as ~/Garrick.")
+
+    def test_inside_the_source_folder(self):
+        for target in (self.source / "template", self.source / "ws", self.source / "new" / "deeper"):
+            self.assertIn(f"{target} is inside {self.source}, the Garrick folder", self.refused(target, force=True))
+
+    def test_holding_the_source_folder(self):
+        self.assertEqual(self.refused(self.code, force=True),
+                         f"{self.code} holds {self.source}, the Garrick folder this installer runs from. "
+                         "Pick a new folder of its own, such as ~/Garrick.")
+
+    def test_through_a_symlink(self):
+        link = self.base / "link"
+        link.symlink_to(self.source)
+        self.assertIn(f"{link} is the same folder as {self.source}", self.refused(link))
+        self.assertIn(f"{link / 'ws'} is inside", self.refused(link / "ws"))
+        up = self.base / "code-link"
+        up.symlink_to(self.code)
+        self.assertIn(f"{up} holds", self.refused(up, force=True))
+        # And the other way round: the source folder reached through a link, the target spelt out.
+        self.installer.REPO = link
+        self.assertIn(f"{self.source} is the same folder as {link}", self.refused(self.source))
+
+    def test_a_name_differing_only_in_capitals(self):
+        if not ignores_capitals(self.base):
+            self.skipTest("this disk tells capitals apart, so there is no second spelling to try")
+        self.assertIn(f"is the same folder as {self.source}", self.refused(self.code / "GARRICK-SOURCE"))
+        self.assertIn("is inside", self.refused(self.code / "Garrick-Source" / "ws"))
+        self.assertIn("holds", self.refused(self.base / "CODE", force=True))
+        self.assertIn("home folder or above it", self.refused(self.base / "HOME", force=True))
+        self.assertIn("privacy", self.refused(self.home / "documents" / "Garrick"))
+        # The reported case: a clone at ~/garrick is the installer's default, ~/Garrick.
+        clone = self.home / "garrick"
+        clone.mkdir()
+        self.installer.REPO = clone
+        self.assertEqual(self.refused(self.home / "Garrick"),
+                         f"{self.home / 'Garrick'} is the same folder as {clone}, the Garrick folder this "
+                         "installer runs from. Pick a new folder outside it, such as ~/Garrick-workspace.")
+
+    def test_neighbours_are_allowed(self):
+        for target in (self.code / "garrick-source-ws", self.code / "garrick-sourced", self.code / "Garrick",
+                       self.home / "Garrick", self.base / "elsewhere" / "ws"):
+            self.assertEqual(self.installer.check_target(target), target)
+
+    def test_suggestion_avoids_the_source_folder(self):
+        self.assertEqual(self.installer.suggestion(), "~/Garrick")
+        (self.home / "Garrick").mkdir()
+        self.installer.REPO = self.home / "Garrick"
+        self.assertEqual(self.installer.suggestion(), "~/Garrick-workspace")
+        self.assertIn("such as ~/Garrick-workspace.", self.refused(self.home / "Documents" / "ws"))
+
+
+class SourceFolderInstallTest(unittest.TestCase):
+    """The reported case end to end: Garrick cloned into ~/garrick, which on a Mac is
+    also ~/Garrick, the installer's default, and the installer run from inside it."""
+
+    def setUp(self):
+        self.box = Sandbox()
+        self.addCleanup(self.box.close)
+        name = "garrick" if ignores_capitals(self.box.home) else "Garrick"
+        self.source = self.box.home / name
+        self.source.mkdir()
+        shutil.copy2(INSTALL, self.source / "install.py")
+        (self.source / "template").symlink_to(REPO / "template")
+        self.installer = self.source / "install.py"
+
+    def untouched(self):
+        self.assertEqual(sorted(p.name for p in self.source.iterdir()), ["install.py", "template"])
+
+    def test_questions_offer_another_folder(self):
+        answers = ["~/Garrick",                       # typed: refused, and asked again
+                   "",                                # the default offered instead
+                   "Sam Rivera", "Independent advisor", "", "", "", "", "", "", "y"]
+        r = run([self.installer], self.box.env, cwd=self.source, stdin="\n".join(answers) + "\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Where should the workspace go? [~/Garrick-workspace]", r.stdout)
+        self.assertIn("the Garrick folder this installer runs from. Pick a new folder outside it", r.stdout)
+        self.assertTrue((self.box.home / "Garrick-workspace" / "AGENTS.md").is_file())
+        self.untouched()
+
+    def test_config_route_refuses_it(self):
+        for target, extra in (("~/Garrick", []), ("~/Garrick", ["--force"]), ("inside", [])):
+            r = run([self.installer, "--config", EXAMPLE, "--target", target, *extra], self.box.env, cwd=self.source)
+            self.assertEqual(r.returncode, 1, (target, extra, r.stdout))
+            self.assertIn("the Garrick folder this installer runs from", r.stderr)
+            self.assertIn("such as ~/Garrick-workspace.", r.stderr)
+            self.untouched()
 
 
 class InteractiveTest(unittest.TestCase):

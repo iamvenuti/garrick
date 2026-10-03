@@ -27,6 +27,9 @@ TEMPLATE = REPO / "template"
 TOOLS = TEMPLATE / "System" / "tools"
 
 DEFAULT_TARGET = "~/Garrick"
+# Offered instead when the default is Garrick's own folder: a Mac ignores capitals
+# in folder names, so a clone at ~/garrick is also ~/Garrick.
+OTHER_TARGET = "~/Garrick-workspace"
 DEFAULT_ZONES = ["Work", "Personal"]
 # macOS privacy protection stops scheduled jobs from reading these folders.
 PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
@@ -196,21 +199,67 @@ def validate(cfg, pl):
 # --------------------------------------------------------------------------- target
 
 
+def same_folder(a, b):
+    """True when two paths name one folder, however they are spelt. Compared by
+    device and inode, not by name: a Mac's disk ignores capitals, so ~/garrick is
+    ~/Garrick, and a symlink is the folder it points to."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def within(path, folder):
+    """True when `path`, which need not exist yet, is `folder` or sits inside it."""
+    p = Path(os.path.abspath(path))
+    while not os.path.exists(p) and p != p.parent:
+        p = p.parent
+    real = p.resolve()
+    return any(same_folder(q, folder) for q in (p, *p.parents, real, *real.parents))
+
+
+def source_overlap(target):
+    """How a target meets the folder this installer runs from: "is", "inside", "holds" or None."""
+    if within(target, REPO):
+        return "is" if same_folder(target, REPO) else "inside"
+    if within(REPO, target):
+        return "holds"
+    return None
+
+
+def suggestion():
+    """The folder a refusal offers: the default, unless the default is Garrick's own folder."""
+    return OTHER_TARGET if source_overlap(Path(DEFAULT_TARGET).expanduser()) else DEFAULT_TARGET
+
+
 def check_target(target, force=False):
-    """Refuse a target that would break scheduled jobs, touch home config, or clobber files."""
+    """Refuse a target that would break scheduled jobs, touch home config, mix the
+    workspace into Garrick's own folder, or clobber files. Returns it as an absolute path."""
     home = Path.home().resolve()
-    t = target.expanduser()
+    t = Path(os.path.abspath(target.expanduser()))
     resolved = t.resolve()
-    if resolved == home or resolved in home.parents:
-        raise InstallError(f"{t} is your home folder or above it. Pick a folder of its own, such as {DEFAULT_TARGET}.")
-    candidates = {resolved, Path(os.path.abspath(t))}
+    if resolved == home or resolved in home.parents or within(home, t):
+        raise InstallError(f"{t} is your home folder or above it. Pick a folder of its own, such as {suggestion()}.")
     for name in PROTECTED:
         guarded = {home / name, (home / name).resolve()}
-        if any(c == g or g in c.parents for c in candidates for g in guarded):
+        if any(c == g or g in c.parents for c in (t, resolved) for g in guarded) or within(t, home / name):
             raise InstallError(
                     f"Not inside ~/{name}: macOS privacy protection blocks scheduled jobs there. "
-                    f"Pick a folder such as {DEFAULT_TARGET}."
+                    f"Pick a folder such as {suggestion()}."
                 )
+    overlap = source_overlap(t)
+    if overlap:
+        source = "the Garrick folder this installer runs from"
+        if overlap == "is" and str(t) == str(REPO):
+            problem = f"{t} is {source}."
+        elif overlap == "is":
+            problem = f"{t} is the same folder as {REPO}, {source}."
+        elif overlap == "inside":
+            problem = f"{t} is inside {REPO}, {source}."
+        else:
+            problem = f"{t} holds {REPO}, {source}."
+        instead = "of its own" if overlap == "holds" else "outside it"
+        raise InstallError(f"{problem} Pick a new folder {instead}, such as {suggestion()}.")
     if t.exists() and not t.is_dir():
         raise InstallError(f"{t} is a file, not a folder.")
     if t.is_dir():
@@ -474,7 +523,7 @@ def interview(pl, target=None, force=False):
 
     while True:
         if not target:
-            target = ask("Where should the workspace go?", DEFAULT_TARGET)
+            target = ask("Where should the workspace go?", suggestion())
         try:
             check_target(Path(target), force=force)
             break

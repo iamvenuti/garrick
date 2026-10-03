@@ -16,7 +16,7 @@ To start from an empty workspace instead, with only the demo's parties and walls
 
 The installer writes only inside the target folder you gave it. It checks every path before writing to it and refuses to write anywhere else. It won't touch `~/.claude`, `~/.codex`, or anything under your home folder outside the target: no global settings changed, no config files edited, nothing installed system-wide. The `.claude/skills` and `.agents/skills` folders it creates are symlinks inside the workspace itself, pointing back at that workspace's own `System/skills`, not at anything in your account-level config.
 
-It also refuses certain targets outright: your home folder itself or any folder above it, and anywhere under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library`, because macOS blocks scheduled jobs from reading those folders regardless of what you intend to run there.
+It also refuses certain targets outright: your home folder itself or any folder above it; anywhere under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library`, because macOS blocks scheduled jobs from reading those folders regardless of what you intend to run there; and the folder Garrick came in, anywhere inside it, or a folder holding it, so your workspace and the download never mix.
 
 ## Your existing setup is untouched
 

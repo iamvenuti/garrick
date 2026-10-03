@@ -124,19 +124,21 @@ Tests the workspace against every rule a machine can check:
 - installer placeholders left unfilled;
 - a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties (a warning);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning);
+- a zone or the Wikis repository whose own hooks git skips, because `core.hooksPath` points somewhere else (a warning);
 - names that cannot be said aloud, or siblings that sound alike;
-- project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`;
+- project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (a thread is active, parked or done; a project is active or done), or a `created` or `updated` date not written YYYY-MM-DD;
 - deliverables without a date prefix;
 - a link or a path in a live thread's Resume here block that leads nowhere (a warning; parked threads are skipped);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
-- meeting and mail pages missing a zone or parties;
-- anything committed from a zone's `Inbox/` (the pre-commit hook refuses it too), a recording there instead of its transcript, or a copy left behind after an item was filed;
+- meeting and mail pages missing a zone or parties, or with a date not written YYYY-MM-DD;
+- person pages without a known party (`party: none` is allowed), or repeating eight or more words from a meeting (a warning);
+- anything committed from a zone's `Inbox/` (the zone's pre-commit hook refuses it too) or from `Wikis/Meetings/raw/inbox/`, a recording in either instead of its transcript, or a copy left behind after an item was filed;
 - a file in a project's `Sources/` that came from mail with no finished page in Meetings: an attachment, found by its exact bytes, or a whole saved mail;
-- a project file that crosses a wall: it links to a meeting page the wall should have kept out, names a party, person or alias from the far side (files in `Sources/`, which came from the party itself, are exempt from this one), repeats eight or more words in a row from a walled meeting page or its raw transcript, or is an attachment of a mail from the far side. The finding names the file and the walled party, never the words that matched;
-- a Knowledge page that links into Meetings, or carries `parties` or a `zone`;
+- a project file that crosses a wall: it links to a meeting page the wall should have kept out, names a party, person or alias from the far side (files in `Sources/`, which came from the party itself, are exempt from this one), repeats eight or more words in a row held only across the wall, in a walled meeting page or its raw transcript or in a file of a project on the far side (files in `Sources/` are compared with meetings only), or is an attachment of a mail from the far side. A link to, or eight words from, a meeting page with no zone or parties is an error whatever the walls. The finding names the file and the walled party, never the words that matched;
+- a Knowledge page that links into Meetings, or carries `party`, `parties` or a `zone`, or a Knowledge page or raw record that shares eight or more words with a meeting (a warning);
 - a raw record changed after it was filed.
 
-It reports two kinds of finding. An error breaks a rule; a warning is something to look at, such as a deliverable without its date or a project without a party. Plain text by default, grouped by check; add `--ear` for a three-sentence version meant to be read aloud, or `--json` for another program to consume. The exit code is 1 if there is at least one error and 0 otherwise, warnings included.
+It reports two kinds of finding. An error breaks a rule; a warning is something to look at, such as a deliverable without its date or a project without a party. Plain text by default, grouped by check; add `--ear` for a three-sentence version meant to be read aloud, or `--json` for another program to consume. The exit code is 0 when there is no error, warnings included, 1 when there is at least one, and 2 when no workspace is found.
 
 The walls part also runs before every commit. The installer puts a git hook in each zone that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall. Take the material out and commit again. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
 

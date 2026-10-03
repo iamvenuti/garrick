@@ -7,7 +7,8 @@
 
 Plain text by default: findings grouped by check, one line each, then a
 count. `--ear` gives at most three short sentences for reading aloud.
-`--json` is for other programs. Exit code 1 when there is any error.
+`--json` is for other programs. Exit code 1 when there is any error, 2 when
+no workspace is found.
 
 `--walls-only` runs the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and

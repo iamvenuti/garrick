@@ -32,15 +32,17 @@ job's folder, which is its write boundary, with no connectors unless you have
 configured them.
 
 **What it spends.** Every call appends one line to `ledger.jsonl` in the jobs
-folder: when, which job, assistant, tier, turns, cost, seconds, exit code and
-any tool the assistant was refused. Before a call, the ledger is read and the
-call is refused, with exit 8, when the last 24 hours already hold
-GARRICK_CAP_CALLS_DAY calls (48), the last hour GARRICK_CAP_CALLS_HOUR (12), or
-the last 24 hours GARRICK_CAP_COST_DAY dollars (20). Each Claude call is also
-stopped at GARRICK_MAX_CALL_USD dollars (5). Set a cap to 0 to remove it. The
-cost is Claude's own estimate at list prices, so on a subscription it measures
-use rather than a bill. Codex reports neither turns nor cost, so its lines
-carry none and only the call caps hold it.
+folder (~/Library/Logs/garrick-jobs/ on a Mac, or GARRICK_JOBS_DIR): when,
+which job, assistant, tier, turns, cost, seconds, exit code and any tool the
+assistant was refused. The ledger keeps the last 60 days. Before a call, the
+ledger is read and the call is refused, with exit 8, when the last 24 hours
+already hold GARRICK_CAP_CALLS_DAY calls (48), the last hour
+GARRICK_CAP_CALLS_HOUR (12), or the last 24 hours GARRICK_CAP_COST_DAY
+dollars (20). Each Claude call is also stopped at GARRICK_MAX_CALL_USD
+dollars (5). Set a cap to 0 to remove it. The cost is Claude's own estimate at
+list prices, so on a subscription it measures use rather than a bill. Codex
+reports neither turns nor cost, so its lines carry none and only the call
+caps hold it.
 
 Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached,
 nothing was called), 64 (usage, or Claude's deny profile is missing or not
@@ -78,6 +80,7 @@ DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}
 DEFAULT_MAX_CALL_USD = 5.0
 JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
 MAX_LOG_BYTES = 1024 * 1024
+LEDGER_DAYS = 60  # longer than every cap, a day at most, and the status page's fourteen days
 
 
 # --------------------------------------------------------------------------- settings
@@ -179,6 +182,34 @@ def append_ledger(path: Path, entry: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
+    prune_ledger(path, time.time())
+
+
+def prune_ledger(path: Path, now: float, days: float = LEDGER_DAYS) -> None:
+    """Keep the ledger to its last `days` days: it is read whole before every
+    call. It is rewritten only once its first line is a day past that, so at
+    most about once a day, and a failure leaves it as it was."""
+    try:
+        with path.open("rb") as f:
+            first = f.readline()
+    except OSError:
+        return
+    try:
+        ts = json.loads(first.decode("utf-8", "replace")).get("ts")
+    except (ValueError, AttributeError):
+        ts = None
+    if isinstance(ts, (int, float)) and ts >= now - (days + 1) * 86400:
+        return
+    keep = read_ledger(path, now, days * 24)
+    tmp = path.with_name(".%s.%d.tmp" % (path.name, os.getpid()))
+    try:
+        tmp.write_text("".join(json.dumps(e, sort_keys=True) + "\n" for e in keep), encoding="utf-8")
+        tmp.replace(path)  # a reader sees the old file or the new one, never half of either
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 def ledger_entry(now: float, job: str, tier: str, outcome: dict, seconds: float, code: int,

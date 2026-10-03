@@ -48,7 +48,7 @@ Under **Codex** there is no list of tools to allow or deny, and the deny profile
 
 ### What it spends
 
-Every call adds one line to `ledger.jsonl` in the jobs folder: when, which job, assistant, tier, turns, cost, seconds, exit code, and any tool that was refused. Before each call the ledger is read, and the call is refused, with exit 8 and no assistant started, when a limit is reached:
+Every call adds one line to `~/Library/Logs/garrick-jobs/ledger.jsonl`, beside the jobs' logs: when, which job, assistant, tier, turns, cost, seconds, exit code, and any tool that was refused. The ledger keeps the last 60 days, more than any limit below or the status page needs. Before each call the ledger is read, and the call is refused, with exit 8 and no assistant started, when a limit is reached:
 
 | Variable | Default | Limit |
 |---|---|---|

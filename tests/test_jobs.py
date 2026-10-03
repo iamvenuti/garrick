@@ -159,6 +159,26 @@ class LedgerTest(unittest.TestCase):
             self.assertEqual(1, len(agent.read_ledger(path, self.now)))
             self.assertEqual([], agent.read_ledger(Path(d) / "missing.jsonl", self.now))
 
+    def test_the_ledger_keeps_sixty_days(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ledger.jsonl"
+            now = time.time()
+            old = [{"ts": now - days * 86400, "job": "sweep"} for days in (90, 61.5)]
+            recent = [{"ts": now - days * 86400, "job": "sweep"} for days in (30, 0.1)]
+            path.write_text("".join(json.dumps(e) + "\n" for e in old + recent) + "{half a line\n")
+            agent.append_ledger(path, {"ts": now, "job": "sweep"})
+            self.assertEqual([e["ts"] for e in recent] + [now],
+                             [json.loads(line)["ts"] for line in path.read_text().splitlines()])
+            self.assertEqual(["ledger.jsonl"], [p.name for p in Path(d).iterdir()])
+
+    def test_the_ledger_is_rewritten_once_a_day_at_most(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "ledger.jsonl"
+            now = time.time()
+            path.write_text(json.dumps({"ts": now - 60.5 * 86400, "job": "sweep"}) + "\n")
+            agent.append_ledger(path, {"ts": now, "job": "sweep"})
+            self.assertEqual(2, len(path.read_text().splitlines()))   # half a day past: left for now
+
     def test_under_every_cap(self):
         self.assertIsNone(agent.cap_reason([self.entry(7200), self.entry(30)], self.now, self.limits))
 

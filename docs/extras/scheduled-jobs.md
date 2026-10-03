@@ -95,7 +95,7 @@ agent.report_items(handled)    # how much it did, for the idle alarm
 
 ### Limits
 
-- The suite tests the runner, the wrapper, the caps and the example against fake assistants. The deny profile, the settings sources and the ledger's numbers were checked by hand against Claude Code 2.1.287. Codex has not been run end to end through this extra.
+- The suite tests the runner, the wrapper, the caps and the example against fake assistants. The deny profile, the settings sources and the ledger's numbers were checked by hand against Claude Code 2.1.287. The permission mode was checked against Claude Code 2.1.288: a job allowed only `Read` and asked to edit a file was refused (the ledger lists `Edit` as denied) and the file was unchanged; a job allowed `WebFetch` was not given the tool, because the profile denies it. Codex has not been run end to end through this extra.
 - The sign-in check asks the assistant whether it is signed in (`claude auth status`, `codex login status`), with no model call. A scheduled job's access to the login keychain can fail now and then; the check, and its one retry five minutes later, exist for that.
 - A laptop that is asleep runs nothing. launchd runs a missed calendar job when the Mac wakes, and several overdue assistant jobs then take turns rather than fail each other's sign-in.
 

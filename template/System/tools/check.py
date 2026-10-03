@@ -75,7 +75,7 @@ CHECKS = [
     ("meetings", "Meeting pages"),
     ("walls", "Walls"),
     ("sources", "Project sources"),
-    ("inbox", "Zone inboxes"),
+    ("inbox", "Inboxes"),
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
     ("generated", "Generated files"),
@@ -97,7 +97,7 @@ EAR_GROUP = {
     "meetings": "{n} things need fixing on meeting pages",
     "walls": "the walls were crossed in {n} places",
     "sources": "{n} project sources came from mail that is not filed in Meetings",
-    "inbox": "{n} files in the zone inboxes need attention",
+    "inbox": "{n} files in the inboxes need attention",
     "knowledge": "{n} Knowledge pages cross into Meetings or carry parties",
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
@@ -1320,11 +1320,12 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
 
 def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     """The walls check on what is about to be committed, and nothing else.
-    Anything waiting in a zone's Inbox is refused too: it has not been filed,
-    so no wall has seen its parties yet."""
+    Anything waiting in a zone's Inbox, or in the Meetings inbox, is refused
+    too: it has not been filed, so no wall has seen its parties yet."""
     out = []
     staged = staged_names(repo)
     zones = {z.resolve() for z in ws.zones}
+    minbox = ws.root.joinpath(*MEETINGS_INBOX).resolve()
     if staged is not None:
         top_path, names = staged
         for name in names:
@@ -1334,6 +1335,12 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                                    "is waiting in the inbox to be filed, and never goes into the zone's history; "
                                    "unstage it and file it where it belongs",
                                    "A file from the %s inbox was about to be committed" % top_path.name))
+                continue
+            if (top_path / name).parent == minbox and parts[-1] != ".gitkeep":
+                out.append(Finding(ERROR, "inbox", rel(ws, top_path / name),
+                                   "is waiting in the Meetings inbox to be ingested, and never goes into the history; "
+                                   "unstage it and ingest it with the meetings skill",
+                                   "A transcript from the Meetings inbox was about to be committed"))
                 continue
             owner = project_of(ws, top_path / name)
             if owner is None or not _in_sources(owner[0], top_path / name):
@@ -1362,15 +1369,32 @@ def _own_repo(folder: Path) -> bool:
     return top is not None and Path(top.strip()).resolve() == folder.resolve()
 
 
+MEETINGS_INBOX = ("Wikis", "Meetings", "raw", "inbox")
+
+
+def _repo_top(ws: Workspace, folder: Path) -> Optional[Path]:
+    """The top of the git repository holding `folder`, when it is the workspace's
+    own (the root, or a repository inside it); None otherwise."""
+    top = _git(["rev-parse", "--show-toplevel"], folder)
+    if top is None:
+        return None
+    top_path = Path(top.strip()).resolve()
+    root = ws.root.resolve()
+    return top_path if top_path == root or root in top_path.parents else None
+
+
 def check_inbox(ws: Workspace) -> List[Finding]:
-    """Mail and files in a zone's Inbox are waiting to be filed. They never
-    enter the zone's history, and once filed no copy stays behind."""
+    """Mail and files in a zone's Inbox, and transcripts in the Meetings inbox,
+    are waiting to be filed. They never enter any history, a recording comes
+    in as its transcript, and once filed no copy stays behind."""
     out = []
     by_size: Optional[Dict[int, List[Path]]] = None
+    inboxes: List[Tuple[Path, str]] = []  # (folder, how to say it)
     for zone in ws.zones:
         inbox = zone / INBOX
         if not inbox.is_dir():
             continue
+        inboxes.append((inbox, "the %s inbox" % zone.name))
         if _own_repo(zone):
             listing = _git(["ls-files", "-z", "--", INBOX], zone) or ""
             for name in sorted(n for n in listing.split("\0") if n and Path(n).name != ".gitkeep"):
@@ -1378,11 +1402,24 @@ def check_inbox(ws: Workspace) -> List[Finding]:
                                    "committed into the %s zone's history from its inbox, which is never committed: "
                                    "`git rm --cached` it, then file it where it belongs" % zone.name,
                                    "Something in the %s inbox was committed" % zone.name))
+    minbox = ws.root.joinpath(*MEETINGS_INBOX)
+    if minbox.is_dir():
+        inboxes.append((minbox, "the Meetings inbox"))
+        top = _repo_top(ws, minbox)
+        if top is not None:
+            listing = _git(["ls-files", "-z", "--", minbox.resolve().relative_to(top).as_posix()], top) or ""
+            for name in sorted(n for n in listing.split("\0") if n and Path(n).name != ".gitkeep"):
+                out.append(Finding(ERROR, "inbox", rel(ws, top / name),
+                                   "committed from the Meetings inbox, which is never committed: "
+                                   "`git rm --cached` it, then ingest it with the meetings skill",
+                                   "Something in the Meetings inbox was committed"))
+    for inbox, spoken in inboxes:
         for path in sorted(p for p in inbox.iterdir() if p.is_file() and not p.name.startswith(".")):
             if path.suffix.lower() in MEDIA_EXTS:
                 out.append(Finding(WARNING, "inbox", rel(ws, path),
-                                   "audio or video is never read; put its transcript in Wikis/Meetings/raw/inbox/ instead",
-                                   "A recording in the %s inbox cannot be read" % zone.name))
+                                   "audio or video is never read; put its transcript (.txt, .md or .vtt) in "
+                                   "Wikis/Meetings/raw/inbox/ instead",
+                                   "A recording in %s cannot be read" % spoken))
                 continue
             if by_size is None:
                 # Where a filed item ends up: a Meetings or Knowledge raw record, or a project's Sources/.
@@ -1400,7 +1437,7 @@ def check_inbox(ws: Workspace) -> List[Finding]:
             if twin is not None:
                 out.append(Finding(WARNING, "inbox", rel(ws, path),
                                    "already filed as %s; this copy was left behind, so delete it" % rel(ws, twin),
-                                   "Something in the %s inbox was filed but not moved" % zone.name))
+                                   "Something in %s was filed but not moved" % spoken))
     return out
 
 

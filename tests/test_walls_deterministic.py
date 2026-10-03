@@ -421,6 +421,12 @@ class TestInstalledHook(unittest.TestCase):
                              env=self.env, capture_output=True, text=True)
         self.assertEqual("All clear.", res.stdout.strip(), res.stdout)
 
+    def test_the_meetings_inbox_stays_out_of_the_wikis_history(self):
+        self.assertEqual(0, self.install.returncode, self.install.stderr)
+        wikis = self.root / "Wikis"
+        self.assertEqual(0, self.git(wikis, "check-ignore", "-q", "Meetings/raw/inbox/call.vtt").returncode)
+        self.assertEqual("Meetings/raw/inbox/.gitkeep", self.git(wikis, "ls-files", "Meetings/raw/inbox").stdout.strip())
+
     def test_scaffold_commits_and_a_breach_is_refused(self):
         self.assertEqual(0, self.install.returncode, self.install.stderr)
         work = self.root / "Zones" / "Work"

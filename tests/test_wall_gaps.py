@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, git, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
@@ -135,6 +135,49 @@ class TestHooksPath(GapCase):
         self.assertClean("hooks")
         (shared / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
         self.assertEqual(["Zones/Work"], [f.path for f in self.findings("hooks")])
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestMeetingsInbox(GapCase):
+    """Transcripts wait in Wikis/Meetings/raw/inbox/ and, like a zone's Inbox,
+    never enter any history."""
+
+    def setUp(self):
+        super().setUp()
+        self.wikis = self.root / "Wikis"
+        self.inbox = self.meetings / "raw" / "inbox"
+        real_repo(self.wikis)
+        write(self.wikis / ".gitignore", "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")  # as installed
+        commit_all(self.wikis, "start")
+
+    def test_a_transcript_waiting_is_untracked_and_clean(self):
+        write(self.inbox / "Theo call 2026-03-20.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello.\n")
+        self.assertEqual("", git(self.wikis, "status", "--porcelain"))
+        commit_all(self.wikis, "nothing to add")
+        self.assertEqual("Meetings/raw/inbox/.gitkeep\n", git(self.wikis, "ls-files", "Meetings/raw/inbox"))
+        self.assertClean("inbox")
+
+    def test_something_committed_there_is_an_error(self):
+        write(self.inbox / "call.vtt", "WEBVTT\n")
+        git(self.wikis, "add", "-f", "Meetings/raw/inbox/call.vtt")
+        commit_all(self.wikis, "forced in")
+        found = self.findings("inbox", "error")
+        self.assertEqual(["Wikis/Meetings/raw/inbox/call.vtt"], [f.path for f in found])
+        self.assertIn("never committed", found[0].message)
+        self.assertEqual("Something in the Meetings inbox was committed", found[0].ear)
+
+    def test_a_recording_instead_of_its_transcript(self):
+        write(self.inbox / "call.m4a", "")
+        found = self.findings("inbox")
+        self.assertEqual([("warning", "Wikis/Meetings/raw/inbox/call.m4a")], [(f.severity, f.path) for f in found])
+        self.assertIn("transcript", found[0].message)
+
+    def test_staged_transcript_is_refused(self):
+        write(self.inbox / "call.vtt", "WEBVTT\n")
+        git(self.wikis, "add", "-f", "Meetings/raw/inbox/call.vtt")
+        found = check.run_checks(self.root, staged=self.wikis)
+        self.assertEqual([("error", "inbox", "Wikis/Meetings/raw/inbox/call.vtt")],
+                         [(f.severity, f.check, f.path) for f in found])
 
 
 if __name__ == "__main__":

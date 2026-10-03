@@ -350,6 +350,17 @@ class TestThreadCards(StatusCase):
         self.assertIn("'Escape'", status.JS)
         self.assertIn("document.addEventListener('click'", status.JS)   # copies inside a card work
 
+    def test_threads_sorted_by_name(self):
+        acme = self.root / "Zones" / "Work" / "Acme Review" / "Threads"
+        write(acme / "Zebra" / "Zebra.md", thread_note("Acme Review", "Zebra").replace("updated: 2026-03-01", "updated: 2026-03-09"))
+        write(acme / "alpha" / "alpha.md", thread_note("Acme Review", "alpha").replace("updated: 2026-03-01", "updated: 2026-01-09"))
+        write(acme / "beta" / "beta.md", thread_note("Acme Review", "beta", status="parked"))
+        write(acme / "Aardvark" / "Aardvark.md", thread_note("Acme Review", "Aardvark", status="parked"))
+        html = self.page()
+        self.assertEqual(["alpha", "Market Sizing", "Pricing", "Zebra"], thread_order(html))
+        self.assertEqual(["Aardvark", "beta"], thread_order(html, 'id="parked-work"'))
+
+
 class TestPanels(StatusCase):
     def test_inbox_waiting(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")

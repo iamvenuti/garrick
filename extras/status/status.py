@@ -254,8 +254,10 @@ def threads(ws: Path) -> Dict[str, dict]:
                        "party": tags(fm.get("party") or pfm.get("party")),
                        "updated": as_date(fm.get("updated")), "status": state}
                 (parked if state == "parked" else rows).append(row)
-        rows.sort(key=lambda r: r["updated"] or dt.date.min)
-        parked.sort(key=lambda r: r["updated"] or dt.date.min)
+        # By name, as you would look for one; the freshness bar carries the age.
+        by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
+        rows.sort(key=by_name)
+        parked.sort(key=by_name)
         out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone}
     return out
 
@@ -1158,7 +1160,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                  % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>over 45 days</span><span>· the bar is days since the thread note was updated, full at 60</span></div>')
-    threads_card = card("threads", "Threads", "%d live · %d parked · hover one for what to do" % (live, parked_n),
+    threads_card = card("threads", "Threads", "%d live · %d parked · by name · hover one for what to do" % (live, parked_n),
                         '<div class="zones">%s</div>%s' % (cols, legend))
 
     # ---- checks

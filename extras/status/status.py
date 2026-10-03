@@ -8,8 +8,8 @@ at a glance: every live thread by zone with how long since its resume point
 moved, what the check found, open actions, what is waiting in the inboxes,
 and, if you run scheduled jobs, how they ran and what the assistant spent.
 A graph of the notes and the links between them, zone by zone, turns slowly
-at the top; click a note to open it or copy what to say about it. Every card
-can be dragged elsewhere or hidden, and Reset view puts the page back.
+at the top; click a note to open it or copy what to say about it. Every
+card can be dragged elsewhere or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
 already keep, and writes nothing but itself. It runs no server, loads nothing
@@ -21,12 +21,13 @@ numbers come from and how old they are.
 rebuilds. The page is the one place that shows every zone at once, so that
 folder is kept out of two things: the workspace's git history (the root
 `.gitignore` names it, and `check.py` reports it if not) and the wording the
-wall check treats as shared by every side (`check.py` never reads it as such,
-so whatever the page repeats can never be copied across a wall unnoticed).
-It shows metadata only: names, party tags, dates and counts, never a line of
-what a note says. The graph reads one more thing from a note, the targets of
-its [[links]], and draws them as lines; the words around a link never reach
-the page. Pass --no-graph to leave it out.
+wall check treats as shared by every side (`check.py` leaves the folder out,
+so wording that appears only on this page never counts as shared).
+What it shows is names, party tags, dates, counts, the check's findings
+(which quote link targets and party names), the section headings of each
+Todo.md, and the targets of links: the graph reads a note's frontmatter and
+the targets of its [[links]], and draws the links as lines. The rest of a
+note's body never reaches the page. Pass --no-graph to leave the graph out.
 
 **Links open the files themselves**, in whatever app you use for Markdown.
 Pass `--obsidian VAULT` if you opened the workspace root in Obsidian as a vault
@@ -43,10 +44,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import importlib.util
 import json
 import os
 import plistlib
 import re
+import shlex
 import subprocess
 import sys
 import urllib.parse
@@ -66,16 +69,27 @@ TODO_ITEM = re.compile(r"^\s*-\s\[ \]\s")
 
 # --------------------------------------------------------------------------- where things are
 
+def is_workspace(folder: Path) -> bool:
+    return (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir()
+
+
 def find_workspace(given: Optional[str]) -> Path:
-    for cand in (given, os.environ.get("GARRICK_WORKSPACE")):
+    """The folder named, or the one this runs in. A named folder must hold
+    System/rules.md and Zones/, so a mistyped path stops here instead of
+    gaining a System/generated/ of its own."""
+    for how, cand in (("--workspace", given), ("GARRICK_WORKSPACE", os.environ.get("GARRICK_WORKSPACE"))):
         if cand:
-            return Path(cand).expanduser().resolve()
+            folder = Path(cand).expanduser().resolve()
+            if not is_workspace(folder):
+                raise SystemExit("status: %s (from %s) is not a Garrick workspace: it has no System/rules.md "
+                                 "and Zones/ folder. Check the path." % (folder, how))
+            return folder
     here = Path.cwd().resolve()
     for folder in (here, *here.parents):
-        if (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir():
+        if is_workspace(folder):
             return folder
     for folder in (Path(__file__).resolve().parent, *Path(__file__).resolve().parents):
-        if (folder / "System" / "rules.md").is_file() and (folder / "Zones").is_dir():
+        if is_workspace(folder):
             return folder
     raise SystemExit("status: no workspace found. Pass --workspace, set GARRICK_WORKSPACE, or run it from inside one.")
 
@@ -105,23 +119,88 @@ def jobs_dir(agent) -> Path:
     return Path.home() / ".local" / "state" / "garrick-jobs"
 
 
-def frontmatter(path: Path) -> dict:
-    """The note's frontmatter: the workspace's own parser when it is there, a
-    small one otherwise. Only frontmatter is ever read from a note."""
+_LIBS: Dict[Path, object] = {}
+
+
+def workspace_lib(ws: Optional[Path]):
+    """The workspace's own garrick_lib, from System/tools, when it is there:
+    the parser check.py uses, so the page reads a note the way the check does."""
+    if ws is None:
+        return None
+    if ws not in _LIBS:
+        mod, src = None, ws / "System" / "tools" / "garrick_lib.py"
+        if src.is_file():
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_status_lib", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                if not callable(getattr(mod, "parse_frontmatter", None)):
+                    mod = None
+            except Exception:
+                mod = None
+        _LIBS[ws] = mod
+    return _LIBS[ws]
+
+
+def _value(raw: str):
+    """One frontmatter value for the fallback parser: a trailing comment
+    dropped, quotes taken off, [a, b] read as a list."""
+    quote = None
+    for i, ch in enumerate(raw):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or raw[i - 1].isspace()):
+            raw = raw[:i]
+            break
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]") and not raw.startswith("[["):
+        return [v.strip().strip("\"'") for v in raw[1:-1].split(",") if v.strip()]
+    return raw.strip("\"'")
+
+
+def frontmatter(path: Path, ws: Optional[Path] = None) -> dict:
+    """The note's frontmatter: the workspace's own parser (garrick_lib in
+    System/tools) when it is there, a small one otherwise that also drops
+    trailing comments and reads block lists. Only frontmatter is ever read
+    from a note here."""
+    lib = workspace_lib(ws)
+    if lib is not None:
+        try:
+            return lib.parse_frontmatter(path) or {}
+        except Exception:
+            pass
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    if not text.startswith("---"):
+    lines = text.lstrip("﻿").splitlines()
+    if not lines or lines[0].strip() != "---":
         return {}
-    out = {}
-    for line in text.split("\n")[1:]:
-        if line.strip() == "---":
+    out: dict = {}
+    key = None
+    for line in lines[1:]:
+        if line.strip() in ("---", "..."):
             break
-        m = re.match(r"^([A-Za-z_][\w-]*)\s*:\s*(.*)$", line)
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and key is not None:
+            out[key] = (out[key] if isinstance(out.get(key), list) else []) + [_value(item.group(1))]
+            continue
+        m = re.match(r"^([A-Za-z_][\w-]*)\s*:(.*)$", line)
+        key = m.group(1) if m else None
         if m:
-            out[m.group(1)] = m.group(2).strip().strip("\"'")
+            out[key] = _value(m.group(2))
     return out
+
+
+def as_text(value) -> str:
+    """A frontmatter value as one string: a list joined, nothing as ''."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
 
 
 def visible_dirs(folder: Path) -> List[Path]:
@@ -130,13 +209,20 @@ def visible_dirs(folder: Path) -> List[Path]:
     return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
 
 
-def tags(value: str) -> List[str]:
-    return [t.strip().lstrip("#") for t in re.split(r"[,\[\]]", value or "") if t.strip()]
+def tags(value) -> List[str]:
+    """Party tags from `acme`, `[acme, birch]`, `#acme` or a block list."""
+    items = value if isinstance(value, list) else re.split(r"[,\[\]]", as_text(value))
+    out = []
+    for t in items:
+        t = re.sub(r"\s+#.*$", "", as_text(t)).strip().strip("[]\"'").lstrip("#").strip()
+        if t and t not in out:
+            out.append(t)
+    return out
 
 
-def as_date(value: str) -> Optional[dt.date]:
+def as_date(value) -> Optional[dt.date]:
     try:
-        return dt.date.fromisoformat(str(value).strip()[:10])
+        return dt.date.fromisoformat(as_text(value).strip()[:10])
     except ValueError:
         return None
 
@@ -152,17 +238,18 @@ def threads(ws: Path) -> Dict[str, dict]:
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
-            pfm = frontmatter(project / (project.name + ".md"))
+            pfm = frontmatter(project / (project.name + ".md"), ws)
             for thread in visible_dirs(project / "Threads"):
                 note = thread / (thread.name + ".md")
-                fm = frontmatter(note)
-                if str(fm.get("status", "")).lower() == "done":
+                fm = frontmatter(note, ws)
+                state = as_text(fm.get("status")).strip().lower()
+                if state == "done":
                     done += 1
                     continue
                 row = {"project": project.name, "thread": thread.name, "note": note,
-                       "party": tags(fm.get("party") or pfm.get("party", "")),
-                       "updated": as_date(fm.get("updated", "")), "status": fm.get("status", "")}
-                (parked if str(fm.get("status", "")).lower() == "parked" else rows).append(row)
+                       "party": tags(fm.get("party") or pfm.get("party")),
+                       "updated": as_date(fm.get("updated")), "status": state}
+                (parked if state == "parked" else rows).append(row)
         rows.sort(key=lambda r: r["updated"] or dt.date.min)
         parked.sort(key=lambda r: r["updated"] or dt.date.min)
         out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone}
@@ -218,8 +305,10 @@ def check(ws: Path) -> Optional[dict]:
 
 
 def repos(ws: Path) -> List[dict]:
+    """The root, each zone, and the wikis: the installer makes one repository
+    at Wikis/ for both. A wiki with a repository of its own is listed too."""
     places = [("Workspace", ws)] + [(z.name, z) for z in visible_dirs(ws / "Zones")] + \
-             [(w.name, w) for w in visible_dirs(ws / "Wikis")]
+             [("Wikis", ws / "Wikis")] + [(w.name, w) for w in visible_dirs(ws / "Wikis")]
     out = []
     for name, folder in places:
         if not (folder / ".git").exists():
@@ -235,16 +324,34 @@ def repos(ws: Path) -> List[dict]:
     return out
 
 
-def wikis(ws: Path) -> List[Tuple[str, Path, str]]:
+# One line per ingest in each wiki's log: `- 2026-09-24: [[wiki/sources/slug|Title]] (…)`.
+LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+
+
+def wikis(ws: Path) -> List[dict]:
+    """Per wiki: its log, how many entries it holds, and the newest entry's
+    date and title. Nothing else from the line: not its zone, not its parties."""
     out = []
     for w in visible_dirs(ws / "Wikis"):
         log = w / "wiki" / "log.md"
         if not log.is_file():
             continue
-        heads = [l[3:].strip() for l in log.read_text(encoding="utf-8", errors="replace").splitlines() if l.startswith("## ")]
-        dated = sorted((h for h in heads if re.match(r"\d{4}-\d{2}-\d{2}", h)), reverse=True)
-        top = (dated or heads or ["nothing logged yet"])[0]
-        out.append((w.name, log, top[:100] + ("…" if len(top) > 100 else "")))
+        entries = []
+        for n, line in enumerate(log.read_text(encoding="utf-8", errors="replace").splitlines()):
+            m = LOG_ENTRY.match(line)
+            when = as_date(m.group(1)) if m else None
+            if when:
+                target = m.group(2).strip()
+                title = (m.group(3) or target.rsplit("/", 1)[-1]).strip()
+                entries.append((when, -n, title, target))
+        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None}
+        if entries:
+            when, _, title, target = max(entries)   # the newest; on a tie, the line nearer the top
+            page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
+            inside = str(page).startswith(str(w.resolve()) + os.sep)
+            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""),
+                       page=page if inside and page.is_file() else None)
+        out.append(row)
     return out
 
 
@@ -279,10 +386,11 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
     nodes, index = [], {}
     kinds = [k for k, _, _ in KINDS]
     for place, root, path in notes:
-        fm = frontmatter(path)
+        fm = frontmatter(path, ws)
         parts = path.relative_to(root).parts
-        kind = str(fm.get("type", "")).lower()
-        project = parts[0] if len(parts) > 1 and root.parent.name == "Zones" else ""
+        kind = as_text(fm.get("type")).strip().lower()
+        in_zone = root.parent.name == "Zones"
+        project = parts[0] if len(parts) > 1 and in_zone else ""
         if path.name == "Todo.md" and len(parts) == 1:
             kind = "todo"
         elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
@@ -292,13 +400,15 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
         elif kind not in kinds:
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
-        moving = kind == "thread" and str(fm.get("status", "")).lower() not in ("done", "parked")
-        days = (now.date() - as_date(fm.get("updated", ""))).days if moving and as_date(fm.get("updated", "")) else None
-        party = tags(str(fm.get("party") or fm.get("parties") or "").split(" #")[0])
+        state = as_text(fm.get("status")).strip().lower()
+        moving = kind == "thread" and state not in ("done", "parked")
+        updated = as_date(fm.get("updated"))
+        days = (now.date() - updated).days if moving and updated else None
+        party = tags(fm.get("party") or fm.get("parties"))
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
         # i, adj and deg to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
-        nodes.append({"n": fm.get("title") or path.stem, "k": kinds.index(kind), "z": place, "p": project,
+        nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if (project, thread) in parked else 0,
                       "c": 1 if kind in ("project", "thread", "todo") else 0, "h": 1 if kind == "project" else 0,
                       "w": names.get((project, thread), "") if thread else "", "u": link(path)})
@@ -497,6 +607,27 @@ def copy(label: str, text: str, say: str) -> str:
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
 
 
+def script_json(data) -> str:
+    """JSON safe inside a <script> element: with <, > and & written as escapes,
+    no title can close the element or open a comment in it."""
+    return (json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = True, out: Optional[Path] = None) -> str:
+    """The command that builds this page again, with the flags it was built
+    with, absolute and quoted so it runs from any folder."""
+    words = ["python3", str(Path(__file__).resolve()), "--workspace", str(ws)]
+    if vault:
+        words += ["--obsidian", vault]
+    if not show_graph:
+        words.append("--no-graph")
+    if out is not None:
+        words += ["--out", str(out)]
+    return " ".join(shlex.quote(w) for w in words + ["--open"])
+
+
+
 GRIP = ('<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/>'
         '<circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></g></svg>')
 CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
@@ -560,7 +691,7 @@ main{padding:26px 30px 80px;min-width:0}
 .meter{height:6px;border-radius:3px;background:var(--track);overflow:hidden}.meter i{display:block;height:100%;border-radius:3px;background:var(--accent)}
 .meter.warning i{background:var(--warning)}.meter.critical i{background:var(--critical)}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start}
-.full{grid-column:span 12}.stack{grid-column:span 5;display:flex;flex-direction:column;gap:16px;min-width:0}.stack.l{grid-column:span 7}
+.full{grid-column:span 12}.stack{grid-column:span 5;display:flex;flex-direction:column;gap:16px;min-width:0}.stack.left{grid-column:span 7}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:16px}
 summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
 .head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font-size:14px;margin:0;font-weight:640}
@@ -598,7 +729,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px;background:var(--raise);border:1px solid var(--line);min-width:0}
 .meters{display:flex;flex-direction:column;gap:12px}.meters .m{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12px}.meters .m .meter{grid-column:1/-1}
 table{border-collapse:collapse;width:100%;font-size:12.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;padding:6px;border-bottom:1px solid var(--grid)}
-td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:0}.r{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow-x:auto}
+td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:0}th.r,td.r{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow-x:auto}
 .acts{display:inline-flex;gap:4px;opacity:0;transition:opacity .12s}
 .thread:hover .acts,.acts:focus-within,.acts.show{opacity:1}
 .thread .t{position:relative}.thread .t .acts{position:absolute;right:0;top:50%;transform:translateY(-50%);background:var(--surface);padding-left:6px}
@@ -613,7 +744,7 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
 .slot{display:flex;flex-direction:column;gap:16px;min-width:0}.slot.full{grid-column:span 12}.slot .card{grid-column:auto}
 .slot:not(:has(>.card:not([hidden]))){display:none}
-.grid:not(:has(.stack.r>.card:not([hidden]))) .stack.l,.grid:not(:has(.stack.l>.card:not([hidden]))) .stack.r{grid-column:span 12}
+.grid:not(:has(.stack.right>.card:not([hidden]))) .stack.left,.grid:not(:has(.stack.left>.card:not([hidden]))) .stack.right{grid-column:span 12}
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}
@@ -638,10 +769,25 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
 .gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
-@media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.l{grid-column:span 12}}
+@media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;flex-wrap:wrap}nav .sub{display:none}.controls{margin-top:0}main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
+"""
+
+JS = r"""
+var Panel=(function(){
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
+function acts(o){var a='<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
+if(o.w){a+=copy('open '+o.w);if(!o.h)a+=copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
+function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
+function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
+function head(o){var s=state(o);return'<h4>'+esc(o.n)+'</h4><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
++(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
++(s?'<div class="ink2" style="margin-top:4px">'+esc(s)+'</div>':'')}
+return{esc:esc,acts:acts,head:head}})();
 """
 
 JS = r"""
@@ -810,7 +956,7 @@ if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].
 
 
 def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
-          show_graph: bool = True) -> str:
+          show_graph: bool = True, out: Optional[Path] = None) -> str:
     now = now or dt.datetime.now()
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
@@ -867,7 +1013,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
              % (now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh,
-                copy("Copy the rebuild command", "python3 System/status/status.py --workspace %s --open" % ws,
+                copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out),
                      "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'class="act wide"')))
 
     # ---- hero and tiles
@@ -998,8 +1144,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         E(age(r["last"], now)) if r["last"] else "never", ICON["good" if not r["dirty"] else "none"], E(r["name"]),
         "%d uncommitted" % r["dirty"] if r["dirty"] else "all committed") for r in R)
     repos_card = card("repos", "Repositories", "a ring means work not yet committed", '<div class="tiles">%s</div>' % rr if rr else '<p class="muted">No git repositories found.</p>')
+    def newest(w):
+        if not w["when"]:
+            return "nothing logged yet"
+        title = ('<a href="%s">%s</a>' % (E(link(w["page"])), E(w["title"]))) if w["page"] else E(w["title"])
+        return "%s · %s" % (E(w["when"].strftime("%d %b %Y").lstrip("0")), title)
     wr = "".join('<div class="row" style="grid-template-columns:1fr"><div class="name"><a href="%s">%s</a><small style="white-space:normal">%s</small></div></div>' % (
-        E(link(log)), E(name), E(head)) for name, log, head in W)
+        E(link(w["log"])), E(w["name"]), newest(w)) for w in W)
     wikis_card = card("wikis", "Wikis", "newest entry in each log", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
 
     # ---- the graph
@@ -1011,7 +1162,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         legend = ('<div class="legend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
                   '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked</span>'
                   '<span>· click a note to open it or copy what to say, double-click to open it, drag to move, pinch or ⌘-scroll to zoom</span></div>' % legend)
-        data = json.dumps(GR, separators=(",", ":")).replace("</", "<\\/")
+        data = script_json(GR)
         graph_card = card("graph", "Graph", "%d notes, %d links · %d projects and threads · names only" % (len(GR["nodes"]), len(GR["edges"]), core),
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in every zone and wiki, and the links between them"></canvas>'
                           '<div class="gbar"><div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
@@ -1021,7 +1172,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     left = checks_card + jobs_card + wikis_card
     right = todo_card + inbox_card + calls_card + repos_card
     main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
-            '<div class="slot stack l" data-slot="left">%s</div><div class="slot stack r" data-slot="right">%s</div>'
+            '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
             '<div class="slot full" data-slot="bottom"></div></div></main>'
             % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1053,7 +1204,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph), encoding="utf-8")
+    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None), encoding="utf-8")
     os.replace(tmp, out)
     print(out)
     if args.open:

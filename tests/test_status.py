@@ -2,18 +2,22 @@
 
     python3 -m unittest discover -s tests
 
-The page must show names, parties, dates and counts and never a line of what
-a note says, load nothing from the network, and write nothing but itself.
+The page must show names, parties, dates, counts, check findings and link
+targets and never the body of a note, load nothing from the network, and write
+nothing but itself.
 """
 
 from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import html as htmllib
 import importlib.util
 import io
 import json
 import os
+import re
+import shlex
 import shutil
 import sys
 import tempfile
@@ -23,7 +27,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from fixtures import build_workspace, thread_note, write  # noqa: E402
+from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 STATUS = REPO / "extras" / "status" / "status.py"
@@ -41,6 +45,8 @@ status = _load()
 
 def stamp(t):
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+
 
 
 class StatusCase(unittest.TestCase):
@@ -130,6 +136,16 @@ class TestGraph(StatusCase):
         data = graph_data(self.page())
         self.assertEqual("Pricing", data["nodes"][self.node(data, "Pricing")]["w"])
 
+    def test_titles_cannot_close_the_data(self):
+        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
+        html = self.page()
+        self.assertNotIn("<!--", html)
+        self.assertEqual(2, html.count("</script>"))          # the graph's data and the page's script, no more
+        self.assertEqual(html.count("<script"), html.count("</script>"))
+        self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
+        self.assertTrue(html.rstrip().endswith("</script></body></html>"))
+
     def test_no_field_the_layout_writes(self):
         layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg"}
         for n in graph_data(self.page())["nodes"]:
@@ -142,6 +158,12 @@ class TestLayout(StatusCase):
         self.assertIn('data-slot="top"', html)
         self.assertGreaterEqual(html.count('class="grip"'), 6)
         self.assertIn('id="reset-view"', html)
+
+    def test_right_column_is_not_right_aligned(self):
+        html = self.page()
+        self.assertIn('class="slot stack right" data-slot="right"', html)
+        self.assertIsNone(re.search(r"(^|[\s,}>])\.r[\s{,:.\[]", status.CSS))  # .r styles table cells only
+        self.assertIn("th.r,td.r{text-align:right", status.CSS)
 
     def test_needs_attention_is_pinned(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
@@ -291,6 +313,90 @@ class TestJobs(StatusCase):
         self.heartbeat(8)
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
+
+
+
+class TestWikisAndRepos(StatusCase):
+    def test_wikis_show_the_newest_entry(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "log.md",
+              "# Log\n\nOne line per ingest, newest first.\n\n"
+              "- 2026-03-12: [[wiki/sources/260312-birch-kickoff|Birch kick-off]] (Work; birch)\n"
+              "- 2026-03-10: [[wiki/sources/260310-acme-kickoff|Acme kick-off]] (Work; acme)\n")
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "log.md", "# Log\n\nOne line per ingest, newest first.\n")
+        html = self.page()
+        start = html.index('id="wikis"')
+        block = html[start:html.index("</details>", start)]
+        self.assertIn("12 Mar 2026 · <a href=", block)
+        self.assertIn(">Birch kick-off</a>", block)
+        self.assertNotIn("Acme kick-off", block)
+        self.assertNotIn("Work; birch", block)                 # nothing else from the line
+        self.assertEqual(1, block.count("nothing logged yet"))  # the Knowledge log has no entry
+
+    def test_the_wikis_repository_is_listed(self):
+        from fixtures import git_init
+        git_init(self.root / "Wikis")
+        html = self.page()
+        start = html.index('id="repos"')
+        self.assertIn('<div class="name">Wikis<small>', html[start:html.index("</details>", start)])
+
+
+class TestRebuildAndWorkspace(StatusCase):
+    def test_rebuild_command_is_absolute_quoted_and_complete(self):
+        ws = Path(self._tmp.name).resolve() / "My Workspace"
+        build_workspace(ws)
+        out = Path(self._tmp.name).resolve() / "pages here" / "status.html"
+        words = shlex.split(status.rebuild_command(ws, "My Work", False, out))
+        self.assertEqual(["python3", str(STATUS.resolve()), "--workspace", str(ws), "--obsidian", "My Work",
+                          "--no-graph", "--out", str(out), "--open"], words)
+        self.assertEqual(["python3", str(STATUS.resolve()), "--workspace", str(ws), "--open"],
+                         shlex.split(status.rebuild_command(ws)))
+
+    def test_the_page_copies_the_command_it_was_built_with(self):
+        out = Path(self._tmp.name).resolve() / "elsewhere" / "status.html"
+        self.run_main("--out", str(out), "--no-graph", "--obsidian", "My Work")
+        html = out.read_text(encoding="utf-8")
+        raw = re.search(r'data-copy="([^"]*)" data-say="Copied. Run it in a terminal', html).group(1)
+        self.assertEqual(status.rebuild_command(self.root, "My Work", False, out), htmllib.unescape(raw))
+
+    def run_main(self, *extra):
+        return TestSelfContained.run_main(self, *extra)
+
+    def test_a_mistyped_workspace_stops(self):
+        wrong = Path(self._tmp.name).resolve() / "Workspce"
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            status.main(["--workspace", str(wrong)])
+        self.assertIn("is not a Garrick workspace", str(stop.exception.code))
+        self.assertFalse(wrong.exists())
+        bare = Path(self._tmp.name).resolve() / "Elsewhere"
+        bare.mkdir()
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+            status.main(["--workspace", str(bare)])
+        self.assertEqual([], list(bare.iterdir()))
+
+
+class TestFrontmatter(StatusCase):
+    def note(self, text):
+        write(self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md", text)
+
+    def parked_with_comment_and_block_list(self):
+        self.note("---\ntitle: Market Sizing\ntype: thread\nparty:\n  - birch\n  - acme\n"
+                  "status: parked   # until the spring\nupdated: 2026-03-01\n---\n\n# Market Sizing\n")
+        html = self.page()
+        self.assertIn('id="parked-work"', html)               # the comment does not make it live
+        node = next(n for n in graph_data(html)["nodes"] if n["n"] == "Market Sizing")
+        self.assertEqual(["birch", "acme"], node["t"])
+
+    def test_the_workspace_parser_is_used(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True)
+        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
+        self.assertIsNotNone(status.workspace_lib(self.root))
+        self.parked_with_comment_and_block_list()
+        self.assertEqual([], list(tools.glob("__pycache__")))   # nothing written beside it
+
+    def test_the_fallback_reads_comments_and_block_lists_too(self):
+        self.assertIsNone(status.workspace_lib(self.root))
+        self.parked_with_comment_and_block_list()
 
 
 if __name__ == "__main__":

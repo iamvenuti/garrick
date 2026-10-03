@@ -9,7 +9,7 @@ One page, Garrick's Status, that answers two questions before you open anything:
 - **Checks**: what `System/tools/check.py` finds, run as the page is built, grouped by check.
 - **Open actions**: the unticked items in each zone's `Todo.md`, counted by section, with an *Open* link to the list.
 - **Inboxes**: what is waiting to be filed in each zone's `Inbox/` and in the Meetings inbox.
-- **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps.
+- **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps. A job's caps are the `GARRICK_CAP_*` values in its launchd plist, so that is where the page reads them, from the plists of the jobs that call the assistant, the lowest where they differ; a cap a plist leaves out is the default. With no such plist the caps are the ones the page was built with, and the card says which. A cap set to 0 shows as *no cap*. A job the cap stopped is one line in *Needs attention*, however many calls it lost.
 - **Repositories and wikis**: what is not yet committed in the workspace, each zone and the wikis, and the date and title of the newest entry in each wiki's log.
 
 ![The graph on the demo workspace, with a thread selected](../assets/status-graph.png)

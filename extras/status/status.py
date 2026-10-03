@@ -554,10 +554,10 @@ def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime
     return runs
 
 
-def jobs(folder: Path, now: dt.datetime) -> List[dict]:
+def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> List[dict]:
     if not folder.is_dir():
         return []
-    sched = launchd_jobs()
+    sched = launchd_jobs() if sched is None else sched
     out = []
     for beat in sorted(folder.glob("*.heartbeat.json")):
         try:
@@ -585,12 +585,45 @@ def jobs(folder: Path, now: dt.datetime) -> List[dict]:
     return out
 
 
-def ledger(agent, folder: Path, now: dt.datetime) -> Optional[dict]:
+CAP_VARS = (("calls_day", "GARRICK_CAP_CALLS_DAY"), ("calls_hour", "GARRICK_CAP_CALLS_HOUR"), ("cost_day", "GARRICK_CAP_COST_DAY"))
+
+
+def caps_in_use(agent, sched: Dict[str, dict]) -> Tuple[Dict[str, float], str]:
+    """The caps the assistant's calls run under, and where the page read them.
+    agent.py takes its caps from the environment of the job that calls it, so
+    a scheduled job's caps are the ones in its launchd plist, and a cap the
+    plist leaves out is agent.py's default. Where jobs set different caps the
+    lowest is shown: it is the first to stop a call. With no plist for a job
+    that calls the assistant, the caps are this environment's."""
+    defaults = dict(getattr(agent, "DEFAULT_CAPS", None) or {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0})
+
+    def read(env) -> Dict[str, float]:
+        out = {}
+        for key, var in CAP_VARS:
+            try:
+                out[key] = float(env.get(var, defaults[key]))
+            except (TypeError, ValueError):
+                out[key] = float(defaults[key])
+        return out
+    calling = sorted(name for name, j in sched.items() if j.get("agent"))
+    if calling:
+        each = [read(sched[name]["env"]) for name in calling]
+        caps = {key: min([c[key] for c in each if c[key]] or [0.0]) for key, _ in CAP_VARS}
+        if len(calling) == 1:
+            return caps, "Caps from the launchd plist of %s." % calling[0]
+        return caps, "Caps from the launchd plists of %s; where they differ, the lowest." % (
+            ", ".join(calling[:-1]) + " and " + calling[-1])
+    if any(var in os.environ for _, var in CAP_VARS):
+        return agent.caps(), "Caps from the GARRICK_CAP_* settings the page was built with; a scheduled job may run under others."
+    return agent.caps(), "Caps are agent.py's defaults; a job that sets GARRICK_CAP_* runs under its own."
+
+
+def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> Optional[dict]:
     path = folder / "ledger.jsonl"
     if agent is None or not path.is_file():
         return None
     entries = agent.read_ledger(path, now.timestamp(), DAYS * 24)
-    caps = agent.caps()
+    caps, caps_from = caps_in_use(agent, launchd_jobs() if sched is None else sched)
     calls = [e for e in entries if not e.get("refused")]
     day = [e for e in calls if now.timestamp() - e["ts"] < 86400]
     hour = [e for e in calls if now.timestamp() - e["ts"] < 3600]
@@ -604,7 +637,8 @@ def ledger(agent, folder: Path, now: dt.datetime) -> Optional[dict]:
         j["cost"] += float(e.get("cost_usd") or 0)
         j["failed"] += 1 if e.get("exit") else 0
         j["denied"] |= set(e.get("denied") or [])
-    return {"caps": caps, "day": len(day), "hour": len(hour), "cost_day": sum(float(e.get("cost_usd") or 0) for e in day),
+    return {"caps": caps, "caps_from": caps_from, "day": len(day), "hour": len(hour),
+            "cost_day": sum(float(e.get("cost_usd") or 0) for e in day),
             "by": by, "refused_today": [e for e in entries if e.get("refused") and now.timestamp() - e["ts"] < 86400]}
 
 
@@ -1206,7 +1240,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     folder = folder or jobs_dir(agent)
     link = Links(ws, vault)
     T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
-    J, L = jobs(folder, now), ledger(agent, folder, now)
+    sched = launchd_jobs()
+    J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
 
     # ---- what needs attention, worst first
     attn = []
@@ -1218,8 +1253,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         if j["state"] == "critical":
             attn.append(("critical", "%s: %s" % (j["name"], j["status"]), "#jobs"))
     if L:
-        for e in L["refused_today"][-3:]:
-            attn.append(("critical", "The spending cap stopped %s" % e.get("job", "a job"), "#calls"))
+        stopped: Dict[str, int] = {}          # one line per job, however many calls it lost
+        for e in L["refused_today"]:
+            job = str(e.get("job") or "a job")
+            stopped[job] = stopped.get(job, 0) + 1
+        for job, n in stopped.items():
+            attn.append(("critical", "The spending cap stopped %s%s" % (job, "" if n == 1 else " %d times in 24 hours" % n), "#calls"))
     waiting = sum(n for _, _, n in IB)
     if waiting:
         attn.append(("warning", "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s"), "#inboxes"))
@@ -1273,7 +1312,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found")]
     if L:
-        tiles[3] = ("Assistant calls, 24 h", "%d<small>of %g</small>" % (L["day"], L["caps"]["calls_day"]),
+        cap = L["caps"]["calls_day"]
+        tiles[3] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
                     "$%.2f at list price" % L["cost_day"])
     top = '<div class="top">%s%s</div>' % (hero, "".join(
         '<div class="tile"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></div>' % (E(a), b, E(c)) for a, b, c in tiles))
@@ -1367,9 +1407,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
     if L:
         c = L["caps"]
-        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", "%d / %g" % (L["day"], c["calls_day"]))
-             + meter(L["hour"], c["calls_hour"], "Calls, last hour", "%d / %g" % (L["hour"], c["calls_hour"]))
-             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", "$%.2f / $%g" % (L["cost_day"], c["cost_day"])))
+        def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
+            return "%s / %s%g" % (text, unit, cap) if cap else "%s, no cap" % text
+        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]))
+             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]))
+             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"))
+             + '<p class="hint">%s</p>' % E(L["caps_from"]))
         trs = "".join('<tr><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td>%s</td><td class="r">%d</td><td class="r">%d</td></tr>'
                       % (E(job), d["calls"], d["cost"], E(", ".join(sorted(d["denied"]))) or '<span class="muted">none</span>', d["failed"], d["refused"])
                       for job, d in sorted(L["by"].items()))

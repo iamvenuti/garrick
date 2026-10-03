@@ -520,6 +520,46 @@ class TestJobs(StatusCase):
         self.assertIn("monthly day 1, 09:00", html)
         self.assertNotIn("late: last ran", html)
 
+    def ledger(self, *entries):
+        with (self.jobs / "ledger.jsonl").open("w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(dict({"ts": self.now.timestamp() - 600}, **e)) + "\n")
+
+    def attention(self, html):
+        start = html.index('id="attention"')
+        return html[start:html.index("</details>", start)]
+
+    def test_one_attention_line_per_capped_job(self):
+        refused = {"job": "brief", "refused": True}
+        self.ledger(refused, refused, refused, {"job": "digest", "refused": True}, {"job": "digest", "cost_usd": 0.2, "exit": 0})
+        with self.plists():
+            block = self.attention(self.page())
+        self.assertEqual(1, block.count("The spending cap stopped brief"))
+        self.assertIn("The spending cap stopped brief 3 times in 24 hours<", block)
+        self.assertIn("The spending cap stopped digest<", block)
+
+    def test_caps_come_from_the_plist_of_the_job_that_calls(self):
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
+        args = ["/usr/bin/python3", "/w/System/jobs/job.py", "brief", "--agent", "--", "python3", "brief.py"]
+        env = {"PATH": "/usr/bin", "GARRICK_CAP_CALLS_DAY": "10", "GARRICK_CAP_COST_DAY": "0"}
+        with self.plists(brief={"ProgramArguments": args, "EnvironmentVariables": env, "StartCalendarInterval": {"Hour": 6}},
+                         status={"StartCalendarInterval": {"Hour": 23}}), \
+                mock.patch.dict(os.environ, {"GARRICK_CAP_CALLS_DAY": "99"}):
+            html = self.page()
+        self.assertIn("1<small>of 10</small>", html)         # the job's cap, not this shell's 99
+        self.assertIn(">1 / 10<", html)
+        self.assertIn(">1 / 12<", html)                      # a cap the plist leaves out is agent.py's default
+        self.assertIn(">$0.50, no cap<", html)               # 0 removes a cap
+        self.assertIn("Caps from the launchd plist of brief.", html)
+
+    def test_without_a_plist_the_caps_say_where_they_come_from(self):
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
+        with self.plists(), mock.patch.dict(os.environ, {"GARRICK_CAP_CALLS_DAY": "0"}):
+            html = self.page()
+        self.assertIn("1<small>no cap</small>", html)
+        self.assertIn(">1, no cap<", html)
+        self.assertIn("Caps from the GARRICK_CAP_* settings the page was built with", html)
+
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"
         folder.mkdir()

@@ -6,7 +6,7 @@ Garrick is early and run by one person, so the fastest route in is an issue befo
 
 ## Ground rules
 
-- **Clean room.** Every name, company, rate and document in this repository is invented: Acme Corp, Birch & Co, and the people who go with them. Never add real ones, in a file or in a commit message. That includes your own clients, however harmless it seems.
+- **Clean room.** Every name, company, rate and document in this repository is invented: Acme Corp, Birch & Co, and the people who go with them. Never add real ones, in a file or in a commit message. That includes your own clients, however harmless it seems. The one exception is the maintainer's own name, in `LICENSE`, the deck's byline, commit metadata and the repository's address.
 - **Standard library only.** The installer and the tools run on the Python that ships with the macOS Command Line Tools, 3.9. No dependencies.
 - **Harness-neutral.** Nothing in `template/` may depend on one assistant. If Claude Code and Codex need different things, the installer makes the difference, not the template.
 - **Three levels, fixed.** Zone, project, thread. The voice grammar depends on it.

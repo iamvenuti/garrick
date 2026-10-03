@@ -34,6 +34,10 @@
     <key>PATH</key>
     <string>/usr/bin:/bin</string>
   </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/status.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/status.launchd.log</string>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

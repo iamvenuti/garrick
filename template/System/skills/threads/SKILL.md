@@ -456,8 +456,10 @@ Knowledge wiki needs no check: it carries nobody's confidence.
 hook.** Each zone's pre-commit hook runs
 `System/tools/check.py --staged --walls-only` on the files being committed. A
 link to a walled meeting, the name of a party, person or alias on the far
-side of a wall, or eight words in a row lifted from a walled meeting page or
-its transcript stops the commit, with one line naming the file and the wall.
+side of a wall, or eight words in a row lifted from a walled meeting page,
+its transcript, a meeting page still missing its parties, or a walled
+project's own files stops the commit, with one line naming the file and the
+wall.
 When it refuses:
 
 - **Take the material out** of that file and commit again. Tell the user a wall

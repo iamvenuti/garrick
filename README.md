@@ -75,7 +75,7 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, cmux and phone access are optional.](docs/architecture/overview.png)
+![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, Garrick's Status, cmux and phone access are optional.](docs/architecture/overview.png)
 
 Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
 

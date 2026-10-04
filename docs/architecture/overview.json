@@ -14,7 +14,7 @@
           "label": "Memory"
         },
         "backend": {
-          "label": "Project"
+          "label": "Work thread"
         },
         "security": {
           "label": "Rules"
@@ -38,7 +38,7 @@
           "sort",
           "meetings",
           "knowledge",
-          "acme"
+          "thread1"
         ],
         "note": "Recordings always become conversations. Mail and files are filed where they belong."
       },
@@ -49,7 +49,8 @@
           "assistant",
           "rules",
           "cmux",
-          "phone"
+          "phone",
+          "status"
         ],
         "note": "You talk to your assistant at your desk or away from it. It reads the rules first, then works across everything."
       }
@@ -127,10 +128,10 @@
       ]
     },
     {
-      "id": "acme",
+      "id": "thread1",
       "type": "backend",
-      "label": "Acme",
-      "sublabel": "a client project",
+      "label": "Work thread 1",
+      "sublabel": "its state of play",
       "pos": [
         280,
         220
@@ -141,10 +142,10 @@
       ]
     },
     {
-      "id": "birch",
+      "id": "thread2",
       "type": "backend",
-      "label": "Birch",
-      "sublabel": "a client project",
+      "label": "Work thread 2",
+      "sublabel": "its state of play",
       "pos": [
         520,
         220
@@ -192,7 +193,21 @@
         420
       ],
       "size": [
-        180,
+        160,
+        70
+      ]
+    },
+    {
+      "id": "status",
+      "type": "external",
+      "label": "Garrick's Status",
+      "sublabel": "optional, read-only",
+      "pos": [
+        290,
+        420
+      ],
+      "size": [
+        160,
         70
       ]
     },
@@ -202,11 +217,11 @@
       "label": "cmux",
       "sublabel": "optional",
       "pos": [
-        330,
+        490,
         420
       ],
       "size": [
-        180,
+        160,
         70
       ]
     },
@@ -216,7 +231,7 @@
       "label": "Your assistant",
       "sublabel": "Claude or Codex in its desktop app",
       "pos": [
-        630,
+        770,
         420
       ],
       "size": [
@@ -230,11 +245,11 @@
       "label": "Phone",
       "sublabel": "optional",
       "pos": [
-        950,
+        1090,
         420
       ],
       "size": [
-        180,
+        160,
         70
       ]
     }
@@ -255,8 +270,8 @@
       "label": "The workspace: run by your assistant, browsed in any editor",
       "wraps": [
         "meetings",
-        "acme",
-        "birch",
+        "thread1",
+        "thread2",
         "knowledge"
       ]
     },
@@ -264,8 +279,8 @@
       "kind": "security-group",
       "label": "Work zone",
       "wraps": [
-        "acme",
-        "birch"
+        "thread1",
+        "thread2"
       ],
       "pad": 14
     },
@@ -274,6 +289,7 @@
       "label": "Tools around it",
       "wraps": [
         "obsidian",
+        "status",
         "cmux",
         "assistant",
         "phone"
@@ -312,7 +328,7 @@
     {
       "id": "to-work",
       "from": "sort",
-      "to": "acme",
+      "to": "thread1",
       "label": "for a project",
       "fromSide": "bottom",
       "toSide": "top"
@@ -347,6 +363,15 @@
       "to": "assistant",
       "label": "away from your desk",
       "variant": "dashed"
+    },
+    {
+      "id": "status-reads",
+      "from": "status",
+      "to": "thread1",
+      "label": "where every thread stands",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
     }
   ],
   "cards": [
@@ -371,7 +396,7 @@
       "title": "Tools around it",
       "items": [
         "You talk to your assistant in its desktop app, or in cmux or on your phone; it follows the rules and does the work across everything",
-        "Obsidian lets you browse and read all of it; cmux, Obsidian and a phone are optional"
+        "Obsidian lets you browse all of it; Garrick's Status shows on one page where every thread stands and what needs attention. Both only read, and both are optional, like cmux and the phone"
       ]
     }
   ]

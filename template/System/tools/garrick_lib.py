@@ -554,6 +554,40 @@ SKILL_FOLDERS = (".claude", ".agents")
 # The address the installer sets in the workspace's repositories when git has none.
 LOCAL_EMAIL = "garrick@localhost"
 
+# Which Garrick a workspace was installed from: the installer writes it, and
+# `check.py --version` reads it, so a bug report can say what is installed.
+VERSION_STAMP = ("System", "garrick-version.json")
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+
+
+def read_version(root: PathLike) -> dict:
+    """The workspace's version stamp, or {} when it has none."""
+    import json
+    try:
+        stamp = json.loads(Path(root).joinpath(*VERSION_STAMP).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stamp if isinstance(stamp, dict) else {}
+
+
+def say_version(stamp: dict) -> str:
+    """One sentence that says which Garrick a stamp records, read or heard."""
+    commit = str(stamp.get("commit") or "")
+    if not commit or commit == "unknown":
+        return ("Garrick, version unknown: this workspace has no record of the copy it was installed from. "
+                "Say the day you downloaded it instead.")
+    out = "Garrick %s" % commit
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", str(stamp.get("date") or ""))
+    if m and 1 <= int(m.group(2)) <= 12:
+        out += " of %d %s %s" % (int(m.group(3)), _MONTH_NAMES[int(m.group(2)) - 1], m.group(1))
+    source = {"download": "a download", "clone": "a clone"}.get(stamp.get("from"))
+    if source:
+        out += ", installed from %s" % source
+    if stamp.get("modified"):
+        out += " with changes not committed"
+    return out + "."
+
 
 class GitError(RuntimeError):
     """A git command that failed, with git's own reason."""

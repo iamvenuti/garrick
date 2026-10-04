@@ -18,6 +18,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import fixtures
 from fixtures import GIT_ENV, HAVE_GIT, TOOLS, build_workspace, commit_all, git, meeting_page, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
@@ -377,6 +378,175 @@ class TestStaged(WallCase):
         self.assertFalse(has_wall_hook(self.zone))
         found = [f for f in check.run_checks(self.root) if f.check == "zones"]
         self.assertIn("--install-hooks", " ".join(f.message for f in found))
+
+
+# Wording only the Acme side wrote, in an Acme note. Never allowed in a finding either.
+PLAN = "The client intends to fold its three northern warehouses into one bonded hub by spring"
+PLAN_WORDS = ("warehouses", "bonded", "spring")
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestStagedAgainstDisk(WallCase):
+    """The commit check reads what it is not committing, the other projects and
+    the meetings, as git holds it as well as from disk: an edit left unstaged
+    must not decide what the commit is allowed to quote."""
+
+    def setUp(self):
+        super().setUp()
+        _copy_tools(self.root)
+        self.zone = self.root / "Zones" / "Work"
+        _real_repo(self.zone)
+        self.note = self.birch / "Threads" / "Market Sizing" / "Notes.md"
+        self.acme_note = self.acme / "Threads" / "Pricing" / "Notes.md"
+        write(self.acme_note, PLAN + ".\n")
+        commit_all(self.zone, "Acme notes")
+
+    def staged(self, cwd=None):
+        return _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"],
+                    cwd or self.zone)
+
+    def stage(self, path):
+        git(self.zone, "add", "--", str(path.relative_to(self.zone)))
+
+    def stage_quote(self):
+        write(self.note, "Worth knowing: " + PLAN.lower() + ".\n")
+        self.stage(self.note)
+
+    def stage_secret(self):
+        brief = self.acme / "Deliverables" / "260302 - Board note.md"
+        write(brief, SECRET + "\n")
+        self.stage(brief)
+
+    def birch_call(self, parties="[birch]"):
+        """A Birch meeting holding SECRET, committed in the Wikis repository."""
+        wikis = self.root / "Wikis"
+        if not (wikis / ".git").exists():
+            git(wikis, "init", "-q")
+        page = self.meetings / "wiki" / "sources" / "260314-birch-call.md"
+        write(page, meeting_page("Work", parties, "Birch call").replace("Decisions.", SECRET + "."))
+        commit_all(wikis, "Birch call")
+        return page
+
+    def assertRefused(self, *expect):
+        res = self.staged()
+        self.assertEqual(1, res.returncode, res.stderr)
+        for text in expect:
+            self.assertIn(text, res.stderr)
+        for word in PLAN_WORDS + SECRET_WORDS:
+            self.assertNotIn(word, res.stderr.lower())
+        return res
+
+    def test_source_edited_on_disk_only(self):
+        source = "repeats wording from Zones/Work/Acme Review/Threads/Pricing/Notes.md"
+        self.stage_quote()
+        self.assertRefused(source)
+        write(self.acme_note, "Nothing much.\n")           # the index still holds the plan
+        self.assertRefused(source)
+        self.acme_note.unlink()                             # and still holds it once the file is gone from disk
+        self.assertRefused(source)
+
+    def test_cut_and_paste_staged_whole_is_a_known_limit(self):
+        # Moving the sentence, and staging both sides, leaves only history to
+        # say where it came from. The check does not read history, and the
+        # docs say so, next to paraphrase. If this ever fails, update them.
+        self.stage_quote()
+        write(self.acme_note, "Nothing much.\n")
+        git(self.zone, "add", "-A")
+        self.assertEqual(0, self.staged().returncode)
+
+    def test_meeting_edited_in_its_own_repository(self):
+        page = self.birch_call()
+        self.stage_secret()
+        self.assertRefused("260314-birch-call")
+        write(page, meeting_page("Work", "[birch]", "Birch call"))   # its last commit still holds the words
+        self.assertRefused("260314-birch-call")
+        page.unlink()
+        self.assertRefused("260314-birch-call")
+
+    def test_meeting_parties_edited_in_its_own_repository(self):
+        page = self.birch_call()
+        page.write_text(page.read_text().replace("parties: [birch]", "parties: [acme]"))
+        self.stage_secret()
+        self.assertRefused("repeats wording from meeting 260314-birch-call, a meeting with birch")
+
+    def test_party_changed_on_disk_only(self):
+        # Read from disk alone, both notes would say the project is Acme's,
+        # and the quotation of an Acme note would pass.
+        self.stage_quote()
+        hub = self.birch / "Birch Entry.md"
+        thread = self.birch / "Threads" / "Market Sizing" / "Market Sizing.md"
+        for note in (hub, thread):
+            note.write_text(note.read_text().replace("party: birch", "party: acme"))
+        res = self.assertRefused("Birch Entry/Birch Entry.md names a different party on disk from the one staged",
+                                 "Market Sizing/Market Sizing.md names a different party on disk from the one staged")
+        self.assertEqual(2, len(res.stderr.strip().splitlines()), res.stderr)
+        git(self.zone, "add", "-A")                         # staged, the commit declares it: nothing ambiguous
+        res = self.staged()
+        self.assertNotIn("different party", res.stderr)
+        self.assertNotIn("repeats wording", res.stderr)
+        self.assertIn("names Birch & Co", res.stderr)       # an Acme project called Birch Entry names Birch
+
+    def test_thread_party_changed_on_disk_only(self):
+        self.stage_quote()
+        thread = self.birch / "Threads" / "Market Sizing" / "Market Sizing.md"
+        thread.write_text(thread.read_text().replace("party: birch", "party: acme"))
+        self.assertRefused("Market Sizing/Market Sizing.md names a different party on disk from the one staged")
+
+    def test_source_party_changed_in_another_zone(self):
+        personal = self.root / "Zones" / "Personal"
+        _real_repo(personal)
+        house = personal / "House"
+        write(house / "House.md", fixtures.project_hub("Personal", "House", "birch"))
+        write(house / "Threads" / "Notes" / "Notes.md", "# Notes\n\n" + SECRET + ".\n")
+        commit_all(personal, "House, for Birch")
+        hub = house / "House.md"
+        hub.write_text(hub.read_text().replace("party: birch", "party: acme"))   # on disk only, another repository
+        self.stage_secret()
+        self.assertRefused("repeats wording from Zones/Personal/House/Threads/Notes/Notes.md")
+
+    def test_shared_file_edited_on_disk_only(self):
+        git(self.root, "init", "-q")
+        git(self.root, "add", "AGENTS.md", "System/rules.md")
+        git(self.root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "root")
+        rules = self.root / "System" / "rules.md"
+        rules.write_text(rules.read_text() + "\n" + PLAN + ".\n")   # would make the plan common wording
+        self.stage_quote()
+        source = "repeats wording from Zones/Work/Acme Review/Threads/Pricing/Notes.md"
+        self.assertRefused(source)
+        git(self.root, "add", "System/rules.md")            # staged in the root is still not committed there
+        self.assertRefused(source)
+
+    def test_nested_inbox_files_are_refused(self):
+        inbox = self.zone / "Inbox"
+        write(inbox / "nested" / "unfiled.txt", "A note dropped as a folder.\n")
+        (inbox / "bundle").mkdir()
+        (inbox / "bundle" / "scan.pdf").write_bytes(b"%PDF-1.4\n\0\x01\x02binary")
+        write(inbox / "bundle" / ".gitkeep")                # only the inbox's own placeholder is exempt
+        git(self.zone, "add", "-f", "Inbox")
+        res = self.staged()
+        self.assertEqual(1, res.returncode)
+        refused = sorted(line.split(" is waiting")[0] for line in res.stderr.strip().splitlines())
+        self.assertEqual(["Commit refused: Zones/Work/Inbox/bundle/.gitkeep",
+                          "Commit refused: Zones/Work/Inbox/bundle/scan.pdf",
+                          "Commit refused: Zones/Work/Inbox/nested/unfiled.txt"], refused)
+
+    def test_the_inbox_placeholder_alone_passes(self):
+        (self.zone / "Inbox" / ".gitkeep").write_text("\n")
+        git(self.zone, "add", "-A")
+        self.assertEqual(0, self.staged().returncode)
+
+    def test_nested_meetings_inbox_files_are_refused(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        commit_all(wikis, "start")
+        inbox = self.meetings / "raw" / "inbox"
+        write(inbox / "export" / "call.vtt", "WEBVTT\n")
+        (inbox / "export" / "audio.bin").write_bytes(b"\0\x01binary")
+        git(wikis, "add", "-f", "Meetings/raw/inbox")
+        res = self.staged(wikis)
+        self.assertEqual(1, res.returncode)
+        self.assertIn("Wikis/Meetings/raw/inbox/export/call.vtt is waiting in the Meetings inbox", res.stderr)
+        self.assertIn("Wikis/Meetings/raw/inbox/export/audio.bin is waiting in the Meetings inbox", res.stderr)
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")

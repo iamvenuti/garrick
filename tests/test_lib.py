@@ -204,5 +204,23 @@ class TestRepositories(unittest.TestCase):
             self.assertIn("git commit -q -m First failed in", str(caught.exception))
 
 
+class TestVersion(unittest.TestCase):
+    def test_said_in_one_sentence(self):
+        self.assertEqual("Garrick 3f9c2ab of 4 October 2026, installed from a download.",
+                         lib.say_version({"commit": "3f9c2ab", "date": "2026-10-04", "from": "download"}))
+        self.assertEqual("Garrick 3f9c2ab of 4 October 2026, installed from a clone with changes not committed.",
+                         lib.say_version({"commit": "3f9c2ab", "date": "2026-10-04", "from": "clone", "modified": True}))
+        for stamp in ({}, {"commit": "unknown", "from": "copy"}):
+            self.assertIn("version unknown", lib.say_version(stamp))
+
+    def test_read_from_the_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual({}, lib.read_version(tmp))
+            write(Path(tmp) / "System" / "garrick-version.json", '{"commit": "3f9c2ab"}')
+            self.assertEqual({"commit": "3f9c2ab"}, lib.read_version(tmp))
+            write(Path(tmp) / "System" / "garrick-version.json", "not json")
+            self.assertEqual({}, lib.read_version(tmp))
+
+
 if __name__ == "__main__":
     unittest.main()

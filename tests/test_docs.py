@@ -91,6 +91,21 @@ class FirstStepsTest(unittest.TestCase):
         for script in scripts:
             self.assertTrue((REPO / "template" / script).is_file(), f"first-steps.md names {script}, which is not shipped")
 
+    def test_the_git_commands_to_approve_are_named_by_what_they_do(self):
+        # A folder after `git -C` says where a command works, not what it does:
+        # the table names the subcommands, and every one the skills run is among them.
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        table = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        row = next(line for line in table.splitlines() if line.startswith("| `git -C"))
+        named = set(re.findall(r"`(\w+)`", row.split("|")[1]))
+        self.assertEqual({"status", "diff", "log", "add", "commit"}, named)
+        for word in ("push", "--force"):
+            self.assertIn("`%s`" % word, table)
+        skills = REPO / "template" / "System" / "skills"
+        for path in skills.rglob("SKILL.md"):
+            for sub in re.findall(r"git -C (?:\"[^\"]+\"|\S+) (\w+)", path.read_text(encoding="utf-8")):
+                self.assertIn(sub, named, f"{path.relative_to(REPO)} runs git {sub}, which first-steps.md does not name")
+
 
 DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"

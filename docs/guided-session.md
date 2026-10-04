@@ -35,7 +35,7 @@ Declared walls guide the assistant. The commit hook checks supported text for ce
 
 ## Between sessions
 
-Return to the project for a real task, then wrap it. Try filing one more conversation yourself. Note where you needed help or where the result was not useful, and bring the notes to the follow-up. If something breaks and stops you before then, tell your facilitator straight away, and describe it without client names or content. If you never returned, that is useful feedback too.
+Return to the project for a real task, then wrap it. Try filing one more conversation yourself. Note where you needed help or where the result was not useful, and bring the notes to the follow-up. If something breaks and stops you before then, tell your facilitator straight away, and describe it without client names or content. Include the line `python3 System/tools/check.py --version` prints in your workspace: it says which Garrick you have, so the facilitator knows whether the problem is already fixed. If you never returned, that is useful feedback too.
 
 ## The follow-up
 

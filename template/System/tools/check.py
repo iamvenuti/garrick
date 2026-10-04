@@ -4,6 +4,7 @@
     python3 System/tools/check.py [--root PATH] [--ear] [--json]
     python3 System/tools/check.py --staged --walls-only      (the pre-commit hook)
     python3 System/tools/check.py --install-hooks
+    python3 System/tools/check.py --version                  (which Garrick, for a bug report)
 
 Plain text by default: findings grouped by check, one line each, then a
 count. `--ear` gives at most three short sentences for reading aloud.
@@ -51,6 +52,8 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter,
     parse_frontmatter_text,
     parse_mail_bytes,
+    read_version,
+    say_version,
     sounds_alike,
     strip_recipients,
     strip_tag,
@@ -138,6 +141,7 @@ class Workspace:
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
+    git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
 
 
 # ---------------------------------------------------------------------------
@@ -1080,14 +1084,15 @@ def shared_files(ws: Workspace) -> List[Path]:
 
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
     """The raw transcripts behind a meeting page: the one its `raw` field names,
-    else any file in raw/ with the page's slug. The inbox is not yet filed."""
+    else any file in raw/ with the page's slug. The inbox is not yet filed. In
+    staged mode, a record deleted from disk but still in git counts too."""
     raw = ws.root / "Wikis" / "Meetings" / "raw"
-    if not raw.is_dir():
-        return []
     stems = {page.stem}
     for value in as_list(fm.get("raw")):
         stems.add(Path(value.strip("[]").split("|", 1)[0]).stem)
-    return sorted(p for p in raw.iterdir() if p.is_file() and p.stem in stems)
+    found = {p for p in raw.iterdir() if p.is_file() and p.stem in stems} if raw.is_dir() else set()
+    found |= {p for p in ws.git_view if p.parent == raw and p.stem in stems}
+    return sorted(found)
 
 
 def finished(fm: dict) -> bool:
@@ -1104,44 +1109,63 @@ def quote_index(ws: Workspace) -> QuoteIndex:
         for h in runs(text):
             owners.setdefault(h, set()).add(owner)
 
+    # In staged mode a file can hold one text on disk and another in git (see
+    # git_view): both count as where its wording was said or written.
+    view = ws.git_view
+
+    def texts(path: Path) -> List[str]:
+        out = [read_text(path) or ""] if path.exists() else []
+        if path in view:
+            out.append(view[path])
+        return out
+
     # Every meeting page and its raw record, finished or not: nothing on an
     # unfinished page may be used anywhere until it has its zone and parties.
     for page, fm in ws.meetings.items():
-        add(body_of(read_text(page) or ""), page)
+        for text in texts(page):
+            add(body_of(text), page)
         for r in meeting_raws(ws, page, fm):
-            add(transcript_text(r, read_text(r) or ""), page)
+            for text in texts(r):
+                add(transcript_text(r, text), page)
     # Every project's own text files, under the party each is written for: a
     # client's brief or data file, and the notes made from them, are that
     # party's material as much as its meetings are. Template folders are not.
     tags: Dict[Path, frozenset] = {}
     projects: Dict[Path, Path] = {}
     for project, pfm in ws.projects:
-        ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        ptags = party_tags(ws, project / (project.name + ".md"), pfm)
         thread_tags: Dict[str, set] = {}
-        for path in walk_files(project):
+        files = list(walk_files(project))
+        files += sorted(p for p in view if project in p.parents and not p.exists())  # deleted, but still in git
+        for path in files:
             if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
                 continue
-            text = read_text(path)
-            if not text:
+            found = [t for t in texts(path) if t]
+            if not found:
                 continue
             parts = path.relative_to(project).parts
             ftags = set(ptags)
             if len(parts) > 2 and parts[0] == "Threads":
                 if parts[1] not in thread_tags:
                     note = project / "Threads" / parts[1] / (parts[1] + ".md")
-                    thread_tags[parts[1]] = {strip_tag(t) for t in as_list(parse_frontmatter(note).get("party"))}
+                    thread_tags[parts[1]] = party_tags(ws, note)
                 ftags |= thread_tags[parts[1]]
             tags[path] = frozenset(ftags)
             projects[path] = project
-            add(body_of(text), path)
+            for text in found:
+                add(body_of(text), path)
     common: set = set()
     beyond: set = set()
     # Wording also found in a shared file is common wording, not a leak. No
-    # other file counts, however widely it is read: see SHARED_FILES.
+    # other file counts, however widely it is read: see SHARED_FILES. A shared
+    # file whose working copy differs from git counts only for the wording both
+    # versions hold, so an edit left unstaged cannot make a quotation common.
     knowledge = ws.root / "Wikis" / "Knowledge"
     for path in shared_files(ws):
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
             found = {h for h in runs(transcript_text(path, read_text(path) or "")) if h in owners}
+            if path in view:
+                found &= runs(transcript_text(path, view[path]))
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
@@ -1220,6 +1244,16 @@ def names_hit(text: str, forms: List[Tuple[bool, str]]) -> bool:
         elif " %s " % form in padded:
             return True
     return False
+
+
+def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
+    """The party tags a hub or thread note declares. In staged mode, where git
+    holds another version of the note, the tags of both: the more parties a
+    file belongs to, the more walls stand around its wording."""
+    tags = {strip_tag(t) for t in as_list((parse_frontmatter(note) if fm is None else fm).get("party"))}
+    if note in ws.git_view:
+        tags |= {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
+    return tags
 
 
 def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set, str]:
@@ -1558,25 +1592,114 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
     return out
 
 
+def _git_bytes(args: List[str], cwd: Path) -> Optional[bytes]:
+    try:
+        res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return res.stdout if res.returncode == 0 else None
+
+
+def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
+    """For every text file in the workspace's repositories whose working copy
+    differs from git, or is gone from disk: the text git holds.
+
+    The commit check reads the files it is not committing, the meetings and the
+    other projects a quotation could come from, from disk. An edit left
+    unstaged would then decide what the check sees, though the commit leaves
+    that file as git holds it. So git's version counts too: for the repository
+    being committed, its index, which is what the commit will hold; for every
+    other, its last commit."""
+    tops = set()
+    for folder in list(ws.zones) + [ws.root / "Wikis" / "Meetings", ws.root / "Wikis" / "Knowledge", ws.root]:
+        top = _repo_top(ws, folder) if folder.is_dir() else None
+        if top is not None:
+            tops.add(top)
+    out: Dict[Path, str] = {}
+    for top in sorted(tops):
+        if top == committing:
+            names, spec = _git(["diff", "--name-only", "--no-renames", "-z"], top), ":%s"
+        elif _git(["rev-parse", "--verify", "-q", "HEAD"], top) is not None:
+            names, spec = _git(["diff", "HEAD", "--name-only", "--no-renames", "-z"], top), "HEAD:%s"
+        else:
+            continue  # nothing committed yet: the disk is all there is
+        for name in (names or "").split("\0"):
+            if not name or Path(name).suffix.lower() not in TEXT_SUFFIXES | {".eml"}:
+                continue
+            data = _git_bytes(["show", spec % name], top)
+            if data is None or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+                continue  # deleted in git too, or not text
+            out[top / name] = data.decode("utf-8", errors="replace")
+    return out
+
+
+def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
+    """Read git's version of every file whose working copy differs (git_view)
+    alongside the disk's. A meeting page counts with the parties of both
+    versions, and one deleted from disk still counts. A project or thread note
+    in the repository being committed whose party differs from the one staged
+    is refused: which party the commit is written for must not depend on an
+    edit it leaves out."""
+    ws.git_view = git_view(ws, committing)
+    sources = ws.root / "Wikis" / "Meetings" / "wiki" / "sources"
+    for path, text in sorted(ws.git_view.items()):
+        if sources in path.parents and path.suffix.lower() == ".md":
+            then = parse_frontmatter_text(text)
+            if path not in ws.meetings:
+                if not path.exists():
+                    ws.meetings[path] = then
+                continue
+            now = ws.meetings[path]
+            parties = as_list(now.get("parties"))
+            now["parties"] = parties + [p for p in as_list(then.get("parties")) if p not in parties]
+    out = []
+    for project, _ in ws.projects:
+        notes = [project / (project.name + ".md")]
+        notes += [t / (t.name + ".md") for t in visible_dirs(project / "Threads")]
+        for note in notes:
+            if note not in ws.git_view or committing not in note.parents:
+                continue
+            staged = {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
+            disk = {strip_tag(t) for t in as_list(parse_frontmatter(note).get("party"))}
+            if staged != disk:
+                out.append(Finding(ERROR, "walls", rel(ws, note),
+                                   "names a different party on disk from the one staged; stage that change or undo "
+                                   "it, so the walls are checked against the party the commit holds",
+                                   "A party was changed but the change is not staged"))
+    return out
+
+
+def in_inbox(name: str, inbox: Tuple[str, ...]) -> bool:
+    """Is `name`, a path inside a repository, anywhere below `inbox`, other
+    than the inbox's own placeholder?"""
+    parts = Path(name).parts
+    n = len(inbox)
+    return len(parts) > n and parts[:n] == inbox and parts[n:] != (".gitkeep",)
+
+
 def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     """The walls check on what is about to be committed, and nothing else.
-    Anything waiting in a zone's Inbox, or in the Meetings inbox, is refused
-    too: it has not been filed, so no wall has seen its parties yet."""
+    Anything waiting in a zone's Inbox, or in the Meetings inbox, at any depth,
+    is refused too: it has not been filed, so no wall has seen its parties yet."""
     out = []
     staged = staged_names(repo)
     zones = {z.resolve() for z in ws.zones}
     minbox = ws.root.joinpath(*MEETINGS_INBOX).resolve()
     if staged is not None:
         top_path, names = staged
+        out.extend(apply_git_view(ws, top_path))
+        try:
+            minbox_rel = minbox.relative_to(top_path).parts
+        except ValueError:
+            minbox_rel = None  # the Meetings inbox is in another repository
         for name in names:
-            parts = Path(name).parts
-            if top_path in zones and len(parts) == 2 and parts[0] == INBOX and parts[1] != ".gitkeep":
+            if top_path in zones and in_inbox(name, (INBOX,)):
                 out.append(Finding(ERROR, "inbox", rel(ws, top_path / name),
                                    "is waiting in the inbox to be filed, and never goes into the zone's history; "
                                    "unstage it and file it where it belongs",
                                    "A file from the %s inbox was about to be committed" % top_path.name))
                 continue
-            if (top_path / name).parent == minbox and parts[-1] != ".gitkeep":
+            if minbox_rel and in_inbox(name, minbox_rel):
                 out.append(Finding(ERROR, "inbox", rel(ws, top_path / name),
                                    "is waiting in the Meetings inbox to be ingested, and never goes into the history; "
                                    "unstage it and ingest it with the meetings skill",
@@ -1938,6 +2061,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
                         help="install the pre-commit wall check in every zone's repository")
+    parser.add_argument("--version", action="store_true",
+                        help="say which Garrick the workspace was installed from, for a bug report")
     args = parser.parse_args(argv)
 
     try:
@@ -1956,6 +2081,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.install_hooks:
         return install_hooks(root)
+    if args.version:
+        print(say_version(read_version(root)))
+        return 0
     findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None)
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)

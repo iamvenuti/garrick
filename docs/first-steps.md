@@ -98,14 +98,14 @@ Whichever assistant you use, a first session asks you to approve around fifteen 
 | `python3 System/skills/intake/intake.py` | Reads what waits in an inbox and files it where it belongs |
 | `python3 System/skills/meetings/ingest.py` | Files a conversation in the Meetings wiki |
 | `python3 System/tools/check.py` | Runs the workspace check. It changes nothing |
-| `git -C Zones/…` or `git -C Wikis …` | Saves what changed in a zone's or a wiki's history, on your Mac |
+| `git -C Zones/…` or `git -C Wikis`, then `status`, `diff`, `log`, `add` or `commit` | Looks at, or saves, what changed in a zone's or a wiki's history, on your Mac |
 
-None of these sends anything off your Mac. Read anything else before you approve it, above all a command that reaches the internet or works outside your Garrick folder.
+None of these sends anything off your Mac. Read the whole line before you approve it, not only its start. With git, the folder after `-C` says only where the command works; the word after the folder says what it does. A git command with `push`, `pull`, `fetch`, `clone` or `remote` reaches the internet, and one with `reset`, `checkout`, `restore`, `clean`, `rm` or `--force` can throw work away. A first session needs none of them: decline them unless you asked for one. Read anything else before you approve it too, above all a command that reaches the internet or works outside your Garrick folder.
 
-You can allow these once rather than every time:
+You can allow some of these once rather than every time:
 
-- **Claude.** When it asks to run one of them, choose the answer that stops it asking again, rather than the one that allows it this time only. That answer names the start of the command, such as `python3 System/tools/scaffold.py`, and holds for this folder alone. From then on, commands that start the same way run without asking.
-- **Codex.** The setting from step 5 decides. With one that lets Codex work inside the workspace on its own, it runs the tools without asking. If it still asks before each git commit, approve those: they only save history on your Mac.
+- **Claude.** For Garrick's own tools, the `python3` lines above, choose the answer that stops it asking again, rather than the one that allows it this time only. That answer names the start of the command, such as `python3 System/tools/scaffold.py`, and holds for this folder alone. From then on, commands that start the same way run without asking. For git, do the same only when the start it names includes one of the five words above, such as `git -C Zones/Work commit`. If it names only the folder, `git -C Zones/Work`, allow the command this time only: a rule that stops at the folder lets every git command run there without asking, `push` included.
+- **Codex.** The setting from step 5 decides. With one that lets Codex work inside the workspace on its own, it runs the tools without asking. If it still asks before each git commit, read the line, then approve it when it is one of the five above: those only look at or save history on your Mac.
 
 ## 5. Do one useful piece of work
 
@@ -125,3 +125,4 @@ Once the workflow works at your desk, [phone access](extras/phone-access.md) can
 - **Claude does not follow the workspace instructions:** check for a `CLAUDE.md` inside or above the workspace. Ask the assistant to run the workspace check; do not remove an existing file without understanding what uses it.
 - **The Code tab or Codex is unavailable:** check the current plan and workspace access with the provider or your administrator.
 - **A command fails:** copy its error into your app or show it to the facilitator. Do not repeat installation into a partly created workspace without checking it first.
+- **Reporting a problem:** say which Garrick you have. `python3 System/tools/check.py --version`, run in the workspace, prints one line with the version it was installed from; put it in the report, or read it to the facilitator.

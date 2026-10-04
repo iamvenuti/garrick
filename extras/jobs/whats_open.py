@@ -33,27 +33,36 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
 import agent  # noqa: E402
+
+# The workspace's own frontmatter parser, so a status reads here as it reads
+# everywhere else: installed, System/jobs/ sits beside System/tools/; in
+# Garrick's source, extras/jobs/ reaches template/System/tools/. Failing both,
+# main() looks in the workspace it is given.
+for _tools in (HERE.parent / "tools", HERE.parent.parent / "template" / "System" / "tools"):
+    if (_tools / "garrick_lib.py").is_file():
+        sys.path.insert(1, str(_tools))
+        break
+try:
+    from garrick_lib import parse_frontmatter  # noqa: E402
+except ImportError:
+    parse_frontmatter = None
 
 SENTINEL = "END OF BRIEF"
 EXIT_INCOMPLETE = 3
 
 
-def frontmatter(path: Path) -> dict:
-    """The simple `key: value` lines between the first two `---` lines."""
-    out = {}
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if not lines or lines[0].strip() != "---":
-        return out
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        m = re.match(r"^([A-Za-z_-]+):\s*(.*?)\s*$", line)
-        if m:
-            out[m.group(1)] = m.group(2).strip("\"'")
-    return out
+def load_parser(workspace: Path) -> bool:
+    """Make sure the workspace's frontmatter parser is loaded."""
+    global parse_frontmatter
+    if parse_frontmatter is None and (workspace / "System" / "tools" / "garrick_lib.py").is_file():
+        sys.path.insert(1, str(workspace / "System" / "tools"))
+        from garrick_lib import parse_frontmatter as found
+        parse_frontmatter = found
+    return parse_frontmatter is not None
 
 
 NOT_LIVE = ("done", "parked")  # finished, or set aside until it is woken
@@ -69,10 +78,10 @@ def live_threads(zone: Path) -> List[Tuple[str, Path]]:
         project, thread = note.parts[-4], note.parent.name
         if note.stem != thread or project.startswith(("_", ".")) or thread.startswith(("_", ".")):
             continue
-        fm = frontmatter(note)
-        if fm.get("status", "").strip().lower() in NOT_LIVE:
+        fm = parse_frontmatter(note)
+        if str(fm.get("status") or "").strip().lower() in NOT_LIVE:
             continue
-        found.append((fm.get("updated", ""), "%s, %s" % (project, thread), note))
+        found.append((str(fm.get("updated") or ""), "%s, %s" % (project, thread), note))
     found.sort(key=lambda row: row[0], reverse=True)
     return [(label, note) for _, label, note in found]
 
@@ -125,6 +134,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     out = Path(args.out).expanduser() if args.out else agent.jobs_dir() / "briefs"
     today = datetime.date.today().isoformat()
+    if not load_parser(workspace):
+        print("whats_open: no System/tools/garrick_lib.py in %s; is it a Garrick workspace?" % workspace,
+              file=sys.stderr)
+        return agent.EXIT_USAGE
     zones = []
     for name in args.zone:
         zone = find_zone(workspace, name)

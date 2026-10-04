@@ -1,0 +1,4 @@
+# Which Garrick this is. In a download from GitHub, git has filled in the two
+# lines below; in a clone they stay as written, and the installer asks git.
+commit: $Format:%h$
+date: $Format:%cs$

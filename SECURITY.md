@@ -20,7 +20,7 @@ You'll get an answer within a week. Fixes go into the next release, and the advi
 ## What is not a vulnerability
 
 - A refusal that should have passed. That is a false positive; open an issue with the "wall check" form.
-- A documented scanner limit, such as a clean paraphrase, an edited attachment or unscanned document format. These limits do not make disclosure harmless; they define where the check cannot detect it. Report a skill that wrongly instructs or permits crossing a wall, or a bypass of a check within its documented coverage. See [principles](docs/principles.md#what-the-check-covers).
+- A documented scanner limit, such as a clean paraphrase, wording moved from one party's note to another's in a single commit, an edited attachment or an unscanned document format. These limits do not make disclosure harmless; they define where the check cannot detect it. Report a skill that wrongly instructs or permits crossing a wall, or a bypass of a check within its documented coverage. See [principles](docs/principles.md#what-the-check-covers).
 
 ## Supported versions
 

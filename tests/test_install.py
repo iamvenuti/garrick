@@ -131,6 +131,18 @@ class InstallTest(unittest.TestCase):
         self.assertFalse(list(r.rglob("CLAUDE.md")))
         self.assertFalse(list(r.rglob("imap_fetch.py")))  # the fetcher is an extra, never installed
 
+    def test_the_workspace_says_which_garrick_it_came_from(self):
+        stamp = json.loads((self.root / "System" / "garrick-version.json").read_text())
+        self.assertIn(stamp["from"], ("clone", "download"))  # the suite runs in a clone, or in a download's copy
+        self.assertRegex(stamp["date"], r"^\d{4}-\d{2}-\d{2}$")
+        if stamp["from"] == "clone":
+            self.assertEqual(git(REPO, "log", "-1", "--format=%h"), stamp["commit"])
+            self.assertIn("modified", stamp)
+        self.assertIn("System/garrick-version.json", git(self.root, "ls-files").splitlines())
+        res = run([self.root / "System" / "tools" / "check.py", "--version"], self.box.env)
+        self.assertEqual(0, res.returncode, res.stderr)
+        self.assertTrue(res.stdout.startswith("Garrick %s of " % stamp["commit"]), res.stdout)
+
     def test_git_repositories(self):
         for repo in repos(self.root):
             self.assertTrue((repo / ".git").is_dir(), repo)
@@ -307,6 +319,46 @@ class RefusalTest(unittest.TestCase):
             target, r = self.box.install(label, config=self.box.config(label, **change))
             self.assertEqual(r.returncode, 1, label)
             self.assertFalse(target.exists(), label)
+
+
+class SourceVersionTest(unittest.TestCase):
+    """Which Garrick an installer is: a download carries its commit in VERSION,
+    a clone asks git, and a copy of either with neither says it does not know."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name).resolve()
+        self.installer = load_installer()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def point_at(self, folder, version):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "VERSION").write_text(version)
+        self.installer.REPO = folder
+        self.installer.VERSION_FILE = folder / "VERSION"
+
+    def test_a_download_reads_its_version_file(self):
+        self.point_at(self.base / "garrick-main", "# Which Garrick\ncommit: 3f9c2ab\ndate: 2026-10-04\n")
+        self.assertEqual({"commit": "3f9c2ab", "date": "2026-10-04", "from": "download"},
+                         self.installer.source_version())
+
+    def test_a_copy_with_neither_does_not_know(self):
+        unfilled = (REPO / "VERSION").read_text()
+        self.assertIn("$Format:%h$", unfilled)              # the source keeps it for git to fill in
+        self.point_at(self.base / "copy", unfilled)
+        self.assertEqual("unknown", self.installer.source_version()["commit"])
+        # Inside someone else's repository, that repository's commit is not Garrick's.
+        outer = self.base / "outer"
+        outer.mkdir()
+        subprocess.run(["git", "init", "-q", str(outer)], check=True)
+        self.point_at(outer / "garrick", unfilled)
+        self.assertEqual("unknown", self.installer.source_version()["commit"])
+
+    @unittest.skipUnless((REPO / ".git").exists(), "not a clone")
+    def test_git_fills_in_a_download(self):
+        self.assertEqual("VERSION: export-subst: set", git(REPO, "check-attr", "export-subst", "VERSION"))
 
 
 class TagGuessTest(unittest.TestCase):

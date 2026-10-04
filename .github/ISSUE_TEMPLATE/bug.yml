@@ -38,4 +38,4 @@ body:
     id: garrick
     attributes:
       label: Which Garrick
-      description: The day you downloaded the ZIP, or for a clone the output of `git -C ~/garrick-source log -1 --format=%h`. It tells whether the bug is already fixed.
+      description: The output of `python3 System/tools/check.py --version`, run in your workspace. It says which Garrick the workspace was installed from, which tells whether the bug is already fixed. If it says the version is unknown, give the day you downloaded the ZIP, or for a clone the output of `git -C ~/garrick-source log -1 --format=%h`.

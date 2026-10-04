@@ -27,9 +27,12 @@ shell rules match a command by how it starts, so they are best-effort. The
 call also loads only your user and project settings, never a project's
 `.claude/settings.local.json`: allow rules kept there for your own sessions
 would otherwise reach a job nobody is watching.
-Codex has no per-tool list and loads no profile. It runs sandboxed to the
-job's folder, which is its write boundary, with no connectors unless you have
-configured them.
+Codex has no per-tool list and loads no profile, so the allow list picks its
+sandbox. A job allowed only tools that read (READ_ONLY_TOOLS), or nothing,
+runs read-only: nothing written, the user's Codex configuration ignored, and
+connectors, plugins, the browser and web search switched off. Any other job
+runs sandboxed to its folder, which is its write boundary, with the
+connectors you have configured.
 
 **What it spends.** Every call appends one line to `ledger.jsonl` in the jobs
 folder (~/Library/Logs/garrick-jobs/ on a Mac, or GARRICK_JOBS_DIR): when,
@@ -289,19 +292,45 @@ def claude_command(tier: str, prompt: str, allow: List[str], budget: float, prof
     return cmd
 
 
-def codex_command(tier: str, prompt: str, last_message: Path) -> List[str]:
+# Tools that only read. A job allowed nothing else runs under Codex read-only.
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
+# What a read-only Codex run switches off besides the sandbox: the connectors
+# (ChatGPT apps) and plugins, which the sandbox does not govern and which can
+# send, and the browser, computer use and image generation.
+CODEX_READ_ONLY_OFF = ("apps", "plugins", "remote_plugin", "browser_use", "browser_use_external",
+                       "computer_use", "image_generation")
+
+
+def read_only(allow: Iterable[str]) -> bool:
+    """Whether a job allowed these tools only reads: Claude's allow list, read
+    for Codex, which has no list of its own."""
+    return all(tool in READ_ONLY_TOOLS for tool in allow)
+
+
+def codex_command(tier: str, prompt: str, last_message: Path, allow: Iterable[str] = ()) -> List[str]:
+    # A job that only reads gets a sandbox that writes nothing, none of the
+    # user's own configuration (MCP servers, plugins, hooks, notify programs),
+    # no connectors, no web search, and no session file left behind. Any
+    # other job gets a sandbox that writes inside its folder, with the user's
+    # configuration, connectors included: a mail job needs its mail.
     model = os.environ.get("GARRICK_CODEX_MODEL_%s" % tier.upper(), "").strip()
     cmd = ["codex", "exec"]
     if model:
         cmd += ["-m", model]
-    cmd += ["--sandbox", "workspace-write", "-c", 'approval_policy="never"',
-            "--skip-git-repo-check", "-o", str(last_message), prompt]
+    if read_only(allow):
+        cmd += ["--sandbox", "read-only", "--ignore-user-config", "--ephemeral", "-c", 'web_search="disabled"']
+        for feature in CODEX_READ_ONLY_OFF:
+            cmd += ["--disable", feature]
+    else:
+        cmd += ["--sandbox", "workspace-write"]
+    cmd += ["-c", 'approval_policy="never"', "--skip-git-repo-check", "-o", str(last_message), prompt]
     return cmd
 
 
 def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] = None,
         job: Optional[str] = None) -> Tuple[int, str]:
     """One headless turn. Returns the exit code and the assistant's final answer."""
+    allow = list(allow)
     h = harness()
     if h not in HARNESSES:
         print("agent: GARRICK_HARNESS is %r; use claude or codex" % h, file=sys.stderr)
@@ -353,7 +382,7 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
             last = Path(tmp) / "last.txt"
             try:
                 with transcript.open("a", encoding="utf-8") as log:
-                    proc = subprocess.run(codex_command(tier, prompt, last), cwd=cwd, stdout=log,
+                    proc = subprocess.run(codex_command(tier, prompt, last, allow), cwd=cwd, stdout=log,
                                           stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             except FileNotFoundError:
                 print("agent: codex is not installed, or not on PATH", file=sys.stderr)

@@ -230,11 +230,29 @@ class ProfileTest(unittest.TestCase):
 
     def test_codex_command_takes_its_model_from_the_tier(self):
         with mock.patch.dict(os.environ, {"GARRICK_CODEX_MODEL_SONNET": "some-model"}):
-            cmd = agent.codex_command("sonnet", "Do it.", Path("/tmp/last.txt"))
+            cmd = agent.codex_command("sonnet", "Do it.", Path("/tmp/last.txt"), ["Read", "Edit"])
         self.assertEqual(["codex", "exec", "-m", "some-model"], cmd[:4])
-        self.assertIn("workspace-write", cmd)
+        self.assertEqual("workspace-write", cmd[cmd.index("--sandbox") + 1])
         self.assertEqual("Do it.", cmd[-1])
         self.assertNotIn("--allowedTools", cmd)
+        self.assertNotIn("--ignore-user-config", cmd)        # a job that writes may need its connectors
+
+    def test_a_codex_job_that_only_reads_cannot_write_or_reach_out(self):
+        # Checked by hand against Codex 0.160.0: run this way, a shell command
+        # writing a file failed with "operation not permitted", and the run had
+        # no web search, browser, app or connector tools; run with the
+        # workspace-write command above, the file was written and those tools
+        # were there.
+        for allow in ([], ["Read"], ["Read", "Grep", "Glob"]):
+            cmd = agent.codex_command("sonnet", "Brief.", Path("/tmp/last.txt"), allow)
+            self.assertEqual("read-only", cmd[cmd.index("--sandbox") + 1], allow)
+            for flag in ("--ignore-user-config", "--ephemeral", 'web_search="disabled"', 'approval_policy="never"'):
+                self.assertIn(flag, cmd)
+            disabled = {cmd[i + 1] for i, c in enumerate(cmd) if c == "--disable"}
+            self.assertTrue({"apps", "plugins", "browser_use", "computer_use"} <= disabled)
+        for allow in (["Edit"], ["Write"], ["Bash"], ["mcp__gmail__search"]):
+            cmd = agent.codex_command("sonnet", "Sweep.", Path("/tmp/last.txt"), allow)
+            self.assertEqual("workspace-write", cmd[cmd.index("--sandbox") + 1], allow)
 
     def test_connector_listing(self):
         listing = ("Checking MCP server health...\n\nclaude.ai Gmail: https://x.invalid - Connected\n"
@@ -285,6 +303,8 @@ class RunTest(FakeAssistants):
         os.environ["GARRICK_HARNESS"] = "codex"
         code, text = agent.run("sonnet", "Sweep.", allow=["Read"])
         self.assertEqual(0, code)
+        call = self.calls()[0]
+        self.assertEqual("read-only", call[call.index("--sandbox") + 1])   # the allow list reaches Codex
         self.assertEqual("Codex answer\nSWEEP_COMPLETE\n", text)
         self.assertIn("the whole run", (self.jobs / "manual.transcript.log").read_text())
         line = self.ledger()[0]
@@ -527,6 +547,15 @@ class WhatsOpenTest(FakeAssistants):
         personal = [p for p in self.out.iterdir() if p.name.startswith("whats-open-personal-")]
         self.assertEqual(1, len(personal))
         self.assertIn("Nothing open", personal[0].read_text())
+
+    def test_a_status_reads_as_the_workspace_reads_it(self):
+        # The status line as people write it: with a comment, quoted, or both.
+        threads = self.ws / "Zones" / "Work" / "Acme Review" / "Threads"
+        for name, status in (("Freight", "parked # until next quarter"), ("Customs", '"parked"'),
+                             ("Audit Prep", "'done'   # signed off"), ("Rates", "active # this week")):
+            write(threads / name / (name + ".md"), thread_note("Acme Review", name, "acme", status=status))
+        labels = sorted(label for label, _ in whats_open.live_threads(self.ws / "Zones" / "Work"))
+        self.assertEqual(["Acme Review, Pricing", "Acme Review, Rates", "Birch Entry, Market Sizing"], labels)
 
     def test_an_answer_without_its_closing_line_writes_nothing(self):
         os.environ["FAKE_RESULT"] = "# Brief, cut short"

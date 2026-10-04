@@ -5,3 +5,6 @@ docs/** linguist-documentation
 presentation/** linguist-documentation
 examples/demo/content/** linguist-documentation
 *.vtt linguist-documentation
+
+# A download records which commit it came from; see VERSION.
+VERSION export-subst

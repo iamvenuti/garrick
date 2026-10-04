@@ -10,6 +10,21 @@ Every repository the installer creates, the root, `Wikis/`, and each zone, gets 
 
 Claude Code reads `AGENTS.md` natively from version 2.1.277. The Code tab of the Claude desktop app runs the same Claude Code, bundled inside the app, and reads the same `AGENTS.md`, skills and settings: on version 2.1.284 it loaded the workspace's `AGENTS.md`, found all four skills, and answered "what's open" from the demo. Choose **Local** and the workspace folder itself; [First steps](first-steps.md) has the settings. Codex reads `AGENTS.md` files too, but only from the git repository root down to the folder a session opens in. It won't walk up past a repository boundary to find one. The Codex mode of the ChatGPT desktop app runs the same Codex, bundled inside the app: on version 0.159.2, opened on the demo workspace, it loaded the root `AGENTS.md` and found all four skills. Five skills ship now; both runs predate the fifth. Open the workspace folder itself as the project's source folder, on **This computer**; [First steps](first-steps.md#using-codex-instead) has the settings.
 
+## What has been tested
+
+Both assistants read the same files, but that alone does not show they do the same things with them. This table records what has been checked in each one, with the version it was checked on. A row reading *not yet tested* has not been.
+
+| Capability | Claude Code | Codex |
+|---|---|---|
+| Reads the workspace's `AGENTS.md` | Natively from 2.1.277. The desktop app's Code tab, 2.1.284, loaded it on the demo | The ChatGPT app's Codex mode, 0.159.2, loaded the root `AGENTS.md` on the demo |
+| Finds the skills | 2.1.284 found the four skills then shipped; not yet rechecked with five | 0.159.2 found the four skills then shipped; not yet rechecked with five |
+| Picks up a thread cold, in a fresh session | 2.1.284 answered "what's open" from the demo. Resuming a thread wrapped by the other assistant: not yet tested | Not yet tested |
+| First-session approvals, on a clean account | Not yet tested | Not yet tested |
+| Unattended jobs | 2.1.287 and 2.1.288: the allow list, the deny profile, the settings sources and the permission mode, checked by hand | 0.160.0: a job that only reads ran read-only, writing nothing and with no connector, browser or web tools. Not yet run end to end through `job.py` |
+| Connectors in a job | Not yet tested live | Switched off for a job that only reads (0.160.0). With a job that writes: not yet tested |
+
+[Scheduled jobs](extras/scheduled-jobs.md) gives the details of each check. Another assistant counts as supported once it passes the same rows; following `AGENTS.md` alone does not establish it.
+
 ## Why each zone is its own git repository
 
 Zones never mix in storage. Giving each zone its own repository makes that true of the history as well: a commit can't span Work and Personal, and a zone can be backed up, moved or handed over without taking the others with it.

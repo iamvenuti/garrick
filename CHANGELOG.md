@@ -22,6 +22,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `check.py` warns when a link or a file path in a live thread's Resume here block leads nowhere, so a deliverable renamed or moved shows up in the next check, not in the next cold resume.
 - Questions and feedback go to the repository's Discussions, linked from the issue chooser, the README and `CONTRIBUTING.md`. A bug report takes a desktop app's version as well as the command-line ones.
 - A sixteenth slide in the introduction, for the status page.
+- Every workspace records which Garrick it was installed from, in `System/garrick-version.json`: the commit and its date, and whether it came as a download or a clone. `python3 System/tools/check.py --version` says it in one line, and the bug form asks for that line. A download from GitHub carries its commit in `VERSION`, which git fills in.
+- A table of what has been tested in Claude Code and in Codex, each with the version it was checked on, in the harnesses guide.
 
 ### Changed
 
@@ -43,12 +45,18 @@ What changed in each release. Dates are when the release was tagged. The format 
 - Document Codex remote voice on iPhone with its desktop host requirement, and Claude Code Remote Control from a terminal.
 - The Obsidian guide shows how to make the graph readable: colour notes by level, leave parked and finished threads out, and link notes rather than quoting their paths, since Obsidian draws no line from a path in backticks.
 - The installer's `.gitignore` files leave out Obsidian's `workspace.json` and `graph.json` in any folder opened as a vault, since Obsidian rewrites both on every pan and zoom. Obsidian's settings are still tracked.
+- A scheduled job that only reads runs read-only under Codex too: no file written, the user's own Codex configuration ignored, and connectors, plugins, the browser and web search switched off. Checked against Codex 0.160.0. A job allowed to write keeps the write sandbox and its connectors.
+- First steps name the git commands a session asks to approve by what they do (`status`, `diff`, `log`, `add`, `commit`), say to read the whole line, and keep Claude's "don't ask again" off a rule that stops at the folder.
+- The walls' stated limits add wording moved rather than copied: cut from one party's note, pasted into another's and committed together, it passes, since only the history says where it came from.
 
 ### Fixed
 
 - The status page: its right column no longer renders right-aligned; the Wikis card reads the logs as they are written; the Wikis repository appears under Repositories; a note's title can no longer break the page's embedded data; the rebuild command it copies runs from anywhere; a mistyped `--workspace` stops instead of creating folders; and it reads frontmatter as `check.py` does. It also builds without git, opens a symlinked note in Obsidian, reads schedules from any plist, monthly ones included, gives one attention line per capped job, and says a project name shared by two zones with its zone.
 - The deck no longer says deleting the folder leaves nothing behind: the assistant's own chat history stays.
 - The demo builder takes a relative target as relative to where you run it.
+- The commit check reads what it is not committing as git holds it as well as from disk: a source edited or deleted without staging, in the same zone or in another repository, still counts, and a shared file counts as common only for the wording both versions hold. A project or thread whose party differs between disk and the staged copy is refused.
+- The commit check refuses files at any depth in a zone's `Inbox/` or the Meetings inbox, not only those directly inside.
+- The "what's open" job reads a thread's status with the workspace's own parser, so `status: parked # until next quarter` and `status: "done"` keep a thread out of the brief.
 
 ## [0.1.0] - 2026-09-30
 

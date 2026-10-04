@@ -26,6 +26,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent
 TEMPLATE = REPO / "template"
 TOOLS = TEMPLATE / "System" / "tools"
+# Git fills in this file's lines when GitHub serves a download (export-subst in
+# .gitattributes); in a clone they stay as written, and git is asked instead.
+VERSION_FILE = REPO / "VERSION"
 
 DEFAULT_TARGET = "~/Garrick"
 # Offered instead when the default is Garrick's own folder: a Mac ignores capitals
@@ -417,6 +420,38 @@ def init_repo(path, message, owner_name, local_identity, paths=None):
         raise InstallError(str(exc)) from None
 
 
+def source_version():
+    """Which Garrick is installing: its commit and that commit's date, and
+    whether it came as a download or a clone. A clone with edits not committed
+    says so, since its commit no longer tells the whole story."""
+    fields = {}
+    try:
+        for line in VERSION_FILE.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition(":")
+            if sep and not line.startswith("#"):
+                fields[key.strip()] = value.strip()
+    except OSError:
+        pass
+    if fields.get("commit") and "$" not in fields["commit"]:
+        return {"commit": fields["commit"], "date": fields.get("date", ""), "from": "download"}
+
+    def git(*args):
+        try:
+            return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    top = git("rev-parse", "--show-toplevel")
+    if top is not None and top.returncode == 0 and same_folder(Path(top.stdout.strip()), REPO):
+        head = git("log", "-1", "--format=%h %cs")
+        status = git("status", "--porcelain", "--untracked-files=no")
+        if head is not None and head.returncode == 0 and len(head.stdout.split()) == 2:
+            commit, date = head.stdout.split()
+            return {"commit": commit, "date": date, "from": "clone",
+                    "modified": bool(status is not None and status.stdout.strip())}
+    return {"commit": "unknown", "date": "", "from": "copy"}
+
+
 def install(cfg, target, force=False, quiet=False):
     pl = lib()
     cfg = normalise(cfg)
@@ -436,6 +471,7 @@ def install(cfg, target, force=False, quiet=False):
     w.copy_tree(TEMPLATE / "System", root / "System", skip=("context.md",))
     w.write(root / "System" / "context.md",
             render_context((TEMPLATE / "System" / "context.md").read_text(encoding="utf-8"), cfg))
+    w.write(root.joinpath(*pl.VERSION_STAMP), json.dumps(source_version(), indent=2) + "\n")
 
     # The wikis: one repository for both.
     w.mkdir(root / "Wikis")

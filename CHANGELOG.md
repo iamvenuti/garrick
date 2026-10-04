@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-04
+
+The release for the first invited users: guided onboarding for the desktop apps, parking, the status page, scheduled jobs, the interview skill, a stricter wall check, and a version stamp in every workspace.
+
 ### Added
 
 - Garrick's mark: a white Gr on blue, set like an element tile, with a small "ai" in the full version (`docs/assets/garrick-mark.svg`, and `garrick-mark-favicon.svg` for small sizes). The letters are outlines of ANRT's Baskervville, under the SIL Open Font Licence. It sits beside the README's title, on the deck's cover and the social card, and in the status page's tab and heading; the deck, the social card and the adoption ladder take its blue as their accent. Display type is Baskerville, the face the mark is drawn in, across the deck, the social card, the adoption ladder and the status page.
@@ -74,5 +78,6 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/iamvenuti/garrick/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/iamvenuti/garrick/releases/tag/v0.1.0

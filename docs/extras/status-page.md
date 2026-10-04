@@ -39,6 +39,18 @@ Each one opens in your browser, and nothing is sent until you submit it there yo
 
 The page never checks for a newer Garrick. It would have to ask GitHub every time it rebuilt, and the page loads nothing from the network. To see whether there is one, compare *All releases* with your version.
 
+## Preview features
+
+Some features are in Garrick's source before they are in a release. They are off until you switch them on in `System/garrick-flags.json`, and *Settings* lists each one and whether it is on. To switch one on, write its name there and rebuild the page:
+
+```json
+{"todo-list": true}
+```
+
+- **`todo-list`**: a *Todo list* card with every open action in the zones. It shows each action's thread, its section of `Todo.md` (or "in the thread note" when it sits there), and its dates as Obsidian Tasks writes them: a due date with `📅`, a day to chase a `#waiting` line with `⏳`. Overdue actions come first. It reads the notes and changes nothing.
+
+A preview feature may still change. When one is released it is switched on for everyone and its flag goes away.
+
 ## Thread cards
 
 Hover a thread in the list, or move to it with the keyboard, and a card opens under it. It shows the thread's name, zone and project, its party, and how long since its note was updated, or that it is parked. Then come the actions:

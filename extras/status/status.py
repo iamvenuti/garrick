@@ -318,6 +318,82 @@ def todo(ws: Path) -> Dict[str, dict]:
     return out
 
 
+# ---- preview features: in Garrick's source, not yet released. Each is off
+# unless the workspace switches it on in System/garrick-flags.json, as
+# {"todo-list": true}. A workspace that runs Garrick's main as its own switches
+# on what it is trying out; a release switches a feature on for everyone and
+# drops its flag. Settings lists them, and which are on.
+FLAGS = {
+    "todo-list": ("Todo list", "Every open action in the zones, with its thread, its section of Todo.md and its dates, "
+                  "in a card of its own."),
+}
+
+
+def preview_flags(ws: Path) -> Dict[str, bool]:
+    try:
+        data = json.loads(ws.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    return {k: isinstance(data, dict) and data.get(k) is True for k in FLAGS}
+
+
+_TL = None
+
+
+def todo_lines():
+    """todo_lines.py, beside this file: the reader for action lines."""
+    global _TL
+    if _TL is None:
+        spec = importlib.util.spec_from_file_location("garrick_todo_lines", str(Path(__file__).with_name("todo_lines.py")))
+        _TL = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_TL)
+    return _TL
+
+
+def todo_list(ws: Path, link: "Links", today: dt.date) -> List[Tuple[str, List[dict]]]:
+    """Preview: every open action in each zone, overdue first, then by date,
+    then by section. Read from the notes, never written."""
+    tl = todo_lines()
+    order = {name: i for i, name in enumerate(tl.SECTIONS)}
+    out = []
+    for zone in visible_dirs(ws / "Zones"):
+        rows = []
+        for t in tl.tasks(str(zone)):
+            if "<action>" in t["text"] or not t["text"]:
+                continue                                  # a template's placeholder
+            field = t["scheduled"] if t["waiting"] else t["due"]
+            try:
+                when = dt.date.fromisoformat(field) if field else None
+            except ValueError:
+                when = None
+            late = bool(when and (when <= today if t["waiting"] else when < today))
+            note = zone / t["file"]
+            rows.append(dict(t, when=when, late=late, link=link(note), zone=zone.name,
+                             sort=(not late, when or dt.date.max, order.get(t["section"] or "", len(order)), t["text"].casefold())))
+        if rows:
+            out.append((zone.name, sorted(rows, key=lambda r: r["sort"])))
+    return out
+
+
+def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date) -> str:
+    def chip(r):
+        if r["when"] is None:
+            return '<span class="chip">waiting</span>' if r["waiting"] else ""
+        rel = "today" if r["when"] == today else "tomorrow" if (r["when"] - today).days == 1 else \
+            "%s %d %s" % (r["when"].strftime("%a"), r["when"].day, r["when"].strftime("%b"))
+        return '<span class="chip%s">%s %s</span>' % (" late" if r["late"] else "", "Chase" if r["waiting"] else "Due", rel)
+    cols = ""
+    for zone, rows in lists:
+        items = "".join(
+            '<div class="titem%s"><div class="ttext">%s%s</div><div class="tmeta">%s%s</div></div>'
+            % (" late" if r["late"] else "",
+               '<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["thread"] or Path(r["file"]).stem)) if (r["thread"] or r["file"] != "Todo.md") else "",
+               md_inline(r["text"]), chip(r), '<span class="muted">%s</span>' % E(r["section"] or "in the thread note"))
+            for r in rows)
+        cols += '<div class="tzone"><h4>%s <span class="muted">%d</span></h4>%s</div>' % (E(zone), len(rows), items)
+    return card("todolist", "Todo list", "preview · every open action, overdue first, read from the notes", '<div class="tzones">%s</div>' % cols)
+
+
 def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
     """Files waiting to be filed: each zone's Inbox and the Meetings inbox."""
     places = [(z.name, z / "Inbox") for z in visible_dirs(ws / "Zones")]
@@ -1021,8 +1097,17 @@ def launcher_choices(installed: Tuple[str, ...]) -> str:
             'Codex and cmux open in the folder with the phrase on the clipboard.</p></section>' % rows)
 
 
+def preview_section(flags: Dict[str, bool]) -> str:
+    rows = "".join('<div class="flagrow"><b>%s</b><span class="chip%s">%s</span><small>%s</small></div>'
+                   % (E(FLAGS[k][0]), " on" if on else "", "on" if on else "off", E(FLAGS[k][1])) for k, on in flags.items())
+    return ('<section class="setsec"><h3>Preview features</h3>%s<p class="hint">In Garrick&#39;s source but not yet released, '
+            'so they may still change. Switch one on in <code>System/garrick-flags.json</code>, for example '
+            '<code>{"todo-list": true}</code>, and rebuild the page.</p></section>' % rows)
+
+
 def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
-    """The Settings dialog: which apps to open projects in, then About Garrick."""
+    """The Settings dialog: which apps to open projects in, About Garrick, and
+    the preview features with which are switched on."""
     stamp = workspace_stamp(ws)
     try:
         text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
@@ -1031,7 +1116,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
             '<div class="gacts"><button class="act" type="button" id="close-settings">Done</button></div></dialog>'
-            % (launcher_choices(installed), about_garrick(installed_version(ws), notes)))
+            % (launcher_choices(installed), about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
 def script_json(data) -> str:
@@ -1207,6 +1292,11 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
+.tzones{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}.tzone h4{margin:0 0 6px;font-size:13px}
+.titem{padding:7px 0;border-top:1px solid var(--line)}.titem .ttext{font-size:13px}.titem .thr{margin-right:6px;font-weight:600;color:var(--ink);text-decoration:none}
+.titem .tmeta{display:flex;gap:8px;align-items:center;margin-top:2px;font-size:11.5px}.chip.late{color:var(--critical);border-color:var(--critical)}
+.flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
 @media (hover:none){.head .tools{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
@@ -1652,6 +1742,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     week = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days <= 7)
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
+    lists = todo_list(ws, link, now.date()) if preview_flags(ws)["todo-list"] else []
+
     # ---- sidebar
     nav = [("overview", "Overview", worst, len(attn) or "")] + ([("graph", "Graph", "", "")] if show_graph else []) + \
           [("threads", "Threads", "warning" if aging else "good", live)]
@@ -1662,6 +1754,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             ("inboxes", "Inboxes", "warning" if waiting else "good", waiting or "")]
     if TD:                                    # a workspace with no Todo.md gets no Open actions at all
         more.insert(1, ("todo", "Open actions", "good", open_actions))
+    if lists:
+        late = sum(r["late"] for _, rows in lists for r in rows)
+        more.insert(2 if TD else 1, ("todolist", "Todo list", "warning" if late else "good", sum(len(r) for _, r in lists)))
     if J:
         more.append(("jobs", "Scheduled jobs", "critical" if any(j["state"] == "critical" for j in J) else "good", len(J)))
     if L:
@@ -1834,12 +1929,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
 
+    todolist_card = todo_list_card(lists, now.date()) if lists else ""
     left = checks_card + jobs_card + wikis_card
     right = todo_card + inbox_card + calls_card + repos_card
     main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
             '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-            '<div class="slot full" data-slot="bottom"></div></div></main>'
-            % (top, attn_card, graph_card, threads_card, left, right))
+            '<div class="slot full" data-slot="bottom">%s</div></div></main>'
+            % (top, attn_card, graph_card, threads_card, left, right, todolist_card))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (

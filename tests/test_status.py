@@ -641,6 +641,52 @@ class TestReleaseNotes(StatusCase):
         self.assertIn("Coming next, on main", self.page())
 
 
+class TestPreviewFeatures(StatusCase):
+    """Features in Garrick's source but not yet released: off unless the workspace switches them on."""
+
+    def todo(self):
+        write(self.root / "Zones" / "Work" / "Todo.md",
+              "# Work: open actions\n\n## Inbox\n\n- [ ] <action>\n- [ ] [[Pricing]]: Send the revised terms 📅 2000-01-03\n"
+              "- [ ] Book the room · [src](https://example.com/mail) 📅 2999-01-01\n\n## Waiting on\n\n"
+              "- [ ] [[Market Sizing]]: Numbers from Birch #waiting ⏳ 2999-02-01\n\n## Done\n\n- [x] Old one ✅ 2000-01-01\n")
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "- [ ] Check the clause\n")
+
+    def on(self, value=True):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": value}))
+
+    def test_off_unless_switched_on(self):
+        self.todo()
+        html = self.page()
+        self.assertNotIn('id="todolist"', html)
+        self.assertRegex(html, r'Todo list</b><span class="chip">off</span>')
+        for broken in ("{not json", json.dumps(["todo-list"]), json.dumps({"todo-list": "yes"})):
+            write(self.root / "System" / "garrick-flags.json", broken)
+            self.assertNotIn('id="todolist"', self.page())
+
+    def test_the_todo_list(self):
+        self.todo()
+        self.on()
+        html = self.page()
+        self.assertIn('id="todolist"', html)
+        self.assertRegex(html, r'Todo list</b><span class="chip on">on</span>')
+        self.assertIn('href="#todolist"', html)                                   # in the sidebar too
+        card = html[html.index('id="todolist"'):]
+        self.assertNotIn("&lt;action&gt;", card)                                  # the template's placeholder
+        self.assertNotIn("Old one", card)                                         # ticked
+        order = [card.index(t) for t in ("Send the revised terms", "Book the room", "Numbers from Birch")]
+        self.assertEqual(sorted(order), order)                                    # overdue first, then by date
+        self.assertIn('class="chip late">Due', card)
+        self.assertIn("Chase", card)
+        self.assertIn("Check the clause", card)                                  # a thread note's own action
+        self.assertIn("in the thread note", card)
+        self.assertNotIn("example.com", card)                                     # a source link is not followed
+
+    def test_garrick_and_the_workspace_read_lines_alike(self):
+        tl = status.todo_lines()
+        p = tl.parse("- [ ] [[Acme/Pricing|Pricing]]: Send it #waiting 🔺 ⏳ 2026-10-09")
+        self.assertEqual(("Pricing", "Send it", "2026-10-09", True), (p["thread"], p["text"], p["scheduled"], p["waiting"]))
+
+
 class TestPanels(StatusCase):
     def test_inbox_waiting(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")

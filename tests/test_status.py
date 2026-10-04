@@ -769,6 +769,128 @@ class TestOpenActions(StatusCase):
         vault = self.page(vault="My Work")
         self.assertIn("file=Zones/Work/Todo\" title=\"Open Work/Todo.md\">Open</a>", vault)
 
+    def test_no_todo_no_open_actions(self):
+        self.assertIn('class="top" style="--tiles:4"', self.page())
+        for todo in (self.root / "Zones").glob("*/Todo.md"):
+            todo.unlink()
+        html = self.page()
+        self.assertNotIn('id="todo"', html)
+        self.assertNotIn("Open actions", html)                    # no card, no tile, no sidebar line
+        self.assertIn('class="top" style="--tiles:3"', html)     # the tiles still fill their row
+
+
+class TestWhatThisMachineHas(StatusCase):
+    """Obsidian and cmux are optional: the page asks at every build and offers
+    only what will work."""
+
+    def setUp(self):
+        super().setUp()
+        self.apps = Path(self._tmp.name).resolve() / "Applications"
+        self.apps.mkdir()
+
+    def install(self, name):
+        (self.apps / (name + ".app")).mkdir()
+
+    def register(self, *folders):
+        config = Path(self._tmp.name).resolve() / "obsidian.json"
+        config.write_text(json.dumps({"vaults": {"id%d" % i: {"path": str(f), "ts": 1} for i, f in enumerate(folders)}}))
+        return config
+
+    def test_vaults_come_from_obsidians_own_list(self):
+        self.install("Obsidian")
+        elsewhere = Path(self._tmp.name).resolve() / "Elsewhere"
+        elsewhere.mkdir()
+        config = self.register(self.root, self.root / "Zones" / "Work", elsewhere)
+        found = status.obsidian_vaults(self.root, config=config, apps=[self.apps])
+        self.assertEqual([(self.root / "Zones" / "Work", "Work"), (self.root, "Workspace")], found)   # deepest first, none elsewhere
+
+    def test_a_shared_vault_name_is_given_by_id(self):
+        self.install("Obsidian")
+        other = Path(self._tmp.name).resolve() / "Old" / "Work"
+        other.mkdir(parents=True)
+        config = self.register(self.root / "Zones" / "Work", other)
+        self.assertEqual([(self.root / "Zones" / "Work", "id0")], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
+
+    @unittest.skipUnless(sys.platform == "darwin", "the app check is macOS's")
+    def test_no_obsidian_app_no_vaults(self):
+        config = self.register(self.root)
+        self.assertEqual([], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
+
+    def test_unreadable_list_no_vaults(self):
+        self.install("Obsidian")
+        config = Path(self._tmp.name).resolve() / "obsidian.json"
+        config.write_text("{not json")
+        self.assertEqual([], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
+
+    def test_a_note_opens_in_the_closest_vault(self):
+        html = self.page(vaults=[(self.root / "Zones" / "Work", "Work"), (self.root, "Workspace")])
+        pricing = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual("obsidian://open?vault=Work&file=Acme%20Review/Threads/Pricing/Pricing", pricing["u"])
+        self.assertIn("obsidian://open?vault=Workspace&amp;file=Zones/Personal/Todo", html)   # Personal is only in the root vault
+        self.assertNotIn((self.root / "Zones").as_uri(), html)
+
+    @unittest.skipUnless(sys.platform == "darwin", "cmux is a macOS app")
+    def test_cmux_is_found_by_its_app(self):
+        self.assertFalse(status.cmux_installed(apps=[self.apps]))
+        self.install("cmux")
+        self.assertTrue(status.cmux_installed(apps=[self.apps]))
+
+    def test_folders_only_where_cmux_is(self):
+        self.assertNotIn('"f":', htmllib.unescape(self.page()))
+        html = self.page(cmux=True)
+        pricing = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual(str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing"), pricing["f"])
+        nodes = graph_data(html)["nodes"]
+        self.assertTrue(all(("f" in n) == bool(n["c"]) for n in nodes))       # projects and threads only
+        hub = next(n for n in nodes if n["n"] == "Acme Review")
+        self.assertEqual(str(self.root / "Zones" / "Work" / "Acme Review"), hub["f"])
+
+    def test_open_in_cmux_only_inside_the_app(self):
+        # A browser has no window.webkit.messageHandlers.garrick, so there the
+        # page offers no cmux and every button only copies.
+        self.assertIn("if(o.f&&host)a+=cmux(o)", status.PANEL_JS)
+        self.assertIn("window.webkit.messageHandlers.garrick", status.PANEL_JS)
+        self.assertIn("if(c&&host){host.postMessage({cmux:", status.JS)
+        self.assertIn("if(host&&rb){rb.textContent='Rebuild now'", status.JS)
+        self.assertIn('id="rebuild" class="act wide"', self.page())
+
+    def test_main_asks_the_machine_and_honours_the_switches(self):
+        out = Path(self._tmp.name).resolve() / "page.html"
+        with mock.patch.object(status, "cmux_installed", return_value=True), \
+                mock.patch.object(status, "obsidian_vaults", return_value=[(self.root, "Workspace")]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status.main(["--workspace", str(self.root), "--out", str(out)])
+            found = out.read_text()
+            status.main(["--workspace", str(self.root), "--out", str(out), "--no-cmux", "--no-obsidian"])
+            kept = out.read_text()
+        self.assertIn('"f":', htmllib.unescape(found))
+        self.assertIn("obsidian://open?vault=Workspace", found)
+        self.assertNotIn('"f":', htmllib.unescape(kept))
+        self.assertNotIn("obsidian://", kept)
+        self.assertIn("--no-obsidian --no-cmux", htmllib.unescape(kept))           # the rebuild command keeps them
+
+
+class TestApp(unittest.TestCase):
+    APP = REPO / "extras" / "status" / "app"
+
+    def test_the_app_is_built_not_shipped(self):
+        self.assertTrue(os.access(self.APP / "make-app.sh", os.X_OK))
+        self.assertEqual({"GarrickStatus.swift", "make-app.sh"}, {p.name for p in self.APP.iterdir() if not p.name.startswith(".")})
+
+    def test_the_app_changes_no_file(self):
+        swift = (self.APP / "GarrickStatus.swift").read_text()
+        self.assertEqual({"attributesOfItem", "fileExists"}, set(re.findall(r"FileManager\.default\.(\w+)", swift)))   # it only looks
+        self.assertNotIn("write(to:", swift)
+        self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+    def test_the_app_compiles(self):
+        import subprocess
+        if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
+            self.skipTest("no swiftc")
+        done = subprocess.run(["xcrun", "swiftc", "-typecheck", str(self.APP / "GarrickStatus.swift")], capture_output=True, text=True)
+        self.assertEqual(0, done.returncode, done.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,13 @@
 # Extra: a status page
 
-One page, Garrick's Status, that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser. It needs no server, no account and no network, and it works whether or not you use Obsidian.
+One page, Garrick's Status, that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser, or in a small [Mac app](#a-mac-app) of its own. It needs no server, no account and no network, and it works whether or not you use Obsidian or cmux: each time it is built, it checks which of them this machine has and offers only what will work.
 
 ## What it shows
 
 - **A graph of the workspace**: every note in your zones and wikis, and the links between them, laid out to fill its card. *Projects and threads* and *Everything* switch how much it shows. Click a note for its links and the same actions a thread's card offers; double-click opens it. [Reading the graph](#reading-the-graph) says what it draws and what it leaves out.
 - **Threads**, one column per zone: every live thread, by name, with its project, its party and how long since its note was updated. The bar fills toward sixty days and turns amber after 14 days, red after 45. Threads you have parked ("park X") sit in a folded *Parked* group at the foot of their zone, also by name, out of the counts. Hover a thread for its card.
 - **Checks**: what `System/tools/check.py` finds, run as the page is built, grouped by check.
-- **Open actions**: the unticked items in each zone's `Todo.md`, counted by section, with an *Open* link to the list.
+- **Open actions**: the unticked items in each zone's `Todo.md`, counted by section, with an *Open* link to the list. A zone without a `Todo.md` is left out, and with none at all so is the card; the check reports the missing file.
 - **Inboxes**: what is waiting to be filed in each zone's `Inbox/` and in the Meetings inbox.
 - **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps. The caps are the ones the jobs run under: the `GARRICK_CAP_*` values in the launchd plists of the jobs that call the assistant, with the default for any a plist leaves out and the lowest where jobs differ. With no such plist, the page shows the caps it was built with, and the card says which it used. A cap set to 0 shows as *no cap*. A job the cap stopped gets one line in *Needs attention*, however many calls it lost.
 - **Repositories and wikis**: what is not yet committed in the workspace, each zone and the wikis, and the date and title of the newest entry in each wiki's log.
@@ -23,6 +23,7 @@ Hover a thread in the list, or move to it with the keyboard, and a card opens un
 - *Open* opens the thread note, and *Open project* its project's hub note.
 - *Copy "open Pricing"* copies the phrase that resumes the thread.
 - *Copy "park Pricing"* copies the phrase that sets it aside. On a parked thread it is *Copy "wake Pricing"*.
+- *Open in cmux*, only in the [Mac app](#a-mac-app) and only where [cmux](cmux.md) is installed, opens a cmux tab in the thread's folder and puts "open Pricing" on the clipboard: start your assistant in the tab and paste it. A project gets the same button for its own folder.
 
 The graph's panel offers the same actions under the same labels. On a project's hub note it also offers "open Acme Review", unless a thread has the same name. Names are said in the shortest form that is unique, the way the threads skill says them: "Pricing", or "Acme Review, Pricing" when two projects have a thread called Pricing, and "Work, House, Kitchen" when projects called House in two zones both have a Kitchen thread. Escape closes the card, and moving the pointer away does too.
 
@@ -42,10 +43,7 @@ The graph's panel offers the same actions under the same labels. On a project's 
    python3 System/status/status.py --workspace ~/Garrick --open
    ```
    The folder you name must hold `System/rules.md` and `Zones/`. A mistyped path stops with a message and creates nothing.
-3. **Links open the files themselves**, in whatever app opens Markdown on your machine. If you opened the workspace root in [Obsidian](obsidian.md) as a vault, pass its name and the links open there instead:
-   ```sh
-   python3 System/status/status.py --workspace ~/Garrick --obsidian Garrick --open
-   ```
+3. **Links open your notes where you read them.** Each build reads [Obsidian](obsidian.md)'s own list of vaults. A note in a vault Obsidian knows, whether that is the workspace root or a zone or wiki you opened on its own, opens there, in the vault closest to it. Any other note opens as a file, in whatever app opens Markdown on your machine. Nothing needs setting: open a folder as a vault in Obsidian and the next build links into it. To name the root vault yourself, pass `--obsidian Garrick`; to keep every link a file link, pass `--no-obsidian`.
 4. **Keep it current on a schedule**, if you like, through the jobs wrapper. It calls no assistant, so it needs no `--agent`:
    ```sh
    python3 System/jobs/job.py status --cwd ~/Garrick -- \
@@ -55,11 +53,27 @@ The graph's panel offers the same actions under the same labels. On a project's 
 
 The page says how old it is, and turns its banner red when it is more than a day and a half old, so a schedule that stopped is not mistaken for a quiet week.
 
+## A Mac app
+
+*Garrick's Status.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
+
+- **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
+- **Its buttons do what they say.** The sidebar's button becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Where cmux is installed, project and thread cards gain *Open in cmux*.
+- **Links go where your Mac sends them**: a note to Obsidian or your Markdown app, a log to its viewer.
+
+Build it once, from the workspace:
+
+```sh
+System/status/app/make-app.sh
+```
+
+It compiles `GarrickStatus.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. `--dest` puts it elsewhere. It will not replace another app of the same name. Drag it to the Dock to keep it there. To test it, `"$HOME/Applications/Garrick's Status.app/Contents/MacOS/GarrickStatus" --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
+
 ## Buttons that copy, not act
 
-The page is a file, and a file cannot act on your workspace, so its buttons copy instead. Paste what a card copies to your assistant. The sidebar copies the command that rebuilds the page. It is absolute and quoted, so it runs from any folder, and it carries the flags the page was built with.
+In a browser the page is a file, and a file cannot act on your workspace, so its buttons copy instead. Paste what a card copies to your assistant. The sidebar copies the command that rebuilds the page. It is absolute and quoted, so it runs from any folder, and it carries the flags the page was built with.
 
-Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself.
+Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself. That holds in the Mac app too. There it can rebuild the page, which writes only the page, and open a cmux tab in a folder of your workspace, which writes nothing. It hands the folder to cmux the way Finder's *Open With* does, so it needs no access to cmux's controls and types nothing into the tab.
 
 ## Reading the graph
 

@@ -4,7 +4,7 @@ This is an optional extension of the [terminal route](../terminal-setup.md). Run
 
 Garrick's own idea of a thread, one line of work with one resume point, doesn't care how many terminal windows you have open, or whether you have any open at all beyond the one you're typing in. cmux is a terminal built for running several agent sessions side by side, one per tab, which maps cleanly onto Garrick's model: a tab for each thread you are working on.
 
-Garrick ships nothing that talks to cmux directly. There's no bundled skill or config for it in `System/skills`; using it is a matter of opening one cmux tab per active thread, in the zone folder that thread lives in, the same way you'd open one plain terminal tab per thread without it.
+Garrick ships no skill or config for cmux in `System/skills`; using it is a matter of opening one cmux tab per active thread, in the zone folder that thread lives in, the same way you'd open one plain terminal tab per thread without it. The one shortcut is in the [status page](status-page.md)'s [Mac app](status-page.md#a-mac-app): where cmux is installed, a thread's card offers *Open in cmux*, which opens a tab in the thread's folder and puts "open [thread]" on the clipboard.
 
 ## How to use it
 

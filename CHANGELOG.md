@@ -4,6 +4,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- *Garrick's Status.app*, in `extras/status/app/`: the status page in a window of its own, for the Dock and the app launcher, built on the user's Mac by `make-app.sh` from one Swift file. It rebuilds the page when it is more than 30 minutes old, reloads it when it is rewritten, turns the sidebar's button into *Rebuild now*, and sends links to the app macOS uses for them. `--check` tests it without a window.
+- On the status page, inside the app and where cmux is installed, project and thread cards offer *Open in cmux*: a cmux tab in that folder, with "open [thread]" on the clipboard. It opens the folder as Finder would, with no access to cmux's controls. `--no-cmux` leaves it out.
+
+### Changed
+
+- The status page asks this machine what it has at every build. Links open a note in the Obsidian vault closest to it, read from Obsidian's own list of vaults, whether that is the workspace root or a zone or wiki opened on its own, and as a file otherwise; `--obsidian VAULT` still names the root vault, and `--no-obsidian` keeps file links. A workspace with no `Todo.md` gets no Open actions card, tile or sidebar line, and the tiles fill their row whatever their number.
+
 ## [0.2.0] - 2026-10-04
 
 The release for the first invited users: guided onboarding for the desktop apps, parking, the status page, scheduled jobs, the interview skill, a stricter wall check, and a version stamp in every workspace.

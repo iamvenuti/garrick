@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Garrick's Status: a status page for a Garrick workspace. An optional extra.
 
-    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT] [--no-graph]
+    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
@@ -30,9 +30,15 @@ Todo.md, and the targets of links: the graph reads a note's frontmatter and
 the targets of its [[links]], and draws the links as lines. The rest of a
 note's body never reaches the page. Pass --no-graph to leave the graph out.
 
-**Links open the files themselves**, in whatever app you use for Markdown.
-Pass `--obsidian VAULT` if you opened the workspace root in Obsidian as a vault
-called VAULT, and the links open there instead.
+**It offers what this machine has**, and asks at every build. A note's link
+opens it in Obsidian when Obsidian has registered the workspace, or the zone or
+wiki the note is in, as a vault; otherwise it opens the file itself, in
+whatever app you use for Markdown. `--obsidian VAULT` names the workspace root
+as the vault instead, and `--no-obsidian` keeps every link a file link. Where
+cmux is installed and the page is open in Garrick's Status.app (see `app/`),
+projects and threads also offer Open in cmux; `--no-cmux` leaves it out. A
+zone with no Todo.md gets no Open actions, and a workspace with none gets no
+card for them.
 
 Copy this folder into your workspace as `System/status/`, next to
 `System/jobs/` if you have it, and run it by hand or on a schedule through
@@ -390,7 +396,7 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
 
 
-def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict:
+def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
@@ -455,6 +461,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime) -> dict
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if kind in ("project", "thread") else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
+        if cmux and kind in ("project", "thread"):
+            nodes[-1]["f"] = str(path.parent)       # where Open in cmux starts a session
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
@@ -674,26 +682,86 @@ def age(t: dt.datetime, now: dt.datetime) -> str:
     return "%d days ago" % round(s / 86400)
 
 
+# ---- what this machine has. Obsidian and cmux are both optional, so every
+# build asks, and the page offers only what will work on it.
+MAC_APPS = (Path("/Applications"), Path.home() / "Applications")
+
+
+def mac_app(name: str, apps: Optional[List[Path]] = None) -> Optional[Path]:
+    for folder in (MAC_APPS if apps is None else apps):
+        app = Path(folder) / (name + ".app")
+        if app.is_dir():
+            return app
+    return None
+
+
+def obsidian_config() -> List[Path]:
+    """Where Obsidian keeps its list of vaults: macOS, Linux, Windows."""
+    home = Path.home()
+    found = [home / "Library" / "Application Support" / "obsidian" / "obsidian.json",
+             home / ".config" / "obsidian" / "obsidian.json"]
+    if os.environ.get("APPDATA"):
+        found.append(Path(os.environ["APPDATA"]) / "obsidian" / "obsidian.json")
+    return found
+
+
+def obsidian_vaults(ws: Path, config: Optional[Path] = None, apps: Optional[List[Path]] = None) -> List[Tuple[Path, str]]:
+    """The vaults Obsidian has registered that hold this workspace's notes:
+    the root, or a zone or wiki opened on its own, or a folder above the
+    workspace. Each comes with the name a link gives it: the folder's name,
+    or the vault's id when two registered vaults share a name. On a Mac,
+    Obsidian must still be installed. Deepest first, so a note opens in the
+    vault closest to it."""
+    if sys.platform == "darwin" and mac_app("Obsidian", apps) is None:
+        return []
+    data = None
+    for f in ([config] if config else obsidian_config()):
+        try:
+            data = json.loads(Path(f).read_text(encoding="utf-8"))
+            break
+        except (OSError, ValueError):
+            continue
+    vaults = data.get("vaults") if isinstance(data, dict) else None
+    known = [(str(vid), Path(v["path"])) for vid, v in (vaults or {}).items() if isinstance(v, dict) and v.get("path")]
+    names = [p.name for _, p in known]
+    root = ws.resolve()
+    out = []
+    for vid, folder in known:
+        where = folder.resolve()
+        if where.is_dir() and (where == root or root in where.parents or where in root.parents):
+            out.append((where, folder.name if names.count(folder.name) == 1 else vid))
+    return sorted(out, key=lambda v: len(v[0].parts), reverse=True)
+
+
+def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
+    """cmux is a macOS app; the page offers it where it is installed."""
+    return sys.platform == "darwin" and mac_app("cmux", apps) is not None
+
+
 class Links:
-    def __init__(self, ws: Path, vault: Optional[str]):
-        self.ws, self.vault = ws, vault
+    def __init__(self, ws: Path, vault: Optional[str] = None, vaults: Optional[List[Tuple[Path, str]]] = None):
+        """`vault` names the workspace root as a vault; `vaults` are the
+        vaults found on this machine, deepest first."""
+        self.ws = ws
+        self.vaults = [(ws, vault)] if vault else list(vaults or [])
 
     def __call__(self, path: Path) -> str:
         """A link to the file. In Obsidian a file is named by its path in the
         vault, so a note that is a symlink to a file elsewhere keeps the path
-        of the link; a file outside the workspace, such as a job's log, is
-        linked as a file."""
-        if self.vault:
-            rel = None
+        of the link; a file in no vault, such as a job's log, is linked as a
+        file."""
+        for root, name in self.vaults:
             for candidate in (Path(os.path.abspath(path)), path.resolve()):
-                try:
-                    rel = candidate.relative_to(self.ws).as_posix()
-                    break
-                except ValueError:
-                    continue
-            if rel is not None:
-                rel = rel[:-3] if rel.endswith(".md") else rel
-                return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(self.vault), urllib.parse.quote(rel))
+                rel = None
+                for base in (Path(os.path.abspath(root)), Path(root).resolve()):
+                    try:
+                        rel = candidate.relative_to(base).as_posix()
+                        break
+                    except ValueError:
+                        continue
+                if rel is not None:
+                    rel = rel[:-3] if rel.endswith(".md") else rel
+                    return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(name), urllib.parse.quote(rel))
         return path.resolve().as_uri()
 
 
@@ -745,14 +813,17 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
                         else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
 
 
-def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int]) -> str:
+def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False) -> str:
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
-    the note was updated, whether it is parked, the name to say, and links."""
-    return json.dumps({"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
-                       "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
-                       "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""},
-                      separators=(",", ":"), ensure_ascii=False)
+    the note was updated, whether it is parked, the name to say, and links.
+    Where cmux is installed, also the thread's folder, for Open in cmux."""
+    card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
+            "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
+            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""}
+    if cmux:
+        card["f"] = str(r["note"].parent)
+    return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
 
 
 def copy(label: str, text: str, say: str) -> str:
@@ -768,12 +839,14 @@ def script_json(data) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
-def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = True, out: Optional[Path] = None) -> str:
+def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = True, out: Optional[Path] = None,
+                    flags: Tuple[str, ...] = ()) -> str:
     """The command that builds this page again, with the flags it was built
     with, absolute and quoted so it runs from any folder."""
     words = ["python3", str(Path(__file__).resolve()), "--workspace", str(ws)]
     if vault:
         words += ["--obsidian", vault]
+    words += list(flags)
     if not show_graph:
         words.append("--no-graph")
     if out is not None:
@@ -878,7 +951,7 @@ nav a .n{margin-left:auto;font-size:11px;color:var(--muted)}nav .sub{padding-lef
 .seg button{flex:1;border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 0;border-radius:6px;cursor:pointer}.seg button.on{background:var(--wash);color:var(--ink)}
 main{padding:26px 30px 80px;min-width:0}
 .stale{display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--critical);font-weight:600}
-.top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(4,minmax(140px,1fr));gap:14px;margin-bottom:18px}
+.top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(var(--tiles,4),minmax(140px,1fr));gap:14px;margin-bottom:18px}
 .hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
 .hero{display:flex;flex-direction:column;justify-content:space-between}
 .hero .fig{font:600 52px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
@@ -976,11 +1049,19 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 # What a note's panel in the graph and a thread's card in the list both show,
 # built in one place, so the two offer the same actions under the same labels.
 # Each action opens a file or copies a phrase; none acts on the workspace.
+# Inside Garrick's Status.app (extras/status/app/), which answers to
+# window.webkit.messageHandlers.garrick, a project or thread with a folder
+# (`f`, there only where cmux is installed) also gets Open in cmux: a cmux tab
+# in that folder, with the phrase that resumes it on the clipboard.
 PANEL_JS = r"""
 var Panel=(function(){
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
+function cmux(o){var p=o.w?'open '+o.w:'';return'<button class="act" type="button" data-cmux="'+esc(o.f)+'"'+(p?' data-copy="'+esc(p)+'"':'')
++' data-say="'+esc(p?'Opened a cmux tab in '+o.n+'. Start your assistant and paste “'+p+'”.':'Opened a cmux tab in '+o.n+'.')+'">Open in cmux</button>'}
 function acts(o){var a='<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
+if(o.f&&host)a+=cmux(o);
 if(o.w){a+=copy('open '+o.w);if(!o.h)a+=copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
@@ -1003,8 +1084,16 @@ var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&
 var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,y=e.type==='focusin'?r.top:e.clientY,w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,Math.max(8,x-w/2))+'px';tip.style.top=(y-tip.offsetHeight-12)+'px'}
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);
 var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
-function put(text){if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
-document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* In Garrick's Status.app the app copies, opens cmux and rebuilds; in a browser
+   the page copies and nothing else. */
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
+if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
+var rb=document.getElementById('rebuild');if(host&&rb){rb.textContent='Rebuild now';rb.removeAttribute('data-copy');rb.title='Build the page again now';
+rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
+document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
+var c=t.closest('button[data-cmux]');if(c&&host){host.postMessage({cmux:c.dataset.cmux,copy:c.dataset.copy||''});say(c.dataset.say);return}
+var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -1273,11 +1362,15 @@ if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].
 
 
 def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
-          show_graph: bool = True, out: Optional[Path] = None) -> str:
+          show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
+          cmux: bool = False, flags: Tuple[str, ...] = ()) -> str:
+    """The page. `vaults` and `cmux` say what this machine has (main() asks
+    obsidian_vaults() and cmux_installed()); `flags` go into the rebuild
+    command as given."""
     now = now or dt.datetime.now()
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
-    link = Links(ws, vault)
+    link = Links(ws, vault, vaults)
     T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
     sched = launchd_jobs() if folder.is_dir() else {}     # the plists matter only to the jobs extra
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
@@ -1320,7 +1413,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     navh += "".join('<a class="sub" href="#zone-%s">%s<span class="n">%d</span></a>' % (re.sub(r"\W+", "-", z.lower()), E(z), len(T[z]["rows"])) for z in T)
     more = [("checks", "Checks", "critical" if C and (C.get("errors") or C.get("failed")) else "warning" if C and C.get("warnings") else "good",
              (C.get("errors", 0) + C.get("warnings", 0)) if C and not C.get("failed") else ""),
-            ("todo", "Open actions", "good", open_actions), ("inboxes", "Inboxes", "warning" if waiting else "good", waiting or "")]
+            ("inboxes", "Inboxes", "warning" if waiting else "good", waiting or "")]
+    if TD:                                    # a workspace with no Todo.md gets no Open actions at all
+        more.insert(1, ("todo", "Open actions", "good", open_actions))
     if J:
         more.append(("jobs", "Scheduled jobs", "critical" if any(j["state"] == "critical" for j in J) else "good", len(J)))
     if L:
@@ -1336,8 +1431,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
              % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall),
                 live, "" if live == 1 else "s", week, navh,
-                copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out),
-                     "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'class="act wide"')))
+                copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out, flags),
+                     "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'id="rebuild" class="act wide"')))
 
     # ---- hero and tiles
     if attn:
@@ -1345,16 +1440,17 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
     else:
         hero = '<div class="hero" id="overview"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
-    tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging)),
-             ("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s")),
-             ("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes"),
-             ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
-              if C and not C.get("failed") else "—", "run just now" if C else "check.py not found")]
+    tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging))]
+    if TD:
+        tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s")))
+    tiles += [("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes"),
+              ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
+               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found")]
     if L:
         cap = L["caps"]["calls_day"]
-        tiles[3] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
+        tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
                     "$%.2f at list price" % L["cost_day"])
-    top = '<div class="top">%s%s</div>' % (hero, "".join(
+    top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
         '<div class="tile"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></div>' % (E(a), b, E(c)) for a, b, c in tiles))
 
     # ---- attention
@@ -1376,14 +1472,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
             rows.append('<div class="thread" data-ok="%d" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small></div>'
                         '<div class="fresh %s"><i style="width:%.1f%%"></i></div><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (k == "good", E(thread_card(r, names, link, days)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
+                        % (k == "good", E(thread_card(r, names, link, days, cmux)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
                            k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)), "%dd" % days if days is not None else "—"))
         held = []
         for r in data["parked"]:
             days = (now.date() - r["updated"]).days if r["updated"] else None
             held.append('<div class="thread" data-ok="1" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s</small></div>'
                         '<span></span><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (E(thread_card(r, names, link, days)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
+                        % (E(thread_card(r, names, link, days, cmux)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
                            "%dd" % days if days is not None else "—"))
         slug = re.sub(r"\W+", "-", z.lower())
         parked_block = ('<details class="parked" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
@@ -1425,7 +1521,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
-    todo_card = card("todo", "Open actions", "unticked items in each zone's Todo.md", tb or '<p class="muted">No Todo.md found.</p>')
+    todo_card = card("todo", "Open actions", "unticked items in each zone's Todo.md", tb) if TD else ""
     ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name">%s<small>%s</small></div></a>' % (
         0 if n else 1, E(link(f)), ICON["warning" if n else "good"], E(name), "%d waiting" % n if n else "empty") for name, f, n in IB)
     inbox_card = card("inboxes", "Inboxes", "files waiting to be filed; say \"process the inbox\"", '<div class="tiles">%s</div>' % ib)
@@ -1477,7 +1573,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # ---- the graph
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now)
+        GR = graph(ws, T, link, now, cmux)
         core = sum(1 for n in GR["nodes"] if n["c"])
         legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E(label)) for i, label in GR["kinds"])
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
@@ -1506,7 +1602,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build the status page for a Garrick workspace.")
     ap.add_argument("--workspace", help="the workspace folder (default: GARRICK_WORKSPACE, or the folder this runs in)")
     ap.add_argument("--out", help="where to write the page (default: System/generated/status.html)")
-    ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault")
+    ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault "
+                    "(by default the page uses the vaults Obsidian has registered)")
+    ap.add_argument("--no-obsidian", action="store_true", help="link to the files themselves, even where Obsidian has a vault")
+    ap.add_argument("--no-cmux", action="store_true", help="leave Open in cmux out, even where cmux is installed")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
     ap.add_argument("--no-graph", action="store_true", help="leave the graph out: the page then reads nothing but frontmatter")
     args = ap.parse_args(argv)
@@ -1528,7 +1627,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None), encoding="utf-8")
+    vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
+    flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
+    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
+                         vaults=vaults, cmux=not args.no_cmux and cmux_installed(), flags=flags), encoding="utf-8")
     os.replace(tmp, out)
     print(out)
     if args.open:

@@ -4,6 +4,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-04
+
+New wording: Garrick as an AI chief of staff that remembers your work and knows whose confidences you hold, running on the agent you already use.
+
+### Changed
+
+- The README opens with "Garrick remembers your work and knows whose confidences you hold", then "An AI chief of staff for your knowledge work, running on the agent you already use. Everything stays in files you own." Claude Code or Codex is described as the agent underneath. The GitHub description, the social card and the deck's cover and claim slide say the same.
+- The launch walkthrough is re-cut with that wording at the opening, in the first app scene and at the close. The rest of the walkthrough is unchanged; captions in `docs/assets/garrick-launch-video.srt`.
+
 ## [0.3.0] - 2026-10-04
 
 The status page in a Mac app of its own, and a page that offers Obsidian and cmux only where the machine has them.
@@ -91,7 +100,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/iamvenuti/garrick/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iamvenuti/garrick/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/iamvenuti/garrick/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/iamvenuti/garrick/releases/tag/v0.1.0

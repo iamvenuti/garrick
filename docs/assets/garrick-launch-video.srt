@@ -1,67 +1,67 @@
 1
-00:00:00,900 --> 00:00:02,777
-Pick up any project where you left it.
+00:00:00,900 --> 00:00:04,356
+Garrick remembers your work, and knows whose confidences you hold.
 
 2
-00:00:03,127 --> 00:00:07,884
-Its decisions, its source material and its next action, kept in files you own.
+00:00:04,706 --> 00:00:11,917
+An AI chief of staff for your knowledge work, running on the agent you already use. Everything stays in files you own.
 
 3
-00:00:09,184 --> 00:00:16,224
-Garrick is a workspace of plain files, run by the assistant you choose: Claude or Codex, in an app or a terminal.
+00:00:13,217 --> 00:00:17,014
+Underneath, Claude or Codex does the work, in an app or a terminal.
 
 4
-00:00:16,524 --> 00:00:18,956
+00:00:17,314 --> 00:00:19,746
 Every line of work keeps one resume point.
 
 5
-00:00:19,456 --> 00:00:20,907
+00:00:20,246 --> 00:00:21,697
 SAM: Open launch plan.
 
 6
-00:00:26,712 --> 00:00:30,893
+00:00:27,502 --> 00:00:31,683
 Calls and mail land in your inboxes. It files each one where it belongs.
 
 7
-00:00:31,293 --> 00:00:32,786
+00:00:32,083 --> 00:00:33,576
 SAM: Process the inbox.
 
 8
-00:00:41,550 --> 00:00:42,233
+00:00:42,340 --> 00:00:43,023
 SAM: Both.
 
 9
-00:00:45,278 --> 00:00:51,529
+00:00:46,068 --> 00:00:52,319
 Acme and Birch compete, so you've declared a wall between them. You met their carrier, Cobalt, once for each.
 
 10
-00:00:51,929 --> 00:00:53,252
+00:00:52,719 --> 00:00:54,042
 SAM: Prep me for Cobalt.
 
 11
-00:01:00,025 --> 00:01:02,265
+00:01:00,815 --> 00:01:03,055
 The Acme call stays out of Birch's brief.
 
 12
-00:01:02,565 --> 00:01:06,938
+00:01:03,355 --> 00:01:07,728
 Walls are rules for the assistant, backed by limited checks before a commit.
 
 13
-00:01:08,138 --> 00:01:12,170
+00:01:08,928 --> 00:01:12,960
 SAM: Board said March, and Theo's budget comes Wednesday. Wrap up.
 
 14
-00:01:16,425 --> 00:01:21,310
+00:01:17,215 --> 00:01:22,100
 Tomorrow, Claude or Codex picks up from that note, not from a lost conversation.
 
 15
-00:01:22,510 --> 00:01:28,099
+00:01:23,300 --> 00:01:28,889
 And an optional page, Garrick's Status, answers two questions: is anything wrong, and where was I?
 
 16
-00:01:29,399 --> 00:01:33,858
-Your work, ready to pick up again, in files you own, with boundaries you declare.
+00:01:30,189 --> 00:01:33,922
+Your work, remembered, in files you own, with boundaries you declare.
 
 17
-00:01:34,358 --> 00:01:35,126
+00:01:34,422 --> 00:01:35,190
 Garrick.

@@ -4,15 +4,17 @@
 
 [![Tests](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml/badge.svg)](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml) [![MIT licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg) ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 
-**Pick up any project where you left it, with its decisions, source material and next action kept in files you own.**
+**Garrick remembers your work and knows whose confidences you hold.**
 
-Garrick gives Claude Code or Codex a workspace for your work and your memory. Ask it to file a conversation, prepare a brief or close a session. It keeps the record in plain folders on your Mac, so another session can pick up from the saved notes.
+An AI chief of staff for your knowledge work, running on the agent you already use. Everything stays in files you own.
 
-Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the assistant rules for using it, and checks project files for specific signs of information crossing a declared boundary.
+Underneath, Claude Code or Codex does the work, in its desktop app or a terminal. Ask Garrick to file a conversation, prepare a brief or close a session. It keeps the record in plain folders on your Mac, so the next session picks up from the saved notes, whichever agent runs it.
 
-[![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/user-attachments/assets/cc315cd1-d505-4d9b-b477-bd0976888aa9)
+Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the agent rules for using it, and checks project files for specific signs of information crossing a declared boundary.
 
-https://github.com/user-attachments/assets/cc315cd1-d505-4d9b-b477-bd0976888aa9
+[![A dramatised example of a brief using one client's meeting and holding back the other client's material.](docs/assets/demo-wall.gif)](https://github.com/user-attachments/assets/83ce60b8-a4d4-402f-bc24-804eaddda3c1)
+
+https://github.com/user-attachments/assets/83ce60b8-a4d4-402f-bc24-804eaddda3c1
 
 *The walkthrough, 98 seconds, with [captions](docs/assets/garrick-launch-video.srt). Dramatised with fictional data; it illustrates the intended workflow.*
 

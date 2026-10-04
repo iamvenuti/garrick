@@ -16,7 +16,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |
-| `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs and the status page |
+| `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs, and the status page with its Mac app |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |
 | `tests/` | `python3 -m unittest discover -s tests` |

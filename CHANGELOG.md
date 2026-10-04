@@ -4,11 +4,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-04
+
+Every install now records what Garrick wrote, so a later update can tell the user's edits from Garrick's own files; and the status page gains Settings, with About Garrick and the ways to report a problem.
+
 ### Added
 
 - The version stamp, `System/garrick-version.json`, now lists every file Garrick wrote into the workspace, by path and SHA-256: the installer's files, and those of a zone `scaffold.py zone` adds later. A future update can then replace a file that is still as Garrick wrote it and leave one the user has changed for a merge. `System/context.md`, which holds the user's own answers, is never listed. A workspace installed before this has no list, so an update will treat all its files as the user's.
 - `check.py --version` adds how many of those files have changed since, or are gone: counts only, since a path names a zone and a zone's name can be a client's. Still one line.
-- The status page has *Settings*, and the Mac app has *Settings…* (⌘,). Under *About Garrick* it shows the installed version, as `check.py --version` says it. It also links to GitHub to report a bug (the form arrives with the version filled in), report a wrong refusal, suggest a change, ask a question, or see what's new. Without a GitHub account, you can copy a report to send instead. The links open in the browser. The page still loads nothing and sends nothing, and it never checks for updates.
+- The status page has *Settings*, and the Mac app has *Settings…* (⌘,). Under *About Garrick* it shows the installed version, as `check.py --version` says it. It also links to GitHub to report a bug (the form arrives with the version filled in), report a wrong refusal, suggest a change, ask a question, or see what's new. Without a GitHub account, you can copy a report to send instead. The links open in the browser. The page still loads nothing and sends nothing, and it never checks for updates. In the Mac app, the menu item arrives once `make-app.sh` is run again; the page's own Settings button works without that.
 
 ## [0.3.1] - 2026-10-04
 
@@ -106,7 +110,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/iamvenuti/garrick/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iamvenuti/garrick/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/iamvenuti/garrick/compare/v0.1.0...v0.2.0

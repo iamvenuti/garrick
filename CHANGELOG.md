@@ -8,6 +8,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - The version stamp, `System/garrick-version.json`, now lists every file Garrick wrote into the workspace, by path and SHA-256: the installer's files, and those of a zone `scaffold.py zone` adds later. A future update can then replace a file that is still as Garrick wrote it and leave one the user has changed for a merge. `System/context.md`, which holds the user's own answers, is never listed. A workspace installed before this has no list, so an update will treat all its files as the user's.
 - `check.py --version` adds how many of those files have changed since, or are gone: counts only, since a path names a zone and a zone's name can be a client's. Still one line.
+- The status page has *Settings*, and the Mac app has *Settings…* (⌘,). Under *About Garrick* it shows the installed version, as `check.py --version` says it. It also links to GitHub to report a bug (the form arrives with the version filled in), report a wrong refusal, suggest a change, ask a question, or see what's new. Without a GitHub account, you can copy a report to send instead. The links open in the browser. The page still loads nothing and sends nothing, and it never checks for updates.
 
 ## [0.3.1] - 2026-10-04
 

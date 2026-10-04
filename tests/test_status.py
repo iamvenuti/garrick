@@ -322,7 +322,10 @@ class TestLayout(StatusCase):
 
 class TestSelfContained(StatusCase):
     def test_nothing_from_the_network(self):
-        html = self.page()
+        # Settings' links to Garrick's GitHub page are the only web addresses,
+        # and only as links the reader follows; TestSettings holds them to that.
+        html = re.sub(r'<a class="setlink" href="https://github\.com/iamvenuti/garrick/[^"]*"', "<a", self.page())
+        html = re.sub(r'<a href="https://github\.com/iamvenuti/garrick/security/advisories/new"', "<a", html)
         self.assertNotIn("http://", html)
         self.assertNotIn("https://", html)
         self.assertNotIn("<script src", html)
@@ -499,6 +502,64 @@ class TestThreadCards(StatusCase):
         html = self.page()
         self.assertEqual(["alpha", "Market Sizing", "Pricing", "Zebra"], thread_order(html))
         self.assertEqual(["Aardvark", "beta"], thread_order(html, 'id="parked-work"'))
+
+
+class TestSettings(StatusCase):
+    """Settings › About Garrick: the version, and links to Garrick's GitHub page."""
+
+    def dialog(self):
+        html = self.page()
+        return html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+
+    def stamp(self):
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", self.root / "System" / "tools")
+        write(self.root / "System" / "garrick-version.json",
+              json.dumps({"commit": "abc1234", "date": "2026-10-04", "from": "download"}))
+        status._LIBS.clear()
+
+    def hrefs(self, dialog):
+        return [htmllib.unescape(h) for h in re.findall(r'href="(https://[^"]*)"', dialog)]
+
+    def test_without_a_stamp_the_version_is_unknown(self):
+        self.assertIn(htmllib.escape(status.UNKNOWN), self.dialog())
+
+    def test_the_version_is_the_stamps(self):
+        self.stamp()
+        self.assertIn("Garrick abc1234 of 4 October 2026, installed from a download.", self.dialog())
+
+    def test_the_bug_form_arrives_with_the_version(self):
+        self.stamp()
+        bug = next(h for h in self.hrefs(self.dialog()) if "/issues/new?template=bug.yml" in h)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(bug).query)
+        form = (REPO / ".github" / "ISSUE_TEMPLATE" / query["template"][0]).read_text(encoding="utf-8")
+        self.assertIn("id: garrick\n", form)                  # the field the link fills must still exist
+        self.assertTrue(query["garrick"][0].startswith("Garrick abc1234 of 4 October 2026"))
+
+    def test_links_go_only_to_garrick_and_open_outside(self):
+        dialog = self.dialog()
+        links = self.hrefs(dialog)
+        self.assertEqual(6, len(links))
+        for h in links:
+            self.assertTrue(h.startswith(status.PROJECT + "/"), h)
+        for tag in re.findall(r'<a [^>]*href="https://[^>]*>', dialog):
+            self.assertIn('target="_blank" rel="noopener"', tag)
+        self.assertTrue((REPO / ".github" / "ISSUE_TEMPLATE" / "wall-check.yml").is_file())
+        chooser = (REPO / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn(status.PROJECT + "/discussions/categories/ideas", chooser)   # the same category the chooser names
+        self.assertIn(status.PROJECT + "/discussions/new?category=ideas", links)
+        self.assertIn(status.PROJECT + "/releases", links)
+
+    def test_a_report_to_copy_carries_the_version_and_the_warning(self):
+        self.stamp()
+        report = htmllib.unescape(re.search(r'data-copy="([^"]*)"[^>]*>Copy a report<', self.dialog()).group(1))
+        self.assertIn("Which Garrick: Garrick abc1234", report)
+        self.assertIn("invented names", report)
+
+    def test_the_app_opens_it(self):
+        swift = (REPO / "extras" / "status" / "app" / "GarrickStatus.swift").read_text(encoding="utf-8")
+        self.assertIn("window.StatusSettings.open()", swift)
+        self.assertIn("window.StatusSettings=", status.JS)
 
 
 class TestPanels(StatusCase):

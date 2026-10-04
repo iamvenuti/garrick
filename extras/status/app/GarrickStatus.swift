@@ -224,6 +224,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 
 	@objc func reloadPage(_ sender: Any?) { reload() }
 	@objc func rebuildPage(_ sender: Any?) { freshen(force: true) }
+	@objc func openSettings(_ sender: Any?) { web.evaluateJavaScript("window.StatusSettings && window.StatusSettings.open()") }
 	@objc func openInBrowser(_ sender: Any?) { NSWorkspace.shared.open(page) }
 	@objc func actualSize(_ sender: Any?) { web.pageZoom = 1 }
 	@objc func zoomIn(_ sender: Any?) { web.pageZoom = min(web.pageZoom + 0.1, 3) }
@@ -245,6 +246,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		}
 		sub("Garrick's Status", [
 			item("About Garrick's Status", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+			item("Settings…", #selector(openSettings(_:)), ","),
 			.separator(),
 			item("Hide Garrick's Status", #selector(NSApplication.hide(_:)), "h"),
 			item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),

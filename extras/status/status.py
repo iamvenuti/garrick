@@ -73,6 +73,12 @@ EXIT = {0: "ok", 3: "answer incomplete", 4: "could not sign in", 6: "missing con
 OK_EXITS = (0, 75)
 LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)|skipped)")
 TODO_ITEM = re.compile(r"^\s*-\s\[ \]\s")
+# Where Garrick lives, for Settings › About Garrick. The page loads nothing from
+# it: each link opens in your browser, and a report goes only when you submit
+# it there yourself.
+PROJECT = "https://github.com/iamvenuti/garrick"
+UNKNOWN = ("Garrick, version unknown: this workspace has no record of the copy it was installed from. "
+           "Say the day you downloaded it instead.")
 
 
 # --------------------------------------------------------------------------- where things are
@@ -148,6 +154,25 @@ def workspace_lib(ws: Optional[Path]):
                 mod = None
         _LIBS[ws] = mod
     return _LIBS[ws]
+
+
+def installed_version(ws: Path) -> str:
+    """Which Garrick this workspace came from, in the words `check.py --version`
+    uses, read from the stamp the installer wrote. A workspace whose tools
+    predate the stamp says the version is unknown."""
+    lib = workspace_lib(ws)
+    read, say = getattr(lib, "read_version", None), getattr(lib, "say_version", None)
+    if not (callable(read) and callable(say)):
+        return UNKNOWN
+    try:
+        stamp = read(ws)
+        said = [say(stamp)]
+        changes = getattr(lib, "say_changes", None)
+        if callable(changes):
+            said.append(changes(ws, stamp))
+        return " ".join(s for s in said if s) or UNKNOWN
+    except Exception:
+        return UNKNOWN
 
 
 def _value(raw: str):
@@ -832,6 +857,38 @@ def copy(label: str, text: str, say: str) -> str:
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
 
 
+def settings(ws: Path) -> str:
+    """Settings › About Garrick: which Garrick this is, and the ways to report a
+    bug, suggest a change or see what's new. Each is a link to Garrick's GitHub
+    page, opened in the browser, where nothing is sent until you submit it
+    yourself; the bug form arrives with the version filled in. For someone
+    with no GitHub account, a report to copy and send to whoever set Garrick
+    up. Nothing here checks for updates: the page never calls out."""
+    version = installed_version(ws)
+    report = ("Garrick bug report\n\nWhich Garrick: %s\n\nWhat happened:\n\nHow to make it happen again:\n\n"
+              "Assistant and its version:\n\nUse invented names (Acme, Birch), never a real client's." % version)
+    links = [
+        ("Report a bug", "/issues/new?" + urllib.parse.urlencode({"template": "bug.yml", "garrick": version}),
+         "The bug form on GitHub, with this version filled in"),
+        ("Report a wrong refusal", "/issues/new?template=wall-check.yml", "The wall check refused something it should allow"),
+        ("Suggest a change", "/discussions/new?category=ideas", "Something Garrick should do, or do differently"),
+        ("Ask a question", "/discussions/new?category=q-a", "How something works, or how it went for you"),
+        ("What's new", "/releases", "Every release and what it changed"),
+    ]
+    rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"><b>%s</b><small>%s</small></a>'
+                   % (E(PROJECT + path), E(label), E(about)) for label, path, about in links)
+    return ('<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title">Settings</h2>'
+            '<h3>About Garrick</h3><p class="setver" id="garrick-version">%s</p>'
+            '<div class="gacts">%s%s</div><div class="setlinks">%s</div>'
+            '<p class="hint">These open GitHub in your browser. The page sends nothing: a report goes only when you submit it '
+            'there. Use invented names (Acme, Birch), never a real client&#39;s. No GitHub account? Copy a report and send '
+            'it to whoever set Garrick up for you. A way past the wall check: <a href="%s" target="_blank" rel="noopener">'
+            'report it privately</a>.</p><div class="gacts"><button class="act" type="button" id="close-settings" autofocus>Done</button></div></dialog>'
+            % (E(version), copy("Copy version", version, "Copied the version."),
+               copy("Copy a report", report, "Copied a report. Fill it in and send it."), rows,
+               E(PROJECT + "/security/advisories/new")))
+
+
 def script_json(data) -> str:
     """JSON safe inside a <script> element: with <, > and & written as escapes,
     no title can close the element or open a comment in it."""
@@ -1003,6 +1060,11 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .thread{border-radius:6px;transition:background .1s}.thread:hover,.thread.on{background:var(--wash)}
 .act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
+#settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:22px 24px;box-shadow:var(--shadow)}
+#settings::backdrop{background:rgba(0,0,0,.35)}#settings h2{margin:0 0 14px;font:600 20px/1.2 var(--display)}#settings h3{margin:0 0 6px;font-size:13px}
+#settings .setver{margin:0;font-size:13px;color:var(--ink2)}#settings .hint{margin-top:12px}#settings .hint a{color:var(--accent)}
+.setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:9px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+.setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
@@ -1094,6 +1156,17 @@ rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
 var c=t.closest('button[data-cmux]');if(c&&host){host.postMessage({cmux:c.dataset.cmux,copy:c.dataset.copy||''});say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* Settings: a modal dialog sits above the page, so the toast moves into it
+   while it is open, or nothing it copies would say so. The app's Settings…
+   (⌘,) calls StatusSettings.open(). */
+var sd=document.getElementById('settings');
+function sdShut(){sd.close()}
+sd.addEventListener('close',function(){document.body.appendChild(toast)});
+sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
+if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
+window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal()}};
+document.getElementById('open-settings').onclick=window.StatusSettings.open;
+document.getElementById('close-settings').onclick=sdShut;
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -1425,7 +1498,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
     aside = ('<aside><div class="brand">%s<div><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
-             '<div class="controls">%s<p class="hint" id="hidden-note" hidden></p>'
+             '<div class="controls"><button class="act wide" type="button" id="open-settings" title="Which Garrick this is, and how to report a bug or suggest a change">Settings</button>'
+             '%s<p class="hint" id="hidden-note" hidden></p>'
              '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
@@ -1593,9 +1667,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<div class="slot full" data-slot="bottom"></div></div></main>'
             % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>%s</title>%s<style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>'
+            '<title>%s</title>%s<style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
+                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, settings(ws),
+                PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

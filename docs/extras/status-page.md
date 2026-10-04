@@ -16,6 +16,19 @@ One page, Garrick's Status, that answers two questions before you open anything:
 
 A sidebar holds Garrick's mark, the overall state, a *problems only* switch that hides everything healthy, and a light, dark or automatic theme. Every section folds. Every card except *Needs attention* can be dragged by the grip in its header to another place on the page, or hidden with its ×; a hidden card is dimmed in the sidebar, and clicking it there brings it back. *Reset view* puts everything back as built, parked notes hidden again, and keeps your theme. The page remembers all of this in your browser and nowhere else, so each browser keeps its own.
 
+## Settings
+
+*Settings*, at the top of the sidebar's buttons, opens *About Garrick*. It says which Garrick the workspace was installed from, in the same words as `python3 System/tools/check.py --version`, and *Copy version* copies that line. Below it are the ways to reach Garrick's maintainers:
+
+- *Report a bug* opens the bug form on GitHub with *Which Garrick* already filled in.
+- *Report a wrong refusal* opens the form for a refusal by the wall check that should have passed.
+- *Suggest a change* and *Ask a question* open a new discussion under Ideas or Q&A.
+- *What's new* opens the list of releases, each with what it changed.
+
+Each one opens in your browser, and nothing is sent until you submit it there yourself. If you have no GitHub account, *Copy a report* copies an outline with your version in it. Fill it in and send it to whoever set Garrick up for you. Use invented names (Acme, Birch) in anything you report, never a real client's. A way to get past the wall check goes in a private report, not an issue: the dialog links to it.
+
+The page never checks for a newer Garrick. It would have to ask GitHub every time it rebuilt, and the page loads nothing from the network. To see whether there is one, compare *What's new* with your version.
+
 ## Thread cards
 
 Hover a thread in the list, or move to it with the keyboard, and a card opens under it. It shows the thread's name, zone and project, its party, and how long since its note was updated, or that it is parked. Then come the actions:
@@ -58,7 +71,7 @@ The page says how old it is, and turns its banner red when it is more than a day
 *Garrick's Status.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
 
 - **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
-- **Its buttons do what they say.** The sidebar's button becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Where cmux is installed, project and thread cards gain *Open in cmux*.
+- **Its buttons do what they say.** The sidebar's button becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Where cmux is installed, project and thread cards gain *Open in cmux*. To open [Settings](#settings), choose *Settings…* in the app menu or press ⌘-comma.
 - **Links go where your Mac sends them**: a note to Obsidian or your Markdown app, a log to its viewer.
 
 Build it once, from the workspace:

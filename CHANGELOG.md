@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-04
+
+The status page in a Mac app of its own, and a page that offers Obsidian and cmux only where the machine has them.
+
 ### Added
 
 - *Garrick's Status.app*, in `extras/status/app/`: the status page in a window of its own, for the Dock and the app launcher, built on the user's Mac by `make-app.sh` from one Swift file. It rebuilds the page when it is more than 30 minutes old, reloads it when it is rewritten, turns the sidebar's button into *Rebuild now*, and sends links to the app macOS uses for them. `--check` tests it without a window.
@@ -87,6 +91,7 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/iamvenuti/garrick/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/iamvenuti/garrick/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/iamvenuti/garrick/releases/tag/v0.1.0

@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
+    VERSION_STAMP,
     MEDIA_EXTS,
     WALL_HOOK_MARK,
     has_wall_hook,
@@ -53,6 +54,7 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     parse_mail_bytes,
     read_version,
+    say_changes,
     say_version,
     sounds_alike,
     strip_recipients,
@@ -443,6 +445,8 @@ def check_placeholders(ws: Workspace) -> List[Finding]:
     for path in walk_files(ws.root):
         if is_template_path(ws, path) or is_generated(ws, path):
             continue
+        if rel(ws, path) == "/".join(VERSION_STAMP):
+            continue    # it lists the templates' files, whose names hold placeholders by design
         found = PLACEHOLDER_RE.findall(rel(ws, path))
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix == "":
             text = read_text(path)
@@ -2082,7 +2086,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.install_hooks:
         return install_hooks(root)
     if args.version:
-        print(say_version(read_version(root)))
+        stamp = read_version(root)
+        print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))
         return 0
     findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None)
     if args.staged and not (args.json or args.ear):

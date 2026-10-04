@@ -4,6 +4,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- The version stamp, `System/garrick-version.json`, now lists every file Garrick wrote into the workspace, by path and SHA-256: the installer's files, and those of a zone `scaffold.py zone` adds later. A future update can then replace a file that is still as Garrick wrote it and leave one the user has changed for a merge. `System/context.md`, which holds the user's own answers, is never listed. A workspace installed before this has no list, so an update will treat all its files as the user's.
+- `check.py --version` adds how many of those files have changed since, or are gone: counts only, since a path names a zone and a zone's name can be a client's. Still one line.
+
 ## [0.3.1] - 2026-10-04
 
 New wording: Garrick as an AI chief of staff that remembers your work and knows whose confidences you hold, running on the agent you already use.

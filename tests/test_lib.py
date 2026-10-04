@@ -221,6 +221,41 @@ class TestVersion(unittest.TestCase):
             write(Path(tmp) / "System" / "garrick-version.json", "not json")
             self.assertEqual({}, lib.read_version(tmp))
 
+    def test_fingerprints_leave_out_answers_the_stamp_links_and_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("AGENTS.md", "System/rules.md", "System/context.md", "System/garrick-version.json", "Zones/Work/.git/config"):
+                write(root / rel, rel)
+            os.symlink("System", root / "link")
+            found = lib.fingerprints(root, [p for p in root.rglob("*")] + [Path("/elsewhere/file")])
+            self.assertEqual(["AGENTS.md", "System/rules.md"], list(found))
+            self.assertEqual(lib.fingerprint(root / "AGENTS.md"), found["AGENTS.md"])
+
+    def test_changes_are_counted_and_said(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("a.md", "b.md", "c.md"):
+                write(root / rel, rel)
+            stamp = {"commit": "3f9c2ab", "files": lib.fingerprints(root, root.iterdir())}
+            self.assertEqual((3, 0, 0), lib.installed_changes(root, stamp))
+            self.assertEqual("All 3 files Garrick wrote are as it wrote them.", lib.say_changes(root, stamp))
+            write(root / "a.md", "mine now")
+            (root / "b.md").unlink()
+            self.assertEqual((3, 1, 1), lib.installed_changes(root, stamp))
+            self.assertEqual("Of the 3 files Garrick wrote, 1 changed and 1 gone since.", lib.say_changes(root, stamp))
+            self.assertEqual("", lib.say_changes(root, {"commit": "3f9c2ab"}))      # installed before the list existed
+
+    def test_new_files_join_only_a_stamp_that_keeps_a_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root / "Zones/Advisory/AGENTS.md", "zone")
+            write(root / "System" / "garrick-version.json", '{"commit": "3f9c2ab"}')
+            self.assertFalse(lib.record_written(root, [root / "Zones/Advisory/AGENTS.md"]))
+            self.assertEqual({"commit": "3f9c2ab"}, lib.read_version(root))
+            write(root / "System" / "garrick-version.json", '{"commit": "3f9c2ab", "files": {"AGENTS.md": "x"}}')
+            self.assertTrue(lib.record_written(root, [root / "Zones/Advisory/AGENTS.md"]))
+            self.assertEqual(["AGENTS.md", "Zones/Advisory/AGENTS.md"], list(lib.read_version(root)["files"]))
+
 
 if __name__ == "__main__":
     unittest.main()

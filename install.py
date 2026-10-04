@@ -300,6 +300,11 @@ class Writer:
 
     def __init__(self, root):
         self.root = root
+        self.written = []       # every file, in order, for the stamp's fingerprints
+
+    def _wrote(self, p):
+        if p not in self.written:
+            self.written.append(p)
 
     def _inside(self, path):
         p = Path(os.path.abspath(path))
@@ -314,6 +319,13 @@ class Writer:
         p = self._inside(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
+        self._wrote(p)
+
+    def copy_file(self, src, dst):
+        p = self._inside(dst)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, p)
+        self._wrote(p)
 
     def copy_tree(self, src, dst, skip=(), fill=None):
         """Copy src into dst, skipping names in `skip`, filling placeholders from `fill`."""
@@ -333,11 +345,13 @@ class Writer:
                         text = item.read_text(encoding="utf-8")
                     except UnicodeDecodeError:
                         shutil.copy2(item, p)
+                        self._wrote(p)
                         continue
                     p.write_text(fill_text(text, fill), encoding="utf-8")
                     shutil.copymode(item, p)
                 else:
                     shutil.copy2(item, p)
+                self._wrote(p)
 
     def symlink(self, link, target_rel):
         p = self._inside(link)
@@ -466,12 +480,11 @@ def install(cfg, target, force=False, quiet=False):
     say = (lambda *a: None) if quiet else print
 
     # The root: entry point and system folder.
-    shutil.copy2(TEMPLATE / "AGENTS.md", w._inside(root / "AGENTS.md"))
+    w.copy_file(TEMPLATE / "AGENTS.md", root / "AGENTS.md")
     w.mkdir(root / "System")
     w.copy_tree(TEMPLATE / "System", root / "System", skip=("context.md",))
     w.write(root / "System" / "context.md",
             render_context((TEMPLATE / "System" / "context.md").read_text(encoding="utf-8"), cfg))
-    w.write(root.joinpath(*pl.VERSION_STAMP), json.dumps(source_version(), indent=2) + "\n")
 
     # The wikis: one repository for both.
     w.mkdir(root / "Wikis")
@@ -509,6 +522,11 @@ def install(cfg, target, force=False, quiet=False):
     # ignore file every zone was just given: its inbox stays out of that zone's history too.
     first_zone = root / "Zones" / cfg["zones"][0]["name"]
     w.write(root.joinpath(*pl.ZONE_TEMPLATE, ".gitignore"), (first_zone / ".gitignore").read_text(encoding="utf-8"))
+    # Which Garrick this is, and a fingerprint of every file it just wrote, so an
+    # update can tell a file still as installed from one the user has changed.
+    stamp = source_version()
+    stamp["files"] = pl.fingerprints(root, w.written)
+    w.write(root.joinpath(*pl.VERSION_STAMP), json.dumps(stamp, indent=2) + "\n")
     # Only what Garrick wrote: with --force the folder may hold the user's own files.
     init_repo(root, "Garrick: workspace created", cfg["owner"]["name"], local_identity,
               paths=("AGENTS.md", "System", ".gitignore", ".claude", ".agents"))

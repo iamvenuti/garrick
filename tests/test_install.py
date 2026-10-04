@@ -8,6 +8,7 @@ running the tests is read or written.
 """
 
 import importlib.util
+import hashlib
 import json
 import os
 import re
@@ -142,6 +143,26 @@ class InstallTest(unittest.TestCase):
         res = run([self.root / "System" / "tools" / "check.py", "--version"], self.box.env)
         self.assertEqual(0, res.returncode, res.stderr)
         self.assertTrue(res.stdout.startswith("Garrick %s of " % stamp["commit"]), res.stdout)
+        self.assertEqual(1, len(res.stdout.strip().splitlines()))                 # still one line for a bug report
+        self.assertIn("All %d files Garrick wrote are as it wrote them." % len(stamp["files"]), res.stdout)
+
+    def test_the_stamp_fingerprints_every_file_garrick_wrote(self):
+        files = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
+        on_disk = set()
+        for folder, dirs, names in os.walk(self.root):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            for n in names:
+                p = Path(folder) / n
+                if not p.is_symlink():
+                    on_disk.add(p.relative_to(self.root).as_posix())
+        # Everything the installer wrote, less the user's own answers, the stamp itself and
+        # System/generated/, where other tests here build pages.
+        on_disk = {p for p in on_disk if not p.startswith("System/generated/")}
+        self.assertEqual(on_disk - {"System/context.md", "System/garrick-version.json"}, set(files))
+        for rel, digest in files.items():
+            self.assertEqual(hashlib.sha256((self.root / rel).read_bytes()).hexdigest(), digest, rel)
+        self.assertIn("Zones/Work/AGENTS.md", files)
+        self.assertIn("System/rules.md", files)
 
     def test_git_repositories(self):
         for repo in repos(self.root):
@@ -182,8 +203,9 @@ class InstallTest(unittest.TestCase):
 
     def test_no_placeholders_outside_templates(self):
         templates = self.root / "System" / "templates"
+        stamp = self.root / "System" / "garrick-version.json"   # lists the templates' files by name
         for path in self.root.rglob("*"):
-            if ".git" in path.parts or templates in path.parents or path.is_symlink():
+            if ".git" in path.parts or templates in path.parents or path.is_symlink() or path == stamp:
                 continue
             self.assertNotIn(OPEN, path.name, path)
             if path.is_file():
@@ -783,7 +805,18 @@ class ZoneTest(unittest.TestCase):
         zones = text.split("## Zones", 1)[1].split("\n## ", 1)[0]
         rows = [line for line in zones.splitlines() if line.startswith("| ") and "---" not in line]
         self.assertEqual([r.split("|")[1].strip() for r in rows], ["Zone", "Work", "Personal", self.name])
-        self.assertEqual(git(self.root, "status", "--porcelain"), "M System/context.md")
+        self.assertEqual(sorted(line.strip() for line in git(self.root, "status", "--porcelain").splitlines()),
+                         ["M System/context.md", "M System/garrick-version.json"])
+
+    def test_its_files_join_the_stamps_list(self):
+        files = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
+        mine = {p for p in files if p.startswith("Zones/%s/" % self.name)}
+        self.assertEqual({"Zones/%s/%s" % (self.name, f) for f in (".gitignore", "AGENTS.md", "Todo.md", "Inbox/.gitkeep")}, mine)
+        for p in mine:
+            self.assertEqual(hashlib.sha256((self.root / p).read_bytes()).hexdigest(), files[p])
+        said = self.made.stdout
+        self.assertIn("Listed its files in System/garrick-version.json", said)
+        self.assertIn("Commit System/context.md and System/garrick-version.json in the workspace's own repository", said)
 
     def test_check_stays_clean_and_the_hook_works_in_it(self):
         check = run([self.root / "System" / "tools" / "check.py", "--root", self.root], self.box.env)

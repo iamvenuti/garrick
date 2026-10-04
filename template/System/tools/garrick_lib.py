@@ -589,6 +589,82 @@ def say_version(stamp: dict) -> str:
     return out + "."
 
 
+# The stamp also lists, under "files", every file Garrick wrote into the
+# workspace, by its path from the top folder and the SHA-256 of its bytes: the
+# installer's files, and those of a zone scaffold.py adds later. An update can
+# then tell a file still as Garrick wrote it, which it may replace, from one the
+# user has changed, which it must leave for a merge. System/context.md holds the
+# user's own answers and is never listed; nor is the stamp itself.
+UNLISTED = ("System/context.md", "/".join(VERSION_STAMP))
+
+
+def fingerprint(path: PathLike) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fingerprints(root: PathLike, paths) -> Dict[str, str]:
+    """Path from the top folder to SHA-256, for each of `paths` that is a file
+    inside `root`. Links, folders and anything under .git are left out."""
+    root = Path(root)
+    out = {}
+    for p in paths:
+        p = Path(p)
+        try:
+            rel = p.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel in UNLISTED or ".git" in Path(rel).parts or p.is_symlink() or not p.is_file():
+            continue
+        out[rel] = fingerprint(p)
+    return dict(sorted(out.items()))
+
+
+def record_written(root: PathLike, paths) -> bool:
+    """Add files Garrick has just written to the stamp's list. Only a stamp that
+    already keeps one: a workspace installed before the list existed has
+    nothing to add to, and an update treats every file in it as the user's."""
+    import json
+    stamp = read_version(root)
+    if not isinstance(stamp.get("files"), dict):
+        return False
+    stamp["files"] = dict(sorted({**stamp["files"], **fingerprints(root, paths)}.items()))
+    Path(root).joinpath(*VERSION_STAMP).write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def installed_changes(root: PathLike, stamp: dict) -> Tuple[int, int, int]:
+    """How many files the stamp lists, how many of them have changed since,
+    and how many are gone."""
+    files = stamp.get("files")
+    if not isinstance(files, dict):
+        return 0, 0, 0
+    changed = gone = 0
+    for rel, digest in files.items():
+        p = Path(root) / rel
+        if not p.is_file():
+            gone += 1
+        elif fingerprint(p) != digest:
+            changed += 1
+    return len(files), changed, gone
+
+
+def say_changes(root: PathLike, stamp: dict) -> str:
+    """One sentence on how far the workspace has moved from what Garrick wrote.
+    Counts only: a path names a zone, and a zone's name can be a client's."""
+    total, changed, gone = installed_changes(root, stamp)
+    if not total:
+        return ""
+    if not changed and not gone:
+        return "All %d files Garrick wrote are as it wrote them." % total
+    parts = []
+    if changed:
+        parts.append("%d changed" % changed)
+    if gone:
+        parts.append("%d gone" % gone)
+    return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
+
+
 class GitError(RuntimeError):
     """A git command that failed, with git's own reason."""
 

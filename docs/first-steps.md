@@ -125,4 +125,4 @@ Once the workflow works at your desk, [phone access](extras/phone-access.md) can
 - **Claude does not follow the workspace instructions:** check for a `CLAUDE.md` inside or above the workspace. Ask the assistant to run the workspace check; do not remove an existing file without understanding what uses it.
 - **The Code tab or Codex is unavailable:** check the current plan and workspace access with the provider or your administrator.
 - **A command fails:** copy its error into your app or show it to the facilitator. Do not repeat installation into a partly created workspace without checking it first.
-- **Reporting a problem:** say which Garrick you have. `python3 System/tools/check.py --version`, run in the workspace, prints one line with the version it was installed from; put it in the report, or read it to the facilitator.
+- **Reporting a problem:** say which Garrick you have. `python3 System/tools/check.py --version`, run in the workspace, prints one line with the version it was installed from and how many of the files Garrick wrote you have changed since, as a count, never their names; put it in the report, or read it to the facilitator.

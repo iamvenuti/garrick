@@ -35,6 +35,7 @@ from garrick_lib import (  # noqa: E402
     is_speakable,
     load_context,
     parse_frontmatter,
+    record_written,
     skill_links,
     sounds_alike,
     table_row,
@@ -245,11 +246,22 @@ def cmd_zone(root, args, today):
         raise Refusal(f"The {name} zone could not be made, so nothing of it was kept: {' '.join(str(exc).split())}")
     said = [f"Created the {name} zone: its own folder and git history, an inbox, "
             "and the wall check before every commit."]
+    to_commit = []
     if list_zone(root, name, holds):
-        said.append(f"Added {name} to the Zones table in System/context.md. "
-                    "Commit that in the workspace's own repository, at its top folder.")
+        said.append(f"Added {name} to the Zones table in System/context.md.")
+        to_commit.append("System/context.md")
     else:
         said.append(f"System/context.md already lists {name}, so its row is unchanged.")
+    # The zone's files join the stamp's list, as the installer's zones did.
+    made = []
+    for folder, dirs, files in os.walk(target):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        made += [Path(folder) / f for f in files]
+    if record_written(root, made):
+        said.append("Listed its files in System/garrick-version.json, so an update knows them as Garrick's.")
+        to_commit.append("System/garrick-version.json")
+    if to_commit:
+        said.append("Commit %s in the workspace's own repository, at its top folder." % " and ".join(to_commit))
     elsewhere = hooks_path(target)
     if elsewhere:
         said.append(f"git takes its hooks from {elsewhere}, so the wall check will not run before commits "

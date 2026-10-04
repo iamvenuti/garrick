@@ -485,6 +485,9 @@ def install(cfg, target, force=False, quiet=False):
     w.copy_tree(TEMPLATE / "System", root / "System", skip=("context.md",))
     w.write(root / "System" / "context.md",
             render_context((TEMPLATE / "System" / "context.md").read_text(encoding="utf-8"), cfg))
+    # The release notes of this Garrick, which the status page shows without fetching anything.
+    if (REPO / "CHANGELOG.md").is_file():
+        w.copy_file(REPO / "CHANGELOG.md", root / "System" / "garrick-changelog.md")
 
     # The wikis: one repository for both.
     w.mkdir(root / "Wikis")

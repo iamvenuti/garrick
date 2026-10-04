@@ -26,6 +26,8 @@ let builder = URL(fileURLWithPath: info["GarrickStatusScript"] as? String ?? wor
 let python = info["GarrickPython"] as? String ?? "/usr/bin/python3"
 let flags = info["GarrickStatusArgs"] as? [String] ?? []
 let cmuxBundle = "com.cmuxterm.app"
+let claudeBundle = "com.anthropic.claudefordesktop"
+let codexBundle = "com.openai.codex"
 let maxAge: TimeInterval = 30 * 60
 // --check loads the page out of sight, acts on nothing, prints what it found
 // and quits: the test that the page loads, sees the app and is answered.
@@ -150,20 +152,76 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(text, forType: .string)
 		}
-		if let folder = body["cmux"] as? String { openInCmux(folder) }
+		if let folder = body["cmux"] as? String { openInCmux(folder) }      // a page built before Open in Claude and Codex
+		if let app = body["launch"] as? String, let folder = body["folder"] as? String {
+			launch(app, folder, phrase: body["phrase"] as? String ?? "")
+		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
 	}
 
-	// Only a folder inside this workspace, and only through Launch Services, as
-	// Finder's Open With would: no socket, no password, no command typed.
-	func openInCmux(_ path: String) {
+	// A folder of this workspace that still exists, or nil, with the page rebuilt.
+	func inWorkspace(_ path: String) -> URL? {
 		let folder = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
 		var isDir: ObjCBool = false
 		guard folder.path.hasPrefix(workspace.standardizedFileURL.path + "/"),
 		      FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else {
 			toast("That folder is not in this workspace any more. Rebuilding the page.")
-			return freshen(force: true)
+			freshen(force: true)
+			return nil
 		}
+		return folder
+	}
+
+	func copyText(_ text: String) {
+		guard !text.isEmpty else { return }
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(text, forType: .string)
+	}
+
+	// Open a project or thread folder in Claude, Codex or cmux. Claude gets the
+	// phrase typed into a new session, for you to send; Codex and cmux get the
+	// folder, and the phrase goes on the clipboard. Nothing is sent and no
+	// command is typed into a terminal.
+	func launch(_ app: String, _ path: String, phrase: String) {
+		guard let folder = inWorkspace(path) else { return }
+		switch app {
+		case "claude":
+			guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) != nil else {
+				toast("Claude is not installed here any more. Rebuilding the page without it.")
+				return freshen(force: true)
+			}
+			var c = URLComponents()
+			c.scheme = "claude"; c.host = "code"; c.path = "/new"
+			c.queryItems = [URLQueryItem(name: "folder", value: folder.path)] + (phrase.isEmpty ? [] : [URLQueryItem(name: "q", value: phrase)])
+			if let url = c.url { NSWorkspace.shared.open(url) }
+		case "codex":
+			guard let codex = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexBundle) else {
+				toast("Codex is not installed here any more. Rebuilding the page without it.")
+				return freshen(force: true)
+			}
+			let cli = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"]
+				.map { codex.appendingPathComponent($0) }
+				.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+			guard let cli else { return toast("Codex's own launcher is missing; reinstall the Codex app.") }
+			copyText(phrase)
+			let p = Process()
+			p.executableURL = cli
+			p.arguments = ["app", folder.path]
+			p.standardOutput = FileHandle.nullDevice
+			p.standardError = FileHandle.nullDevice
+			do { try p.run() } catch { toast("Codex did not open that folder.") }
+		case "cmux":
+			copyText(phrase)
+			openInCmux(folder.path)
+		default:
+			return
+		}
+	}
+
+	// Only a folder inside this workspace, and only through Launch Services, as
+	// Finder's Open With would: no socket, no password, no command typed.
+	func openInCmux(_ path: String) {
+		guard let folder = inWorkspace(path) else { return }
 		guard let cmux = NSWorkspace.shared.urlForApplication(withBundleIdentifier: cmuxBundle) else {
 			toast("cmux is not installed here any more. Rebuilding the page without it.")
 			return freshen(force: true)

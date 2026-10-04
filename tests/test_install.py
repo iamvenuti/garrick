@@ -164,6 +164,10 @@ class InstallTest(unittest.TestCase):
         self.assertIn("Zones/Work/AGENTS.md", files)
         self.assertIn("System/rules.md", files)
 
+    def test_the_release_notes_come_with_it(self):
+        # The status page shows them from here, so it never fetches anything.
+        self.assertEqual((REPO / "CHANGELOG.md").read_bytes(), (self.root / "System" / "garrick-changelog.md").read_bytes())
+
     def test_git_repositories(self):
         for repo in repos(self.root):
             self.assertTrue((repo / ".git").is_dir(), repo)

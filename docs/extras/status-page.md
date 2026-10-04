@@ -18,16 +18,26 @@ A sidebar holds Garrick's mark, the overall state, a *problems only* switch that
 
 ## Settings
 
-*Settings*, at the top of the sidebar's buttons, opens *About Garrick*. It says which Garrick the workspace was installed from, in the same words as `python3 System/tools/check.py --version`, and *Copy version* copies that line. Below it are the ways to reach Garrick's maintainers:
+The cog beside the page's name opens *Settings*. In the Mac app, *Settings…* in the app menu (⌘,) opens it too.
+
+**Open projects in** lists the apps a project or thread can be opened in: Claude, Codex and cmux. Each build checks which of them this Mac has. One that isn't installed is shown greyed out, and the ones that are installed can be switched off. Every app left on gets a button on each project and thread card, in the [Mac app](#a-mac-app) only:
+
+- *Open in Claude* starts a new session in the thread's folder with "open Pricing" already typed in. Press Send to resume the thread.
+- *Open in Codex* and *Open in cmux* open the thread's folder, and put "open Pricing" on the clipboard for you to paste.
+
+Your choices are kept in the app's own storage, and the page still writes nothing.
+
+**About Garrick** says which Garrick the workspace was installed from, in the same words as `python3 System/tools/check.py --version`. *Copy version* copies that line. *What's new* shows the notes of that release, read from the copy of the changelog the installer put in `System/garrick-changelog.md`. A workspace installed from a clone of `main` also sees *Coming next*, which is what is waiting for the next release. Below that are the ways to reach Garrick's maintainers:
 
 - *Report a bug* opens the bug form on GitHub with *Which Garrick* already filled in.
 - *Report a wrong refusal* opens the form for a refusal by the wall check that should have passed.
 - *Suggest a change* and *Ask a question* open a new discussion under Ideas or Q&A.
-- *What's new* opens the list of releases, each with what it changed.
+- *Announcements* is where each release is announced. Watch it on GitHub to hear of the next one.
+- *All releases* lists every release with what it changed.
 
 Each one opens in your browser, and nothing is sent until you submit it there yourself. If you have no GitHub account, *Copy a report* copies an outline with your version in it. Fill it in and send it to whoever set Garrick up for you. Use invented names (Acme, Birch) in anything you report, never a real client's. A way to get past the wall check goes in a private report, not an issue: the dialog links to it.
 
-The page never checks for a newer Garrick. It would have to ask GitHub every time it rebuilt, and the page loads nothing from the network. To see whether there is one, compare *What's new* with your version.
+The page never checks for a newer Garrick. It would have to ask GitHub every time it rebuilt, and the page loads nothing from the network. To see whether there is one, compare *All releases* with your version.
 
 ## Thread cards
 
@@ -36,7 +46,7 @@ Hover a thread in the list, or move to it with the keyboard, and a card opens un
 - *Open* opens the thread note, and *Open project* its project's hub note.
 - *Copy "open Pricing"* copies the phrase that resumes the thread.
 - *Copy "park Pricing"* copies the phrase that sets it aside. On a parked thread it is *Copy "wake Pricing"*.
-- *Open in cmux*, only in the [Mac app](#a-mac-app) and only where [cmux](cmux.md) is installed, opens a cmux tab in the thread's folder and puts "open Pricing" on the clipboard: start your assistant in the tab and paste it. A project gets the same button for its own folder.
+- *Open in Claude*, *Open in Codex* and *Open in cmux*, only in the [Mac app](#a-mac-app), one for each of those apps that is installed and switched on in [Settings](#settings). Claude starts a session in the thread's folder with "open Pricing" typed in. Codex and [cmux](cmux.md) open the folder with "open Pricing" on the clipboard. A project gets the same buttons for its own folder.
 
 The graph's panel offers the same actions under the same labels. On a project's hub note it also offers "open Acme Review", unless a thread has the same name. Names are said in the shortest form that is unique, the way the threads skill says them: "Pricing", or "Acme Review, Pricing" when two projects have a thread called Pricing, and "Work, House, Kitchen" when projects called House in two zones both have a Kitchen thread. Escape closes the card, and moving the pointer away does too.
 
@@ -71,7 +81,7 @@ The page says how old it is, and turns its banner red when it is more than a day
 *Garrick's Status.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
 
 - **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
-- **Its buttons do what they say.** The sidebar's button becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Where cmux is installed, project and thread cards gain *Open in cmux*. To open [Settings](#settings), choose *Settings…* in the app menu or press ⌘-comma.
+- **Its buttons do what they say.** The sidebar's button becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Project and thread cards gain *Open in Claude*, *Open in Codex* and *Open in cmux*, for the ones that are installed and switched on in [Settings](#settings). The app menu's *Settings…* (⌘-comma) opens Settings.
 - **Links go where your Mac sends them**: a note to Obsidian or your Markdown app, a log to its viewer.
 
 Build it once, from the workspace:

@@ -156,6 +156,15 @@ def workspace_lib(ws: Optional[Path]):
     return _LIBS[ws]
 
 
+def workspace_stamp(ws: Path) -> dict:
+    """The installer's stamp, System/garrick-version.json, or {}."""
+    try:
+        stamp = json.loads(ws.joinpath("System", "garrick-version.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stamp if isinstance(stamp, dict) else {}
+
+
 def installed_version(ws: Path) -> str:
     """Which Garrick this workspace came from, in the words `check.py --version`
     uses, read from the stamp the installer wrote. A workspace whose tools
@@ -760,7 +769,41 @@ def obsidian_vaults(ws: Path, config: Optional[Path] = None, apps: Optional[List
 
 def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
     """cmux is a macOS app; the page offers it where it is installed."""
-    return sys.platform == "darwin" and mac_app("cmux", apps) is not None
+    return "cmux" in launchers_installed(apps)
+
+
+# The apps a project or thread can be opened in, in the order the page offers
+# them: key, label, bundle id, the names its .app may carry. The page offers
+# the ones installed here, Settings chooses among those, and only Garrick's
+# Status.app can open them; in a browser the page still only copies.
+LAUNCHERS = (("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)),
+             ("codex", "Codex", "com.openai.codex", ("Codex", "ChatGPT")),
+             ("cmux", "cmux", "com.cmuxterm.app", ("cmux",)))
+LABEL = {k: label for k, label, _, _ in LAUNCHERS}
+
+
+def bundle_id(app: Path) -> Optional[str]:
+    try:
+        with (app / "Contents" / "Info.plist").open("rb") as f:
+            return plistlib.load(f).get("CFBundleIdentifier")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+
+
+def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
+    """Which of LAUNCHERS this Mac has. An app is known by its bundle id, so
+    the ChatGPT app is not taken for Codex; one with no readable Info.plist is
+    taken at its name."""
+    if sys.platform != "darwin":
+        return ()
+    found = []
+    for key, _, bundle, names in LAUNCHERS:
+        for name in names:
+            app = mac_app(name, apps)
+            if app is not None and bundle_id(app) in (bundle, None):
+                found.append(key)
+                break
+    return tuple(found)
 
 
 class Links:
@@ -842,7 +885,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked, the name to say, and links.
-    Where cmux is installed, also the thread's folder, for Open in cmux."""
+    Where an app to open it in is installed (`cmux`, for any of LAUNCHERS),
+    also the thread's folder."""
     card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
             "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""}
@@ -857,14 +901,90 @@ def copy(label: str, text: str, say: str) -> str:
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
 
 
-def settings(ws: Path) -> str:
-    """Settings › About Garrick: which Garrick this is, and the ways to report a
-    bug, suggest a change or see what's new. Each is a link to Garrick's GitHub
-    page, opened in the browser, where nothing is sent until you submit it
-    yourself; the bug form arrives with the version filled in. For someone
-    with no GitHub account, a report to copy and send to whoever set Garrick
-    up. Nothing here checks for updates: the page never calls out."""
-    version = installed_version(ws)
+# The changelog the workspace was installed with: install.py copies the
+# release's CHANGELOG.md here, so the page shows release notes without
+# fetching anything.
+CHANGELOG = ("System", "garrick-changelog.md")
+GEAR = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" '
+        'stroke-linejoin="round" d="M8.6 2.5h2.8l.4 2.1 1.5.9 2-.8 1.4 2.4-1.6 1.4v1.8l1.6 1.4-1.4 2.4-2-.8-1.5.9-.4 2.1H8.6l-.4-2.1'
+        '-1.5-.9-2 .8-1.4-2.4 1.6-1.4V8.5L3.3 7.1l1.4-2.4 2 .8 1.5-.9z"/><circle cx="10" cy="10" r="2.4" fill="none" '
+        'stroke="currentColor" stroke-width="1.5"/></svg>')
+
+
+def changelog_sections(text: str) -> List[Tuple[str, str, List[str]]]:
+    """Each `## [name] - date` section of a Keep a Changelog file, with its lines."""
+    out: List[Tuple[str, str, List[str]]] = []
+    for line in text.splitlines():
+        m = re.match(r"^## \[([^\]]+)\](?:\s*-\s*(\S+))?", line)
+        if m:
+            out.append((m.group(1), m.group(2) or "", []))
+        elif out and not re.match(r"^\[[^\]]+\]:\s*\S", line):     # link references stay out
+            out[-1][2].append(line)
+    return out
+
+
+def md_inline(s: str) -> str:
+    s = E(s)
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"(?<![\w*])\*([^*]+)\*(?![\w*])", r"<i>\1</i>", s)
+    return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)        # a link keeps its text: the page links only to Garrick
+
+
+def md_block(lines: List[str]) -> str:
+    """The little Markdown a changelog uses: headings, paragraphs, bullets."""
+    out: List[str] = []
+    in_list = False
+    for line in lines:
+        if line.startswith("- "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append("<li>%s</li>" % md_inline(line[2:]))
+            continue
+        if in_list and line.startswith("  ") and line.strip():
+            out[-1] = out[-1][:-5] + " " + md_inline(line.strip()) + "</li>"
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if line.startswith("### "):
+            out.append("<h5>%s</h5>" % md_inline(line[4:]))
+        elif line.strip():
+            out.append("<p>%s</p>" % md_inline(line))
+    if in_list:
+        out.append("</ul>")
+    return "".join(out)
+
+
+def release_notes(text: Optional[str], edge: bool = False) -> str:
+    """The newest release's notes, read from a changelog on this machine. With
+    `edge`, for a workspace that follows main rather than a release, also
+    what is waiting under Unreleased."""
+    if not text:
+        return ""
+    sections = changelog_sections(text)
+    parts = []
+    if edge:
+        waiting = [s for s in sections if s[0].lower() == "unreleased" and any(l.strip() for l in s[2])]
+        if waiting:
+            parts.append(("Coming next, on main", waiting[0][2]))
+    released = [s for s in sections if s[0].lower() != "unreleased"]
+    if released:
+        name, date, lines = released[0]
+        parts.append(("What's new in %s%s" % (name, ", " + date if date else ""), lines))
+    return "".join('<details class="notes"%s><summary>%s</summary><div>%s</div></details>'
+                   % ("", E(title), md_block(lines)) for title, lines in parts)
+
+
+def about_garrick(version: str, notes: str = "") -> str:
+    """Settings › About Garrick: which Garrick this is, its release notes, and
+    the ways to report a bug, suggest a change, ask, or hear about releases.
+    Each is a link to Garrick's GitHub page, opened in the browser, where
+    nothing is sent until you submit it yourself; the bug form arrives with the
+    version filled in. For someone with no GitHub account, a report to copy and
+    send to whoever set Garrick up. Nothing here checks for updates: the page
+    never calls out."""
     report = ("Garrick bug report\n\nWhich Garrick: %s\n\nWhat happened:\n\nHow to make it happen again:\n\n"
               "Assistant and its version:\n\nUse invented names (Acme, Birch), never a real client's." % version)
     links = [
@@ -873,20 +993,45 @@ def settings(ws: Path) -> str:
         ("Report a wrong refusal", "/issues/new?template=wall-check.yml", "The wall check refused something it should allow"),
         ("Suggest a change", "/discussions/new?category=ideas", "Something Garrick should do, or do differently"),
         ("Ask a question", "/discussions/new?category=q-a", "How something works, or how it went for you"),
-        ("What's new", "/releases", "Every release and what it changed"),
+        ("Announcements", "/discussions/categories/announcements", "News of each release; watch it on GitHub to hear of the next"),
+        ("All releases", "/releases", "Every release and what it changed"),
     ]
     rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"><b>%s</b><small>%s</small></a>'
                    % (E(PROJECT + path), E(label), E(about)) for label, path, about in links)
-    return ('<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title">Settings</h2>'
-            '<h3>About Garrick</h3><p class="setver" id="garrick-version">%s</p>'
-            '<div class="gacts">%s%s</div><div class="setlinks">%s</div>'
+    return ('<section class="setsec"><h3>About Garrick</h3><p class="setver" id="garrick-version">%s</p>'
+            '<div class="gacts">%s%s</div>%s<div class="setlinks">%s</div>'
             '<p class="hint">These open GitHub in your browser. The page sends nothing: a report goes only when you submit it '
             'there. Use invented names (Acme, Birch), never a real client&#39;s. No GitHub account? Copy a report and send '
             'it to whoever set Garrick up for you. A way past the wall check: <a href="%s" target="_blank" rel="noopener">'
-            'report it privately</a>.</p><div class="gacts"><button class="act" type="button" id="close-settings" autofocus>Done</button></div></dialog>'
+            'report it privately</a>.</p></section>'
             % (E(version), copy("Copy version", version, "Copied the version."),
-               copy("Copy a report", report, "Copied a report. Fill it in and send it."), rows,
+               copy("Copy a report", report, "Copied a report. Fill it in and send it."), notes, rows,
                E(PROJECT + "/security/advisories/new")))
+
+
+def launcher_choices(installed: Tuple[str, ...]) -> str:
+    """Settings › Open projects in: one switch per app Garrick can open a
+    project in, off and greyed where it is not installed. Kept in this
+    viewer's own storage, so the page still writes nothing."""
+    rows = "".join('<label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
+                   % (k, "" if k in installed else " disabled", E(label), "Installed" if k in installed else "Not installed on this Mac")
+                   for k, label, _, _ in LAUNCHERS)
+    return ('<section class="setsec"><h3>Open projects in</h3>%s<p class="hint">The buttons appear on project and thread '
+            'cards in Garrick&#39;s Status.app. Claude opens with the phrase that resumes the thread typed in, for you to send; '
+            'Codex and cmux open in the folder with the phrase on the clipboard.</p></section>' % rows)
+
+
+def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
+    """The Settings dialog: which apps to open projects in, then About Garrick."""
+    stamp = workspace_stamp(ws)
+    try:
+        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        text = None
+    notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
+    return ('<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
+            '<div class="gacts"><button class="act" type="button" id="close-settings">Done</button></div></dialog>'
+            % (launcher_choices(installed), about_garrick(installed_version(ws), notes)))
 
 
 def script_json(data) -> str:
@@ -1060,6 +1205,17 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .thread{border-radius:6px;transition:background .1s}.thread:hover,.thread.on{background:var(--wash)}
 .act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
+.brand{display:flex;align-items:flex-start;gap:10px}.brand>div{flex:1;min-width:0}
+.cog{flex:none;margin:2px 0 0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
+.cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
+#settings .setsec{margin-top:18px}#settings .setsec:first-of-type{margin-top:0}
+.launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
+.launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
+.launcher-choice input:disabled+span{color:var(--muted)}
+.notes{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
+.notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
+.notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
+#settings{max-height:calc(100vh - 48px);overflow:auto;overscroll-behavior:contain}#settings h2:focus{outline:none}
 #settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:22px 24px;box-shadow:var(--shadow)}
 #settings::backdrop{background:rgba(0,0,0,.35)}#settings h2{margin:0 0 14px;font:600 20px/1.2 var(--display)}#settings h3{margin:0 0 6px;font-size:13px}
 #settings .setver{margin:0;font-size:13px;color:var(--ink2)}#settings .hint{margin-top:12px}#settings .hint a{color:var(--accent)}
@@ -1120,10 +1276,14 @@ var Panel=(function(){
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
-function cmux(o){var p=o.w?'open '+o.w:'';return'<button class="act" type="button" data-cmux="'+esc(o.f)+'"'+(p?' data-copy="'+esc(p)+'"':'')
-+' data-say="'+esc(p?'Opened a cmux tab in '+o.n+'. Start your assistant and paste “'+p+'”.':'Opened a cmux tab in '+o.n+'.')+'">Open in cmux</button>'}
+var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux'};
+function chosen(){var on={};try{on=JSON.parse(localStorage.getItem('garrick-launchers')||'{}')}catch(e){}
+return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
+function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
+:(p?'Opened '+LABEL[k]+' in '+o.n+'. Paste “'+p+'” to your assistant.':'Opened '+LABEL[k]+' in '+o.n+'.');
+return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">Open in '+LABEL[k]+'</button>'}
 function acts(o){var a='<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
-if(o.f&&host)a+=cmux(o);
+if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 if(o.w){a+=copy('open '+o.w);if(!o.h)a+=copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
@@ -1154,7 +1314,7 @@ if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.write
 var rb=document.getElementById('rebuild');if(host&&rb){rb.textContent='Rebuild now';rb.removeAttribute('data-copy');rb.title='Build the page again now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
-var c=t.closest('button[data-cmux]');if(c&&host){host.postMessage({cmux:c.dataset.cmux,copy:c.dataset.copy||''});say(c.dataset.say);return}
+var c=t.closest('button[data-launch]');if(c&&host){host.postMessage({launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''});say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
@@ -1167,6 +1327,10 @@ if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdSh
 window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal()}};
 document.getElementById('open-settings').onclick=window.StatusSettings.open;
 document.getElementById('close-settings').onclick=sdShut;
+var lk='garrick-launchers';function lprefs(){try{return JSON.parse(localStorage.getItem(lk)||'{}')}catch(e){return{}}}
+sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
+c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;try{localStorage.setItem(lk,JSON.stringify(p))}catch(e){}
+say((c.checked?'Showing ':'Hiding ')+'Open in '+c.parentNode.querySelector('span').firstChild.textContent+'.')}});
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -1436,11 +1600,14 @@ if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].
 
 def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
           show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
-          cmux: bool = False, flags: Tuple[str, ...] = ()) -> str:
-    """The page. `vaults` and `cmux` say what this machine has (main() asks
-    obsidian_vaults() and cmux_installed()); `flags` go into the rebuild
-    command as given."""
+          cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None) -> str:
+    """The page. `vaults` and `launchers` say what this machine has (main()
+    asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
+    stands for launchers=("cmux",). `flags` go into the rebuild command as
+    given."""
     now = now or dt.datetime.now()
+    launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
+    cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws, vault, vaults)
@@ -1496,14 +1663,15 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     more += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
     navh += "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in more)
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
-    aside = ('<aside><div class="brand">%s<div><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div></div>'
+    aside = ('<aside><div class="brand">%s<div><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div>'
+             '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
+             'which Garrick this is, release notes, and how to report a bug">%s</button></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
-             '<div class="controls"><button class="act wide" type="button" id="open-settings" title="Which Garrick this is, and how to report a bug or suggest a change">Settings</button>'
-             '%s<p class="hint" id="hidden-note" hidden></p>'
+             '<div class="controls">%s<p class="hint" id="hidden-note" hidden></p>'
              '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall),
+             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), GEAR, ICON[worst], E(overall),
                 live, "" if live == 1 else "s", week, navh,
                 copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out, flags),
                      "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'id="rebuild" class="act wide"')))
@@ -1667,9 +1835,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<div class="slot full" data-slot="bottom"></div></div></main>'
             % (top, attn_card, graph_card, threads_card, left, right))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>%s</title>%s<style>%s</style></head><body data-built="%s"><div class="app">%s%s</div>%s'
+            '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), aside, main, settings(ws),
+                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), aside, main, settings(ws, launch),
                 PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 
@@ -1705,7 +1873,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
     flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
     tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
-                         vaults=vaults, cmux=not args.no_cmux and cmux_installed(), flags=flags), encoding="utf-8")
+                         vaults=vaults, flags=flags,
+                         launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
     os.replace(tmp, out)
     print(out)
     if args.open:

@@ -4,6 +4,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- The status page opens a project or thread in Claude, Codex or cmux. Each build checks which of the three this Mac has. In *Settings*, under *Open projects in*, you switch each installed one on or off, and every app left on gets a button on the cards, in Garrick's Status.app only. Claude starts a session with "open Pricing" typed in for you to send. Codex and cmux open the folder with the phrase on the clipboard. Your choices are kept in the app's own storage.
+- *Settings* shows the installed release's notes from `System/garrick-changelog.md`, which the installer now copies from `CHANGELOG.md`, so nothing is fetched. A workspace that follows `main` also sees what is coming next. An *Announcements* link leads to the release news on GitHub.
+
+### Changed
+
+- *Settings* opens from a cog beside the page's name, not from a sidebar button.
+
 ## [0.4.0] - 2026-10-04
 
 Every install now records what Garrick wrote, so a later update can tell the user's edits from Garrick's own files; and the status page gains Settings, with About Garrick and the ways to report a problem.

@@ -539,7 +539,7 @@ class TestSettings(StatusCase):
     def test_links_go_only_to_garrick_and_open_outside(self):
         dialog = self.dialog()
         links = self.hrefs(dialog)
-        self.assertEqual(6, len(links))
+        self.assertEqual(7, len(links))
         for h in links:
             self.assertTrue(h.startswith(status.PROJECT + "/"), h)
         for tag in re.findall(r'<a [^>]*href="https://[^>]*>', dialog):
@@ -549,6 +549,7 @@ class TestSettings(StatusCase):
         self.assertIn(status.PROJECT + "/discussions/categories/ideas", chooser)   # the same category the chooser names
         self.assertIn(status.PROJECT + "/discussions/new?category=ideas", links)
         self.assertIn(status.PROJECT + "/releases", links)
+        self.assertIn(status.PROJECT + "/discussions/categories/announcements", links)
 
     def test_a_report_to_copy_carries_the_version_and_the_warning(self):
         self.stamp()
@@ -560,6 +561,84 @@ class TestSettings(StatusCase):
         swift = (REPO / "extras" / "status" / "app" / "GarrickStatus.swift").read_text(encoding="utf-8")
         self.assertIn("window.StatusSettings.open()", swift)
         self.assertIn("window.StatusSettings=", status.JS)
+
+
+class TestLaunchers(StatusCase):
+    """Open in Claude, Codex or cmux: offered for what is installed, chosen in Settings."""
+
+    def app(self, folder, name, bundle=None):
+        app = folder / (name + ".app")
+        (app / "Contents").mkdir(parents=True)
+        if bundle:
+            with (app / "Contents" / "Info.plist").open("wb") as f:
+                plistlib.dump({"CFBundleIdentifier": bundle}, f)
+        return app
+
+    @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
+    def test_known_by_bundle_id(self):
+        apps = Path(self._tmp.name) / "Applications"
+        self.app(apps, "ChatGPT", "com.openai.chat")                     # ChatGPT is not Codex
+        self.app(apps, "Claude", "com.anthropic.claudefordesktop")
+        self.app(apps, "cmux")                                           # no Info.plist: taken at its name
+        self.assertEqual(("claude", "cmux"), status.launchers_installed([apps]))
+        self.app(apps, "Codex", "com.openai.codex")
+        self.assertEqual(("claude", "codex", "cmux"), status.launchers_installed([apps]))
+
+    def test_the_page_names_what_is_installed(self):
+        html = self.page(launchers=("claude", "cmux"))
+        self.assertIn('data-launchers="claude,cmux"', html)
+        self.assertIn('"f":', htmllib.unescape(html))                   # cards carry their folder
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        self.assertIn('data-launcher="codex" disabled', dialog)          # not installed: shown, greyed
+        self.assertNotIn('data-launcher="claude" disabled', dialog)
+        self.assertNotIn('"f":', htmllib.unescape(self.page()))          # nothing to open it in, no folder
+
+    def test_only_the_app_opens_anything(self):
+        self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
+        self.assertIn("localStorage.getItem('garrick-launchers')", status.PANEL_JS)   # the choice stays in this viewer
+        self.assertIn("host.postMessage({launch:", status.JS)
+
+    def test_settings_open_from_the_cog(self):
+        html = self.page()
+        brand = html[html.index('<div class="brand">'):html.index('<div class="overall">')]
+        self.assertIn('id="open-settings"', brand)
+        self.assertIn('aria-label="Settings"', brand)
+
+
+class TestReleaseNotes(StatusCase):
+    CHANGES = ("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Something on main, with `code`.\n\n"
+               "## [0.4.0] - 2026-10-05\n\nA summary line.\n\n### Added\n\n- **Settings** with a cog\n"
+               "  that wraps onto a second line.\n- A [link](https://example.com) and <script>x</script>.\n\n"
+               "## [0.3.1] - 2026-10-04\n\n- Older.\n\n[0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0\n")
+
+    def test_the_newest_release_only_for_a_download(self):
+        notes = status.release_notes(self.CHANGES)
+        self.assertIn("What&#x27;s new in 0.4.0, 2026-10-05", notes)
+        self.assertNotIn("Older", notes)
+        self.assertNotIn("Something on main", notes)
+        self.assertIn("<b>Settings</b> with a cog that wraps onto a second line.", notes)
+
+    def test_main_shows_what_is_coming(self):
+        notes = status.release_notes(self.CHANGES, edge=True)
+        self.assertLess(notes.index("Coming next, on main"), notes.index("What&#x27;s new in 0.4.0"))
+        self.assertIn("<code>code</code>", notes)
+
+    def test_nothing_from_the_changelog_runs_or_links_out(self):
+        notes = status.release_notes(self.CHANGES)
+        self.assertNotIn("<script>", notes)
+        self.assertNotIn("example.com", notes)
+        self.assertNotIn("compare/", notes)                              # link references stay out
+        self.assertIn("A link and &lt;script&gt;", notes)
+
+    def test_the_page_reads_the_installed_changelog(self):
+        write(self.root / "System" / "garrick-changelog.md", self.CHANGES)
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "download"}))
+        status._LIBS.clear()
+        html = self.page()
+        self.assertIn("What&#x27;s new in 0.4.0", html)
+        self.assertNotIn("Coming next", html)
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "clone"}))
+        self.assertIn("Coming next, on main", self.page())
 
 
 class TestPanels(StatusCase):
@@ -909,15 +988,15 @@ class TestWhatThisMachineHas(StatusCase):
     def test_open_in_cmux_only_inside_the_app(self):
         # A browser has no window.webkit.messageHandlers.garrick, so there the
         # page offers no cmux and every button only copies.
-        self.assertIn("if(o.f&&host)a+=cmux(o)", status.PANEL_JS)
+        self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
         self.assertIn("window.webkit.messageHandlers.garrick", status.PANEL_JS)
-        self.assertIn("if(c&&host){host.postMessage({cmux:", status.JS)
+        self.assertIn("if(c&&host){host.postMessage({launch:", status.JS)
         self.assertIn("if(host&&rb){rb.textContent='Rebuild now'", status.JS)
         self.assertIn('id="rebuild" class="act wide"', self.page())
 
     def test_main_asks_the_machine_and_honours_the_switches(self):
         out = Path(self._tmp.name).resolve() / "page.html"
-        with mock.patch.object(status, "cmux_installed", return_value=True), \
+        with mock.patch.object(status, "launchers_installed", return_value=("cmux",)), \
                 mock.patch.object(status, "obsidian_vaults", return_value=[(self.root, "Workspace")]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             status.main(["--workspace", str(self.root), "--out", str(out)])
@@ -940,9 +1019,12 @@ class TestApp(unittest.TestCase):
 
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "GarrickStatus.swift").read_text()
-        self.assertEqual({"attributesOfItem", "fileExists"}, set(re.findall(r"FileManager\.default\.(\w+)", swift)))   # it only looks
+        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile"}, set(re.findall(r"FileManager\.default\.(\w+)", swift)))   # it only looks
         self.assertNotIn("write(to:", swift)
         self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
+        for bundle in ("claudeBundle", "codexBundle"):
+            self.assertIn("withBundleIdentifier: %s" % bundle, swift)
+        self.assertIn("guard let folder = inWorkspace(path)", swift)          # only a folder of this workspace
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):

@@ -1029,7 +1029,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     except OSError:
         text = None
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
-    return ('<dialog id="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
+    return ('<dialog id="settings" class="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
             '<div class="gacts"><button class="act" type="button" id="close-settings">Done</button></div></dialog>'
             % (launcher_choices(installed), about_garrick(installed_version(ws), notes)))
 
@@ -1205,22 +1205,6 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .thread{border-radius:6px;transition:background .1s}.thread:hover,.thread.on{background:var(--wash)}
 .act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
-.brand{display:flex;align-items:flex-start;gap:10px}.brand>div{flex:1;min-width:0}
-.cog{flex:none;margin:2px 0 0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
-.cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
-#settings .setsec{margin-top:18px}#settings .setsec:first-of-type{margin-top:0}
-.launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
-.launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
-.launcher-choice input:disabled+span{color:var(--muted)}
-.notes{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
-.notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
-.notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
-#settings{max-height:calc(100vh - 48px);overflow:auto;overscroll-behavior:contain}#settings h2:focus{outline:none}
-#settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:22px 24px;box-shadow:var(--shadow)}
-#settings::backdrop{background:rgba(0,0,0,.35)}#settings h2{margin:0 0 14px;font:600 20px/1.2 var(--display)}#settings h3{margin:0 0 6px;font-size:13px}
-#settings .setver{margin:0;font-size:13px;color:var(--ink2)}#settings .hint{margin-top:12px}#settings .hint a{color:var(--accent)}
-.setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:9px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
-.setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
@@ -1262,6 +1246,28 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 @media (max-width:820px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;flex-wrap:wrap}nav .sub{display:none}.controls{margin-top:0}main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
+"""
+
+# Settings: the dialog, its sections and the cog that opens it. Kept apart so
+# a page built on this one (the workspace's own status page, where it runs
+# ahead of a release) can carry the same dialog with the same look.
+SETTINGS_CSS = r"""
+.brand{display:flex;align-items:flex-start;gap:10px}.brand>div{flex:1;min-width:0}
+.cog{flex:none;margin:2px 0 0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
+.cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
+dialog.settings .setsec{margin-top:18px}dialog.settings .setsec:first-of-type{margin-top:0}
+.launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
+.launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
+.launcher-choice input:disabled+span{color:var(--muted)}
+.notes{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
+.notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
+.notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
+dialog.settings{max-height:calc(100vh - 48px);overflow:auto;overscroll-behavior:contain}dialog.settings h2:focus{outline:none}
+dialog.settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:22px 24px;box-shadow:var(--shadow)}
+dialog.settings::backdrop{background:rgba(0,0,0,.35)}dialog.settings h2{margin:0 0 14px;font:600 20px/1.2 var(--display)}dialog.settings h3{margin:0 0 6px;font-size:13px}
+dialog.settings .setver{margin:0;font-size:13px;color:var(--ink2)}dialog.settings .hint{margin-top:12px}dialog.settings .hint a{color:var(--accent)}
+.setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:9px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+.setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 """
 
 # What a note's panel in the graph and a thread's card in the list both show,
@@ -1837,7 +1843,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), aside, main, settings(ws, launch),
+                E(NAME), favicon(), CSS + SETTINGS_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), aside, main, settings(ws, launch),
                 PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
 
 

@@ -470,10 +470,52 @@ def repos(ws: Path) -> List[dict]:
                 return subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, timeout=30).stdout
             except (OSError, subprocess.TimeoutExpired):
                 return ""
-        dirty = len(git("status", "--porcelain").splitlines())
+        changes = changed_files(git("status", "--porcelain", "-z", "--untracked-files=all"))
         ct = git("log", "-1", "--format=%ct").strip()
-        out.append({"name": name, "dirty": dirty, "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
+        out.append({"name": name, "folder": folder, "dirty": len(changes), "changes": changes,
+                    "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
     return out
+
+
+# How `git status --porcelain` marks a file, as the Repositories card says it.
+# A file staged and then edited again is both staged and not staged.
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+CHANGE_KINDS = (("conflicted", "conflicted"), ("staged", "staged"), ("unstaged", "not staged"), ("untracked", "untracked"))
+
+
+def changed_files(porcelain: str) -> List[Tuple[str, Tuple[str, ...]]]:
+    """(path, kinds) for every file `git status --porcelain -z` lists: one entry
+    per file, a rename under its new name. A count of these is a count of
+    files, never of commits."""
+    out, items = [], porcelain.split("\0")
+    i = 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if len(item) < 4:
+            continue
+        xy, path = item[:2], item[3:]
+        if "R" in xy or "C" in xy:
+            i += 1                              # the name it had before
+        if xy == "??":
+            kinds = ("untracked",)
+        elif xy in UNMERGED:
+            kinds = ("conflicted",)
+        else:
+            kinds = tuple(k for k, mark in (("staged", xy[0]), ("unstaged", xy[1])) if mark not in " ?!")
+        if kinds:
+            out.append((path, kinds))
+    return out
+
+
+def say_files(n: int) -> str:
+    return "1 changed file" if n == 1 else "%d changed files" % n
+
+
+def say_kinds(changes) -> str:
+    """"2 staged, 5 not staged, 5 untracked": what a repository's changed files are."""
+    counts = [(sum(1 for _, ks in changes if k in ks), label) for k, label in CHANGE_KINDS]
+    return ", ".join("%d %s" % (n, label) for n, label in counts if n)
 
 
 # One line per ingest in each wiki's log: `- 2026-09-24: [[wiki/sources/slug|Title]] (…)`.
@@ -1258,6 +1300,33 @@ def card(id_: str, title: str, meta: str, body: str, open_: bool = True, fixed: 
             '<div class="body">%s</div></details>' % (id_, " open" if open_ else "", CHEV, E(title), E(meta), tools, body))
 
 
+REPO_LIST_CAP = 30   # paths shown per kind; the count above stays exact
+
+
+def repo_changes(ws: Path, r: dict) -> str:
+    """One repository's changed files, by kind, to read and nothing more. No
+    button commits them: another session may be halfway through that work."""
+    try:
+        where = r["folder"].relative_to(ws).as_posix() or "."
+    except ValueError:
+        where = str(r["folder"])
+    where = "the workspace folder" if where == "." else where
+    groups = []
+    for kind, label in CHANGE_KINDS:
+        paths = [path for path, ks in r["changes"] if kind in ks]
+        if not paths:
+            continue
+        more = len(paths) - REPO_LIST_CAP
+        items = "".join("<li><code>%s</code></li>" % E(p) for p in paths[:REPO_LIST_CAP])
+        items += '<li class="muted">and %d more</li>' % more if more > 0 else ""
+        groups.append('<p class="hint">%s, %d</p><ul class="paths">%s</ul>' % (E(label[:1].upper() + label[1:]), len(paths), items))
+    copy = ('<button class="act" type="button" data-copy="%s" data-say="%s">Copy the folder\'s path</button>'
+            % (E(str(r["folder"])), E("Copied the path of %s." % r["name"])))
+    return ('<details class="notes changes"><summary>%s: %s</summary><p class="hint">In %s. %s. '
+            'Nothing here commits: review them in your git tool, or ask your assistant.</p>%s<div class="gacts">%s</div></details>'
+            % (E(r["name"]), E(say_files(r["dirty"])), E(where), E(say_kinds(r["changes"]).capitalize()), "".join(groups), copy))
+
+
 def meter(value: float, cap: float, label: str, right: str) -> str:
     pct = 0 if not cap else min(100.0, value / cap * 100)
     kind = "critical" if pct >= 90 else "warning" if pct >= 70 else ""
@@ -1393,6 +1462,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
 nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-size:10.5px;color:var(--muted)}
 .hint{font-size:11.5px;color:var(--muted);margin:0}
+.changes .hint{margin:6px 0 2px}.paths{margin:0;padding-left:18px;font-size:12px}.paths code{word-break:break-all}
 .zt{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.zt .act{margin-left:auto;align-self:center}a.act:hover{text-decoration:none}
 .gwrap{position:relative;height:560px;border-radius:10px;background:var(--raise);border:1px solid var(--line);overflow:hidden}
 .gwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.gwrap canvas.drag{cursor:grabbing}.gwrap canvas.hot{cursor:pointer}
@@ -2048,10 +2118,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="meters">%s</div><div style="margin-top:14px">%s</div>' % (m, table))
 
     # ---- repositories and wikis
-    rr = "".join('<div class="item" data-ok="1" data-tip="last commit %s">%s<div class="name">%s<small>%s</small></div></div>' % (
-        E(age(r["last"], now)) if r["last"] else "never", ICON["good" if not r["dirty"] else "none"], E(r["name"]),
-        "%d uncommitted" % r["dirty"] if r["dirty"] else "all committed") for r in R)
-    repos_card = card("repos", "Repositories", "a ring means work not yet committed", '<div class="tiles">%s</div>' % rr if rr else '<p class="muted">No git repositories found.</p>')
+    rr = "".join('<div class="item" data-ok="1" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
+        E("; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"])) if x)),
+        ICON["good" if not r["dirty"] else "none"], E(r["name"]),
+        say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
+    repos_card = card("repos", "Repositories", "a ring means files changed since the last commit",
+                      ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
+                      if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
         if not w["when"]:
             return "nothing logged yet"

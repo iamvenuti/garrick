@@ -4,6 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The status page's Repositories card counts changed files and says so: "12 changed files", not "12 uncommitted", which read as twelve commits. Its tooltip and a list under the tiles split them into staged, not staged, untracked and conflicted, and list the paths, with a button that copies the repository's folder. The card stays read-only: nothing on it commits. Untracked files in a new folder are counted one by one.
+- `intake.py` lost `zone_of`, which nothing called.
+
+### Fixed
+
+- `todo_lines.py` closes the files it reads, so the tests no longer print `ResourceWarning`.
+
+### Security
+
+- The filing commands of the intake and meetings skills check where a file will really land, just before moving or writing it, and refuse rather than file somewhere else. Every such command has boundary tests. Details are in the security advisory published with this release.
+
 ## [0.6.0] - 2026-10-05
 
 The status page is reorganised around how it is used: *Overview* for your work, *Status* for the machinery, the graph one place at a time, and Settings for how a thread opens. Todo lines move to the Obsidian Tasks format, and two preview features, the Todo list and buttons that act, can be switched on.

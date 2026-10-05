@@ -10,7 +10,7 @@ One page, Garrick's Status, that answers two questions before you open anything:
 - **Open actions**: the unticked items in each zone's `Todo.md`, counted by section, with an *Open* link to the list. A zone without a `Todo.md` is left out, and with none at all so is the card; the check reports the missing file.
 - **Inboxes**: what is waiting to be filed in each zone's `Inbox/` and in the Meetings inbox.
 - **Scheduled jobs and assistant calls**, when you use the [scheduled jobs](scheduled-jobs.md) extra: a fourteen-day strip per job, one cell per day, and the spend against its caps. The caps are the ones the jobs run under: the `GARRICK_CAP_*` values in the launchd plists of the jobs that call the assistant, with the default for any a plist leaves out and the lowest where jobs differ. With no such plist, the page shows the caps it was built with, and the card says which it used. A cap set to 0 shows as *no cap*. A job the cap stopped gets one line in *Needs attention*, however many calls it lost.
-- **Repositories and wikis**: what is not yet committed in the workspace, each zone and the wikis, and the date and title of the newest entry in each wiki's log.
+- **Repositories and wikis**: how many files have changed since the last commit in the workspace, each zone and the wikis, split into staged, not staged, untracked and conflicted, with their paths to read; and the date and title of the newest entry in each wiki's log. The card counts files, not commits, and never commits anything: another session may be halfway through that work.
 
 ![The graph on the demo workspace, with a thread selected](../assets/status-graph.png)
 

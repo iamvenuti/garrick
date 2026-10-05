@@ -1017,6 +1017,58 @@ class TestWikisAndRepos(StatusCase):
         self.assertIn('<div class="name">Wikis<small>', html[start:html.index("</details>", start)])
 
 
+class TestChangedFiles(StatusCase):
+    """The Repositories card counts changed files and says what they are. It
+    never calls them commits, and it offers no way to commit them."""
+
+    def test_reads_porcelain_one_entry_per_file(self):
+        porcelain = "\0".join(["M  staged.md", " M edited.md", "MM both.md", "R  new name.md", "old name.md",
+                               "?? notes/draft.md", "UU merge.md", " D gone.md", ""])
+        self.assertEqual([("staged.md", ("staged",)), ("edited.md", ("unstaged",)), ("both.md", ("staged", "unstaged")),
+                          ("new name.md", ("staged",)), ("notes/draft.md", ("untracked",)), ("merge.md", ("conflicted",)),
+                          ("gone.md", ("unstaged",))], status.changed_files(porcelain))
+        self.assertEqual([], status.changed_files(""))
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_counts_match_git_status(self):
+        from fixtures import commit_all, git, git_init
+        work = self.root / "Zones" / "Work"
+        git_init(work)
+        commit_all(work)
+        hub = work / "Acme Review" / "Acme Review.md"
+        hub.write_text(hub.read_text() + "\nEdited.\n")                     # not staged
+        write(work / "Acme Review" / "Sources" / "a.csv", "x\n")             # untracked, in a new folder
+        write(work / "Acme Review" / "Sources" / "b.csv", "y\n")             # untracked, same folder
+        git(work, "mv", "Acme Review/Threads/Pricing/Pricing.md", "Acme Review/Threads/Pricing/Pricing notes.md")
+        R = {r["name"]: r for r in status.repos(self.root)}
+        self.assertEqual(4, R["Work"]["dirty"])                               # files, the new folder's two included
+        self.assertEqual("1 staged, 1 not staged, 2 untracked", status.say_kinds(R["Work"]["changes"]))
+        html = self.page()
+        start = html.index('id="repos"')
+        block = html[start:html.index('<script', start)]     # the last card, before the page's script
+        self.assertIn("<small>4 changed files</small>", block)
+        self.assertNotIn("uncommitted", block)
+        self.assertIn("Work: 4 changed files", block)
+        self.assertIn("<code>Acme Review/Sources/a.csv</code>", block)
+        self.assertIn("<code>Acme Review/Threads/Pricing/Pricing notes.md</code>", block)
+        self.assertIn("In Zones/Work.", block)
+        self.assertNotIn("data-act", block)                                   # nothing here commits
+        self.assertNotRegex(block.lower(), r">\s*commit")
+
+    def test_one_file_is_singular_and_a_clean_repository_says_so(self):
+        self.assertEqual("1 changed file", status.say_files(1))
+        self.assertEqual("12 changed files", status.say_files(12))
+        self.assertEqual("", status.say_kinds([]))
+
+    def test_a_long_list_is_cut_but_the_count_is_not(self):
+        changes = [("f%02d.md" % i, ("untracked",)) for i in range(status.REPO_LIST_CAP + 5)]
+        out = status.repo_changes(self.root, {"name": "Work", "folder": self.root / "Zones" / "Work",
+                                              "dirty": len(changes), "changes": changes})
+        self.assertIn("%d changed files" % len(changes), out)
+        self.assertIn("and 5 more", out)
+        self.assertEqual(status.REPO_LIST_CAP, out.count("<code>"))
+
+
 class TestRebuildAndWorkspace(StatusCase):
     def test_rebuild_command_is_absolute_quoted_and_complete(self):
         ws = Path(self._tmp.name).resolve() / "My Workspace"

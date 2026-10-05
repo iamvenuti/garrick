@@ -1361,7 +1361,8 @@ nav .navsec{margin:12px 0 2px;padding:0 10px;font-size:11px;font-weight:600;lett
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
 .slot{display:flex;flex-direction:column;gap:16px;min-width:0}.slot.full{grid-column:span 12}.slot .card{grid-column:auto}
 .slot:not(:has(>.card:not([hidden]))){display:none}
-.grid:not(:has(.stack.right>.card:not([hidden]))) .stack.left,.grid:not(:has(.stack.left>.card:not([hidden]))) .stack.right{grid-column:span 12}
+/* one column takes the width when the other is empty, except while a card is dragged: then both show, side by side */
+body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.left,body:not(.dragging) .grid:not(:has(.stack.left>.card:not([hidden]))) .stack.right{grid-column:span 12}
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}

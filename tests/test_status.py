@@ -168,7 +168,7 @@ class TestGraph(StatusCase):
         rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
         self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
         self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
-        self.assertIn('<i style="background:%s"></i>mail</span>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
+        self.assertIn('<i style="background:%s"></i>Mail</span>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
 
     def test_inboxes_raw_and_catalogues_stay_out(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Note.md", "# A dropped note\n")

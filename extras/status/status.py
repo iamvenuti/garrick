@@ -1969,8 +1969,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         meta = "%d live" % len(data["rows"]) + (" · %d aging" % na if na else "") + (" · %d stale" % nb if nb else "") + (" · %d done" % data["done"] if data["done"] else "")
         cols += ('<details class="zone" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta">%s</span></summary>%s%s</details>'
                  % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
-    legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
-              '<span><i class="critical"></i>over 45 days</span></div>')
+    legend = ('<div class="legend"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
+              '<span><i class="critical"></i>Over 45 days</span></div>')
     threads_card = card("threads", "Threads", "",
                         '<div class="zones">%s</div>%s<p class="hint gsum">%d live · %d parked · by name · hover one for what to do</p>'
                         % (cols, legend, live, parked_n))
@@ -2022,8 +2022,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                            E(str(j["seconds"])), E(last), ICON[j["state"]], E(j["status"]) + (
                                ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                                % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"])) if acting and j["name"] in sched else "")))
-        legend = ('<div class="legend"><span><i class="good"></i>every run ok</span><span><i class="warning"></i>some failed, then recovered</span>'
-                  '<span><i class="critical"></i>ended the day failed, or most runs failed</span><span><i></i>no run</span><span>· one cell per day, last %d days</span></div>' % DAYS)
+        legend = ('<div class="legend"><span><i class="good"></i>Every run ok</span><span><i class="warning"></i>Some failed, then recovered</span>'
+                  '<span><i class="critical"></i>Ended the day failed, or most runs failed</span><span><i></i>No run</span><span>· One cell per day, last %d days</span></div>' % DAYS)
         jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
     if L:
         c = L["caps"]
@@ -2060,9 +2060,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label))) for i, label in GR["kinds"])
+        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label[:1].upper() + label[1:]))) for i, label in GR["kinds"])
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>15–45 days old</span>'
-                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
+                  '<span><i class="ring" style="border-color:var(--critical)"></i>Over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis

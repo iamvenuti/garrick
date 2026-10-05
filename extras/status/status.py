@@ -1348,6 +1348,8 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 .gsum{margin:6px 0 0}
+.phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
+.phead .pflip{flex:none;font-size:11px;padding:3px 8px}.gpop .phead{padding-right:30px}
 .gzsel{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
 appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
 background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
@@ -1388,7 +1390,8 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 .zt{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.zt .act{margin-left:auto;align-self:center}a.act:hover{text-decoration:none}
 .gwrap{position:relative;height:560px;border-radius:10px;background:var(--raise);border:1px solid var(--line);overflow:hidden}
 .gwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.gwrap canvas.drag{cursor:grabbing}.gwrap canvas.hot{cursor:pointer}
-.gbar{position:absolute;left:10px;top:10px;right:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}.gbar>*{pointer-events:auto}
+.gbar{position:absolute;left:10px;top:10px;right:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}
+.gbar.gcorner{left:auto;top:auto;bottom:10px;justify-content:flex-end}.gbar>*{pointer-events:auto}
 .gbar .gseg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
 .gbar button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer}
 .gbar button.on{background:var(--wash);color:var(--ink)}.gbar>button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
@@ -1458,13 +1461,16 @@ function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='finder'?'Showed '+o.n+' i
 return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+(k==='finder'?'Reveal in Finder':'Open in '+LABEL[k])+'</button>'}
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
-if(o.w){a+=copy('open '+o.w);if(!o.h)a+=o.pa&&host?park(o):copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
-function park(o){var v=o.s?'wake':'park';return'<button class="act" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
+if(o.w)a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
+function park(o){var v=o.s?'wake':'park';return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
 +'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
+/* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else */
+function flip(o){if(!o.w||o.h)return'';if(o.pa&&host)return park(o);var p=(o.s?'wake ':'park ')+o.w;
+return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(o.s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
-function head(o){var s=state(o);return'<h4>'+esc(o.n)+'</h4><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
+function head(o){var s=state(o);return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
 +(s?'<div class="ink2" style="margin-top:4px">'+esc(s)+'</div>':'')}
 /* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
@@ -1522,7 +1528,9 @@ StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.clo
    (⌘,) calls StatusSettings.open(). */
 var sd=document.getElementById('settings');
 function sdShut(){sd.close()}
-sd.addEventListener('close',function(){document.body.appendChild(toast)});
+var sdChanged=false;sd.addEventListener('change',function(){sdChanged=true});
+/* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once */
+sd.addEventListener('close',function(){document.body.appendChild(toast);if(sdChanged&&host){sdChanged=false;host.postMessage({rebuild:true})}});
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal()}};
@@ -2063,7 +2071,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
                           '<div class="gbar"><select class="gzsel" aria-label="Place">' + switch + '</select>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
-                          '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
+                          '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button></div>'
+                          '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data))
 

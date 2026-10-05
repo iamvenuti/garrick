@@ -796,7 +796,8 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual({"todo-done", "todo-date"}, {a["verb"] for a in acts})
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
-        self.assertIn("o.pa&&host?park(o)", status.PANEL_JS)                                # only the app parks
+        self.assertIn("if(o.pa&&host)return park(o)", status.PANEL_JS)                      # only the app parks
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 

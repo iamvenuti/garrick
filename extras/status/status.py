@@ -326,6 +326,8 @@ def todo(ws: Path) -> Dict[str, dict]:
 FLAGS = {
     "todo-list": ("Todo list", "Every open action in the zones, with its thread, its section of Todo.md and its dates, "
                   "in a card of its own."),
+    "page-actions": ("Actions", "In Garrick's Status.app: tick and date a line of the Todo list, and park or wake a thread "
+                     "from its card. Each changes one line or one status field and commits it, as the skills do."),
 }
 
 
@@ -375,7 +377,19 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[Tuple[str, List[d
     return out
 
 
-def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date) -> str:
+def todo_buttons(zone: str, r: dict) -> str:
+    """Tick and a menu of dates, for Garrick's Status.app. Each button carries the
+    request page_action.py reads; the date is worked out at the click, so a page
+    built yesterday still means today."""
+    def req(verb, **more):
+        return E(json.dumps(dict({"verb": verb, "zone": zone, "file": r["file"], "key": r["key"]}, **more)))
+    picks = "".join('<button class="act" type="button" data-act="%s" data-rel="%s" data-say="Dating it…">%s</button>'
+                    % (req("todo-date"), rel, label) for rel, label in (("0", "Today"), ("1", "Tomorrow"), ("7", "In a week"), ("-", "No date")))
+    return ('<button class="tick" type="button" data-act="%s" data-say="Ticking it…" aria-label="Mark done: %s"></button>'
+            '<details class="tdate"><summary>Date</summary><div>%s</div></details>' % (req("todo-done"), E(r["text"][:80]), picks))
+
+
+def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions: bool = False) -> str:
     def chip(r):
         if r["when"] is None:
             return '<span class="chip">waiting</span>' if r["waiting"] else ""
@@ -385,8 +399,8 @@ def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date) -> str:
     cols = ""
     for zone, rows in lists:
         items = "".join(
-            '<div class="titem%s"><div class="ttext">%s%s</div><div class="tmeta">%s%s</div></div>'
-            % (" late" if r["late"] else "",
+            '<div class="titem%s">%s<div class="ttext">%s%s</div><div class="tmeta">%s%s</div></div>'
+            % (" late" if r["late"] else "", '<div class="tacts">%s</div>' % todo_buttons(zone, r) if actions else "",
                '<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["thread"] or Path(r["file"]).stem)) if (r["thread"] or r["file"] != "Todo.md") else "",
                md_inline(r["text"]), chip(r), '<span class="muted">%s</span>' % E(r["section"] or "in the thread note"))
             for r in rows)
@@ -506,7 +520,7 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
 
 
-def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False) -> dict:
+def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
@@ -573,6 +587,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "w": say, "u": link(path)})
         if cmux and kind in ("project", "thread"):
             nodes[-1]["f"] = str(path.parent)       # where Open in cmux starts a session
+        if actions and kind == "thread" and in_zone and folder_thread:
+            nodes[-1]["pa"] = [place, path.relative_to(root).as_posix()]   # what Park and Wake act on
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
@@ -957,7 +973,8 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
                         else "%s, %s, %s" % (z, p, t)) for z, p, t in every}
 
 
-def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False) -> str:
+def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False,
+                actions: bool = False) -> str:
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked, the name to say, and links.
@@ -968,6 +985,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
             "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""}
     if cmux:
         card["f"] = str(r["note"].parent)
+    if actions:
+        card["pa"] = [r["zone"], "%s/Threads/%s/%s.md" % (r["project"], r["thread"], r["thread"])]
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
 
 
@@ -1296,6 +1315,11 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .tzones{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}.tzone h4{margin:0 0 6px;font-size:13px}
 .titem{padding:7px 0;border-top:1px solid var(--line)}.titem .ttext{font-size:13px}.titem .thr{margin-right:6px;font-weight:600;color:var(--ink);text-decoration:none}
 .titem .tmeta{display:flex;gap:8px;align-items:center;margin-top:2px;font-size:11.5px}.chip.late{color:var(--critical);border-color:var(--critical)}
+.titem{display:grid;grid-template-columns:auto 1fr;column-gap:10px}.titem>.ttext,.titem>.tmeta{grid-column:2}.titem>.tacts{grid-row:1/3;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:1px}
+.titem:not(:has(.tacts)){display:block}.nohost .tacts{display:none}.nohost .titem{display:block}
+.tick{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--base);background:none;cursor:pointer;padding:0}.tick:hover{border-color:var(--good);background:var(--wash)}
+.tdate{position:relative;font-size:10.5px}.tdate summary{list-style:none;cursor:pointer;color:var(--muted)}.tdate summary::-webkit-details-marker{display:none}
+.tdate>div{position:absolute;z-index:5;left:0;top:16px;display:flex;flex-direction:column;gap:3px;padding:6px;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
 .flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
 .flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
@@ -1381,7 +1405,9 @@ function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='claude'?(p?'Opened Claude
 return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">Open in '+LABEL[k]+'</button>'}
 function acts(o){var a='<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
-if(o.w){a+=copy('open '+o.w);if(!o.h)a+=copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
+if(o.w){a+=copy('open '+o.w);if(!o.h)a+=o.pa&&host?park(o):copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
+function park(o){var v=o.s?'wake':'park';return'<button class="act" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
++'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
@@ -1406,11 +1432,17 @@ var toast=document.getElementById('toast');function say(s){toast.textContent=s;t
 /* In Garrick's Status.app the app copies, opens cmux and rebuilds; in a browser
    the page copies and nothing else. */
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 var rb=document.getElementById('rebuild');if(host&&rb){rb.textContent='Rebuild now';rb.removeAttribute('data-copy');rb.title='Build the page again now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
+/* An action (preview, page-actions): the app runs page_action.py, then rebuilds the page. */
+var x=t.closest('button[data-act]');if(x){if(!host)return;var r;try{r=JSON.parse(x.dataset.act)}catch(err){return}
+if(x.dataset.rel!==undefined){if(x.dataset.rel==='-')r.date='-';else{var d=new Date();d.setDate(d.getDate()+(+x.dataset.rel));
+r.date=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}var m=x.closest('details');if(m)m.open=false}
+host.postMessage({act:r});say(x.dataset.say);return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -1745,7 +1777,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     week = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days <= 7)
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
-    lists = todo_list(ws, link, now.date()) if preview_flags(ws)["todo-list"] else []
+    flags_on = preview_flags(ws)
+    acting = flags_on["page-actions"]
+    lists = todo_list(ws, link, now.date()) if flags_on["todo-list"] else []
 
     # ---- sidebar
     nav = [("overview", "Overview", worst, len(attn) or "")] + ([("graph", "Graph", "", "")] if show_graph else []) + \
@@ -1818,14 +1852,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
             rows.append('<div class="thread" data-ok="%d" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small></div>'
                         '<div class="fresh %s"><i style="width:%.1f%%"></i></div><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (k == "good", E(thread_card(r, names, link, days, cmux)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
+                        % (k == "good", E(thread_card(r, names, link, days, cmux, acting)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
                            k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)), "%dd" % days if days is not None else "—"))
         held = []
         for r in data["parked"]:
             days = (now.date() - r["updated"]).days if r["updated"] else None
             held.append('<div class="thread" data-ok="1" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s</small></div>'
                         '<span></span><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (E(thread_card(r, names, link, days, cmux)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
+                        % (E(thread_card(r, names, link, days, cmux, acting)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
                            "%dd" % days if days is not None else "—"))
         slug = re.sub(r"\W+", "-", z.lower())
         parked_block = ('<details class="parked" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
@@ -1919,7 +1953,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # ---- the graph
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now, cmux)
+        GR = graph(ws, T, link, now, cmux, acting)
         core = sum(1 for n in GR["nodes"] if n["c"])
         legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E(label)) for i, label in GR["kinds"])
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
@@ -1932,7 +1966,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
 
-    todolist_card = todo_list_card(lists, now.date()) if lists else ""
+    todolist_card = todo_list_card(lists, now.date(), acting) if lists else ""
     left = checks_card + jobs_card + wikis_card
     right = todo_card + inbox_card + calls_card + repos_card
     main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'

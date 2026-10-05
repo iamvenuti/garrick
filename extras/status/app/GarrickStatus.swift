@@ -158,6 +158,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			openInCmux(folder)                 // a page built before Open in Claude and Codex
 		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
+		if let request = body["act"] as? [String: Any] { act(request) }
 	}
 
 	// A folder of this workspace that still exists, or nil, with the page rebuilt.
@@ -216,6 +217,40 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			openInCmux(folder.path)
 		default:
 			return
+		}
+	}
+
+	// A button that changes something (preview, page-actions): page_action.py,
+	// beside status.py, does it and commits it, and says what it did. The app
+	// only passes the request on; the script checks every part of it.
+	func act(_ request: [String: Any]) {
+		guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
+		let script = builder.deletingLastPathComponent().appendingPathComponent("page_action.py")
+		guard FileManager.default.fileExists(atPath: script.path) else {
+			return toast("This page's actions need page_action.py beside status.py.")
+		}
+		let p = Process()
+		p.executableURL = URL(fileURLWithPath: python)
+		p.arguments = [script.path, "--workspace", workspace.path]
+		p.currentDirectoryURL = workspace
+		let input = Pipe(), output = Pipe()
+		p.standardInput = input
+		p.standardOutput = output
+		p.standardError = FileHandle.nullDevice
+		p.terminationHandler = { _ in
+			let reply = output.fileHandleForReading.readDataToEndOfFile()
+			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+			DispatchQueue.main.async {
+				self.toast(said?["say"] as? String ?? "That did not work.")
+				self.freshen(force: true)
+			}
+		}
+		do {
+			try p.run()
+			input.fileHandleForWriting.write(data)
+			input.fileHandleForWriting.closeFile()
+		} catch {
+			toast("Cannot run \(python)")
 		}
 	}
 

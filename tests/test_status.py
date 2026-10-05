@@ -682,6 +682,27 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("in the thread note", card)
         self.assertNotIn("example.com", card)                                     # a source link is not followed
 
+    def test_actions_only_when_switched_on(self):
+        self.todo()
+        self.on()
+        html = self.page()
+        self.assertNotIn('data-act=', html.split("<script>")[0])
+        self.assertNotIn('"pa":', htmllib.unescape(html))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": True, "page-actions": True}))
+        html = self.page()
+        self.assertRegex(html, r'Actions</b><span class="chip on">on</span>')
+        acts = [json.loads(htmllib.unescape(a)) for a in re.findall(r'data-act="([^"]*)"', html.split("<script>")[0])]
+        ticks = [a for a in acts if a["verb"] == "todo-done"]
+        self.assertTrue(ticks)
+        self.assertTrue(all(set(a) == {"verb", "zone", "file", "key"} and re.fullmatch(r"[0-9a-f]{16}", a["key"]) for a in ticks))
+        self.assertIn({"Work"}, [{a["zone"] for a in ticks}])
+        self.assertEqual({"todo-done", "todo-date"}, {a["verb"] for a in acts})
+        card = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
+        self.assertIn("o.pa&&host?park(o)", status.PANEL_JS)                                # only the app parks
+        self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
+        self.assertIn(".nohost .tacts{display:none}", status.CSS)
+
     def test_garrick_and_the_workspace_read_lines_alike(self):
         tl = status.todo_lines()
         p = tl.parse("- [ ] [[Acme/Pricing|Pricing]]: Send it #waiting 🔺 ⏳ 2026-10-09")

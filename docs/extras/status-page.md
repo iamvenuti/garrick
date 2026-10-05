@@ -49,6 +49,8 @@ Some features are in Garrick's source before they are in a release. They are off
 
 - **`todo-list`**: a *Todo list* card with every open action in the zones. It shows each action's thread, its section of `Todo.md` (or "in the thread note" when it sits there), and its dates as Obsidian Tasks writes them: a due date with `📅`, a day to chase a `#waiting` line with `⏳`. Overdue actions come first. It reads the notes and changes nothing.
 
+- **`page-actions`**: buttons that change your notes, in Garrick's Status.app only. On the Todo list, a circle ticks an action and *Date* sets or clears its date. On a thread's card, *Park* and *Wake* replace the phrases to copy. Each button changes one line or one `status:` field, the same way the skills would: ticking adds Obsidian Tasks' `✅` date, and parking sets `status: parked`, moves `updated:` and adds a dated "Parked." entry. Each change is then committed in the zone's repository, through its wall check. If the wall check refuses the commit, the file is put back as it was. The app runs `page_action.py` from the same folder as `status.py`, so copy both. A browser has no way to reach it, so there the buttons stay hidden.
+
 A preview feature may still change. When one is released it is switched on for everyone and its flag goes away.
 
 ## Thread cards
@@ -108,7 +110,7 @@ It compiles `GarrickStatus.swift` with the Xcode command line tools, which a Mac
 
 In a browser the page is a file, and a file cannot act on your workspace, so its buttons copy instead. Paste what a card copies to your assistant. The sidebar copies the command that rebuilds the page. It is absolute and quoted, so it runs from any folder, and it carries the flags the page was built with.
 
-Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself. That holds in the Mac app too. There it can rebuild the page, which writes only the page, and open a cmux tab in a folder of your workspace, which writes nothing. It hands the folder to cmux the way Finder's *Open With* does, so it needs no access to cmux's controls and types nothing into the tab.
+Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself. That holds in the Mac app too, unless you switch on the [preview](#preview-features) `page-actions`, whose buttons tick, date, park and wake. There it can rebuild the page, which writes only the page, and open a cmux tab in a folder of your workspace, which writes nothing. It hands the folder to cmux the way Finder's *Open With* does, so it needs no access to cmux's controls and types nothing into the tab.
 
 ## Reading the graph
 

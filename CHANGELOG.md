@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Preview feature `page-actions`: in Garrick's Status.app, tick and date a line of the Todo list, and park or wake a thread from its card. Each button changes one line or one `status:` field and commits it, as the skills do, and a commit the wall check refuses leaves the file as it was. `extras/status/page_action.py` does the work; a browser cannot reach it.
+
 ### Changed
 
 - A zone's `Todo.md` uses Obsidian Tasks lines: each opens with its thread, `[[Thread]]: `, or its single-thread project, or else its party or person, and the dates go last as Tasks fields (`📅` due, `🛫` not before, `#waiting` and `⏳` the day to chase). Obsidian's Tasks plugin can then sort and filter them, and the status page's Todo list shows their dates. The meetings, threads and interview skills write it; the template's header explains it. A list in the older `· project, thread · date` form still counts on the page, without dates.

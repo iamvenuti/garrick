@@ -11,6 +11,8 @@ functions below keep their signatures:
     walled(context, tag_a, tag_b) -> bool
     workspace_root(start=None) -> Path
     link_on_the_way(base, path) -> Path or None
+    landing(root, home, path) -> Path
+    write_new(root, home, path, data) / write_over(...) / move_new(root, home, src, path)
     install_wall_hook(zone) -> Path
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
@@ -28,8 +30,11 @@ from __future__ import annotations
 import datetime
 import email
 import email.policy
+import errno
 import os
 import re
+import shutil
+import stat
 import subprocess
 import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
@@ -51,6 +56,11 @@ __all__ = [
     "walled",
     "workspace_root",
     "link_on_the_way",
+    "OffCourse",
+    "landing",
+    "write_new",
+    "write_over",
+    "move_new",
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
@@ -495,6 +505,141 @@ def link_on_the_way(base: PathLike, path: PathLike) -> Optional[Path]:
         if step.is_symlink():
             return step
     return None
+
+
+class OffCourse(Exception):
+    """A file that would land somewhere other than the folder checked for it.
+    `link` is the symbolic link that would send it there, or the path itself."""
+
+    def __init__(self, link: PathLike):
+        super().__init__(str(link))
+        self.link = Path(link)
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    return path == folder or folder in path.parents
+
+
+def landing(root: PathLike, home: PathLike, path: PathLike) -> Path:
+    """Where `path` really lands, with every link on the way resolved.
+
+    `home` is the folder a command checked the file may go to: a project, a
+    wiki. A link on the way is fine while it keeps the file inside `home` as
+    it really is, and `home` inside the workspace `root`; a link that leads
+    out, `path` itself being a link, and a path that climbs with `..` raise
+    OffCourse. Nothing is created or moved."""
+    root, home, path = Path(root), Path(home), Path(path)
+    try:
+        parts = path.relative_to(home).parts
+    except ValueError:
+        raise OffCourse(path)
+    if not parts or ".." in parts:
+        raise OffCourse(path)
+    real_home = home.resolve()
+    if not _inside(real_home, root.resolve()):
+        raise OffCourse(link_on_the_way(root, home) or home)
+    if path.is_symlink():
+        raise OffCourse(path)
+    folder = path.parent.resolve()
+    if not _inside(folder, real_home):
+        raise OffCourse(link_on_the_way(home, path.parent) or path.parent)
+    return folder / path.name
+
+
+_NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+
+
+def _open_folder(root: Path, home: Path, path: Path) -> Tuple[int, str]:
+    """(descriptor of the folder `path` really lands in, its name there).
+
+    The folder is opened one step at a time from the top, following no link,
+    so a link put on the way since `landing` checked it makes this fail
+    rather than lead somewhere else. Files are then made relative to the
+    descriptor, never by path."""
+    target = landing(root, home, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(target.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in target.parent.parts[1:]:
+            step = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = step
+    except OSError:
+        os.close(fd)
+        raise OffCourse(link_on_the_way(home, path.parent) or path.parent)
+    return fd, target.name
+
+
+def _create(folder: int, name: str, path: Path, mode: int = 0o666) -> int:
+    try:
+        return os.open(name, _NEW, mode, dir_fd=folder)
+    except FileExistsError:
+        raise FileExistsError(errno.EEXIST, "already exists", str(path))
+
+
+def write_new(root: PathLike, home: PathLike, path: PathLike, data: bytes) -> Path:
+    """Write `data` to `path`, a file that does not exist yet, inside `home`.
+    Raises OffCourse as `landing` does, and FileExistsError when anything,
+    a file or a link, already stands at `path`. Returns `path`."""
+    root, home, path = Path(root), Path(home), Path(path)
+    folder, name = _open_folder(root, home, path)
+    try:
+        with os.fdopen(_create(folder, name, path), "wb") as out:
+            out.write(data)
+    finally:
+        os.close(folder)
+    return path
+
+
+def write_over(root: PathLike, home: PathLike, path: PathLike, data: bytes) -> Path:
+    """Replace `path` whole with `data`, or create it, inside `home`. Written
+    beside it and renamed over it, so a reader sees the old file or the new
+    one, and a link put at `path` since the check is replaced, not followed."""
+    root, home, path = Path(root), Path(home), Path(path)
+    folder, name = _open_folder(root, home, path)
+    tmp = ".%s.%d.tmp" % (name, os.getpid())
+    try:
+        with os.fdopen(_create(folder, tmp, path), "wb") as out:
+            out.write(data)
+        os.replace(tmp, name, src_dir_fd=folder, dst_dir_fd=folder)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=folder)
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(folder)
+    return path
+
+
+def move_new(root: PathLike, home: PathLike, src: PathLike, path: PathLike) -> Path:
+    """Move the file `src` to `path`, which does not exist yet, inside `home`:
+    copied byte for byte with its permissions and times, then removed. `src`
+    is never read through a link. Raises as `write_new` does, and leaves
+    `src` where it was. Returns `path`."""
+    root, home, path = Path(root), Path(home), Path(path)
+    inp = os.open(str(src), os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(inp)
+        folder, name = _open_folder(root, home, path)
+        try:
+            with os.fdopen(_create(folder, name, path, 0o600), "wb") as out:
+                try:
+                    with os.fdopen(os.dup(inp), "rb") as reader:
+                        shutil.copyfileobj(reader, out)
+                    out.flush()
+                    os.fchmod(out.fileno(), stat.S_IMODE(st.st_mode))
+                    os.utime(out.fileno(), ns=(st.st_atime_ns, st.st_mtime_ns))
+                except BaseException:
+                    os.unlink(name, dir_fd=folder)
+                    raise
+        finally:
+            os.close(folder)
+    finally:
+        os.close(inp)
+    os.unlink(str(src))
+    return path
 
 
 # ---------------------------------------------------------------------------

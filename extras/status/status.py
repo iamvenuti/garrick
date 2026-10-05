@@ -458,7 +458,9 @@ def check(ws: Path) -> Optional[dict]:
 
 def repos(ws: Path) -> List[dict]:
     """The root, each zone, and the wikis: the installer makes one repository
-    at Wikis/ for both. A wiki with a repository of its own is listed too."""
+    at Wikis/ for both. A wiki with a repository of its own is listed too.
+    When git fails or runs out of time, the repository is `unread`, never
+    clean: an empty answer is not a count of nothing."""
     places = [("Workspace", ws)] + [(z.name, z) for z in visible_dirs(ws / "Zones")] + \
              [("Wikis", ws / "Wikis")] + [(w.name, w) for w in visible_dirs(ws / "Wikis")]
     out = []
@@ -467,12 +469,15 @@ def repos(ws: Path) -> List[dict]:
             continue
         def git(*args):
             try:
-                return subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, timeout=30).stdout
+                proc = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, timeout=30)
             except (OSError, subprocess.TimeoutExpired):
-                return ""
-        changes = changed_files(git("status", "--porcelain", "-z", "--untracked-files=all"))
-        ct = git("log", "-1", "--format=%ct").strip()
+                return None
+            return proc.stdout if proc.returncode == 0 else None
+        porcelain = git("status", "--porcelain", "-z", "--untracked-files=all")
+        changes = changed_files(porcelain or "")
+        ct = (git("log", "-1", "--format=%ct") or "").strip()
         out.append({"name": name, "folder": folder, "dirty": len(changes), "changes": changes,
+                    "unread": porcelain is None,
                     "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
     return out
 
@@ -2118,10 +2123,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="meters">%s</div><div style="margin-top:14px">%s</div>' % (m, table))
 
     # ---- repositories and wikis
-    rr = "".join('<div class="item" data-ok="1" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
-        E("; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"])) if x)),
-        ICON["good" if not r["dirty"] else "none"], E(r["name"]),
-        say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
+    rr = "".join('<div class="item" data-ok="%d" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
+        0 if r.get("unread") else 1,
+        E("git status failed or took over 30 seconds, so its changes are not known" if r.get("unread") else
+          "; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"])) if x)),
+        ICON["warning" if r.get("unread") else "good" if not r["dirty"] else "none"], E(r["name"]),
+        "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
     repos_card = card("repos", "Repositories", "a ring means files changed since the last commit",
                       ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
                       if rr else '<p class="muted">No git repositories found.</p>')

@@ -34,7 +34,6 @@ import argparse  # noqa: E402
 import datetime  # noqa: E402
 import json  # noqa: E402
 import re  # noqa: E402
-import shutil  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional, Tuple  # noqa: E402
 
@@ -47,8 +46,10 @@ from garrick_lib import (  # noqa: E402
     MEDIA_EXTS,
     is_domain,
     is_webmail,
+    landing,
     load_context,
     mail_attachments,
+    move_new,
     parse_frontmatter,
     parse_mail,
     strip_recipients,
@@ -57,8 +58,9 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     walled,
     workspace_root,
+    write_new,
 )
-from ingest import RAW_EXTS, Refusal, _stems, build_slug, meetings_root, no_links  # noqa: E402
+from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root  # noqa: E402
 
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
@@ -382,12 +384,14 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     slug = build_slug(date, title, _stems(raw_dir, sources))
     dest = raw_dir / (slug + path.suffix.lower())
     page = sources / (slug + ".md")
-    no_links(root, dest, page)
-    sources.mkdir(parents=True, exist_ok=True)
+    meetings = meetings_root(root)
     today = today or datetime.date.today().isoformat()
     text = draft_page(title, date, zone, tags, slug, mail, today)
-    shutil.move(str(path), str(dest))
-    page.write_text(text, encoding="utf-8")
+    with filing(root):
+        landing(root, meetings, dest)
+        landing(root, meetings, page)
+        move_new(root, meetings, path, dest)
+        write_new(root, meetings, page, text.encode("utf-8"))
     return slug, dest, page
 
 
@@ -445,14 +449,15 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
         "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
         "<A short summary. Every vendor claim attributed to its vendor.>", "",
         "Touches <the concept and entity pages it speaks to>.", ""])
-    no_links(root, dest, page)
-    sources.mkdir(parents=True, exist_ok=True)
-    if mail:
-        dest.write_bytes(strip_recipients(path.read_bytes()))
-        path.unlink()
-    else:
-        shutil.move(str(path), str(dest))
-    page.write_text(text, encoding="utf-8")
+    with filing(root):
+        landing(root, kroot, dest)
+        landing(root, kroot, page)
+        if mail:
+            write_new(root, kroot, dest, strip_recipients(path.read_bytes()))
+            path.unlink()
+        else:
+            move_new(root, kroot, path, dest)
+        write_new(root, kroot, page, text.encode("utf-8"))
     return slug, dest, page
 
 
@@ -525,11 +530,12 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     tags = _known_tags(ctx, parties, "A file for a project")
     _check_wall(ctx, ptags, tags)
     dest = folder / "Sources" / _safe_name(name or path.name)
-    no_links(root.resolve(), dest)
+    with filing(root):
+        landing(root, folder, dest)
     if dest.exists():
         raise Refusal("%s already exists; pass --name for a different one." % _rel(root, dest))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(path), str(dest))
+    with filing(root):
+        move_new(root, folder, path, dest)
     return dest
 
 
@@ -584,14 +590,14 @@ def extract_attachment(root: Path, mail: str, project: Optional[str], name: str 
                           "Pass --name with one of its attachments: %s." % names)
         chosen = hits[0]
     dest = folder / "Sources" / _safe_name(save_as or chosen[0])
-    no_links(root.resolve(), dest)
+    with filing(root):
+        landing(root, folder, dest)
     if dest.exists():
         if dest.read_bytes() == chosen[2]:
             return "already", dest
         raise Refusal("%s already exists and is different; pass --save-as for another name." % _rel(root, dest))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "xb") as f:  # never through a link put there since the check
-        f.write(chosen[2])
+    with filing(root):
+        write_new(root, folder, dest, chosen[2])
     return "saved", dest
 
 

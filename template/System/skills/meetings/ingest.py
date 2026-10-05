@@ -19,9 +19,9 @@ refusal, one line to stderr and exits 1.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import re
-import shutil
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -32,7 +32,9 @@ HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent.parent / "tools"
 sys.path.insert(0, str(TOOLS))
 
-from garrick_lib import link_on_the_way, parse_frontmatter, workspace_root  # noqa: E402
+from garrick_lib import (  # noqa: E402
+    OffCourse, landing, move_new, parse_frontmatter, workspace_root, write_new, write_over,
+)
 
 RAW_EXTS = {".txt", ".md", ".vtt"}
 SLUG_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -79,20 +81,29 @@ def meetings_root(root: Path) -> Path:
     return root / "Wikis" / "Meetings"
 
 
-def no_links(root: Path, *paths: Path) -> None:
-    """Refuse when a symbolic link stands between `root` and any of `paths`,
-    their last part included. Called just before a file is moved or written,
-    after every other check, so the file lands where it was checked to go."""
-    for path in paths:
-        link = link_on_the_way(root, path)
-        if link is not None:
-            try:
-                where = link.relative_to(root).as_posix()
-            except ValueError:
-                where = str(link)
-            raise Refusal("%s is a symbolic link, or outside the workspace. Garrick never files through a link, "
-                          "because the file would land somewhere other than the folder it checked. Nothing was "
-                          "moved." % where)
+@contextlib.contextmanager
+def filing(root: Path):
+    """Word what garrick_lib's writers raise as a refusal. They land a file in
+    the folder that was checked for it or nowhere: a link that leads out of
+    that folder, or one put on the way since the check, is refused."""
+    try:
+        yield
+    except OffCourse as exc:
+        raise Refusal("%s is a symbolic link that leads out of the folder Garrick checked, or is outside the "
+                      "workspace. Garrick never files through such a link, because the file would land somewhere "
+                      "other than the folder it checked. Nothing was moved or written." % _rel(root, exc.link))
+    except FileExistsError as exc:
+        raise Refusal("%s already exists, so nothing was moved or written; another session may have filed it."
+                      % _rel(root, Path(exc.filename or "")))
+
+
+def _rel(root: Path, path: Path) -> str:
+    for base in (root, root.resolve()):
+        try:
+            return path.relative_to(base).as_posix()
+        except ValueError:
+            pass
+    return str(path)
 
 
 # --------------------------------------------------------------------------- land
@@ -103,16 +114,19 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
 
     Never edits the file's contents. Refuses a file that is not directly in
     `raw/inbox/`, a link, a file that is not a transcript Garrick reads, a bad
-    date, a workspace with no Meetings wiki, and a link on the way to `raw/`.
+    date, a workspace with no Meetings wiki, and a link on the way to `raw/`
+    that leads out of the wiki.
     """
     inbox_path = Path(inbox)
     if not inbox_path.is_file():
         raise Refusal("%s is not a file." % inbox_path)
-    inbox_dir = meetings_root(root) / "raw" / "inbox"
-    if (inbox_path.is_symlink() or link_on_the_way(root, inbox_dir) is not None
-            or inbox_path.resolve().parent != inbox_dir.resolve()):
+    meetings = meetings_root(root)
+    inbox_dir = meetings / "raw" / "inbox"
+    if inbox_path.is_symlink() or inbox_path.resolve().parent != inbox_dir.resolve():
         raise Refusal("%s is not in Wikis/Meetings/raw/inbox/. land only takes a transcript from there, "
                       "and never a link to one. Nothing was moved." % inbox_path.name)
+    with filing(root):
+        landing(root, meetings, inbox_dir / inbox_path.name)
     if inbox_path.suffix.lower() not in RAW_EXTS:
         raise Refusal("%s is not a transcript Garrick reads: use .txt, .md or .vtt." % inbox_path.name)
     try:
@@ -121,7 +135,6 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
         raise Refusal('"%s" is not a date (YYYY-MM-DD).' % date_iso)
     if not title.strip():
         raise Refusal("A meeting needs a title, even a short one, to name the file.")
-    meetings = meetings_root(root)
     raw_dir = meetings / "raw"
     sources_dir = meetings / "wiki" / "sources"
     if not raw_dir.is_dir():
@@ -129,8 +142,8 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
     taken = _stems(raw_dir, sources_dir)
     slug = build_slug(date_iso, title, taken)
     dest = raw_dir / ("%s%s" % (slug, inbox_path.suffix.lower()))
-    no_links(root, dest)
-    shutil.move(str(inbox_path), str(dest))
+    with filing(root):
+        move_new(root, meetings, inbox_path, dest)
     return slug, dest
 
 
@@ -147,9 +160,7 @@ def ensure_person(root: Path, name: str, party: str, today: str) -> Tuple[Path, 
     Never overwrites an existing person page: identity and party, once
     written, are corrected by hand, not regenerated. Returns (path, created).
     """
-    people_dir = meetings_root(root) / "wiki" / "people"
-    people_dir.mkdir(parents=True, exist_ok=True)
-    path = people_dir / ("%s.md" % person_slug(name))
+    path = meetings_root(root) / "wiki" / "people" / ("%s.md" % person_slug(name))
     if path.is_file():
         return path, False
     party_line = "party: %s\n" % party if party else ""
@@ -164,7 +175,13 @@ def ensure_person(root: Path, name: str, party: str, today: str) -> Tuple[Path, 
         "# %s\n\n"
         "<Who they are, and which party, in a sentence.>\n"
     ) % (name, party_line, today, today, name)
-    path.write_text(text, encoding="utf-8")
+    try:
+        with filing(root):
+            write_new(root, meetings_root(root), path, text.encode("utf-8"))
+    except Refusal:
+        if path.is_file() and not path.is_symlink():  # another session made it first
+            return path, False
+        raise
     return path, True
 
 
@@ -194,7 +211,8 @@ def rebuild_index(root: Path) -> Tuple[Path, int]:
     lines = ["# Index", "", "Every page, newest first.", "", "| Page | Type | Updated |", "|---|---|---|"]
     lines += [r[2] for r in rows]
     index_path = meetings / "wiki" / "index.md"
-    index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with filing(root):
+        write_over(root, meetings, index_path, ("\n".join(lines) + "\n").encode("utf-8"))
     return index_path, len(rows)
 
 
@@ -224,7 +242,8 @@ def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optio
     where = ", ".join(p for p in parties if p) or "no parties"
     entry = "- %s: [[wiki/sources/%s|%s]] (%s; %s)" % (today, slug, title, zone or "no zone", where)
     new_lines = head + [entry] + lines[head_end:]
-    log_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    with filing(root):
+        write_over(root, meetings_root(root), log_path, ("\n".join(new_lines) + "\n").encode("utf-8"))
     return log_path
 
 

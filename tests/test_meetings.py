@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -194,11 +195,85 @@ class LandOnlyFromTheInboxTest(unittest.TestCase):
         self.assertTrue(f.exists())
         self.assertFalse((self.note.parent / "Sources").exists())
 
+    def test_a_linked_inbox_is_named(self):
+        inbox = self.ws.meetings / "raw" / "inbox"
+        (inbox / ".gitkeep").unlink()
+        inbox.rmdir()
+        os.symlink(str(self.note.parent), str(inbox))
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, inbox / self.note.name, "2026-03-10", "Acme kick-off")
+        self.assertIn("Wikis/Meetings/raw/inbox is a symbolic link", str(caught.exception))
+        self.assert_untouched()
+
+    def test_an_inbox_linked_inside_the_wiki_still_lands(self):
+        inbox = self.ws.meetings / "raw" / "inbox"
+        inbox.rename(self.ws.meetings / "raw" / "inbox-real")
+        os.symlink("inbox-real", str(inbox))
+        f = self.ws.inbox_file("call.txt")
+        slug, dest = ingest.land(self.ws.root, f, "2026-03-10", "Acme kick-off")
+        self.assertTrue(dest.is_file())
+        self.assertFalse(f.exists())
+
     def test_still_lands_from_the_inbox(self):
         f = self.ws.inbox_file("call.txt")
         slug, dest = ingest.land(self.ws.root, f, "2026-03-10", "Acme kick-off")
         self.assertEqual(self.ws.meetings / "raw" / "260310-acme-kick-off.txt", dest)
         self.assertEqual(self.text, self.note.read_text())
+
+class WikiWritesNeverThroughALinkTest(unittest.TestCase):
+    """person, index and log write into the Meetings wiki, or refuse: a link
+    that leads out of the wiki is never written through."""
+
+    def setUp(self):
+        self.ws = TempWorkspace()
+        self.outside = self.ws.root / "Zones" / "Work" / "Acme Review"
+        self.outside.mkdir(parents=True)
+
+    def tearDown(self):
+        self.ws.close()
+
+    def test_a_dangling_link_where_a_person_page_goes(self):
+        page = self.ws.meetings / "wiki" / "people" / "dana-whitlock.md"
+        os.symlink(str(self.outside / "dana.md"), str(page))
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.ensure_person(self.ws.root, "Dana Whitlock", "acme", "2026-03-10")
+        self.assertIn("Nothing was moved or written", str(caught.exception))
+        self.assertEqual([], list(self.outside.iterdir()))
+
+    def test_a_people_folder_linked_out_of_the_wiki(self):
+        people = self.ws.meetings / "wiki" / "people"
+        (people / ".gitkeep").unlink()
+        people.rmdir()
+        os.symlink(str(self.outside), str(people))
+        with self.assertRaises(ingest.Refusal):
+            ingest.ensure_person(self.ws.root, "Dana Whitlock", "acme", "2026-03-10")
+        self.assertEqual([], list(self.outside.iterdir()))
+
+    def test_index_and_log_linked_out_of_the_wiki(self):
+        for name, write in (("index.md", lambda: ingest.rebuild_index(self.ws.root)),
+                            ("log.md", lambda: ingest.append_log(self.ws.root, "260310-acme-kick-off", "Acme kick-off",
+                                                                 "Work", ["acme"], "2026-03-10"))):
+            with self.subTest(name=name):
+                target = fixtures.write(self.outside / name, "theirs\n")
+                page = self.ws.meetings / "wiki" / name
+                page.unlink()
+                os.symlink(str(target), str(page))
+                with self.assertRaises(ingest.Refusal):
+                    write()
+                self.assertEqual("theirs\n", target.read_text())
+
+    def test_a_person_made_by_another_session_first_is_kept(self):
+        page = self.ws.meetings / "wiki" / "people" / "dana-whitlock.md"
+        real = ingest.write_new
+
+        def first(root, home, path, data):
+            fixtures.write(page, "theirs\n")
+            return real(root, home, path, data)
+        with mock.patch.object(ingest, "write_new", first):
+            path, created = ingest.ensure_person(self.ws.root, "Dana Whitlock", "acme", "2026-03-10")
+        self.assertFalse(created)
+        self.assertEqual("theirs\n", path.read_text())
+
 
 class PastedNotesTest(unittest.TestCase):
     """Notes pasted into the conversation: the skill saves them unedited as

@@ -20,6 +20,7 @@ import plistlib
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -1054,6 +1055,27 @@ class TestChangedFiles(StatusCase):
         self.assertIn("In Zones/Work.", block)
         self.assertNotIn("data-act", block)                                   # nothing here commits
         self.assertNotRegex(block.lower(), r">\s*commit")
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_a_git_status_that_fails_is_never_all_committed(self):
+        from fixtures import commit_all, git_init
+        work = self.root / "Zones" / "Work"
+        git_init(work)
+        commit_all(work)
+        run = subprocess.run
+
+        def slow(cmd, *args, **kw):
+            if "status" in cmd:
+                raise subprocess.TimeoutExpired(cmd, 30)
+            return run(cmd, *args, **kw)
+        with mock.patch.object(status.subprocess, "run", slow):
+            R = {r["name"]: r for r in status.repos(self.root)}
+            html = self.page()
+        self.assertTrue(R["Work"]["unread"])
+        start = html.index('id="repos"')
+        block = html[start:html.index('<script', start)]
+        self.assertIn("Work<small>could not be read</small>", block)
+        self.assertNotIn("all committed", block)
 
     def test_one_file_is_singular_and_a_clean_repository_says_so(self):
         self.assertEqual("1 changed file", status.say_files(1))

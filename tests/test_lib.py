@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -273,6 +274,113 @@ class TestVersion(unittest.TestCase):
             write(root / "System" / "garrick-version.json", '{"commit": "3f9c2ab", "files": {"AGENTS.md": "x"}}')
             self.assertTrue(lib.record_written(root, [root / "Zones/Advisory/AGENTS.md"]))
             self.assertEqual(["AGENTS.md", "Zones/Advisory/AGENTS.md"], list(lib.read_version(root)["files"]))
+
+
+class TestLanding(unittest.TestCase):
+    """landing and the writers built on it: a file lands in the folder checked
+    for it, or nowhere. A link that stays inside that folder is fine."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "ws"
+        self.home = self.root / "Zones" / "Work" / "Acme"
+        self.other = self.root / "Zones" / "Work" / "Birch"
+        write(self.home / "Archive" / "Sources" / "keep.md", "x")
+        write(self.other / "Sources" / "keep.md", "x")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def birch(self):
+        return sorted(p.name for p in (self.other / "Sources").iterdir())
+
+    def test_a_link_inside_home_is_followed(self):
+        os.symlink("Archive/Sources", str(self.home / "Sources"))
+        dest = self.home / "Sources" / "new.md"
+        self.assertEqual((self.home / "Archive" / "Sources").resolve() / "new.md",
+                         lib.landing(self.root, self.home, dest))
+        self.assertEqual(dest, lib.write_new(self.root, self.home, dest, b"hello"))
+        self.assertEqual("hello", (self.home / "Archive" / "Sources" / "new.md").read_text())
+
+    def test_a_link_out_of_home_is_refused_even_inside_the_workspace(self):
+        os.symlink(str(self.other / "Sources"), str(self.home / "Sources"))
+        with self.assertRaises(lib.OffCourse) as caught:
+            lib.write_new(self.root, self.home, self.home / "Sources" / "new.md", b"x")
+        self.assertEqual(self.home / "Sources", caught.exception.link)
+        self.assertEqual(["keep.md"], self.birch())
+
+    def test_a_home_outside_the_workspace_is_refused(self):
+        outside = Path(self._tmp.name) / "outside"
+        outside.mkdir()
+        away = self.root / "Zones" / "Work" / "Away"
+        os.symlink(str(outside), str(away))
+        with self.assertRaises(lib.OffCourse) as caught:
+            lib.write_new(self.root, away, away / "x.md", b"x")
+        self.assertEqual(away, caught.exception.link)
+        self.assertEqual([], list(outside.iterdir()))
+
+    def test_a_link_at_the_file_and_a_climb_are_refused(self):
+        leaf = self.home / "leaf.md"
+        os.symlink("Archive/Sources/keep.md", str(leaf))
+        for path in (leaf, self.home / ".." / "Birch" / "x.md", self.other / "x.md"):
+            with self.subTest(path=path), self.assertRaises(lib.OffCourse):
+                lib.landing(self.root, self.home, path)
+
+    def test_a_link_put_at_the_file_since_the_check(self):
+        dest = self.home / "Sources" / "new.md"
+        planted = self.other / "Sources" / "planted.md"
+        checked = lib.landing
+
+        def plant(*args):
+            out = checked(*args)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(str(planted), str(dest))
+            return out
+        with mock.patch.object(lib, "landing", plant), self.assertRaises(FileExistsError) as caught:
+            lib.write_new(self.root, self.home, dest, b"x")
+        self.assertEqual(str(dest), caught.exception.filename)
+        self.assertFalse(planted.exists())
+        dest.unlink()
+        with mock.patch.object(lib, "landing", plant):     # write_over replaces the link, never follows it
+            lib.write_over(self.root, self.home, dest, b"over")
+        self.assertFalse(dest.is_symlink())
+        self.assertEqual("over", dest.read_text())
+        self.assertFalse(planted.exists())
+        self.assertEqual(["new.md"], sorted(p.name for p in dest.parent.iterdir()))  # no temporary file left
+
+    def test_a_folder_swapped_for_a_link_since_the_check(self):
+        folder = self.home / "Archive" / "Sources"
+        checked = lib.landing
+
+        def swap(*args):
+            out = checked(*args)
+            shutil.rmtree(str(folder))
+            os.symlink(str(self.other / "Sources"), str(folder))
+            return out
+        with mock.patch.object(lib, "landing", swap), self.assertRaises(lib.OffCourse):
+            lib.write_new(self.root, self.home, folder / "new.md", b"x")
+        self.assertEqual(["keep.md"], self.birch())
+
+    def test_move_new_keeps_bytes_and_times_and_never_reads_a_link(self):
+        inbox = self.root / "Zones" / "Work" / "Inbox"
+        src = write(inbox / "a.csv", "1,2\n")
+        os.utime(str(src), (1_000_000_000, 1_000_000_000))
+        dest = self.home / "Sources" / "a.csv"
+        lib.move_new(self.root, self.home, src, dest)
+        self.assertFalse(src.exists())
+        self.assertEqual("1,2\n", dest.read_text())
+        self.assertEqual(1_000_000_000, int(dest.stat().st_mtime))
+        link = inbox / "b.csv"
+        os.symlink(str(self.other / "Sources" / "keep.md"), str(link))
+        with self.assertRaises(OSError):
+            lib.move_new(self.root, self.home, link, self.home / "Sources" / "b.csv")
+        self.assertTrue(link.is_symlink())
+        self.assertFalse((self.home / "Sources" / "b.csv").exists())
+        again = write(inbox / "a.csv", "new\n")
+        with self.assertRaises(FileExistsError):
+            lib.move_new(self.root, self.home, again, dest)
+        self.assertTrue(again.exists())
+        self.assertEqual("1,2\n", dest.read_text())
 
 
 if __name__ == "__main__":

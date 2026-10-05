@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from email import policy
 from email.message import EmailMessage
 from pathlib import Path
@@ -707,6 +708,33 @@ class TestNeverThroughALink(MailCase):
         self.assertIn("link", str(caught.exception))
         self.assertTrue(path.is_symlink())
         self.assertTrue(outside.exists())
+
+    def test_a_link_inside_the_project_is_followed(self):
+        archive = self.work / "Acme Review" / "Archive" / "Sources"
+        archive.mkdir(parents=True)
+        self.link(self.work / "Acme Review" / "Sources", archive)
+        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
+        intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])
+        self.assertFalse(path.exists())
+        self.assertEqual("maker,price\nKeld,4.10\n", (archive / "Seal kit quotes.csv").read_text())
+        self.assertEqual(self.before, self.birch_sources())
+
+    def test_a_file_put_at_the_destination_since_the_check_is_a_refusal(self):
+        mail = self.drop("quotes.eml", eml(subject="Seal kit quotes", plain="Attached.\n",
+                                           attachment=("Seal kit quotes.csv", QUOTES)))
+        slug, _, _ = intake.file_conversation(self.root, mail, ["acme"])
+        dest = self.work / "Acme Review" / "Sources" / "Seal kit quotes.csv"
+        checked = lib.landing
+
+        def plant(*args):
+            out = checked(*args)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("theirs\n")
+            return out
+        with mock.patch.object(lib, "landing", plant), self.assertRaises(intake.Refusal) as caught:
+            intake.extract_attachment(self.root, slug, "Zones/Work/Acme Review", index=1)
+        self.assertIn("already exists", str(caught.exception))
+        self.assertEqual("theirs\n", dest.read_text())
 
     def test_ordinary_filing_still_works(self):
         path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")

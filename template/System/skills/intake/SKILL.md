@@ -41,9 +41,10 @@ The helper does the mechanics: it lists, parses, suggests parties from mail
 domains, and moves an item to the destination you give it, after checking
 the zone and the wall. It never chooses a destination. Every filing command
 takes one explicitly, and refuses without it. It never files through a
-symbolic link either: a link between the workspace and the destination, or a
-linked file waiting in an inbox, is refused before anything moves, because the
-file would land somewhere other than the folder that was checked.
+symbolic link that leads out of the folder it checked, the project or the
+wiki, and never takes a linked file waiting in an inbox: either is refused
+before anything moves, because the file would land somewhere other than the
+folder that was checked. A link that stays inside that folder is fine.
 
 ## "Process the inbox"
 

@@ -12,10 +12,12 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Fixed
 
 - `todo_lines.py` closes the files it reads, so the tests no longer print `ResourceWarning`.
+- The status page's Repositories card says a repository "could not be read" when `git status` fails or runs past 30 seconds, instead of showing it as all committed.
 
 ### Security
 
-- The filing commands of the intake and meetings skills check where a file will really land, just before moving or writing it, and refuse rather than file somewhere else. Every such command has boundary tests. Details are in the security advisory published with this release.
+- The filing commands of the intake and meetings skills, and the meetings skill's person, index and log writes, check where a file will really land and refuse rather than file somewhere else. A symbolic link is followed only while it stays inside the folder that was checked, the project or the wiki; one that leads out of it, into another project or off the workspace, is refused. The file is then written relative to that folder, opened without following any link, so a link put on the way after the check makes the command refuse instead of writing through it. Every such command has boundary tests. Details are in the security advisory published with this release.
+- **Breaking for linked folders:** a workspace whose `Wikis/`, a wiki or a zone is a link to another disk or a synced folder outside the workspace can no longer file into it. Keep the workspace itself on that disk instead.
 
 ## [0.6.0] - 2026-10-05
 

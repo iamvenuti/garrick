@@ -34,11 +34,16 @@ note's body never reaches the page. Pass --no-graph to leave the graph out.
 opens it in Obsidian when Obsidian has registered the workspace, or the zone or
 wiki the note is in, as a vault; otherwise it opens the file itself, in
 whatever app you use for Markdown. `--obsidian VAULT` names the workspace root
-as the vault instead, and `--no-obsidian` keeps every link a file link. Where
-cmux is installed and the page is open in Garrick's Status.app (see `app/`),
-projects and threads also offer Open in cmux; `--no-cmux` leaves it out. A
-zone with no Todo.md gets no Open actions, and a workspace with none gets no
-card for them.
+as the vault instead, and `--no-obsidian` keeps every link a file link. In
+Garrick's Status.app (see `app/`), projects and threads also offer Reveal in
+Finder and Open in Claude, Codex or cmux, for each one installed and switched
+on in Settings, where one of them can also be what clicking a thread's name
+does; `--no-cmux` leaves cmux out. A zone with no Todo.md gets no Open
+actions, and a workspace with none gets no card for them.
+
+Preview features (FLAGS) stay off until System/garrick-flags.json switches
+them on: the Todo list, and the buttons that act, which page_action.py beside
+this file carries out for the Mac app.
 
 Copy this folder into your workspace as `System/status/`, next to
 `System/jobs/` if you have it, and run it by hand or on a schedule through

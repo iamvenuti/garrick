@@ -4,15 +4,18 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
+
+The status page is reorganised around how it is used: *Overview* for your work, *Status* for the machinery, the graph one place at a time, and Settings for how a thread opens. Todo lines move to the Obsidian Tasks format, and two preview features, the Todo list and buttons that act, can be switched on.
+
 ### Added
 
 - Preview feature `page-actions`: in Garrick's Status.app, tick and date a line of the Todo list, and park or wake a thread from its card. Each button changes one line or one `status:` field and commits it, as the skills do, and a commit the wall check refuses leaves the file as it was. `extras/status/page_action.py` does the work; a browser cannot reach it.
-
 - With `page-actions` on, a scheduled job of the jobs extra gets *Run now*, which starts it through launchd so it keeps its own wrapper, lock and log.
 
 ### Changed
 
-- The page has tabs. *Overview* is where your work stands: the tiles, *Needs attention*, the graph, the threads, open actions and inboxes. *Status* is the machinery behind it: scheduled jobs, assistant calls, the check, repositories and wikis, with a red dot on the tab when something there failed, and *Needs attention* at its top. The sidebar lists them in that order. Every tile on *Overview*, and the summary at the top of the sidebar, opens the card that explains it, in whichever tab it sits. A card's header has a button that moves it to the other tab, and *Reset view* puts every card back.
+- The page has tabs. *Overview* is where your work stands: the tiles, the graph, the threads, open actions and inboxes. *Status* is the machinery behind it: scheduled jobs, assistant calls, the check, repositories and wikis, with a red dot on the tab when something there failed, and *Needs attention* at its top. The sidebar lists them in that order. Every tile on *Overview*, and the summary at the top of the sidebar, opens the card that explains it, in whichever tab it sits. A card's header has a button that moves it to the other tab, and *Reset view* puts every card back.
 - *Settings* lists the ways to open a thread: the note's own link (*Open in Obsidian*, or *Open the note* without Obsidian), *Reveal in Finder*, cmux, Codex and Claude. Each has a checkbox, whether the cards offer it, and a radio button, what clicking a thread's name does; the note's link is the default. Settings closes with the × at its top right, and every change is kept as it is made.
 - *Park* and *Wake* sit at the top right of a thread's card and the graph's panel, beside the name, rather than among the ways to open it. *Pause rotation* and *Fit* sit in the graph's bottom right corner. Closing Settings after a change rebuilds the page in the Mac app. The sidebar's *Problems only* became *Only what needs attention*, at the top of the *Status* tab, and acts on that tab alone.
 - The graph shows one place at a time, Work first: a drop-down in its bar picks a zone, a wiki, or *All*, and the page remembers the pick. The graph's and the threads' counts sit under their legends rather than in the card headers, and the legends are shorter.
@@ -142,7 +145,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/iamvenuti/garrick/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/iamvenuti/garrick/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/iamvenuti/garrick/compare/v0.3.0...v0.3.1

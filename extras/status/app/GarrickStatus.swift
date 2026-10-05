@@ -62,7 +62,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		window.contentView = web
 		window.center()
 		window.setFrameAutosaveName("GarrickStatus")
-		if checking { return load() }
+		if checking {
+			guard FileManager.default.fileExists(atPath: page.path) else {
+				print("no page at \(page.path): build it with status.py first")   // the check would wait for it forever
+				exit(1)
+			}
+			return load()
+		}
 		window.makeKeyAndOrderFront(nil)
 
 		watch()

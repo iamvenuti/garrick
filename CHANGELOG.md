@@ -4,16 +4,20 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+The status page opens a project in Claude, Codex or cmux, shows the release notes of the Garrick you installed, and has preview features you can switch on.
+
 ### Added
 
 - The status page opens a project or thread in Claude, Codex or cmux. Each build checks which of the three this Mac has. In *Settings*, under *Open projects in*, you switch each installed one on or off, and every app left on gets a button on the cards, in Garrick's Status.app only. Claude starts a session with "open Pricing" typed in for you to send. Codex and cmux open the folder with the phrase on the clipboard. Your choices are kept in the app's own storage.
 - *Settings* shows the installed release's notes from `System/garrick-changelog.md`, which the installer now copies from `CHANGELOG.md`, so nothing is fetched. A workspace that follows `main` also sees what is coming next. An *Announcements* link leads to the release news on GitHub.
-
 - Preview features: in Garrick's source but not yet released, off until switched on in `System/garrick-flags.json`, and listed in *Settings*. The first is `todo-list`, a card with every open action in the zones, overdue first, read from the notes and never written.
 
 ### Changed
 
 - *Settings* opens from a cog beside the page's name, not from a sidebar button.
+- Garrick's Status.app needs `make-app.sh` run again to open Claude and Codex. Until then it opens cmux as before, and its Claude and Codex buttons do nothing.
 
 ## [0.4.0] - 2026-10-04
 
@@ -121,7 +125,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/iamvenuti/garrick/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/iamvenuti/garrick/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/iamvenuti/garrick/compare/v0.2.0...v0.3.0

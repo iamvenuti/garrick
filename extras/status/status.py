@@ -1230,11 +1230,17 @@ GRIP = ('<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor"><cir
 CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
 
 
+MOVE = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5h9.5M10 3l2.5 2.5L10 8M13 10.5H3.5M6 8l-2.5 2.5L6 13" fill="none" '
+        'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+
 def card(id_: str, title: str, meta: str, body: str, open_: bool = True, fixed: bool = False) -> str:
     """A folding card. Unless fixed, its header has a grip to drag it elsewhere
     and a button to hide it; the browser remembers both."""
     tools = "" if fixed else ('<span class="tools"><span class="grip" draggable="true" title="Drag to move" aria-hidden="true">%s</span>'
-                              '<button class="hide" type="button" title="Hide this card" aria-label="Hide %s">%s</button></span>' % (GRIP, E(title), CLOSE))
+                              '<button class="totab" type="button" title="Move to the other tab" aria-label="Move %s to the other tab">%s</button>'
+                              '<button class="hide" type="button" title="Hide this card" aria-label="Hide %s">%s</button></span>'
+                              % (GRIP, E(title), MOVE, E(title), CLOSE))
     return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span>%s</summary>'
             '<div class="body">%s</div></details>' % (id_, " open" if open_ else "", CHEV, E(title), E(meta), tools, body))
 
@@ -1332,6 +1338,7 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
+nav .navsec{margin:12px 0 2px;padding:0 10px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .tabs{display:flex;gap:2px;margin:0 0 18px;border-bottom:1px solid var(--line)}
 .tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
 .tabs button:hover{color:var(--ink)}.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
@@ -1358,8 +1365,8 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}
-.grip,.hide{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--muted);border:0;background:none;padding:0;cursor:pointer}
-.grip{cursor:grab}.grip:hover,.hide:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg{width:14px;height:14px}
+.grip,.hide,.totab{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--muted);border:0;background:none;padding:0;cursor:pointer}
+.grip{cursor:grab}.grip:hover,.hide:hover,.totab:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg,.totab svg{width:14px;height:14px}
 .dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
 .ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
 nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-size:10.5px;color:var(--muted)}
@@ -1474,15 +1481,16 @@ if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 
 host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
-var tTodo=document.getElementById('tab-todo'),tOver=document.getElementById('tab-overview');
-if(tTodo&&tOver){var tabBtns=document.querySelectorAll('.tabs [data-tab]');
-window.StatusTab=function(n){var t=n==='todo';tTodo.hidden=!t;tOver.hidden=t;
+var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
+window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
+tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});
 tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
-try{localStorage.setItem('garrick-tab',n)}catch(e){}if(!t)window.dispatchEvent(new Event('resize'))};
+try{localStorage.setItem('garrick-tab',n)}catch(e){}window.dispatchEvent(new Event('resize'))};
 tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
-var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved==='todo'?'todo':'overview');
+var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved||'overview');
+/* a sidebar link opens the tab its section is in, wherever the card has been moved */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('nav a[href^="#"]');if(!a)return;
-var el=document.getElementById(a.getAttribute('href').slice(1));if(!el)return;StatusTab(tTodo.contains(el)?'todo':'overview')},true)}
+var el=document.getElementById(a.getAttribute('href').slice(1)),sec=el&&el.closest('section.tab');if(sec)StatusTab(sec.id.slice(4))},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
    (⌘,) calls StatusSettings.open(). */
@@ -1538,15 +1546,20 @@ var slots={};document.querySelectorAll('[data-slot]').forEach(function(s){slots[
 function cards(){return Array.prototype.slice.call(document.querySelectorAll('[data-slot]>.card[id]'))}
 function inSlot(el){return el&&el.parentNode&&el.parentNode.hasAttribute&&el.parentNode.hasAttribute('data-slot')}
 var L=null;try{L=JSON.parse(st.get(KEY)||'null')}catch(e){}
-if(L&&L.v===1){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c[k]||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))s.appendChild(el)})});
+if(L&&L.v===2){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c[k]||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))s.appendChild(el)})});
 (L.h||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))el.hidden=true})}
 function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
-st.set(KEY,JSON.stringify({v:1,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
+st.set(KEY,JSON.stringify({v:2,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
 function sync(){var h=cards().filter(function(e){return e.hidden});
 document.querySelectorAll('nav a[href^="#"]').forEach(function(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');a.classList.toggle('off',!!(c&&c.hidden))});
+cards().forEach(function(c){var b=c.querySelector('.totab'),sec=c.closest('section.tab');if(!b||!sec)return;
+var to=sec.id==='tab-status'?'Overview':'Status';b.title='Move to '+to;b.setAttribute('aria-label','Move '+c.querySelector('h2').textContent+' to '+to)});
 var n=document.getElementById('hidden-note');if(n){n.hidden=!h.length;n.textContent=h.length+' card'+(h.length>1?'s':'')+' hidden. Click one in the list above to bring it back.'}}
 function toast(t){var el=document.getElementById('toast');if(!el)return;el.textContent=t;el.style.opacity=1;setTimeout(function(){el.style.opacity=0},2600)}
 document.addEventListener('click',function(e){
+var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();var mc=m.closest('.card'),ms=mc.closest('section.tab');
+var to=ms&&ms.id==='tab-status'?'overview':'status',slot=document.querySelector('#tab-'+to+' [data-slot$="left"]');
+if(slot){slot.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+(to==='status'?'Status':'Overview')+'.')}return}
 var b=e.target.closest('.head .hide,.head .grip');if(b){e.preventDefault();e.stopPropagation();
 if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from the sidebar, or Reset view.')}return}
 var a=e.target.closest('nav a[href^="#"]');if(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');if(c&&c.hidden){c.hidden=false;c.open=true;save()}}},true);
@@ -1822,20 +1835,23 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
           [("threads", "Threads", "warning" if aging else "good", live)]
     navh = "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in nav)
     navh += "".join('<a class="sub" href="#zone-%s">%s<span class="n">%d</span></a>' % (re.sub(r"\W+", "-", z.lower()), E(z), len(T[z]["rows"])) for z in T)
-    more = [("checks", "Checks", "critical" if C and (C.get("errors") or C.get("failed")) else "warning" if C and C.get("warnings") else "good",
-             (C.get("errors", 0) + C.get("warnings", 0)) if C and not C.get("failed") else ""),
-            ("inboxes", "Inboxes", "warning" if waiting else "good", waiting or "")]
+    # The work first, as the Overview and Todo tabs hold it; then the machinery, as the Status tab does.
+    more = []
     if TD:                                    # a workspace with no Todo.md gets no Open actions at all
-        more.insert(1, ("todo", "Open actions", "good", open_actions))
+        more.append(("todo", "Open actions", "good", open_actions))
     if lists:
         late = sum(r["late"] for _, rows in lists for r in rows)
-        more.insert(2 if TD else 1, ("todolist", "Todo list", "warning" if late else "good", sum(len(r) for _, r in lists)))
+        more.append(("todolist", "Todo list", "warning" if late else "good", sum(len(r) for _, r in lists)))
+    more.append(("inboxes", "Inboxes", "warning" if waiting else "good", waiting or ""))
+    machine = [("checks", "Checks", "critical" if C and (C.get("errors") or C.get("failed")) else "warning" if C and C.get("warnings") else "good",
+                (C.get("errors", 0) + C.get("warnings", 0)) if C and not C.get("failed") else "")]
     if J:
-        more.append(("jobs", "Scheduled jobs", "critical" if any(j["state"] == "critical" for j in J) else "good", len(J)))
+        machine.append(("jobs", "Scheduled jobs", "critical" if any(j["state"] == "critical" for j in J) else "good", len(J)))
     if L:
-        more.append(("calls", "Assistant calls", "critical" if L["refused_today"] else "good", L["day"]))
-    more += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
+        machine.append(("calls", "Assistant calls", "critical" if L["refused_today"] else "good", L["day"]))
+    machine += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
     navh += "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in more)
+    navh += '<p class="navsec">Status</p>' + "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in machine)
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
     aside = ('<aside><div class="brand">%s<h1>%s</h1><div class="bacts">%s'
              '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
@@ -2006,19 +2022,27 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
 
     todo_tab = todo_list_card(lists, now.date(), acting) if lists else ""
-    left = checks_card + jobs_card + wikis_card
-    right = todo_card + inbox_card + calls_card + repos_card
-    main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
-            '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-            '<div class="slot full" data-slot="bottom"></div></div></main>'
-            % (top, attn_card, graph_card, threads_card, left, right))
-    if todo_tab:                              # the Todo list is a tab of its own beside the overview
-        late = sum(r["late"] for _, rows in lists for r in rows)
-        tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>'
-                '<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button></div>'
-                % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else ""))
-        main = main.replace('<div class="stale" id="stale"></div>', '<div class="stale" id="stale"></div>' + tabs + '<section class="tab" id="tab-overview">', 1)
-        main = main.replace('</main>', '</section><section class="tab" id="tab-todo" hidden>%s</section></main>' % todo_tab, 1)
+    # Three tabs: Overview for where the work stands, Todo for the list, Status
+    # for the machinery behind it. Cards can be moved between Overview and
+    # Status from their headers, and Reset view puts them back.
+    machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
+    def section(name, hidden, body):
+        return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
+    overview = section("overview", False, '%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
+                       '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
+                       '<div class="slot full" data-slot="bottom"></div></div>' % (top, attn_card, graph_card, threads_card, todo_card, inbox_card))
+    status_tab = section("status", True, '<div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
+                         '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
+                         % ("".join(machinery[0::2]), "".join(machinery[1::2])))
+    late = sum(r["late"] for _, rows in lists for r in rows)
+    trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
+    tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
+            '<button type="button" role="tab" data-tab="status">Status%s</button></div>'
+            % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
+               % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
+               '<span class="dot critical" title="something failed"></span>' if trouble else ""))
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>'
+            % (tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (

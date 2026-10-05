@@ -12,6 +12,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- The page has tabs. *Overview* is where your work stands: the tiles, *Needs attention*, the graph, the threads, open actions and inboxes. *Status* is the machinery behind it: scheduled jobs, assistant calls, the check, repositories and wikis, with a red dot on the tab when something there failed. The sidebar lists them in that order. A card's header has a button that moves it to the other tab, and *Reset view* puts every card back.
 - The Todo list (preview `todo-list`) is a tab of its own beside the overview, as it is in the workspace it came from, with a red dot when something is overdue. A link in the sidebar opens the tab its section is in.
 - The sidebar's top row holds Garrick's mark, the page's name and two icons: a circular arrow that rebuilds the page in the Mac app, or copies the command that does in a browser, and the cog for Settings. The build time sits below them across the sidebar. *Reset view* moved into Settings, and it no longer forgets which apps you chose to open projects in.
 - The status page reads a project with no thread note as its own single thread, from its hub, so a workspace laid out before Garrick gave every project a `Threads/` folder shows every project. `dormant`, `paused` and `on-hold` read as parked, and `closed`, `archived` and `complete` as done.

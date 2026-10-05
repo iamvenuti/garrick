@@ -300,6 +300,47 @@ class TestGraph(StatusCase):
             self.assertEqual(set(), layout & set(n))
 
 
+class TestTabs(StatusCase):
+    """Overview for where the work stands, Status for the machinery behind it."""
+
+    def section(self, html, name):
+        start = html.index('id="tab-%s"' % name)
+        return html[start:html.index("</section>", start)]
+
+    def job(self, code):
+        now = self.now.timestamp()
+        (self.jobs / "brief.heartbeat.json").write_text(json.dumps(
+            {"job": "brief", "finished": stamp(now - 60), "exit": code, "seconds": 30, "items": 2, "idle_days": 0}))
+        (self.jobs / "brief.log").write_text("===== %s  brief  exit %d  (30s) =====\n\n" % (stamp(now - 60), code))
+
+    def test_the_default_split(self):
+        self.job(0)
+        html = self.page()
+        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="status">Status', html)
+        overview, machinery = self.section(html, "overview"), self.section(html, "status")
+        for card_id in ("graph", "threads", "todo", "inboxes"):
+            self.assertIn('id="%s"' % card_id, overview, card_id)
+        for card_id in ("jobs", "checks", "repos", "wikis"):
+            self.assertIn('id="%s"' % card_id, machinery, card_id)
+        self.assertIn('class="top"', overview)                                  # the tiles lead the overview
+        self.assertIn('id="tab-status" hidden', html)
+
+    def test_a_card_moves_between_tabs_and_reset_puts_it_back(self):
+        html = self.page()
+        self.assertGreaterEqual(html.count('class="totab"'), 4)
+        self.assertNotIn('class="totab"', html[html.index('id="attention"'):html.index("</summary>", html.index('id="attention"'))]
+                         if 'id="attention"' in html else "")
+        self.assertIn("'#tab-'+to+' [data-slot$=\"left\"]'", status.LAYOUT_JS)
+        self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                         # a layout saved by the old page is not replayed
+
+    def test_a_failure_marks_the_status_tab(self):
+        self.job(0)
+        self.assertNotIn('data-tab="status">Status<span class="dot critical"', self.page())
+        self.job(4)
+        html = self.page()
+        self.assertIn('data-tab="status">Status<span class="dot critical"', html)
+
+
 class TestLayout(StatusCase):
     def test_cards_can_move_and_hide(self):
         html = self.page()
@@ -687,7 +728,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_todo_list_is_a_tab(self):
         self.todo()
-        self.assertNotIn('class="tabs"', self.page())                         # no Todo list, no tabs
+        self.assertNotIn('data-tab="todo"', self.page())                      # no Todo list, no Todo tab
         self.on()
         html = self.page()
         self.assertIn('<button type="button" role="tab" data-tab="todo">Todo<span class="n">', html)
@@ -695,7 +736,7 @@ class TestPreviewFeatures(StatusCase):
         self.assertLess(over, html.index('id="graph"'))
         self.assertLess(html.index('id="graph"'), todo)
         self.assertLess(todo, html.index('id="todolist"'))                    # the list sits in its own tab
-        self.assertIn("StatusTab(tTodo.contains(el)?'todo':'overview')", status.JS)   # a sidebar link opens its tab
+        self.assertIn("if(sec)StatusTab(sec.id.slice(4))", status.JS)          # a sidebar link opens its tab
 
     def test_actions_only_when_switched_on(self):
         self.todo()

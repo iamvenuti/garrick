@@ -255,6 +255,18 @@ class TestGraph(StatusCase):
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
 
+    def test_a_place_at_a_time_work_first(self):
+        html = self.page()
+        bar = html[html.index('aria-label="Place">'):html.index("</div>", html.index('aria-label="Place">'))]
+        places = re.findall(r'data-z="([^"]*)"', bar)
+        self.assertEqual("Work", places[0])
+        self.assertEqual("*", places[-1])                                         # and All, last
+        self.assertIn("Meetings", places)                                         # a wiki is a place too
+        self.assertIn("(zsel==='*'||n.z===zsel)", status.GRAPH_JS)
+        graph = html[html.index('id="graph"'):html.index("</details>", html.index('id="graph"'))]
+        self.assertLess(graph.index("glegend"), graph.index('id="gsum"'))          # the summary sits under the legend
+        self.assertIn('<span class="meta"></span>', graph)
+
     def test_the_graph_fills_its_card(self):
         js = status.GRAPH_JS
         self.assertNotIn("Math.min(W,H)", js)                       # no circle scaled into the shorter side

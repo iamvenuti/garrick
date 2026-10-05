@@ -116,7 +116,9 @@ Nothing on the page can change a file, and nothing it copies runs until you past
 
 ## Reading the graph
 
-Each zone and wiki has its own spot on the card: a few sit in a row, more go round an ellipse in the card's proportions, and places that link to each other sit side by side. A zone reads as a cluster, and the notes fill the card in either view.
+The graph shows one place at a time: Work when you have it, or another zone or wiki picked in the bar above it, or *All*. The page remembers the pick. The line under the legend counts what is drawn.
+
+With *All*, each zone and wiki has its own spot on the card: a few sit in a row, more go round an ellipse in the card's proportions, and places that link to each other sit side by side. A zone reads as a cluster, and the notes fill the card in either view.
 
 Each kind of note has its own colour: projects, threads, meetings, mail filed in the Meetings wiki, people, Knowledge pages and other notes. The legend lists only the kinds the view draws. A thread that has gone quiet carries an amber or red ring. Parked threads, with the notes in their folders, are hidden, and so is any project with no live thread left; *Show parked* draws them, faded.
 

@@ -209,6 +209,13 @@ class TestSorting(Case):
 
 
 class TestSafety(Case):
+    def test_a_removed_zone_is_not_put_back(self):
+        shutil.rmtree(self.root / "Zones" / "Personal")
+        p = self.plan()
+        self.assertEqual([], [x for k in update.KINDS for x in p["actions"][k] if x.startswith("Zones/Personal/")])
+        self.apply()
+        self.assertFalse((self.root / "Zones" / "Personal").exists())
+
     def test_context_is_never_touched(self):
         context = (self.root / "System" / "context.md").read_bytes()
         self.as_if_older("System/tools/scaffold.py", "# older\n")

@@ -116,10 +116,11 @@ def shipped(zones):
 
 
 def zones_of(root, stamp):
-    """The zones to update: those the stamp lists files for, and every visible
-    folder in Zones/ that is a repository of its own."""
-    names = {p.split("/")[1] for p in (stamp.get("files") or {}) if p.startswith("Zones/") and p.count("/") >= 2}
+    """The zones to update: those the stamp lists files for that still have a
+    folder, and every visible folder in Zones/ that is a repository of its own."""
     zones_dir = root / "Zones"
+    names = {p.split("/")[1] for p in (stamp.get("files") or {}) if p.startswith("Zones/") and p.count("/") >= 2}
+    names = {n for n in names if (zones_dir / n).is_dir()}     # a zone you removed is not put back
     if zones_dir.is_dir():
         names |= {d.name for d in zones_dir.iterdir()
                   if d.is_dir() and not d.name.startswith((".", "_")) and (d / ".git").exists()}

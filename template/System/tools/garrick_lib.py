@@ -751,12 +751,28 @@ def say_version(stamp: dict) -> str:
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", str(stamp.get("date") or ""))
     if m and 1 <= int(m.group(2)) <= 12:
         out += " of %d %s %s" % (int(m.group(3)), _MONTH_NAMES[int(m.group(2)) - 1], m.group(1))
+    updates = [u for u in (stamp.get("updates") or []) if isinstance(u, dict)]
     source = {"download": "a download", "clone": "a clone"}.get(stamp.get("from"))
     if source:
-        out += ", installed from %s" % source
+        out += ", %s %s" % ("from" if updates else "installed from", source)
     if stamp.get("modified"):
         out += " with changes not committed"
-    return out + "."
+    if updates:
+        last = updates[-1]
+        out += ". Updated%s from %s" % (_on(last.get("on")), last.get("from") or "an unknown version")
+    out += "."
+    left = stamp.get("left") or []
+    if left:
+        out += " %d file%s left at an older version." % (len(left), "" if len(left) == 1 else "s")
+    return out
+
+
+def _on(date: object) -> str:
+    """" on 6 October 2026", or "" when there is no date to say."""
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", str(date or ""))
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        return ""
+    return " on %d %s %s" % (int(m.group(3)), _MONTH_NAMES[int(m.group(2)) - 1], m.group(1))
 
 
 # The stamp also lists, under "files", every file Garrick wrote into the

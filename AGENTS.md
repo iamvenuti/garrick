@@ -14,6 +14,8 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
+| `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace |
+| `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. After tagging a release, run `python3 update.py --release-hashes` and commit the result; a test fails until you do |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |
 | `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs, and the status page with its Mac app |

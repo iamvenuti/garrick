@@ -4,6 +4,13 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `install.py --update ~/Garrick` brings an installed workspace up to the Garrick you run it from, without losing what you changed. It reports first and changes nothing until `--apply`. A file still exactly as some Garrick wrote it is replaced. A file you changed that Garrick has changed too gets Garrick's version beside it as `.new`. Starting files you have filled in, such as a `Todo.md`, are left alone. `System/rules.md` is always merged, never replaced. Nothing is deleted, each repository gets one commit you can revert, and the version stamp changes last. [Updating Garrick](docs/updating.md) has the details.
+- The `update` skill: say "update Garrick" and your assistant runs the update, then merges each `.new` file with you, keeping your changes and Garrick's together and asking about any passage you both changed.
+- `check.py` warns while an update's `.new` file waits to be merged, and `check.py --version` says when the workspace was last updated, and from which Garrick.
+- `release-hashes.json` records every file each release shipped, so an update recognises a file left by any earlier Garrick, even in a workspace installed before 0.4.0 or one where a fix was copied in by hand.
+
 ## [0.6.1] - 2026-10-05
 
 A security fix in the intake and meetings skills, and a clearer count of changed files on the status page.

@@ -87,10 +87,12 @@ CHECKS = [
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
     ("generated", "Generated files"),
+    ("updates", "Updates to merge"),
 ]
 
 # How a group of findings is said aloud when there is more than one.
 EAR_GROUP = {
+    "updates": "{n} files wait for an update to be merged",
     "claude-md": "{n} CLAUDE files could switch off the instructions",
     "instructions": "the instruction files have drifted in {n} places",
     "placeholders": "{n} files still hold installer placeholders",
@@ -1935,10 +1937,26 @@ def check_generated(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_updates(ws: Workspace) -> List[Finding]:
+    """An update leaves Garrick's newer version of a file you changed beside it,
+    as `<name>.new`, for you and your assistant to merge. Until then the file
+    keeps the older version's wording."""
+    stamp = read_version(ws.root)
+    candidates = set(stamp.get("files") or {}) | {"System/rules.md"}
+    out = []
+    for path in sorted(candidates):
+        if (ws.root / (path + ".new")).is_file():
+            out.append(Finding(WARNING, "updates", path + ".new",
+                               "Garrick's newer %s waits to be merged into yours; merge it, then delete the .new "
+                               "(say \"update Garrick\")" % path,
+                               "An update left a file to merge"))
+    return out
+
+
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_hooks, check_names,
     check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_people, check_walls,
-    check_sources, check_inbox, check_knowledge, check_raw, check_generated,
+    check_sources, check_inbox, check_knowledge, check_raw, check_generated, check_updates,
 ]
 
 

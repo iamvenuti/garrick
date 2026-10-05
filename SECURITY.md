@@ -24,4 +24,4 @@ You'll get an answer within a week. Fixes go into the next release, and the advi
 
 ## Supported versions
 
-Only the latest release.
+Only the latest release. [Updating Garrick](docs/updating.md) brings an installed workspace up to it without losing your changes.

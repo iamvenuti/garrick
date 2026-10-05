@@ -3,6 +3,7 @@
 
     python3 install.py                                   asks, one question at a time
     python3 install.py --config FILE.json --target PATH  no questions (guided sessions, tests, demos)
+    python3 install.py --update ~/Garrick [--apply]      bring an installed workspace up to this Garrick
 
 Python 3.9+, standard library only. Writes nothing outside the target folder.
 """
@@ -412,6 +413,25 @@ def render_context(template_text, cfg):
     return "\n".join(out) + "\n"
 
 
+def ignore_files(zones):
+    """The .gitignore of every repository the installer makes, and the zone
+    template's, which a zone added later copies: {path from the top: text}.
+    The installer writes them, and an update compares against them."""
+    common = (".DS_Store\n._*\n__pycache__/\n"
+              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
+              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+    inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
+    transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
+                   "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
+    generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + common,
+           "Wikis/.gitignore": common + transcripts}
+    for zone in zones:
+        out["Zones/%s/.gitignore" % zone] = common + inbox
+    out["System/templates/zone/.gitignore"] = common + inbox
+    return out
+
+
 def count(items, one, many):
     return f"{len(items)} {one if len(items) == 1 else many}"
 
@@ -507,24 +527,17 @@ def install(cfg, target, force=False, quiet=False):
         for link, points_to in pl.skill_links(root, repo):
             w.symlink(link, points_to)
 
-    ignore = (".DS_Store\n._*\n__pycache__/\n"
-              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
-              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
-    inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
-    transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
-                   "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
-    generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
-    w.write(root / ".gitignore", "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + ignore)
-    for repo in repos[1:]:
-        w.write(repo / ".gitignore", ignore + (inbox if repo.parent == root / "Zones" else transcripts))
+    for rel, text in ignore_files([z["name"] for z in cfg["zones"]]).items():
+        if not rel.startswith("System/"):          # the zone template's comes after the repositories exist
+            w.write(root / rel, text)
 
     local_identity = git_identity_missing(root)
     for repo in repos[1:]:
         init_repo(repo, f"Garrick: {repo.name} created", cfg["owner"]["name"], local_identity)
     # A zone added later is copied from the zone template, so the template keeps the
     # ignore file every zone was just given: its inbox stays out of that zone's history too.
-    first_zone = root / "Zones" / cfg["zones"][0]["name"]
-    w.write(root.joinpath(*pl.ZONE_TEMPLATE, ".gitignore"), (first_zone / ".gitignore").read_text(encoding="utf-8"))
+    zone_ignore = "/".join(pl.ZONE_TEMPLATE + (".gitignore",))
+    w.write(root / zone_ignore, ignore_files([])[zone_ignore])
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an
     # update can tell a file still as installed from one the user has changed.
     stamp = source_version()
@@ -740,6 +753,11 @@ def interview(pl, target=None, force=False):
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--update" in argv:                     # bring an installed workspace up to this Garrick
+        argv.remove("--update")
+        import update
+        return update.main(argv)
     ap = argparse.ArgumentParser(description="Install a Garrick workspace.")
     ap.add_argument("--config", help="JSON file with the answers; skips the questions")
     ap.add_argument("--target", help=f"folder to install into (default {DEFAULT_TARGET})")

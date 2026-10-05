@@ -1,0 +1,166 @@
+{
+ "releases": [
+  "v0.1.0",
+  "v0.2.0",
+  "v0.3.0",
+  "v0.3.1",
+  "v0.4.0",
+  "v0.5.0",
+  "v0.6.0"
+ ],
+ "paths": {
+  "AGENTS.md": [
+   "07b540a0297dff9016dc9c8627299d6b27b9362be6ce56ff32964e5f365dfde8",
+   "f0772e326ba6786677e6b9d7c8027238837d80668ee9755396ac69fd807d68b1"
+  ],
+  "System/garrick-changelog.md": [
+   "1117432f7acd61322f97575a28a65563c2efc552365dc49b80828edecc025542",
+   "2d33955393b8317d97f8feea6833baf34c0cb2d5628fedb3ee4f30d600e5390f",
+   "ae3818102d036f37798dd5f88ccb6a6d4111a9b868f36fd713aa2671cd9e13ba",
+   "2fbe6e26fefc27e42748bea6f9ede3d838dddbb21d3fe587ad38a1d24e8df469",
+   "55f60f1b8681b9cdf38c4aa49639949b6d6ab82477f9cc5206ec1066b745052c",
+   "1d59f74174aa7960c1aa9db864a4d215466c46de7fbeb5ea019ca6afd3492994",
+   "d89f8465c3ba834e296347b25ef49248526d393f13d24781219749581a7b0f57"
+  ],
+  "System/rules.md": [
+   "045d6d76404b9a352161fb4b9dc93fc896e03ff206de01765d491a3eedefa35b",
+   "04a5bbe5538e420fae52a5502b151c3a4f5696a299466beb557fe7794a177585"
+  ],
+  "System/skills/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/skills/intake/SKILL.md": [
+   "9ffca653ebcb3dbb1d4caef93364e066b5dd4ea3ad952cf190c0076cac6b0f48",
+   "9508d66f3ee361e8ad0e02719f4919fcb52b6966901bb66dabd9fec12a493143"
+  ],
+  "System/skills/intake/intake.py": [
+   "3f8a28871b14b6f63d5f86bc7db5d93628a98f812993285ed24b8cc6724d9f17"
+  ],
+  "System/skills/interview/SKILL.md": [
+   "21a6c77dbec49ac06c6af3f958a5005a4f754e3905de3d76ed8b292e3027b004",
+   "1798e38ca5512703e48080cebdcc001356e8da69f441a1aa1eb14ab9a460ac23"
+  ],
+  "System/skills/knowledge/SKILL.md": [
+   "a8c2461a9b068a233d196a71dfeb8b0f401d176396beb3f99bfbbf657e9cda7f",
+   "5b8134f2412fe4d72f900d3d8b84f78045b63c4e0e69b66c912bf92be333fc07"
+  ],
+  "System/skills/meetings/SKILL.md": [
+   "4b658a0261b709eb0c46f3c8da99272b420c9b58dc45fbf7c7ee5598ab843007",
+   "c8a32d32257389cac116e86f7e235034ec6e7deca0a28bc6165aec9608aa29df",
+   "dcde91400daab86a2c93679479871fc4d81753bae43fdbacb87129c95310fba0"
+  ],
+  "System/skills/meetings/ingest.py": [
+   "fd95c5762a86e1990e9d9a15285d574ac3fde77a6a5334ad314ea8d11ab1b5d7"
+  ],
+  "System/skills/threads/SKILL.md": [
+   "28f2517a535fa9fe92bf4972f511c9a9533f6e6c0274d5de1d36b07a7d5c6ae7",
+   "d08ed94fb698c4befdba3ff9568bc86a6f36304cbf845cff079848676f07dd95",
+   "7af31cf300ca7ba8a49246b9fa7ee8b88665aa03d43158dbf771f0bc48af4ee7"
+  ],
+  "System/templates/project/Deliverables/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/templates/project/Sources/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/templates/project/{{PROJECT}}.md": [
+   "30d2f32a5fe3ae080c3348b288910cf467ae995616138c7fb3b9491327909c61"
+  ],
+  "System/templates/thread/{{THREAD}}.md": [
+   "b22ad7dd0527af0cf8f9cb273ffc20ca3992c211a53dd1a22e50350ac36282fd"
+  ],
+  "System/templates/zone/AGENTS.md": [
+   "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b"
+  ],
+  "System/templates/zone/Inbox/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/templates/zone/Todo.md": [
+   "b5810e00726903f99c5c4fbf4684db799ab4a30c586bce16a63c5d7f0bdf9211",
+   "c8fa0cd94a10b2d36afd3509d9a8eb9f0b5acdb9d5dde160a3fe3343aa3969e9"
+  ],
+  "System/tools/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/tools/check.py": [
+   "a037b1d3cd47f416e4ca99fd3e5dc00462c33cee225cfd79f1437791e4bb5081",
+   "16b5e3e88c0fb91155a8bc1a3d40aa0fd7328a97745b627b07a5a248d15d56df",
+   "04d1ed3000c78d5eb46bff46d5e402d2ab39901a55816cf2bd958507c33827d8"
+  ],
+  "System/tools/garrick_lib.py": [
+   "0dd41a83b05503836039fdc169d654087848a8f5dcf7807119ba1ce05eb5694c",
+   "c7ebfb02d18bc20919b57b5b0562512c0ee61e3b01e452c4b82c96668c1504e5",
+   "bc5f16815add3578a0b65248b655c9f3c54a7cefb4bfb570fae7d0a2620ebc1e"
+  ],
+  "System/tools/scaffold.py": [
+   "a749c79fc4a5df811dbeec4bb0f83da972c41500dc954ce084c765bd3e7d00fe",
+   "77aebd55bd8b511565b4d9a4d4b0b9c99c4daf247bdc0e04b560fa07fb2cc572",
+   "56d8ca57392896de3b827d9b43e5c4223c32b4cdd807746ba175f5c30d2ff11a"
+  ],
+  "Wikis/AGENTS.md": [
+   "7e8ec73be7a41e823ab20e75fdd2bb16c58375640f2c972d16021eeeb9ee5756"
+  ],
+  "Wikis/Knowledge/AGENTS.md": [
+   "8c9cccbde233008c971c4d5d8d1369ff72007b10a7438fd9798a02aba53c8ec1",
+   "ffdeea020704d7710dc347f31bf1c0dc08970c70c93e5cfc2219927f5c54919d"
+  ],
+  "Wikis/Knowledge/raw/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Knowledge/wiki/concepts/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Knowledge/wiki/entities/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Knowledge/wiki/index.md": [
+   "2079452e80f214fbffd74d380d6fbfa853f646fe6f3e8261f38849a6721833a5"
+  ],
+  "Wikis/Knowledge/wiki/log.md": [
+   "6836b264021f98cb0e5819f59ce9d61838b3bcc2a15a5c133a3aef8b4e292c63"
+  ],
+  "Wikis/Knowledge/wiki/sources/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Meetings/AGENTS.md": [
+   "cfc746c74c69edd28fc45ce27324474517d4572639c4a5e52040bc0e08eb28cc",
+   "ef45c01b4c418cf5f6ca3cac86334740912d6deaf8edbcdf26718f483f038d63"
+  ],
+  "Wikis/Meetings/raw/inbox/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Meetings/wiki/index.md": [
+   "2079452e80f214fbffd74d380d6fbfa853f646fe6f3e8261f38849a6721833a5"
+  ],
+  "Wikis/Meetings/wiki/log.md": [
+   "6836b264021f98cb0e5819f59ce9d61838b3bcc2a15a5c133a3aef8b4e292c63"
+  ],
+  "Wikis/Meetings/wiki/people/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Wikis/Meetings/wiki/sources/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Zones/_zone/AGENTS.md": [
+   "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b"
+  ],
+  "Zones/_zone/Inbox/.gitkeep": [
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "Zones/_zone/Todo.md": [
+   "e1cc15a367fa95aeda05b491179e2f4c59c8a860b9f34809eafdceff2b08a58a"
+  ]
+ },
+ "zone": {
+  "AGENTS.md": [
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
+  ],
+  "Inbox/.gitkeep": [
+   ""
+  ],
+  "Todo.md": [
+   "# {{ZONE}}: open actions\n\nOne line per action: what, which thread it is for, and by when. An action that belongs to no thread names its party or person instead. Tick a line when it is done.\n\n## Inbox\n\n- [ ] <action> \u00b7 <project>, <thread> \u00b7 <date>\n\n## Done\n",
+   "# {{ZONE}}: open actions\n\nOne line per action, Obsidian Tasks style. It opens with the thread it is for, `[[Thread]]: `, or with the project when the project is a single thread; an action that belongs to no thread opens with its party or person instead. The dates go last: `\ud83d\udcc5` when it is due, `\ud83d\udeeb` when it cannot start before, and for something you are waiting on, `#waiting` and `\u23f3` the day to chase. Tick a line when it is done.\n\n## Inbox\n\n- [ ] [[<Thread>]]: <action> \ud83d\udcc5 <YYYY-MM-DD>\n\n## Done\n"
+  ]
+ }
+}

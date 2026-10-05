@@ -98,7 +98,8 @@ def _scan(zone_dir):
         rel = os.path.relpath(path, zone_dir)
         heading, section, fence = "", None, False
         try:
-            lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.read().split("\n")
         except OSError:
             continue
         for line in lines:
@@ -138,7 +139,8 @@ class NotFound(Exception):
 
 
 def _load(path):
-    return open(path, encoding="utf-8").read().split("\n")
+    with open(path, encoding="utf-8") as f:
+        return f.read().split("\n")
 
 
 def _save(path, lines):
@@ -166,7 +168,8 @@ def _rekey(zone_dir, old, new):
     the page does not restart its 14 days in the Inbox."""
     ledger = os.path.join(zone_dir, LEDGER)
     try:
-        seen = json.load(open(ledger))
+        with open(ledger) as f:
+            seen = json.load(f)
     except (OSError, ValueError):
         return
     if old in seen:

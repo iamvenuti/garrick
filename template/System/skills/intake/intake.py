@@ -92,15 +92,6 @@ def place_of(root: Path, path: Path) -> Tuple[str, str]:
     raise Refusal("%s is not in an inbox: Zones/<Zone>/%s/ or Wikis/Meetings/raw/inbox/." % (path.name, INBOX))
 
 
-def zone_of(root: Path, path: Path) -> str:
-    """The zone whose Inbox holds `path`. Refuses a file anywhere else."""
-    where, zone = place_of(root, path)
-    if where != "zone":
-        raise Refusal("%s is in the Meetings inbox, which holds transcripts; use the meetings skill's ingest.py land."
-                      % path.name)
-    return zone
-
-
 def _parse_quietly(path: Path) -> Optional[dict]:
     try:
         return parse_mail(path)

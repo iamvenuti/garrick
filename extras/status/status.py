@@ -1927,7 +1927,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         cols += ('<details class="zone" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta">%s</span></summary>%s%s</details>'
                  % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend"><span><i class="good"></i>updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
-              '<span><i class="critical"></i>over 45 days</span><span>· the bar is days since the thread note was updated, full at 60</span></div>')
+              '<span><i class="critical"></i>over 45 days</span></div>')
     threads_card = card("threads", "Threads", "%d live · %d parked · by name · hover one for what to do" % (live, parked_n),
                         '<div class="zones">%s</div>%s' % (cols, legend))
 
@@ -2016,10 +2016,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E(label)) for i, label in GR["kinds"])
-        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>thread untouched 15 to 45 days</span>'
-                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>parked, when shown</span>'
-                  '<span>· click a note to open it or copy what to say, double-click to open it, drag to move, pinch or ⌘-scroll to zoom</span></div>' % legend)
+        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label))) for i, label in GR["kinds"])
+        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>15–45 days old</span>'
+                  '<span><i class="ring" style="border-color:var(--critical)"></i>over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
         graph_card = card("graph", "Graph", "%d notes, %d links · %d projects and threads · names only" % (len(GR["nodes"]), len(GR["edges"]), core),
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in every zone and wiki, and the links between them"></canvas>'

@@ -333,6 +333,25 @@ class TestTabs(StatusCase):
         self.assertIn("'#tab-'+to+' [data-slot$=\"left\"]'", status.LAYOUT_JS)
         self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                         # a layout saved by the old page is not replayed
 
+    def test_needs_attention_leads_the_status_tab(self):
+        self.job(4)
+        html = self.page()
+        machinery = self.section(html, "status")
+        self.assertLess(machinery.index('id="attention"'), machinery.index('id="jobs"'))
+        self.assertNotIn('id="attention"', self.section(html, "overview"))
+
+    def test_the_overview_leads_to_the_cards(self):
+        self.job(0)
+        html = self.page()
+        overview = self.section(html, "overview")
+        targets = re.findall(r'<a class="(?:hero|tile) go"[^>]*href="#([a-z]+)"', overview)
+        self.assertIn("threads", targets)
+        self.assertIn("inboxes", targets)
+        for t in targets:
+            self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
+        self.assertRegex(html, r'<a class="overall go" href="#(attention|overview)"')
+        self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
+
     def test_a_failure_marks_the_status_tab(self):
         self.job(0)
         self.assertNotIn('data-tab="status">Status<span class="dot critical"', self.page())
@@ -645,7 +664,7 @@ class TestLaunchers(StatusCase):
 
     def test_settings_open_from_the_cog(self):
         html = self.page()
-        brand = html[html.index('<div class="brand">'):html.index('<div class="overall">')]
+        brand = html[html.index('<div class="brand">'):html.index('class="overall')]
         self.assertIn('id="open-settings"', brand)
         self.assertIn('aria-label="Settings"', brand)
 
@@ -736,7 +755,7 @@ class TestPreviewFeatures(StatusCase):
         self.assertLess(over, html.index('id="graph"'))
         self.assertLess(html.index('id="graph"'), todo)
         self.assertLess(todo, html.index('id="todolist"'))                    # the list sits in its own tab
-        self.assertIn("if(sec)StatusTab(sec.id.slice(4))", status.JS)          # a sidebar link opens its tab
+        self.assertIn("StatusTab(sec.id.slice(4))", status.JS)                  # a link opens the tab its target is in
 
     def test_actions_only_when_switched_on(self):
         self.todo()
@@ -1128,7 +1147,7 @@ class TestWhatThisMachineHas(StatusCase):
         self.assertIn("if(c&&host){var m={launch:", status.JS)
         self.assertIn("if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now'", status.JS)
         brand = self.page()
-        brand = brand[brand.index('<div class="brand">'):brand.index('<div class="overall">')]
+        brand = brand[brand.index('<div class="brand">'):brand.index('class="overall')]
         self.assertIn('id="rebuild"', brand)                      # an icon beside the cog: rebuilds in the app, copies elsewhere
         self.assertIn('data-copy="', brand)
 

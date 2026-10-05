@@ -1285,6 +1285,7 @@ nav a .n{margin-left:auto;font-size:11px;color:var(--muted)}nav .sub{padding-lef
 main{padding:26px 30px 80px;min-width:0}
 .stale{display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--critical);font-weight:600}
 .top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(var(--tiles,4),minmax(140px,1fr));gap:14px;margin-bottom:18px}
+a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{border-color:var(--base)}a.overall.go{display:flex}
 .hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
 .hero{display:flex;flex-direction:column;justify-content:space-between}
 .hero .fig{font:600 52px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
@@ -1490,8 +1491,9 @@ try{localStorage.setItem('garrick-tab',n)}catch(e){}window.dispatchEvent(new Eve
 tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
 var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved||'overview');
 /* a sidebar link opens the tab its section is in, wherever the card has been moved */
-document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('nav a[href^="#"]');if(!a)return;
-var el=document.getElementById(a.getAttribute('href').slice(1)),sec=el&&el.closest('section.tab');if(sec)StatusTab(sec.id.slice(4))},true);
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.getAttribute('href')==='#')return;
+var el=document.getElementById(a.getAttribute('href').slice(1)),sec=el&&el.closest('section.tab');if(!sec)return;
+StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
    (⌘,) calls StatusSettings.open(). */
@@ -1858,7 +1860,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
              'which Garrick this is, release notes, the view, and how to report a bug">%s</button></div>'
              '<p>Built %s · <span id="age">just now</span></p></div>'
-             '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
+             '<a class="overall go" href="#%s">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></a><nav>%s</nav>'
              '<div class="controls"><p class="hint" id="hidden-note" hidden></p>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
@@ -1866,26 +1868,29 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                 '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" title="Copy the command that rebuilds the page" '
                 'data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD),
-                GEAR, now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh))
+                GEAR, now.strftime("%a %d %b, %H:%M"), "attention" if attn else "overview", ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh))
 
     # ---- hero and tiles
     if attn:
-        hero = '<div class="hero" id="overview"><div class="fig">%s%d</div><div class="lbl">%s attention</div></div>' % (
+        hero = '<a class="hero go" id="overview" href="#attention"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
             ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
     else:
         hero = '<div class="hero" id="overview"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
-    tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging))]
+    # Each tile leads to the card that explains it, in whichever tab that card sits.
+    tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging), "threads")]
     if TD:
-        tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s")))
-    tiles += [("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes"),
+        tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
+                      "todolist" if lists else "todo"))
+    tiles += [("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes", "inboxes"),
               ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
-               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found")]
+               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
         tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
-                    "$%.2f at list price" % L["cost_day"])
+                    "$%.2f at list price" % L["cost_day"], "calls")
     top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
-        '<div class="tile"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></div>' % (E(a), b, E(c)) for a, b, c in tiles))
+        '<a class="tile go" href="#%s"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></a>' % (h, E(a), b, E(c))
+        for a, b, c, h in tiles))
 
     # ---- attention
     attn_card = ""
@@ -2029,12 +2034,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
-    overview = section("overview", False, '%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
+    overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom"></div></div>' % (top, attn_card, graph_card, threads_card, todo_card, inbox_card))
-    status_tab = section("status", True, '<div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
+                       '<div class="slot full" data-slot="bottom"></div></div>' % (top, graph_card, threads_card, todo_card, inbox_card))
+    # Needs attention leads the Status tab: what it lists is the machinery's.
+    status_tab = section("status", True, '<div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
-                         % ("".join(machinery[0::2]), "".join(machinery[1::2])))
+                         % (attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(r["late"] for _, rows in lists for r in rows)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'

@@ -1410,7 +1410,9 @@ if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.write
 var rb=document.getElementById('rebuild');if(host&&rb){rb.textContent='Rebuild now';rb.removeAttribute('data-copy');rb.title='Build the page again now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
-var c=t.closest('button[data-launch]');if(c&&host){host.postMessage({launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''});say(c.dataset.say);return}
+var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
+if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
+host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…

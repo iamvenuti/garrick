@@ -152,9 +152,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(text, forType: .string)
 		}
-		if let folder = body["cmux"] as? String { openInCmux(folder) }      // a page built before Open in Claude and Codex
 		if let app = body["launch"] as? String, let folder = body["folder"] as? String {
 			launch(app, folder, phrase: body["phrase"] as? String ?? "")
+		} else if let folder = body["cmux"] as? String {
+			openInCmux(folder)                 // a page built before Open in Claude and Codex
 		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
 	}

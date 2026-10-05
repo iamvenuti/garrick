@@ -596,7 +596,8 @@ class TestLaunchers(StatusCase):
     def test_only_the_app_opens_anything(self):
         self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
         self.assertIn("localStorage.getItem('garrick-launchers')", status.PANEL_JS)   # the choice stays in this viewer
-        self.assertIn("host.postMessage({launch:", status.JS)
+        self.assertIn("var m={launch:", status.JS)
+        self.assertIn("if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}", status.JS)   # an older app still opens cmux
 
     def test_settings_open_from_the_cog(self):
         html = self.page()
@@ -1036,7 +1037,7 @@ class TestWhatThisMachineHas(StatusCase):
         # page offers no cmux and every button only copies.
         self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
         self.assertIn("window.webkit.messageHandlers.garrick", status.PANEL_JS)
-        self.assertIn("if(c&&host){host.postMessage({launch:", status.JS)
+        self.assertIn("if(c&&host){var m={launch:", status.JS)
         self.assertIn("if(host&&rb){rb.textContent='Rebuild now'", status.JS)
         self.assertIn('id="rebuild" class="act wide"', self.page())
 

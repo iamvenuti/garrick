@@ -415,7 +415,8 @@ def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions:
                md_inline(r["text"]), chip(r), '<span class="muted">%s</span>' % E(r["section"] or "in the thread note"))
             for r in rows)
         cols += '<div class="tzone"><h4>%s <span class="muted">%d</span></h4>%s</div>' % (E(zone), len(rows), items)
-    return card("todolist", "Todo list", "preview · every open action, overdue first, read from the notes", '<div class="tzones">%s</div>' % cols)
+    return ('<div id="todolist" class="todotab"><p class="hint">Every open action in the zones, overdue first, read from the notes. '
+            'A preview feature.</p><div class="tzones">%s</div></div>' % cols)
 
 
 def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
@@ -1016,6 +1017,10 @@ GEAR = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><pat
         'stroke="currentColor" stroke-width="1.5"/></svg>')
 
 
+REBUILD = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" '
+           'stroke-linecap="round" stroke-linejoin="round" d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.4h-3.4"/></svg>')
+
+
 def changelog_sections(text: str) -> List[Tuple[str, str, List[str]]]:
     """Each `## [name] - date` section of a Keep a Changelog file, with its lines."""
     out: List[Tuple[str, str, List[str]]] = []
@@ -1135,6 +1140,11 @@ def preview_section(flags: Dict[str, bool]) -> str:
             '<code>{"todo-list": true}</code>, and rebuild the page.</p></section>' % rows)
 
 
+VIEW = ('<section class="setsec"><h3>View</h3><p class="hint">Cards dragged or hidden, folds, the graph&#39;s view and the open tab '
+        'are remembered in this window only.</p><div class="gacts"><button class="act" type="button" id="reset-view" '
+        'title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button></div></section>')
+
+
 def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     """The Settings dialog: which apps to open projects in, About Garrick, and
     the preview features with which are switched on."""
@@ -1146,7 +1156,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
             '<div class="gacts"><button class="act" type="button" id="close-settings">Done</button></div></dialog>'
-            % (launcher_choices(installed), about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
+            % (launcher_choices(installed), VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
 def script_json(data) -> str:
@@ -1322,6 +1332,11 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
+.tabs{display:flex;gap:2px;margin:0 0 18px;border-bottom:1px solid var(--line)}
+.tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
+.tabs button:hover{color:var(--ink)}.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+.tabs .n{font-size:11.5px;color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
+.todotab>.hint{margin:0 0 14px}.todotab{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
 .tzones{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}.tzone h4{margin:0 0 6px;font-size:13px}
 .titem{padding:7px 0;border-top:1px solid var(--line)}.titem .ttext{font-size:13px}.titem .thr{margin-right:6px;font-weight:600;color:var(--ink);text-decoration:none}
 .titem .tmeta{display:flex;gap:8px;align-items:center;margin-top:2px;font-size:11.5px}.chip.late{color:var(--critical);border-color:var(--critical)}
@@ -1377,8 +1392,9 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 # a page built on this one (the workspace's own status page, where it runs
 # ahead of a release) can carry the same dialog with the same look.
 SETTINGS_CSS = r"""
-.brand{display:flex;align-items:flex-start;gap:10px}.brand>div{flex:1;min-width:0}
-.cog{flex:none;margin:2px 0 0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
+.brand{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px}.brand h1{flex:1;min-width:0}.brand .bacts{display:flex;gap:0}
+.brand>p{flex-basis:100%;margin:6px 0 0}
+.cog{flex:none;margin:0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
 .cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
 dialog.settings .setsec{margin-top:18px}dialog.settings .setsec:first-of-type{margin-top:0}
 .launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
@@ -1445,7 +1461,7 @@ var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHand
 if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
-var rb=document.getElementById('rebuild');if(host&&rb){rb.textContent='Rebuild now';rb.removeAttribute('data-copy');rb.title='Build the page again now';
+var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
 /* An action (preview, page-actions): the app runs page_action.py, then rebuilds the page. */
@@ -1457,6 +1473,16 @@ var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launc
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
+var tTodo=document.getElementById('tab-todo'),tOver=document.getElementById('tab-overview');
+if(tTodo&&tOver){var tabBtns=document.querySelectorAll('.tabs [data-tab]');
+window.StatusTab=function(n){var t=n==='todo';tTodo.hidden=!t;tOver.hidden=t;
+tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
+try{localStorage.setItem('garrick-tab',n)}catch(e){}if(!t)window.dispatchEvent(new Event('resize'))};
+tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
+var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved==='todo'?'todo':'overview');
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('nav a[href^="#"]');if(!a)return;
+var el=document.getElementById(a.getAttribute('href').slice(1));if(!el)return;StatusTab(tTodo.contains(el)?'todo':'overview')},true)}
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
    (⌘,) calls StatusSettings.open(). */
@@ -1536,7 +1562,7 @@ document.addEventListener('drop',function(e){if(!drag)return;e.preventDefault();
 document.addEventListener('dragend',function(){if(drag)end()});
 function end(){document.body.classList.remove('dragging');if(drag)drag.classList.remove('lifted');if(ph.parentNode)ph.parentNode.removeChild(ph);drag=null}
 var r=document.getElementById('reset-view');if(r)r.onclick=function(){try{var ks=[];for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);
-if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme')ks.push(k)}ks.forEach(function(k){localStorage.removeItem(k)})}catch(x){}
+if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme'&&k!=='garrick-launchers')ks.push(k)}ks.forEach(function(k){localStorage.removeItem(k)})}catch(x){}
 try{history.replaceState(null,'',location.pathname+location.search)}catch(x){}location.reload()};
 sync();
 })();
@@ -1811,18 +1837,19 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     more += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
     navh += "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in more)
     overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
-    aside = ('<aside><div class="brand">%s<div><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div>'
+    aside = ('<aside><div class="brand">%s<h1>%s</h1><div class="bacts">%s'
              '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
-             'which Garrick this is, release notes, and how to report a bug">%s</button></div>'
+             'which Garrick this is, release notes, the view, and how to report a bug">%s</button></div>'
+             '<p>Built %s · <span id="age">just now</span></p></div>'
              '<div class="overall">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></div><nav>%s</nav>'
-             '<div class="controls">%s<p class="hint" id="hidden-note" hidden></p>'
-             '<button class="act wide" type="button" id="reset-view" title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button>'
+             '<div class="controls"><p class="hint" id="hidden-note" hidden></p>'
              '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), GEAR, ICON[worst], E(overall),
-                live, "" if live == 1 else "s", week, navh,
-                copy("Copy the rebuild command", rebuild_command(ws, vault, show_graph, out, flags),
-                     "Copied. Run it in a terminal to rebuild the page.").replace('class="act"', 'id="rebuild" class="act wide"')))
+             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME),
+                '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" title="Copy the command that rebuilds the page" '
+                'data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
+                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD),
+                GEAR, now.strftime("%a %d %b, %H:%M"), ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh))
 
     # ---- hero and tiles
     if attn:
@@ -1978,13 +2005,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<script type="application/json" id="graph-data">%s</script>' % (legend, data))
 
-    todolist_card = todo_list_card(lists, now.date(), acting) if lists else ""
+    todo_tab = todo_list_card(lists, now.date(), acting) if lists else ""
     left = checks_card + jobs_card + wikis_card
     right = todo_card + inbox_card + calls_card + repos_card
     main = ('<main><div class="stale" id="stale"></div>%s<div class="grid">%s<div class="slot full" data-slot="top">%s%s</div>'
             '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-            '<div class="slot full" data-slot="bottom">%s</div></div></main>'
-            % (top, attn_card, graph_card, threads_card, left, right, todolist_card))
+            '<div class="slot full" data-slot="bottom"></div></div></main>'
+            % (top, attn_card, graph_card, threads_card, left, right))
+    if todo_tab:                              # the Todo list is a tab of its own beside the overview
+        late = sum(r["late"] for _, rows in lists for r in rows)
+        tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>'
+                '<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button></div>'
+                % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else ""))
+        main = main.replace('<div class="stale" id="stale"></div>', '<div class="stale" id="stale"></div>' + tabs + '<section class="tab" id="tab-overview">', 1)
+        main = main.replace('</main>', '</section><section class="tab" id="tab-todo" hidden>%s</section></main>' % todo_tab, 1)
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (

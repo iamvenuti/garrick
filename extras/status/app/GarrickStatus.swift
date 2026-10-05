@@ -309,7 +309,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			var a=document.createElement('a');a.href='obsidian://check';document.body.appendChild(a);a.click();a.remove();
 			var rb=document.getElementById('rebuild');
 			return JSON.stringify({title:document.title,host:!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick),
-			rebuild:rb?rb.textContent:null,stored:p,
+			rebuild:rb?rb.title:null,stored:p,
 			cmux:[].filter.call(document.querySelectorAll('[data-card]'),function(r){return JSON.parse(r.dataset.card).f}).length})})()
 			""") { result, error in
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

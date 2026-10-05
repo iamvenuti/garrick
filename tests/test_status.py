@@ -306,6 +306,9 @@ class TestLayout(StatusCase):
         self.assertIn('data-slot="top"', html)
         self.assertGreaterEqual(html.count('class="grip"'), 6)
         self.assertIn('id="reset-view"', html)
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        self.assertIn('id="reset-view"', dialog)                               # Reset view lives in Settings
+        self.assertIn("k!=='garrick-launchers'", status.LAYOUT_JS)             # and keeps the launcher choices
 
     def test_right_column_is_not_right_aligned(self):
         html = self.page()
@@ -681,6 +684,18 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("Check the clause", card)                                  # a thread note's own action
         self.assertIn("in the thread note", card)
         self.assertNotIn("example.com", card)                                     # a source link is not followed
+
+    def test_the_todo_list_is_a_tab(self):
+        self.todo()
+        self.assertNotIn('class="tabs"', self.page())                         # no Todo list, no tabs
+        self.on()
+        html = self.page()
+        self.assertIn('<button type="button" role="tab" data-tab="todo">Todo<span class="n">', html)
+        over, todo = html.index('id="tab-overview"'), html.index('id="tab-todo" hidden')
+        self.assertLess(over, html.index('id="graph"'))
+        self.assertLess(html.index('id="graph"'), todo)
+        self.assertLess(todo, html.index('id="todolist"'))                    # the list sits in its own tab
+        self.assertIn("StatusTab(tTodo.contains(el)?'todo':'overview')", status.JS)   # a sidebar link opens its tab
 
     def test_actions_only_when_switched_on(self):
         self.todo()
@@ -1070,8 +1085,11 @@ class TestWhatThisMachineHas(StatusCase):
         self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
         self.assertIn("window.webkit.messageHandlers.garrick", status.PANEL_JS)
         self.assertIn("if(c&&host){var m={launch:", status.JS)
-        self.assertIn("if(host&&rb){rb.textContent='Rebuild now'", status.JS)
-        self.assertIn('id="rebuild" class="act wide"', self.page())
+        self.assertIn("if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now'", status.JS)
+        brand = self.page()
+        brand = brand[brand.index('<div class="brand">'):brand.index('<div class="overall">')]
+        self.assertIn('id="rebuild"', brand)                      # an icon beside the cog: rebuilds in the app, copies elsewhere
+        self.assertIn('data-copy="', brand)
 
     def test_main_asks_the_machine_and_honours_the_switches(self):
         out = Path(self._tmp.name).resolve() / "page.html"

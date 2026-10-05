@@ -12,6 +12,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- The Todo list (preview `todo-list`) is a tab of its own beside the overview, as it is in the workspace it came from, with a red dot when something is overdue. A link in the sidebar opens the tab its section is in.
+- The sidebar's top row holds Garrick's mark, the page's name and two icons: a circular arrow that rebuilds the page in the Mac app, or copies the command that does in a browser, and the cog for Settings. The build time sits below them across the sidebar. *Reset view* moved into Settings, and it no longer forgets which apps you chose to open projects in.
 - The status page reads a project with no thread note as its own single thread, from its hub, so a workspace laid out before Garrick gave every project a `Threads/` folder shows every project. `dormant`, `paused` and `on-hold` read as parked, and `closed`, `archived` and `complete` as done.
 - A zone's `Todo.md` uses Obsidian Tasks lines: each opens with its thread, `[[Thread]]: `, or its single-thread project, or else its party or person, and the dates go last as Tasks fields (`📅` due, `🛫` not before, `#waiting` and `⏳` the day to chase). Obsidian's Tasks plugin can then sort and filter them, and the status page's Todo list shows their dates. The meetings, threads and interview skills write it; the template's header explains it. A list in the older `· project, thread · date` form still counts on the page, without dates.
 

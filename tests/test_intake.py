@@ -736,6 +736,33 @@ class TestNeverThroughALink(MailCase):
         self.assertIn("already exists", str(caught.exception))
         self.assertEqual("theirs\n", dest.read_text())
 
+    def test_a_refused_record_leaves_no_page_behind(self):
+        # Something appears at the raw record's name after the check: the draft
+        # page is taken back and the item waits in its inbox, as it was.
+        cases = (("file_conversation", "forecast.eml", eml(plain="Figures inside.\n"), ["acme"],
+                  self.meetings / "raw", self.meetings / "wiki" / "sources", "move_new"),
+                 ("file_reading", "weekly.eml", eml(**NEWSLETTER), None,
+                  self.root / "Wikis" / "Knowledge" / "raw", self.root / "Wikis" / "Knowledge" / "wiki" / "sources",
+                  "write_new"))
+        for command, name, data, parties, raw, sources, writer in cases:
+            with self.subTest(command=command):
+                path = self.drop(name, data)
+                pages = set(sources.glob("*.md"))
+                raws = set(raw.iterdir())
+                real = getattr(intake, writer)
+
+                def plant(root, home, *args, _real=real, _raw=raw):
+                    target = args[-1] if writer == "move_new" else args[0]
+                    if target.parent == _raw:
+                        write(target, "theirs\n")
+                    return _real(root, home, *args)
+                with mock.patch.object(intake, writer, plant), self.assertRaises(intake.Refusal) as caught:
+                    getattr(intake, command)(self.root, path, *([parties] if parties else []))
+                self.assertIn("already exists", str(caught.exception))
+                self.assertTrue(path.exists())
+                self.assertEqual(pages, set(sources.glob("*.md")))
+                self.assertEqual(1, len(set(raw.iterdir()) - raws))          # only the planted file
+
     def test_ordinary_filing_still_works(self):
         path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
         dest = intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])

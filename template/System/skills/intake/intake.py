@@ -348,6 +348,18 @@ def _known_tags(ctx: dict, parties: List[str], what: str) -> List[str]:
     return tags
 
 
+def _page_then(root: Path, home: Path, page: Path, text: str, place) -> None:
+    """Write a draft page, then file the item it describes with `place()`.
+    When filing is refused, the page is taken back, so the item stays in its
+    inbox and nothing is left half-filed."""
+    write_new(root, home, page, text.encode("utf-8"))
+    try:
+        place()
+    except BaseException:
+        page.unlink()  # removes the page itself, never what a link points to
+        raise
+
+
 def file_conversation(root: Path, path: Path, parties: List[str], title: str = "", date: str = "",
                       today: Optional[str] = None) -> Tuple[str, Path, Path]:
     """Record a mail from a zone's Inbox as a conversation: move the original,
@@ -389,9 +401,7 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     text = draft_page(title, date, zone, tags, slug, mail, today)
     with filing(root):
         landing(root, meetings, dest)
-        landing(root, meetings, page)
-        move_new(root, meetings, path, dest)
-        write_new(root, meetings, page, text.encode("utf-8"))
+        _page_then(root, meetings, page, text, lambda: move_new(root, meetings, path, dest))
     return slug, dest, page
 
 
@@ -449,15 +459,15 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
         "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
         "<A short summary. Every vendor claim attributed to its vendor.>", "",
         "Touches <the concept and entity pages it speaks to>.", ""])
-    with filing(root):
-        landing(root, kroot, dest)
-        landing(root, kroot, page)
+    def freeze():
         if mail:
             write_new(root, kroot, dest, strip_recipients(path.read_bytes()))
             path.unlink()
         else:
             move_new(root, kroot, path, dest)
-        write_new(root, kroot, page, text.encode("utf-8"))
+    with filing(root):
+        landing(root, kroot, dest)
+        _page_then(root, kroot, page, text, freeze)
     return slug, dest, page
 
 

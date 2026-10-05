@@ -1311,11 +1311,7 @@ REPO_LIST_CAP = 30   # paths shown per kind; the count above stays exact
 def repo_changes(ws: Path, r: dict) -> str:
     """One repository's changed files, by kind, to read and nothing more. No
     button commits them: another session may be halfway through that work."""
-    try:
-        where = r["folder"].relative_to(ws).as_posix() or "."
-    except ValueError:
-        where = str(r["folder"])
-    where = "the workspace folder" if where == "." else where
+    where = "the workspace folder" if r["folder"] == ws else r["folder"].relative_to(ws).as_posix()
     groups = []
     for kind, label in CHANGE_KINDS:
         paths = [path for path, ks in r["changes"] if kind in ks]
@@ -1325,11 +1321,10 @@ def repo_changes(ws: Path, r: dict) -> str:
         items = "".join("<li><code>%s</code></li>" % E(p) for p in paths[:REPO_LIST_CAP])
         items += '<li class="muted">and %d more</li>' % more if more > 0 else ""
         groups.append('<p class="hint">%s, %d</p><ul class="paths">%s</ul>' % (E(label[:1].upper() + label[1:]), len(paths), items))
-    copy = ('<button class="act" type="button" data-copy="%s" data-say="%s">Copy the folder\'s path</button>'
-            % (E(str(r["folder"])), E("Copied the path of %s." % r["name"])))
+    button = copy("Copy the folder's path", str(r["folder"]), "Copied the path of %s." % r["name"])
     return ('<details class="notes changes"><summary>%s: %s</summary><p class="hint">In %s. %s. '
             'Nothing here commits: review them in your git tool, or ask your assistant.</p>%s<div class="gacts">%s</div></details>'
-            % (E(r["name"]), E(say_files(r["dirty"])), E(where), E(say_kinds(r["changes"]).capitalize()), "".join(groups), copy))
+            % (E(r["name"]), E(say_files(r["dirty"])), E(where), E(say_kinds(r["changes"])), "".join(groups), button))
 
 
 def meter(value: float, cap: float, label: str, right: str) -> str:

@@ -1082,6 +1082,12 @@ class TestChangedFiles(StatusCase):
         self.assertEqual("12 changed files", status.say_files(12))
         self.assertEqual("", status.say_kinds([]))
 
+    def test_the_root_repository_is_the_workspace_folder(self):
+        out = status.repo_changes(self.root, {"name": "Workspace", "folder": self.root, "dirty": 1,
+                                              "changes": [("AGENTS.md", ("unstaged",))]})
+        self.assertIn("In the workspace folder. 1 not staged.", out)
+        self.assertIn('data-copy="%s"' % self.root, out)
+
     def test_a_long_list_is_cut_but_the_count_is_not(self):
         changes = [("f%02d.md" % i, ("untracked",)) for i in range(status.REPO_LIST_CAP + 5)]
         out = status.repo_changes(self.root, {"name": "Work", "folder": self.root / "Zones" / "Work",

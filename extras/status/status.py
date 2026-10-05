@@ -879,9 +879,11 @@ def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
 # them: key, label, bundle id, the names its .app may carry. The page offers
 # the ones installed here, Settings chooses among those, and only Garrick's
 # Status.app can open them; in a browser the page still only copies.
-LAUNCHERS = (("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)),
+LAUNCHERS = (("finder", "Finder", "com.apple.finder", ()),
+             ("cmux", "cmux", "com.cmuxterm.app", ("cmux",)),
              ("codex", "Codex", "com.openai.codex", ("Codex", "ChatGPT")),
-             ("cmux", "cmux", "com.cmuxterm.app", ("cmux",)))
+             ("claude", "Claude", "com.anthropic.claudefordesktop", ("Claude",)))
+VERB = {"finder": "Reveal in Finder", "cmux": "Open in cmux", "codex": "Open in Codex", "claude": "Open in Claude"}
 LABEL = {k: label for k, label, _, _ in LAUNCHERS}
 
 
@@ -899,7 +901,7 @@ def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
     taken at its name."""
     if sys.platform != "darwin":
         return ()
-    found = []
+    found = ["finder"]                          # every Mac has it
     for key, _, bundle, names in LAUNCHERS:
         for name in names:
             app = mac_app(name, apps)
@@ -1120,16 +1122,21 @@ def about_garrick(version: str, notes: str = "") -> str:
                E(PROJECT + "/security/advisories/new")))
 
 
-def launcher_choices(installed: Tuple[str, ...]) -> str:
-    """Settings › Open projects in: one switch per app Garrick can open a
-    project in, off and greyed where it is not installed. Kept in this
-    viewer's own storage, so the page still writes nothing."""
-    rows = "".join('<label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
-                   % (k, "" if k in installed else " disabled", E(label), "Installed" if k in installed else "Not installed on this Mac")
-                   for k, label, _, _ in LAUNCHERS)
-    return ('<section class="setsec"><h3>Open projects in</h3>%s<p class="hint">The buttons appear on project and thread '
-            'cards in Garrick&#39;s Status.app. Claude opens with the phrase that resumes the thread typed in, for you to send; '
-            'Codex and cmux open in the folder with the phrase on the clipboard.</p></section>' % rows)
+def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False) -> str:
+    """Settings › Opening a thread: the note's own link, then each app Garrick
+    can open a project in, with a checkbox (offered on the cards) and a radio
+    (what clicking a thread's name does). Greyed where not installed. Kept in
+    this viewer's own storage, so the page still writes nothing."""
+    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True)]
+    rows += [(k, VERB[k], k in installed) for k, _, _, _ in LAUNCHERS]
+    html = "".join('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
+                   '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>'
+                   % (k, "" if ok else " disabled", E(label), "The note&#39;s own link" if k == "note" else "Installed" if ok else "Not installed on this Mac",
+                      k, "" if ok else " disabled")
+                   for k, label, ok in rows)
+    return ('<section class="setsec"><h3>Opening a thread</h3><p class="hint">Tick what project and thread cards offer; the dot marks what '
+            'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app; Claude starts with the phrase that resumes the '
+            'thread typed in, for you to send, and Codex and cmux open in the folder with the phrase on the clipboard. Saved as you change it.</p>%s</section>' % html)
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
@@ -1154,9 +1161,10 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     except OSError:
         text = None
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
-    return ('<dialog id="settings" class="settings" aria-labelledby="settings-title"><h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s'
-            '<div class="gacts"><button class="act" type="button" id="close-settings">Done</button></div></dialog>'
-            % (launcher_choices(installed), VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
+    return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
+            '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
+            '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s</dialog>'
+            % (launcher_choices(installed, bool(mac_app("Obsidian"))), VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
 def script_json(data) -> str:
@@ -1340,6 +1348,9 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 .gsum{margin:6px 0 0}
+.gzsel{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
+appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
 nav .navsec{margin:12px 0 2px;padding:0 10px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .tabs{display:flex;gap:2px;margin:0 0 18px;border-bottom:1px solid var(--line)}
 .tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
@@ -1406,6 +1417,12 @@ SETTINGS_CSS = r"""
 .brand>p{flex-basis:100%;margin:6px 0 0}
 .cog{flex:none;margin:0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
 .cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
+.launcher-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.launcher-default{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}.launcher-default input{accent-color:var(--accent)}
+.launcher-default:has(input:disabled){opacity:.4}
+dialog.settings{position:relative}dialog.settings .sclose{position:absolute;top:14px;right:14px;width:30px;height:30px;display:flex;align-items:center;
+justify-content:center;font-size:20px;line-height:1;border:0;background:none;color:var(--muted);border-radius:8px;cursor:pointer}
+dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
 dialog.settings .setsec{margin-top:18px}dialog.settings .setsec:first-of-type{margin-top:0}
 .launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
 .launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
@@ -1433,13 +1450,13 @@ var Panel=(function(){
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
-var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux'};
-function chosen(){var on={};try{on=JSON.parse(localStorage.getItem('garrick-launchers')||'{}')}catch(e){}
-return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
-function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
+var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
+function prefs(){try{return JSON.parse(localStorage.getItem('garrick-launchers')||'{}')}catch(e){return{}}}
+function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
+function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='finder'?'Showed '+o.n+' in Finder.':k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
 :(p?'Opened '+LABEL[k]+' in '+o.n+'. Paste “'+p+'” to your assistant.':'Opened '+LABEL[k]+' in '+o.n+'.');
-return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">Open in '+LABEL[k]+'</button>'}
-function acts(o){var a='<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
+return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+(k==='finder'?'Reveal in Finder':'Open in '+LABEL[k])+'</button>'}
+function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 if(o.w){a+=copy('open '+o.w);if(!o.h)a+=o.pa&&host?park(o):copy((o.s?'wake ':'park ')+o.w)}return'<div class="gacts">'+a+'</div>'}
 function park(o){var v=o.s?'wake':'park';return'<button class="act" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
@@ -1450,6 +1467,11 @@ return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')
 function head(o){var s=state(o);return'<h4>'+esc(o.n)+'</h4><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
 +(s?'<div class="ink2" style="margin-top:4px">'+esc(s)+'</div>':'')}
+/* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a');if(!a||!host)return;
+var d=null;try{d=localStorage.getItem('garrick-default')}catch(x){}if(!d||d==='note'||chosen().indexOf(d)<0)return;
+var row=a.closest('.thread'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
+e.preventDefault();e.stopPropagation();host.postMessage({launch:d,folder:o.f,phrase:o.w?'open '+o.w:''})},true);
 return{esc:esc,acts:acts,head:head}})();
 """
 
@@ -1507,9 +1529,15 @@ window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);s
 document.getElementById('open-settings').onclick=window.StatusSettings.open;
 document.getElementById('close-settings').onclick=sdShut;
 var lk='garrick-launchers';function lprefs(){try{return JSON.parse(localStorage.getItem(lk)||'{}')}catch(e){return{}}}
+var dk='garrick-default';function dpref(){try{return localStorage.getItem(dk)||'note'}catch(e){return'note'}}
+function radios(){sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){var c=sd.querySelector('input[data-launcher="'+r.value+'"]');
+r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref()});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
+sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.onchange=function(){try{localStorage.setItem(dk,r.value)}catch(e){}
+say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
 c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;try{localStorage.setItem(lk,JSON.stringify(p))}catch(e){}
-say((c.checked?'Showing ':'Hiding ')+'Open in '+c.parentNode.querySelector('span').firstChild.textContent+'.')}});
+if(!c.checked&&dpref()===c.dataset.launcher){try{localStorage.setItem(dk,'note')}catch(e){}}radios();
+say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.')}});radios();
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -1637,7 +1665,7 @@ function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
 var drawn={};V.forEach(function(n){drawn[n.k]=1});document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)});
-document.querySelectorAll('.gzone button').forEach(function(b){b.classList.toggle('on',b.dataset.z===zsel)});
+var zs=document.querySelector('.gzsel');if(zs)zs.value=zsel;
 var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
 /* Every note pushes every other away, which costs the square of the notes a
    step. Past BIG notes a quadtree stands in for each far group by its centre,
@@ -1764,7 +1792,7 @@ pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close(
 var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode',mode)}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
-document.querySelectorAll('.gzone button').forEach(function(b){b.onclick=function(){zsel=b.dataset.z;st.set('garrick-graph-place',zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
+var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
 document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
@@ -2030,10 +2058,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
-        switch = "".join('<button type="button" data-z="%s">%s</button>' % (E(z), E(z)) for z in places) + '<button type="button" data-z="*">All</button>'
+        switch = "".join('<option value="%s">%s</option>' % (E(z), E(z)) for z in places) + '<option value="*">All</option>'
         graph_card = card("graph", "Graph", "",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
-                          '<div class="gbar"><div class="gseg gzone" role="group" aria-label="Place">' + switch + '</div>'
+                          '<div class="gbar"><select class="gzsel" aria-label="Place">' + switch + '</select>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'

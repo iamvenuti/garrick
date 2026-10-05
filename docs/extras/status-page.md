@@ -22,12 +22,12 @@ A sidebar holds Garrick's mark, the page's name, a circular arrow that rebuilds 
 
 The cog beside the page's name opens *Settings*. In the Mac app, *Settings…* in the app menu (⌘,) opens it too.
 
-**Open projects in** lists the apps a project or thread can be opened in: Claude, Codex and cmux. Each build checks which of them this Mac has. One that isn't installed is shown greyed out, and the ones that are installed can be switched off. Every app left on gets a button on each project and thread card, in the [Mac app](#a-mac-app) only:
+**Opening a thread** lists the ways a project or thread can be opened: the note's own link (*Open in Obsidian*, or *Open the note* where Obsidian is not installed), *Reveal in Finder*, *Open in cmux*, *Open in Codex* and *Open in Claude*. Each build checks which of the apps this Mac has, and one that is not installed is greyed out. Each row has two controls:
 
-- *Open in Claude* starts a new session in the thread's folder with "open Pricing" already typed in. Press Send to resume the thread.
-- *Open in Codex* and *Open in cmux* open the thread's folder, and put "open Pricing" on the clipboard for you to paste.
+- **A checkbox:** whether project and thread cards offer it. The apps work in the [Mac app](#a-mac-app) only.
+- **A radio button:** what clicking a thread's name in the Threads list does. The note's own link is the default. An app chosen here takes over the click in the Mac app; in a browser the name still opens the note.
 
-Your choices are kept in the app's own storage, and the page still writes nothing.
+*Open in Claude* starts a new session in the thread's folder with "open Pricing" already typed in; press Send to resume the thread. *Open in Codex* and *Open in cmux* open the folder and put "open Pricing" on the clipboard. *Reveal in Finder* shows the folder. Your choices are kept in the app's own storage as you make them, and the page still writes nothing. Close Settings with the × at its top right, or Escape.
 
 **About Garrick** says which Garrick the workspace was installed from, in the same words as `python3 System/tools/check.py --version`. *Copy version* copies that line. *What's new* shows the notes of that release, read from the copy of the changelog the installer put in `System/garrick-changelog.md`. A workspace installed from a clone of `main` also sees *Coming next*, which is what is waiting for the next release. Below that are the ways to reach Garrick's maintainers:
 
@@ -116,7 +116,7 @@ Nothing on the page can change a file, and nothing it copies runs until you past
 
 ## Reading the graph
 
-The graph shows one place at a time: Work when you have it, or another zone or wiki picked in the bar above it, or *All*. The page remembers the pick. The line under the legend counts what is drawn.
+The graph shows one place at a time: Work when you have it, or another zone or wiki picked from the drop-down above it, or *All*. The page remembers the pick. The line under the legend counts what is drawn.
 
 With *All*, each zone and wiki has its own spot on the card: a few sit in a row, more go round an ellipse in the card's proportions, and places that link to each other sit side by side. A zone reads as a cluster, and the notes fill the card in either view.
 

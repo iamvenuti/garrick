@@ -186,7 +186,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		NSPasteboard.general.setString(text, forType: .string)
 	}
 
-	// Open a project or thread folder in Claude, Codex or cmux. Claude gets the
+	// Open a project or thread folder in Claude, Codex or cmux, or show it in Finder. Claude gets the
 	// phrase typed into a new session, for you to send; Codex and cmux get the
 	// folder, and the phrase goes on the clipboard. Nothing is sent and no
 	// command is typed into a terminal.
@@ -221,6 +221,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		case "cmux":
 			copyText(phrase)
 			openInCmux(folder.path)
+		case "finder":
+			NSWorkspace.shared.activateFileViewerSelecting([folder])
 		default:
 			return
 		}

@@ -257,8 +257,8 @@ class TestGraph(StatusCase):
 
     def test_a_place_at_a_time_work_first(self):
         html = self.page()
-        bar = html[html.index('aria-label="Place">'):html.index("</div>", html.index('aria-label="Place">'))]
-        places = re.findall(r'data-z="([^"]*)"', bar)
+        bar = html[html.index('<select class="gzsel" aria-label="Place">'):html.index("</select>")]
+        places = re.findall(r'<option value="([^"]*)"', bar)                      # a drop-down, not a row of buttons
         self.assertEqual("Work", places[0])
         self.assertEqual("*", places[-1])                                         # and All, last
         self.assertIn("Meetings", places)                                         # a wiki is a place too
@@ -655,9 +655,9 @@ class TestLaunchers(StatusCase):
         self.app(apps, "ChatGPT", "com.openai.chat")                     # ChatGPT is not Codex
         self.app(apps, "Claude", "com.anthropic.claudefordesktop")
         self.app(apps, "cmux")                                           # no Info.plist: taken at its name
-        self.assertEqual(("claude", "cmux"), status.launchers_installed([apps]))
+        self.assertEqual(("finder", "cmux", "claude"), status.launchers_installed([apps]))   # Finder: every Mac has it
         self.app(apps, "Codex", "com.openai.codex")
-        self.assertEqual(("claude", "codex", "cmux"), status.launchers_installed([apps]))
+        self.assertEqual(("finder", "cmux", "codex", "claude"), status.launchers_installed([apps]))
 
     def test_the_page_names_what_is_installed(self):
         html = self.page(launchers=("claude", "cmux"))
@@ -673,6 +673,16 @@ class TestLaunchers(StatusCase):
         self.assertIn("localStorage.getItem('garrick-launchers')", status.PANEL_JS)   # the choice stays in this viewer
         self.assertIn("var m={launch:", status.JS)
         self.assertIn("if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}", status.JS)   # an older app still opens cmux
+
+    def test_a_checkbox_and_a_default_for_each_way_to_open(self):
+        dialog = self.page(launchers=("finder", "claude"))
+        dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>")]
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
+        self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
+        self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
+        self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
+        self.assertNotIn(">Done<", dialog)
+        self.assertIn("e.target.closest('.thread .t>a')", status.PANEL_JS)       # a click on a thread follows the default
 
     def test_settings_open_from_the_cog(self):
         html = self.page()

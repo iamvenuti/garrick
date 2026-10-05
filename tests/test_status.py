@@ -703,6 +703,17 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 
+    def test_a_project_without_threads_is_its_own_thread(self):
+        write(self.root / "Zones" / "Work" / "Solo" / "Solo.md",
+              "---\ntitle: Solo\ntype: project\nparty: acme\nstatus: dormant\nupdated: 2026-03-02\n---\n\n# Solo\n")
+        write(self.root / "Zones" / "Work" / "Gone" / "Gone.md", "---\ntype: project\nstatus: closed\n---\n")
+        T = status.threads(self.root)
+        solo = [r for r in T["Work"]["parked"] if r["project"] == "Solo"]
+        self.assertEqual(1, len(solo))                                   # dormant reads as parked
+        self.assertEqual(("Solo", "Solo/Solo.md"), (solo[0]["thread"], solo[0]["rel"]))
+        self.assertFalse([r for r in T["Work"]["rows"] + T["Work"]["parked"] if r["project"] == "Gone"])
+        self.assertEqual(["Acme Review", "Birch Entry"], sorted({r["project"] for r in T["Work"]["rows"]}))   # projects with threads list those
+
     def test_garrick_and_the_workspace_read_lines_alike(self):
         tl = status.todo_lines()
         p = tl.parse("- [ ] [[Acme/Pricing|Pricing]]: Send it #waiting 🔺 ⏳ 2026-10-09")

@@ -141,6 +141,38 @@ class TestPark(ActionCase):
                 self.act(verb="park", zone="Work", file=rel)
 
 
+class TestRun(ActionCase):
+    def plists(self):
+        import plistlib
+        folder = Path(self._tmp.name) / "LaunchAgents"
+        folder.mkdir()
+        with (folder / "com.garrick.whats-open.plist").open("wb") as f:
+            plistlib.dump({"Label": "com.garrick.whats-open",
+                           "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "whats-open", "--", "python3", "x.py"]}, f)
+        with (folder / "other.plist").open("wb") as f:
+            plistlib.dump({"Label": "com.example.other", "ProgramArguments": ["/bin/echo", "whats-open"]}, f)
+        return folder
+
+    def test_run_starts_the_job_through_launchd(self):
+        folder = self.plists()
+        self.assertEqual("com.garrick.whats-open", pa.job_label("whats-open", folder))
+        self.assertIsNone(pa.job_label("other", folder))
+        started = []
+        real, pa.kickstart = pa.kickstart, lambda label: started.append(label) or True
+        try:
+            self.assertEqual("whats-open is running now", pa.run_job({"verb": "run", "job": "whats-open"}, folder))
+            self.assertEqual(["com.garrick.whats-open"], started)
+            for bad in ("nothing-here", "../x", "", None):
+                with self.assertRaises(pa.Refused, msg=bad):
+                    pa.run_job({"verb": "run", "job": bad}, folder)
+            pa.kickstart = lambda label: False
+            with self.assertRaisesRegex(pa.Refused, "is it loaded"):
+                pa.run_job({"verb": "run", "job": "whats-open"}, folder)
+        finally:
+            pa.kickstart = real
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())      # running a job changes no note
+
+
 class TestScript(ActionCase):
     def run_script(self, request, ws=None):
         return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(ws or self.root)], input=request,

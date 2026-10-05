@@ -14,6 +14,8 @@ and committing it in the zone's repository, as the skills would:
     todo-date   set or clear its date: 📅, or ⏳ on a #waiting line; "-" clears
     park        a thread note's status to parked, with a dated entry
     wake        and back to active
+    run         start a scheduled job now, through launchd, so it keeps its
+                own wrapper, lock and log; it changes no note itself
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
@@ -34,7 +36,7 @@ import sys
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-VERBS = ("todo-done", "todo-undo", "todo-date", "park", "wake")
+VERBS = ("todo-done", "todo-undo", "todo-date", "park", "wake", "run")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
@@ -152,9 +154,45 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
     return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
 
 
+def job_label(name, folder: Path = None):
+    """The launchd label of the job the jobs extra runs as `job.py <name>`, or None."""
+    import plistlib
+    folder = folder or Path.home() / "Library" / "LaunchAgents"
+    for plist in sorted(folder.glob("*.plist")) if folder.is_dir() else []:
+        try:
+            p = plistlib.loads(plist.read_bytes())
+            args = [str(a) for a in p.get("ProgramArguments", [])]
+        except Exception:
+            continue
+        at = next((i for i, a in enumerate(args) if a.endswith("job.py")), None)
+        if at is not None and at + 1 < len(args) and args[at + 1] == name and isinstance(p.get("Label"), str):
+            return p["Label"]
+    return None
+
+
+def kickstart(label: str) -> bool:
+    import os
+    done = subprocess.run(["launchctl", "kickstart", "gui/%d/%s" % (os.getuid(), label)], capture_output=True, text=True)
+    return done.returncode == 0
+
+
+def run_job(req: dict, folder: Path = None) -> str:
+    name = req.get("job")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise Refused("not a job name")
+    label = job_label(name, folder)
+    if label is None:
+        raise Refused("no scheduled job called %s" % name)
+    if not kickstart(label):
+        raise Refused("launchd would not start %s; is it loaded?" % name)
+    return "%s is running now" % name
+
+
 def act(ws: Path, req, today=None) -> str:
     if not isinstance(req, dict) or req.get("verb") not in VERBS:
         raise Refused("unknown action")
+    if req["verb"] == "run":
+        return run_job(req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
     return todo(ws, req)

@@ -271,9 +271,15 @@ def as_date(value) -> Optional[dt.date]:
 
 # --------------------------------------------------------------------------- what the page reads
 
+DONE = {"done", "closed", "archived", "complete", "completed"}
+PARKED = {"parked", "dormant", "paused", "on-hold"}
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
-    note was last updated. Frontmatter only, like "what's open"."""
+    note was last updated. Frontmatter only, like "what's open". A project
+    with no thread note is its own single thread, read from its hub, as in a
+    workspace laid out before Garrick gave every project a Threads/ folder."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
         rows, parked, done = [], [], 0
@@ -282,15 +288,19 @@ def threads(ws: Path) -> Dict[str, dict]:
                 continue
             hub = project / (project.name + ".md")
             pfm = frontmatter(hub, ws)
-            for thread in visible_dirs(project / "Threads"):
-                note = thread / (thread.name + ".md")
-                fm = frontmatter(note, ws)
+            found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
+            if not any(n.is_file() for _, n in found) and hub.is_file() and \
+                    as_text(pfm.get("type")).strip().lower() == "project":
+                found = [(project.name, hub)]
+            for name, note in found:
+                fm = pfm if note == hub else frontmatter(note, ws)
                 state = as_text(fm.get("status")).strip().lower()
-                if state == "done":
+                if state in DONE:
                     done += 1
                     continue
-                row = {"zone": zone.name, "project": project.name, "thread": thread.name, "note": note,
-                       "hub": hub if hub.is_file() else None,
+                state = "parked" if state in PARKED else state
+                row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
+                       "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
                        "updated": as_date(fm.get("updated")), "status": state}
                 (parked if state == "parked" else rows).append(row)
@@ -986,7 +996,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     if cmux:
         card["f"] = str(r["note"].parent)
     if actions:
-        card["pa"] = [r["zone"], "%s/Threads/%s/%s.md" % (r["project"], r["thread"], r["thread"])]
+        card["pa"] = [r["zone"], r["rel"]]
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
 
 
@@ -1916,7 +1926,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             rows.append('<div class="row" data-ok="%d">%s<div class="name"><a href="%s">%s</a><small>%s</small></div><div class="strip">%s</div>'
                         '<div class="ink2 num" data-tip="took %ss">%s</div><span class="status">%s%s</span></div>'
                         % (j["state"] == "good", ICON[j["state"]], E(link(j["log"])), E(j["name"]), E(j["schedule"]), strip,
-                           E(str(j["seconds"])), E(last), ICON[j["state"]], E(j["status"])))
+                           E(str(j["seconds"])), E(last), ICON[j["state"]], E(j["status"]) + (
+                               ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
+                               % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"])) if acting and j["name"] in sched else "")))
         legend = ('<div class="legend"><span><i class="good"></i>every run ok</span><span><i class="warning"></i>some failed, then recovered</span>'
                   '<span><i class="critical"></i>ended the day failed, or most runs failed</span><span><i></i>no run</span><span>· one cell per day, last %d days</span></div>' % DAYS)
         jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))

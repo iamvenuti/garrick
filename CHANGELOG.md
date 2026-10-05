@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-05
+
+A security fix in the intake and meetings skills, and a clearer count of changed files on the status page.
+
 ### Changed
 
 - The status page's Repositories card counts changed files and says so: "12 changed files", not "12 uncommitted", which read as twelve commits. Its tooltip and a list under the tiles split them into staged, not staged, untracked and conflicted, and list the paths, with a button that copies the repository's folder. The card stays read-only: nothing on it commits. Untracked files in a new folder are counted one by one.
@@ -160,7 +164,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/iamvenuti/garrick/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/iamvenuti/garrick/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/iamvenuti/garrick/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0

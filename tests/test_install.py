@@ -106,7 +106,8 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
         # One closing line for either route, app or terminal, with the full path.
         self.assertEqual(self.result.stdout.strip().splitlines()[-1],
-                         f"Next: open {self.root} in your Claude or ChatGPT app, or start claude or codex there.")
+                         f"Next: open {self.root} in your Claude or ChatGPT app, or start claude or codex there, "
+                         f"and say \"set up Garrick\".")
         self.assertNotIn("garrick@localhost", self.result.stdout)  # git had an identity: no hint
 
     def test_structure(self):

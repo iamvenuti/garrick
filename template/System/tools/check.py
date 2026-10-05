@@ -771,6 +771,12 @@ def resume_block(text: str) -> List[str]:
     return out
 
 
+# A Resume here block as the thread template leaves it: its date and table
+# cells still hold the template's <angle-bracket> prompts.
+RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Waiting on|Deadline)\s*\|\s*<")
+RESUME_DATE_PROMPT = "**Where it stands, <"
+
+
 def check_resume(ws: Workspace) -> List[Finding]:
     """A resume point is the signpost a cold resume follows first. Every link
     and file path in a live thread's Resume here block must still lead
@@ -786,7 +792,14 @@ def check_resume(ws: Workspace) -> List[Finding]:
             if not text or str(parse_frontmatter(note).get("status") or "").strip().lower() in ("done", "parked"):
                 continue  # finished, or set aside: nobody resumes it until it is woken
             spoken = "%s, %s" % (project.name, thread.name)
-            for line in resume_block(text):
+            block = resume_block(text)
+            unfilled = [m.group(1) for m in (RESUME_PROMPT_RE.match(line) for line in block) if m]
+            if unfilled or any(RESUME_DATE_PROMPT in line for line in block):
+                out.append(Finding(WARNING, "resume", rel(ws, note),
+                                   "Resume here is still the template's (%s not filled in); say \"wrap %s\" to fill it"
+                                   % (", ".join(unfilled).lower() or "its date", thread.name),
+                                   "Thread %s has no real resume point yet" % spoken))
+            for line in block:
                 for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
                     target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
                     if not target or target.startswith("<") or "://" in target:

@@ -34,8 +34,8 @@ System/
   rules.md              how the assistant behaves (the only copy)
   context.md            who you are and who you deal with, filled in from your answers
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, and garrick_lib.py, which they share
-  skills/               threads, intake, meetings, knowledge, interview
+  tools/                scaffold.py, check.py, probe.py, and garrick_lib.py, which they share
+  skills/               threads, intake, meetings, knowledge, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
   Knowledge/            published material you study, empty until you feed it
@@ -128,7 +128,7 @@ Tests the workspace against every rule a machine can check:
 - names that cannot be said aloud, or siblings that sound alike;
 - project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (a thread is active, parked or done; a project is active or done), or a `created` or `updated` date not written YYYY-MM-DD;
 - deliverables without a date prefix;
-- a link or a path in a live thread's Resume here block that leads nowhere (a warning; parked threads are skipped);
+- a link or a path in a live thread's Resume here block that leads nowhere, or a block still holding the template's prompts (warnings; parked threads are skipped);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
 - meeting and mail pages missing a zone or parties, or with a date not written YYYY-MM-DD;
 - person pages without a known party (`party: none` is allowed), or repeating eight or more words from a meeting (a warning);
@@ -136,7 +136,8 @@ Tests the workspace against every rule a machine can check:
 - a file in a project's `Sources/` that came from mail with no finished page in Meetings: an attachment, found by its exact bytes, or a whole saved mail;
 - a project file that crosses a wall: it links to a meeting page the wall should have kept out, names a party, person or alias from the far side (files in `Sources/`, which came from the party itself, are exempt from this one), repeats eight or more words in a row held only across the wall, in a walled meeting page or its raw transcript or in a file of a project on the far side (files in `Sources/` are compared with meetings only), or is an attachment of a mail from the far side. A link to, or eight words from, a meeting page with no zone or parties is an error whatever the walls. The finding names the file and the walled party, never the words that matched;
 - a Knowledge page that links into Meetings, or carries `party`, `parties` or a `zone`, or a Knowledge page or raw record that shares eight or more words with a meeting (a warning);
-- a raw record changed after it was filed.
+- a raw record changed after it was filed;
+- a `.new` file an update left beside one of yours, waiting to be merged (a warning).
 
 It reports two kinds of finding. An error breaks a rule; a warning is something to look at, such as a deliverable without its date or a project without a party. Plain text by default, grouped by check; add `--ear` for a three-sentence version meant to be read aloud, or `--json` for another program to consume. The exit code is 0 when there is no error, warnings included, 1 when there is at least one, and 2 when no workspace is found.
 

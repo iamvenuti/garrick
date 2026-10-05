@@ -68,7 +68,7 @@ Open Claude and sign in. Under **Settings > Privacy**, review **Help improve Cla
 3. Above the box where you type, click the first button and choose **Local**. It runs Claude on your Mac with your own files. The other choices run somewhere else and don't see your workspace.
 4. Click the folder button beside it and choose your `Garrick` folder (Command, Shift and H jumps to your home folder). Choose the whole folder, not a zone inside it: the rules and skills live at its top. The button then reads **Garrick**, as in the picture.
 5. Below the box, next to the microphone, click the mode and choose **Accept edits**. The picture shows **Auto**; change it. With Accept edits, Claude writes and updates your notes without asking each time, and still asks before running anything else, such as saving to git. The app remembers this for the folder.
-6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
+6. Say “Set up Garrick.” The assistant checks which folder it has open and what your Mac has, asks two or three questions about how you work, and writes the answers down so every later session knows them. On a new workspace it then offers to interview you about your work. Continue with [Your first useful session](first-session.md).
 
 Two things to leave alone. Don't turn on "Allow bypass permissions mode" in Settings, which lets Claude run anything without asking. And if the app suggests creating a `CLAUDE.md`, don't: Garrick's instructions live in `AGENTS.md`, and a `CLAUDE.md` in the folder makes Claude stop reading them.
 
@@ -86,7 +86,7 @@ Open the ChatGPT desktop app and sign in to the account and workspace you chose.
 3. Name it `Garrick`. Under **Source folders**, click **Add folder** and choose your `Garrick` folder, the whole folder, not a zone inside it. Leave **This computer** selected: it runs on your Mac with your own files.
 4. Click **Create project**.
 5. The setting below the box (**Approve for me** in the picture) decides what Codex does without asking you. Click it and choose the setting whose description says Codex works inside your workspace on its own but asks before it runs commands outside the workspace or reaches the internet. It is the closest match to Accept edits in Claude. The names of these settings change between versions, so go by the description. If none fits, choose the one that asks more often.
-6. Ask “Read the workspace instructions and tell me which folder I have open.” On a new workspace, no projects exist yet; continue with [Your first useful session](first-session.md).
+6. Say “Set up Garrick.” The assistant checks which folder it has open and what your Mac has, asks two or three questions about how you work, and writes the answers down so every later session knows them. On a new workspace it then offers to interview you about your work. Continue with [Your first useful session](first-session.md).
 
 ### The commands it asks to approve
 

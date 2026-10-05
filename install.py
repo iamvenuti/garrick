@@ -576,7 +576,7 @@ def install(cfg, target, force=False, quiet=False):
         say(f"  To use your own address instead, run this in {root}:")
         say(f"    {OWN_ADDRESS}")
     say("")
-    say(f"Next: open {root} in your Claude or ChatGPT app, or start claude or codex there.")
+    say(f"Next: open {root} in your Claude or ChatGPT app, or start claude or codex there, and say \"set up Garrick\".")
     return root
 
 

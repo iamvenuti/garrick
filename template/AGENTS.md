@@ -13,6 +13,7 @@ Three levels of work, two memories, one system folder.
 | `System/` | Rules, context, skills and checks. Everything else consumes it |
 | `System/generated/` | Pages a tool rebuilds, such as the status page. Its rule is under *Files* in `System/rules.md` |
 | `System/interviews/` | The interview skill's records, one per interview |
+| `System/setup.md` | How the user works here: their assistant, app and installed tools. Written by the setup skill; read it before suggesting a tool |
 | `Zones/<Zone>/` | One side of life or work. Its own git repository |
 | `Zones/<Zone>/<Project>/` | One client, engagement or undertaking. The hub note is named after it |
 | `Zones/<Zone>/<Project>/Threads/<Thread>/` | One line of work, with one resume point |

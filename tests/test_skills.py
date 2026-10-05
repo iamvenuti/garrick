@@ -73,7 +73,7 @@ class SkillsTest(unittest.TestCase):
         return sorted(p.parent for p in SKILLS.glob("*/SKILL.md"))
 
     def test_the_skills(self):
-        self.assertEqual(["intake", "interview", "knowledge", "meetings", "threads"],
+        self.assertEqual(["intake", "interview", "knowledge", "meetings", "setup", "threads", "update"],
                          [p.name for p in self.skills()])
 
     def test_every_skill_names_itself(self):
@@ -304,7 +304,8 @@ class SkillsTest(unittest.TestCase):
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",
-                     SKILLS / "threads" / "SKILL.md", REPO / "template" / "System" / "rules.md",
+                     SKILLS / "threads" / "SKILL.md", SKILLS / "setup" / "SKILL.md", SKILLS / "update" / "SKILL.md",
+                     REPO / "template" / "System" / "rules.md",
                      REPO / "template" / "AGENTS.md", REPO / "template" / "System" / "templates" / "zone" / "Todo.md",
                      REPO / "AGENTS.md"):
             text = path.read_text(encoding="utf-8")

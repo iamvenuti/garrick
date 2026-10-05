@@ -173,7 +173,8 @@ step 6, and another session may have changes of its own in any repository.
    git -C "Zones/<Zone>" commit -m "Interview: open actions"
    ```
 5. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
-   plain words.
+   plain words. The threads just made start with the template's resume
+   points: offer the `setup` skill's *Fill in my resume points* for them.
 6. **Close the record**: add `## Set up` with what was created and the commit
    hashes, then commit it on its own in the workspace root's repository:
    ```sh

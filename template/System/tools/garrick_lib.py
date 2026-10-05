@@ -10,6 +10,7 @@ functions below keep their signatures:
     load_context(root) -> dict
     walled(context, tag_a, tag_b) -> bool
     workspace_root(start=None) -> Path
+    link_on_the_way(base, path) -> Path or None
     install_wall_hook(zone) -> Path
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
@@ -49,6 +50,7 @@ __all__ = [
     "load_context",
     "walled",
     "workspace_root",
+    "link_on_the_way",
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
@@ -470,6 +472,29 @@ def workspace_root(start: Optional[PathLike] = None) -> Path:
         if (folder / "System" / "rules.md").is_file():
             return folder
     raise FileNotFoundError("no workspace (a folder holding System/rules.md) above %s" % here)
+
+
+def link_on_the_way(base: PathLike, path: PathLike) -> Optional[Path]:
+    """The first symbolic link on the way from `base` down to `path`, `path`
+    itself included, or None when there is none. `base` may be a link, and so
+    may anything above it: the check starts below it. A path that is not under
+    `base`, or that climbs with `..`, is returned whole, as unsafe.
+
+    A command that checked where a file may go calls this just before moving
+    or writing it, so a link cannot send the file past the folder it checked."""
+    base, path = Path(base), Path(path)
+    try:
+        parts = path.relative_to(base).parts
+    except ValueError:
+        return path
+    if ".." in parts:
+        return path
+    step = base
+    for part in parts:
+        step = step / part
+        if step.is_symlink():
+            return step
+    return None
 
 
 # ---------------------------------------------------------------------------

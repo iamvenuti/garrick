@@ -58,7 +58,7 @@ from garrick_lib import (  # noqa: E402
     walled,
     workspace_root,
 )
-from ingest import RAW_EXTS, Refusal, _stems, build_slug, meetings_root  # noqa: E402
+from ingest import RAW_EXTS, Refusal, _stems, build_slug, meetings_root, no_links  # noqa: E402
 
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
@@ -254,6 +254,9 @@ def _item(root: Path, path: Path) -> Tuple[Path, str, str, str, Optional[dict]]:
     path = Path(path)
     if not path.is_file():
         raise Refusal("%s is not a file." % path)
+    if path.is_symlink():
+        raise Refusal("%s is a symbolic link. Drop the file itself into the inbox; Garrick never files a link."
+                      % path.name)
     where, zone = place_of(root, path)
     kind, m = kind_of(path, where)
     return path, where, zone, kind, m
@@ -388,6 +391,7 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     slug = build_slug(date, title, _stems(raw_dir, sources))
     dest = raw_dir / (slug + path.suffix.lower())
     page = sources / (slug + ".md")
+    no_links(root, dest, page)
     sources.mkdir(parents=True, exist_ok=True)
     today = today or datetime.date.today().isoformat()
     text = draft_page(title, date, zone, tags, slug, mail, today)
@@ -450,6 +454,7 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
         "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
         "<A short summary. Every vendor claim attributed to its vendor.>", "",
         "Touches <the concept and entity pages it speaks to>.", ""])
+    no_links(root, dest, page)
     sources.mkdir(parents=True, exist_ok=True)
     if mail:
         dest.write_bytes(strip_recipients(path.read_bytes()))
@@ -507,7 +512,8 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     The destination is only ever the one given. Refuses without a project, a
     project in another zone, a project whose party is walled from `parties`,
     mail (a mail is recorded as a conversation first, and only its attachment
-    goes to the project), audio, and a name already taken. Returns the new path.
+    goes to the project), audio, a name already taken, and a symbolic link
+    between the workspace and the destination. Returns the new path.
     """
     path, where, zone, kind, _ = _item(root, path)
     folder, pzone, ptags = resolve_project(root, project)
@@ -528,6 +534,7 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     tags = _known_tags(ctx, parties, "A file for a project")
     _check_wall(ctx, ptags, tags)
     dest = folder / "Sources" / _safe_name(name or path.name)
+    no_links(root.resolve(), dest)
     if dest.exists():
         raise Refusal("%s already exists; pass --name for a different one." % _rel(root, dest))
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -562,8 +569,8 @@ def extract_attachment(root: Path, mail: str, project: Optional[str], name: str 
 
     Refuses a mail not yet filed as a conversation, a project in another zone
     from the mail's, a project whose party is walled from the mail's parties,
-    and a name already taken by a different file. Returns ("saved" or
-    "already", path).
+    a name already taken by a different file, and a symbolic link between the
+    workspace and the destination. Returns ("saved" or "already", path).
     """
     raw, fm = _filed_mail(root, mail)
     folder, pzone, ptags = resolve_project(root, project)
@@ -586,12 +593,14 @@ def extract_attachment(root: Path, mail: str, project: Optional[str], name: str 
                           "Pass --name with one of its attachments: %s." % names)
         chosen = hits[0]
     dest = folder / "Sources" / _safe_name(save_as or chosen[0])
+    no_links(root.resolve(), dest)
     if dest.exists():
         if dest.read_bytes() == chosen[2]:
             return "already", dest
         raise Refusal("%s already exists and is different; pass --save-as for another name." % _rel(root, dest))
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(chosen[2])
+    with open(dest, "xb") as f:  # never through a link put there since the check
+        f.write(chosen[2])
     return "saved", dest
 
 

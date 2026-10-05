@@ -32,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent.parent / "tools"
 sys.path.insert(0, str(TOOLS))
 
-from garrick_lib import parse_frontmatter, workspace_root  # noqa: E402
+from garrick_lib import link_on_the_way, parse_frontmatter, workspace_root  # noqa: E402
 
 RAW_EXTS = {".txt", ".md", ".vtt"}
 SLUG_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -79,18 +79,40 @@ def meetings_root(root: Path) -> Path:
     return root / "Wikis" / "Meetings"
 
 
+def no_links(root: Path, *paths: Path) -> None:
+    """Refuse when a symbolic link stands between `root` and any of `paths`,
+    their last part included. Called just before a file is moved or written,
+    after every other check, so the file lands where it was checked to go."""
+    for path in paths:
+        link = link_on_the_way(root, path)
+        if link is not None:
+            try:
+                where = link.relative_to(root).as_posix()
+            except ValueError:
+                where = str(link)
+            raise Refusal("%s is a symbolic link, or outside the workspace. Garrick never files through a link, "
+                          "because the file would land somewhere other than the folder it checked. Nothing was "
+                          "moved." % where)
+
+
 # --------------------------------------------------------------------------- land
 
 
 def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[str, Path]:
     """Move a transcript out of `raw/inbox/` and name it `YYMMDD-slug.ext`.
 
-    Never edits the file's contents. Refuses a file that is not a transcript
-    Garrick reads, a bad date, or a workspace with no Meetings wiki.
+    Never edits the file's contents. Refuses a file that is not directly in
+    `raw/inbox/`, a link, a file that is not a transcript Garrick reads, a bad
+    date, a workspace with no Meetings wiki, and a link on the way to `raw/`.
     """
     inbox_path = Path(inbox)
     if not inbox_path.is_file():
         raise Refusal("%s is not a file." % inbox_path)
+    inbox_dir = meetings_root(root) / "raw" / "inbox"
+    if (inbox_path.is_symlink() or link_on_the_way(root, inbox_dir) is not None
+            or inbox_path.resolve().parent != inbox_dir.resolve()):
+        raise Refusal("%s is not in Wikis/Meetings/raw/inbox/. land only takes a transcript from there, "
+                      "and never a link to one. Nothing was moved." % inbox_path.name)
     if inbox_path.suffix.lower() not in RAW_EXTS:
         raise Refusal("%s is not a transcript Garrick reads: use .txt, .md or .vtt." % inbox_path.name)
     try:
@@ -107,6 +129,7 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
     taken = _stems(raw_dir, sources_dir)
     slug = build_slug(date_iso, title, taken)
     dest = raw_dir / ("%s%s" % (slug, inbox_path.suffix.lower()))
+    no_links(root, dest)
     shutil.move(str(inbox_path), str(dest))
     return slug, dest
 

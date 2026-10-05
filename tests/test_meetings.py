@@ -9,6 +9,7 @@ temporary folder; nothing here touches a real workspace.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -134,6 +135,70 @@ class LandTest(unittest.TestCase):
         with self.assertRaises(ingest.Refusal):
             ingest.land(self.ws.root, f, "2026-03-10", "   ")
 
+
+class LandOnlyFromTheInboxTest(unittest.TestCase):
+    """land takes a transcript from raw/inbox/ and nowhere else, never through
+    a link, and leaves the file where it was when it refuses."""
+
+    def setUp(self):
+        self.ws = TempWorkspace()
+        self.note = fixtures.write(self.ws.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md",
+                                   "---\ntitle: Acme Review\ntype: project\n---\n")
+        self.text = self.note.read_text()
+
+    def tearDown(self):
+        self.ws.close()
+
+    def assert_untouched(self):
+        self.assertEqual(self.text, self.note.read_text())
+        self.assertEqual([], [p.name for p in (self.ws.meetings / "raw").iterdir() if p.name != "inbox"])
+
+    def assert_refused(self, path):
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, path, "2026-03-10", "Acme kick-off")
+        self.assertIn("Nothing was moved", str(caught.exception))
+        self.assert_untouched()
+
+    def test_refuses_a_file_outside_the_inbox(self):
+        self.assert_refused(self.note)
+        r = run_cli(self.ws.root, "land", "--inbox", str(self.note), "--date", "2026-03-10", "--title", "X")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("raw/inbox", r.stderr)
+        self.assert_untouched()
+
+    def test_refuses_a_file_in_a_folder_inside_the_inbox(self):
+        nested = self.ws.inbox_file("older/call.txt")
+        self.assert_refused(nested)
+        self.assertTrue(nested.exists())
+
+    def test_refuses_a_link_in_the_inbox(self):
+        link = self.ws.meetings / "raw" / "inbox" / "call.md"
+        os.symlink(str(self.note), str(link))
+        self.assert_refused(link)
+        self.assertTrue(link.is_symlink())
+
+    def test_refuses_a_linked_inbox(self):
+        inbox = self.ws.meetings / "raw" / "inbox"
+        (inbox / ".gitkeep").unlink()
+        inbox.rmdir()
+        os.symlink(str(self.note.parent), str(inbox))
+        self.assert_refused(inbox / self.note.name)
+
+    def test_refuses_a_link_waiting_at_the_destination(self):
+        f = self.ws.inbox_file("call.txt")
+        waiting = self.ws.meetings / "raw" / "260310-acme-kick-off.txt"
+        os.symlink(str(self.note.parent / "Sources" / "call.txt"), str(waiting))
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, f, "2026-03-10", "Acme kick-off")
+        self.assertIn("Nothing was moved", str(caught.exception))
+        self.assertTrue(f.exists())
+        self.assertFalse((self.note.parent / "Sources").exists())
+
+    def test_still_lands_from_the_inbox(self):
+        f = self.ws.inbox_file("call.txt")
+        slug, dest = ingest.land(self.ws.root, f, "2026-03-10", "Acme kick-off")
+        self.assertEqual(self.ws.meetings / "raw" / "260310-acme-kick-off.txt", dest)
+        self.assertEqual(self.text, self.note.read_text())
 
 class PastedNotesTest(unittest.TestCase):
     """Notes pasted into the conversation: the skill saves them unedited as

@@ -231,6 +231,24 @@ class TestVersion(unittest.TestCase):
             self.assertEqual(["AGENTS.md", "System/rules.md"], list(found))
             self.assertEqual(lib.fingerprint(root / "AGENTS.md"), found["AGENTS.md"])
 
+    def test_link_on_the_way(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            write(base / "real" / "file.md", "x")
+            os.symlink("real", base / "linked")
+            os.symlink("real/file.md", base / "real" / "leaf.md")
+            self.assertIsNone(lib.link_on_the_way(base, base / "real" / "file.md"))
+            self.assertIsNone(lib.link_on_the_way(base, base / "real" / "not-yet.md"))
+            self.assertEqual(base / "linked", lib.link_on_the_way(base, base / "linked" / "file.md"))
+            self.assertEqual(base / "real" / "leaf.md", lib.link_on_the_way(base, base / "real" / "leaf.md"))
+            outside = Path(tmp) / "elsewhere.md"
+            self.assertEqual(outside, lib.link_on_the_way(base, outside))
+            climbing = base / "real" / ".." / ".." / "elsewhere.md"
+            self.assertEqual(climbing, lib.link_on_the_way(base, climbing))
+            # The base itself may be a link: only what lies below it counts.
+            os.symlink(str(base), Path(tmp) / "alias")
+            self.assertIsNone(lib.link_on_the_way(Path(tmp) / "alias", Path(tmp) / "alias" / "real" / "file.md"))
+
     def test_changes_are_counted_and_said(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

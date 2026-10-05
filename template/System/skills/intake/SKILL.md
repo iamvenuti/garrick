@@ -40,7 +40,10 @@ All paths are relative to the workspace root.
 The helper does the mechanics: it lists, parses, suggests parties from mail
 domains, and moves an item to the destination you give it, after checking
 the zone and the wall. It never chooses a destination. Every filing command
-takes one explicitly, and refuses without it.
+takes one explicitly, and refuses without it. It never files through a
+symbolic link either: a link between the workspace and the destination, or a
+linked file waiting in an inbox, is refused before anything moves, because the
+file would land somewhere other than the folder that was checked.
 
 ## "Process the inbox"
 
@@ -143,6 +146,10 @@ takes one explicitly, and refuses without it.
    **When a command refuses because of a wall, stop.** Leave the item where
    it is, and say only: "A wall held something back." Not the project, not
    the party, not the file. Never retry with other parties to get round it.
+
+   **When a command refuses because of a link, stop too.** Leave the item and
+   the link as they are and tell the user which folder holds the link. Never
+   remove or replace a link to get the file through: the user decides.
 
 8. **Record a domain the user placed**, so the next mail files itself:
    `intake.py learn --domain <domain> --party <tag>`, as *File a mail*,

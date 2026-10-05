@@ -593,6 +593,128 @@ class TestExtractAttachment(MailCase):
         self.assertEqual("saved\tZones/Work/Acme Review/Sources/Seal kit quotes.csv", r.stdout.strip())
 
 
+class TestNeverThroughALink(MailCase):
+    """A filing command lands a file in the folder it checked, or nowhere: a
+    symbolic link anywhere between the workspace and the destination, or a
+    linked file in an inbox, is refused before anything moves."""
+
+    def birch_sources(self):
+        return {p.name for p in (self.work / "Birch Entry" / "Sources").iterdir()}
+
+    def link(self, path, target):
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(target), str(path))
+        return path
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Birch Entry" / "Sources" / "Birch contacts.csv", "name\n")
+        self.before = self.birch_sources()
+
+    def assert_refused_cleanly(self, caught):
+        message = str(caught.exception)
+        self.assertIn("link", message)
+        self.assertIn("Nothing was moved", message)
+        self.assertNotIn("birch", message.lower())
+
+    def test_a_linked_sources_folder(self):
+        self.link(self.work / "Acme Review" / "Sources", self.work / "Birch Entry" / "Sources")
+        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])
+        self.assert_refused_cleanly(caught)
+        self.assertTrue(path.exists())
+        self.assertEqual(self.before, self.birch_sources())
+        r = run_intake(self.root, "file-to-project", "--file", path, "--project", "Zones/Work/Acme Review",
+                       "--parties", "acme")
+        self.assertEqual(1, r.returncode)
+        self.assertTrue(path.exists())
+
+    def test_a_linked_file_in_sources(self):
+        dangling = self.work / "Birch Entry" / "Sources" / "Seal kit quotes.csv"
+        self.link(self.work / "Acme Review" / "Sources" / "Seal kit quotes.csv", dangling)
+        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])
+        self.assert_refused_cleanly(caught)
+        self.assertTrue(path.exists())
+        self.assertFalse(dangling.exists())
+
+    def test_a_linked_project_is_the_project_it_points_to(self):
+        # The project folder itself is read where it really is, so the wall is
+        # checked against the project the file would actually reach.
+        self.link(self.work / "Acme Mirror", self.work / "Birch Entry")
+        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, path, "Zones/Work/Acme Mirror", ["acme"])
+        self.assertIn("wall", str(caught.exception))
+        self.assertTrue(path.exists())
+        self.assertEqual(self.before, self.birch_sources())
+
+    def test_an_attachment_into_a_linked_sources_folder(self):
+        mail = self.drop("quotes.eml", eml(subject="Seal kit quotes", plain="Attached.\n",
+                                           attachment=("Seal kit quotes.csv", QUOTES)))
+        slug, raw, _ = intake.file_conversation(self.root, mail, ["acme"])
+        self.link(self.work / "Acme Review" / "Sources", self.work / "Birch Entry" / "Sources")
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.extract_attachment(self.root, slug, "Zones/Work/Acme Review", index=1)
+        self.assert_refused_cleanly(caught)
+        self.assertEqual(self.before, self.birch_sources())
+        self.assertTrue(raw.exists())
+
+    def test_an_attachment_onto_a_linked_file(self):
+        mail = self.drop("quotes.eml", eml(subject="Seal kit quotes", plain="Attached.\n",
+                                           attachment=("Seal kit quotes.csv", QUOTES)))
+        slug, _, _ = intake.file_conversation(self.root, mail, ["acme"])
+        dangling = self.work / "Birch Entry" / "Sources" / "Seal kit quotes.csv"
+        self.link(self.work / "Acme Review" / "Sources" / "Seal kit quotes.csv", dangling)
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.extract_attachment(self.root, slug, "Zones/Work/Acme Review", index=1)
+        self.assert_refused_cleanly(caught)
+        self.assertFalse(dangling.exists())
+
+    def test_a_conversation_into_a_linked_meetings_folder(self):
+        for linked in (self.meetings / "raw", self.meetings / "wiki" / "sources"):
+            with self.subTest(linked=linked.name):
+                aside = linked.with_name(linked.name + "-aside")
+                linked.rename(aside)
+                os.symlink(str(self.work / "Birch Entry" / "Sources"), str(linked))
+                path = self.drop("forecast.eml", eml(plain="Figures inside.\n"))
+                with self.assertRaises(intake.Refusal) as caught:
+                    intake.file_conversation(self.root, path, ["acme"])
+                self.assert_refused_cleanly(caught)
+                self.assertTrue(path.exists())
+                self.assertEqual(self.before, self.birch_sources())
+                linked.unlink()
+                aside.rename(linked)
+
+    def test_reading_into_a_linked_knowledge_folder(self):
+        self.link(self.root / "Wikis" / "Knowledge" / "raw", self.work / "Birch Entry" / "Sources")
+        path = self.drop("weekly.eml", eml(**NEWSLETTER))
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_reading(self.root, path)
+        self.assert_refused_cleanly(caught)
+        self.assertTrue(path.exists())
+        self.assertEqual(self.before, self.birch_sources())
+
+    def test_a_linked_file_in_an_inbox(self):
+        outside = write(self.root / "Zones" / "Work" / "Inbox" / "real" / "Seal kit quotes.csv", "maker\n")
+        path = self.link(self.inbox / "Seal kit quotes.csv", outside)
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])
+        self.assertIn("link", str(caught.exception))
+        self.assertTrue(path.is_symlink())
+        self.assertTrue(outside.exists())
+
+    def test_ordinary_filing_still_works(self):
+        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
+        dest = intake.file_to_project(self.root, path, "Zones/Work/Acme Review", ["acme"])
+        self.assertEqual(self.work / "Acme Review" / "Sources" / "Seal kit quotes.csv", dest)
+        self.assertEqual(self.before, self.birch_sources())
+
+
 class TestLearn(MailCase):
     def test_adds_the_domain_and_the_next_mail_files_itself(self):
         path = self.drop("fernway.eml", eml(sender="Pat Rowe <pat@acmelabs.example>", plain="x\n"))

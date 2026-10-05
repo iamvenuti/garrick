@@ -425,7 +425,8 @@ class TodoList:
 
     def render(self):
         inbox = [l for l in self.open_items if l in self.shown]
-        inbox += ["- [ ]" + l[5:] for l in self.done_items if l in self.shown and l not in self.ticked]
+        # A line done later is still open here: unticked, and without its ✅ date.
+        inbox += [re.sub(r" ✅ \d{4}-\d{2}-\d{2}$", "", "- [ ]" + l[5:]) for l in self.done_items if l in self.shown and l not in self.ticked]
         done_ = [l for l in self.done_items if l in self.ticked]
         out = self.head + ["## Inbox", ""] + inbox + ([""] if inbox else []) + ["## Done", ""] + done_
         return "\n".join(out).rstrip("\n") + "\n"

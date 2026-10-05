@@ -189,8 +189,11 @@ per wrap: the one named, and nothing else.
    Never edit or compress earlier entries. They are the record.
 7. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
    before editing. Append new actions for this thread under `## Inbox` as
-   `- [ ] <action> · <project>, <thread> · <date>`, naming this thread in full
-   (`Acme, Pricing`): that is how a later wrap or finish finds its lines.
+   `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
+   header gives, the dates last. Open the line with this thread's link, or
+   its path, `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`, when another
+   project has a thread of the same name: that is how a later wrap or finish
+   finds its lines.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
 8. **Set `updated:`** in the note's frontmatter to today.

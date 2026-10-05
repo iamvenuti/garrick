@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- A zone's `Todo.md` uses Obsidian Tasks lines: each opens with its thread, `[[Thread]]: `, or its single-thread project, or else its party or person, and the dates go last as Tasks fields (`📅` due, `🛫` not before, `#waiting` and `⏳` the day to chase). Obsidian's Tasks plugin can then sort and filter them, and the status page's Todo list shows their dates. The meetings, threads and interview skills write it; the template's header explains it. A list in the older `· project, thread · date` form still counts on the page, without dates.
+
 ## [0.5.0] - 2026-10-05
 
 The status page opens a project in Claude, Codex or cmux, shows the release notes of the Garrick you installed, and has preview features you can switch on.

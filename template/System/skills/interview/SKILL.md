@@ -163,8 +163,10 @@ step 6, and another session may have changes of its own in any repository.
    the reason and offer a fix. Each is committed in its zone as that
    procedure says, by name.
 4. **Open actions.** Re-read each zone's `Todo.md` and append under `## Inbox`
-   as `- [ ] <action> · <project>, <thread> · <date>`, naming the thread just
-   set up for it, or the party or person when no thread fits. Commit each
+   as `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the
+   list's header gives: the thread just set up for it, or `<Party>: ` with
+   the party or person when no thread fits, and a date only when one was
+   given. Commit each
    zone's list in its own repository:
    ```sh
    git -C "Zones/<Zone>" add -- Todo.md

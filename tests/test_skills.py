@@ -273,9 +273,13 @@ class SkillsTest(unittest.TestCase):
         writers = [REPO / "template" / "System" / "templates" / "zone" / "Todo.md"] + [
             SKILLS / name / "SKILL.md" for name in ("threads", "meetings", "interview")]
         for path in writers:
-            lines = re.findall(r"- \[ \] <action> · .*? · <date>", flat(path.read_text(encoding="utf-8")))
+            text = flat(path.read_text(encoding="utf-8"))
+            lines = re.findall(r"- \[ \] \[\[<Thread>\]\]: <action>[^`\n]*?<YYYY-MM-DD>", text)
             self.assertTrue(lines, path)
-            self.assertEqual({"- [ ] <action> · <project>, <thread> · <date>"}, set(lines), path)
+            # the thread first, the date last as Obsidian Tasks reads it; a meeting adds its page as the source
+            self.assertLessEqual(set(lines), {"- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>",
+                                              "- [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>"}, path)
+            self.assertNotIn("<project>, <thread>", text, path)
         threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("that is how a later wrap or finish finds its lines", "Touch no line that names another thread",
                        "unticked lines that name this thread"):

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -183,22 +184,26 @@ class DemoTest(unittest.TestCase):
         self.assertIn(ACME_SIDE, acme_note.read_text(encoding="utf-8"))
 
     def test_todo_lines_name_their_thread(self):
-        """Wraps and finishes find a thread's actions by `<project>, <thread>`, so every
-        line names a thread that exists, or else a party or person in the context file."""
+        """Wraps and finishes find a thread's actions by the `[[Thread]]: ` that opens
+        the line, so every line opens with a thread or single-thread project that
+        exists, or else a party or person in the context file; and its dates are
+        Obsidian Tasks fields at the end, where Tasks reads them."""
         ctx = load_context(self.root)
         names = {entry["party"] for entry in ctx["parties"].values()} | {person["name"] for person in ctx["people"]}
         for zone in ("Work", "Personal"):
-            lines = [l for l in (self.root / "Zones" / zone / "Todo.md").read_text(encoding="utf-8").splitlines()
-                     if l.startswith("- [")]
+            zdir = self.root / "Zones" / zone
+            notes = {p.stem for p in zdir.rglob("*.md")}
+            lines = [l for l in (zdir / "Todo.md").read_text(encoding="utf-8").splitlines() if l.startswith("- [")]
             self.assertTrue(lines, zone)
             for line in lines:
-                middle = line.split(" · ")[1]
-                if ", " in middle:
-                    project, thread = middle.split(", ", 1)
-                    note = self.root / "Zones" / zone / project / "Threads" / thread / (thread + ".md")
-                    self.assertTrue(note.is_file(), line)
+                body = line[6:]
+                label = re.match(r"^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]: ", body)
+                if label:
+                    self.assertIn(label.group(1).rsplit("/", 1)[-1], notes, line)
                 else:
-                    self.assertIn(middle, names, line)
+                    self.assertIn(body.split(": ", 1)[0], names, line)
+                self.assertRegex(line, r"(?:(?: (?:📅|🛫|⏳|✅) \d{4}-\d{2}-\d{2})+|[^\d])$", line)
+                self.assertNotRegex(line, r"(?:📅|🛫|⏳|✅) \d{4}-\d{2}-\d{2}.*[^\d\s]+.*$", line)
 
     def test_person_pages_say_who_and_nothing_more(self):
         """A person page is read on both sides of every wall, so it holds who someone is

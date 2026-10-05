@@ -138,12 +138,19 @@ One meeting at a time, even when several files are waiting.
    page. Re-read it right before appending (another session may be writing
    to it too), then append under `## Inbox`:
    ```markdown
-   - [ ] <action> · <project>, <thread> · <date>
+   - [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>
    ```
-   Name a thread only when it is plain: the one the user names, or the only
-   live thread of the only project in this zone whose `party` is among the
-   page's parties. Otherwise write the party or person the action is for
-   where the thread would go, and never guess one. Touch no other line.
+   The format is the list's own, in its header: the thread first, the
+   meeting page as its source, the dates last as Obsidian Tasks writes them
+   (`📅` due; `#waiting` and `⏳` the day to chase, for something the user
+   is waiting on; no date field when none was given). Name a thread only
+   when it is plain: the one the user names, or the only live thread of the
+   only project in this zone whose `party` is among the page's parties. A
+   project with a single thread is named by its hub, `[[<Project>]]`. When
+   two projects have a thread of the same name, give its path,
+   `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`. Otherwise open the
+   line with the party or person the action is for, `<Party>: `, and never
+   guess a thread. Touch no other line.
 9. **Commit.** The meeting page, the raw file, any new person page, the
    index and the log all live in the Wikis repository; `Todo.md` lives in
    the zone's own, separate repository. That is two commits, not one, and

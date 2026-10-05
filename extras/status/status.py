@@ -1348,6 +1348,7 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
 .gsum{margin:6px 0 0}
+.onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
 .phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
 .phead .pflip{flex:none;font-size:11px;padding:3px 8px}.gpop .phead{padding-right:30px}
 .gzsel{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
@@ -1485,7 +1486,7 @@ JS = r"""
 (function(){var root=document.documentElement,st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 function theme(t){if(t==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',t);document.querySelectorAll('.seg button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});st.set('garrick-status-theme',t)}
 theme(st.get('garrick-status-theme')||'auto');document.querySelectorAll('.seg button').forEach(function(b){b.onclick=function(){theme(b.dataset.t)}});
-var only=document.getElementById('only');only.checked=st.get('garrick-status-only')==='1';function apply(){document.body.classList.toggle('only',only.checked);st.set('garrick-status-only',only.checked?'1':'0')}only.onchange=apply;apply();
+var only=document.getElementById('only');only.checked=st.get('garrick-status-only')==='1';function apply(){var t=document.getElementById('tab-status')||document.body;t.classList.toggle('only',only.checked);st.set('garrick-status-only',only.checked?'1':'0')}only.onchange=apply;apply();
 document.querySelectorAll('details[id]').forEach(function(d){var s=st.get('garrick-fold-'+d.id);if(s==='0')d.open=false;if(s==='1')d.open=true;d.addEventListener('toggle',function(){st.set('garrick-fold-'+d.id,d.open?'1':'0')})});
 var h=(Date.now()-new Date(document.body.dataset.built))/36e5,el=document.getElementById('age');if(el)el.textContent=h<1?Math.max(1,Math.round(h*60))+' min ago':h<48?Math.round(h)+' h ago':Math.round(h/24)+' days ago';
 if(h>36){var s=document.getElementById('stale');s.style.display='block';s.textContent='Built '+Math.round(h)+' hours ago, so it may be out of date. Run status.py again to refresh it.'}
@@ -1905,7 +1906,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              '<p>Built %s · <span id="age">just now</span></p></div>'
              '<a class="overall go" href="#%s">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></a><nav>%s</nav>'
              '<div class="controls"><p class="hint" id="hidden-note" hidden></p>'
-             '<label class="switch"><input type="checkbox" id="only"> Problems only</label>'
+
              '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
              % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME),
                 '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" title="Copy the command that rebuilds the page" '
@@ -2087,7 +2088,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom"></div></div>' % (top, graph_card, threads_card, todo_card, inbox_card))
     # Needs attention leads the Status tab: what it lists is the machinery's.
-    status_tab = section("status", True, '<div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
+    status_tab = section("status", True, '<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
                          % (attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(r["late"] for _, rows in lists for r in rows)

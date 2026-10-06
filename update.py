@@ -15,7 +15,10 @@ it (`System/garrick-version.json`), and sorts each into one of these:
 - **add**: a file new in this Garrick.
 - **merge**: a file you changed that Garrick has changed too. Garrick's version
   goes beside it as `<name>.new`, and yours stays as it is. `System/rules.md` is
-  always merged, never replaced: it is yours to amend.
+  always merged, never replaced: it is yours to amend. The `.new` is
+  committed, so it survives a clean or a clone until you merge it. Once it is
+  written the file counts as offered, and is offered again only when a later
+  Garrick changes it again.
 - **yours**: a file Garrick only starts, such as a zone's `Todo.md` or a wiki's
   log, that you have since filled in. Never touched, not even with a `.new`.
 - **restore**: a file Garrick ships that you deleted. Put back only when named
@@ -24,8 +27,8 @@ it (`System/garrick-version.json`), and sorts each into one of these:
 
 Nothing is written without `--apply`, and nothing is ever deleted. Each
 repository the update touches gets one commit of its own, holding only the
-files the update wrote, so `git revert` undoes it. `.new` files are left
-uncommitted, for the merge. `System/context.md` is never read or written. The
+files the update wrote, `.new` files included, so `git revert` undoes it.
+`System/context.md` is never read or written. The
 version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
 changes nothing the second time.
@@ -40,6 +43,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -165,12 +169,14 @@ def plan(root, zones=None):
     """What an update would do, without doing any of it."""
     lib = install.lib()
     stamp = lib.read_version(root)
-    recorded = stamp.get("files") if isinstance(stamp.get("files"), dict) else {}
+    listed = isinstance(stamp.get("files"), dict)
+    recorded = stamp["files"] if listed else {}
     zones = zones if zones is not None else zones_of(root, stamp)
     known = known_hashes(zones)
     new = shipped(zones)
     actions = {kind: [] for kind in KINDS}
     current, kept = [], []
+    history = {}        # repository: every path it ever committed, read once, for a stamp with no list
     for path in sorted(set(new) | set(recorded)):
         if path in lib.UNLISTED:
             continue
@@ -181,7 +187,8 @@ def plan(root, zones=None):
             continue
         target = digest(new[path][0])
         if on_disk is None:
-            actions["restore" if path in recorded else "add"].append(path)
+            removed = path in recorded or (not listed and ever_committed(root, path, history))
+            actions["restore" if removed else "add"].append(path)
             continue
         have = digest(on_disk)
         if have == target:
@@ -202,7 +209,23 @@ def plan(root, zones=None):
     hooks = [z for z in zones if stale_hook(root / "Zones" / z)]
     return {"workspace": str(root), "from": {k: stamp.get(k, "") for k in ("commit", "date")},
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
-            "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new, "recorded": recorded}
+            "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
+            "recorded": recorded, "listed": listed}
+
+
+def ever_committed(root, path, history):
+    """Whether the repository holding `path` ever had it: a file missing now
+    that was once committed was deleted, since an update never deletes. For a
+    workspace whose stamp lists no files, installed before 0.4.0. `history`
+    caches each repository's answer, so a repository costs two git commands
+    however many files are missing."""
+    repo = repo_of(root, path)
+    if repo not in history:
+        deleted = git(repo, "log", "--no-renames", "--diff-filter=D", "--name-only", "--format=", "-z",
+                      check=False).stdout
+        tracked = git(repo, "ls-files", "-z", check=False).stdout
+        history[repo] = {x.strip("\n") for x in (deleted + "\0" + tracked).split("\0")} - {""}
+    return path_in_repo(root, path) in history[repo]
 
 
 def stale_hook(zone):
@@ -285,8 +308,13 @@ def repo_of(root, path):
         folder = folder.parent
 
 
+def status(repo, rel):
+    """git's two-letter status of one path: "" when committed as it is, "??" when untracked."""
+    return git(repo, "status", "--porcelain", "--", rel, check=False).stdout[:2].strip()
+
+
 def uncommitted(repo, rel):
-    return bool(git(repo, "status", "--porcelain", "--", rel, check=False).stdout.strip())
+    return bool(status(repo, rel))
 
 
 def write_bytes(path, data, mode):
@@ -294,10 +322,26 @@ def write_bytes(path, data, mode):
     tmp = path.with_name(path.name + ".garrick-tmp")
     if tmp.exists() or tmp.is_symlink():
         tmp.unlink()                       # left by an update that stopped halfway
-    with open(tmp, "xb") as f:
-        f.write(data)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "xb") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def first_missing(root, path):
+    """The topmost folder that writing `path` would create, or None when its
+    folder is there already, so that putting it back can remove what it made."""
+    folder, top = path.parent, None
+    while folder != root and root in folder.parents and not folder.exists():
+        top, folder = folder, folder.parent
+    return top
 
 
 def apply(root, p, only=None, today=None):
@@ -313,6 +357,7 @@ def apply(root, p, only=None, today=None):
             raise UpdateError("Not in the update: %s. Name files as the report lists them." % ", ".join(unknown))
     todo = []          # (kind, path, where it is written, bytes, mode)
     skipped = []       # (path, reason)
+    done = {kind: [] for kind in ("replace", "add", "restore", "merge")}
     for kind in ("replace", "add", "restore", "merge"):
         for path in p["actions"][kind]:
             if picked is not None and path not in picked:
@@ -324,7 +369,16 @@ def apply(root, p, only=None, today=None):
             if lib.link_on_the_way(root, root / dest) is not None:
                 skipped.append((path, "a symbolic link stands on the way to it"))
                 continue
-            if kind != "merge" and uncommitted(repo_of(root, path), path_in_repo(root, path)):
+            state = status(repo_of(root, dest), path_in_repo(root, dest))
+            if kind == "merge":
+                if not state and read(root / dest) == data:
+                    done["merge"].append(path)      # its .new is there and committed, from a run that stopped
+                    continue
+                if state not in ("", "??") and (root / dest).exists():
+                    skipped.append((path, "its .new has changes not committed; commit or discard them, "
+                                          "then run again"))
+                    continue
+            elif state:
                 skipped.append((path, "it has changes not committed; commit or discard them, then run again"))
                 continue
             if kind in ("add", "restore") and (root / path).exists():
@@ -332,37 +386,37 @@ def apply(root, p, only=None, today=None):
                 continue
             todo.append((kind, path, dest, data, mode))
 
-    done = {kind: [] for kind in ("replace", "add", "restore", "merge")}
     by_repo = {}
     for kind, path, dest, data, mode in todo:
-        if kind == "merge":
-            write_bytes(root / dest, data, mode)
-            done["merge"].append(path)
-            continue
-        by_repo.setdefault(repo_of(root, path), []).append((kind, path, data, mode))
+        by_repo.setdefault(repo_of(root, dest), []).append((kind, path, dest, data, mode))
     commits = []
     to = p["to"].get("commit") or "unknown"
     for repo, items in sorted(by_repo.items()):
-        before = {path: read(root / path) for _, path, _, _ in items}
-        for _, path, data, mode in items:
-            write_bytes(root / path, data, mode)
-        rels = [path_in_repo(root, path) for _, path, _, _ in items]
+        before = {}        # where it is written: (bytes, mode, folder made), bytes None where there was no file
+        rels = [path_in_repo(root, dest) for _, _, dest, _, _ in items]
         try:
+            for _, _, dest, _, _ in items:
+                target = root / dest
+                if target.exists() or target.is_symlink():
+                    before[dest] = (target.read_bytes(), target.stat().st_mode & 0o777, None)
+                else:
+                    before[dest] = (None, None, first_missing(root, target))
+            for _, _, dest, data, mode in items:
+                write_bytes(root / dest, data, mode)
             git(repo, "add", "--", *rels)
             git(repo, "commit", "-q", "-m", "Garrick: update to %s, %d file%s" % (
                 to, len(rels), "" if len(rels) == 1 else "s"), "--", *rels)
-        except UpdateError as exc:
+        except (UpdateError, OSError) as exc:
             git(repo, "reset", "-q", "--", *rels, check=False)
-            for _, path, _, _ in items:
-                if before[path] is None:
-                    (root / path).unlink()
-                else:
-                    write_bytes(root / path, before[path], (root / path).stat().st_mode & 0o777)
-            skipped += [(path, "the commit was refused, so it was put back: %s" % exc) for _, path, _, _ in items]
+            stuck = put_back(root, before)
+            why = "the commit was refused" if isinstance(exc, UpdateError) else "a file could not be read or written"
+            skipped += [(path, "%s, so it was put back: %s" % (why, exc) if dest not in stuck else
+                         "%s, and it could not be put back (%s): restore it with git checkout" % (why, stuck[dest]))
+                        for _, path, dest, _, _ in items]
             continue
         commits.append(git(repo, "rev-parse", "--short", "HEAD").stdout.strip() + " in " + (
             os.path.relpath(repo, root) if repo != root else "the workspace"))
-        for kind, path, _, _ in items:
+        for kind, path, _, _, _ in items:
             done[kind].append(path)
 
     hooks = []
@@ -372,11 +426,41 @@ def apply(root, p, only=None, today=None):
 
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]
     problems = check_errors(root, written)
-    stamped = False
+    stamped, unstamped = False, ""
     if not problems:
-        stamped = stamp(root, p, done, today)
+        try:
+            stamped = stamp(root, p, done, today)
+        except (UpdateError, OSError) as exc:
+            unstamped = str(exc)
     return {"done": done, "skipped": skipped, "commits": commits, "hooks": hooks,
-            "problems": problems, "stamped": stamped}
+            "problems": problems, "stamped": stamped, "unstamped": unstamped}
+
+
+def put_back(root, before):
+    """Return each file in `before` to what it held, {path: (bytes or None,
+    mode, the folder writing it made)}, and remove any temporary file a stopped
+    write left, and any folder made for a file that was not there. Returns the
+    files that could not be put back, with why."""
+    stuck = {}
+    for path, (data, mode, made) in before.items():
+        target = root / path
+        tmp = target.with_name(target.name + ".garrick-tmp")
+        try:
+            if tmp.exists() or tmp.is_symlink():
+                tmp.unlink()
+            if data is None:
+                if target.exists() or target.is_symlink():
+                    target.unlink()
+                folder = target.parent
+                while made is not None and (folder == made or made in folder.parents):
+                    if folder.is_dir() and not any(folder.iterdir()):
+                        folder.rmdir()
+                    folder = folder.parent
+            elif read(target) != data:
+                write_bytes(target, data, mode)
+        except OSError as exc:
+            stuck[path] = exc
+    return stuck
 
 
 def path_in_repo(root, path):
@@ -402,34 +486,55 @@ def check_errors(root, paths):
 def stamp(root, p, done, today=None):
     """Record the newer Garrick in System/garrick-version.json and commit it.
     The list of files keeps, for each, the fingerprint of what Garrick last
-    wrote there: the new one where the update wrote or found it, the old one
-    where it left a file for a merge or as yours."""
+    gave it: the new one where the update wrote it, wrote its .new or found it
+    current, the old one where it left a file behind or as yours. A merged file
+    is then changed by you with nothing newer from Garrick, and is not offered
+    again until Garrick changes it again. A stamp that had no list gets one
+    holding every file Garrick ships that is there, those it left with no
+    fingerprint, so that one you delete later counts as removed by you. Nothing
+    is written when nothing would change, and if the commit is refused the
+    stamp is put back as it was."""
     lib = install.lib()
     old = lib.read_version(root)
     files = dict(p["recorded"])
-    applied = {path for paths in done.values() for path in paths} - set(done["merge"])
+    written = {path for paths in done.values() for path in paths}
     for path, (data, _) in p["files"].items():
-        if path in applied or path in p["current"]:
+        if path in written or path in p["current"]:
             files[path] = digest(data)
+        elif path in p["actions"]["restore"] and path not in files:
+            files[path] = digest(data)      # listed, so it stays removed by you rather than new
+        elif not p["listed"] and path not in files and os.path.lexists(root / path):
+            files[path] = None              # there, as yours or left behind; what Garrick gave it is unknown
     for path in p["actions"]["retired"]:
         files.pop(path, None)
     offered = [path for kind in ("replace", "add") for path in p["actions"][kind]]
-    left = sorted(path for path in offered if path not in applied)
+    left = sorted(path for path in offered if path not in written)
     new = {k: v for k, v in install.source_version().items()}
-    if (new.get("commit") == old.get("commit") and files == p["recorded"] and not left
-            and not old.get("left")):
+    if (new.get("commit") == old.get("commit") and files == p["recorded"]
+            and left == sorted(old.get("left") or [])):
         return False
     history = list(old.get("updates") or [])
-    history.append({"from": old.get("commit", ""), "to": new.get("commit", ""),
-                    "on": today or datetime.date.today().isoformat()})
+    entry = {"from": old.get("commit", ""), "to": new.get("commit", ""),
+             "on": today or datetime.date.today().isoformat()}
+    if (new.get("commit") != old.get("commit") or written) and history[-1:] != [entry]:
+        history.append(entry)       # an update between two copies with no commit to tell them apart counts too
     new["files"] = dict(sorted(files.items()))
     new["updates"] = history
     if left:
         new["left"] = left
     rel = "/".join(lib.VERSION_STAMP)
-    write_bytes(root / rel, (json.dumps(new, indent=2) + "\n").encode("utf-8"), 0o644)
-    git(root, "add", "--", rel)
-    git(root, "commit", "-q", "-m", "Garrick: version stamp %s" % new.get("commit", "unknown"), "--", rel)
+    target = root / rel
+    before = {rel: (target.read_bytes(), target.stat().st_mode & 0o777, None) if target.is_file()
+              else (None, None, first_missing(root, target))}
+    try:
+        write_bytes(target, (json.dumps(new, indent=2) + "\n").encode("utf-8"), 0o644)
+        git(root, "add", "--", rel)
+        git(root, "commit", "-q", "-m", "Garrick: version stamp %s" % new.get("commit", "unknown"), "--", rel)
+    except (UpdateError, OSError) as exc:
+        git(root, "reset", "-q", "--", rel, check=False)
+        stuck = put_back(root, before)
+        raise UpdateError("the version stamp could not be committed, so it %s: %s" % (
+            "was put back as it was" if not stuck else "could not be put back; restore it with git checkout", exc))
     return True
 
 
@@ -438,15 +543,22 @@ def say_applied(p, result):
     lines = []
     if done["replace"] or done["add"] or done["restore"]:
         n = len(done["replace"]) + len(done["add"]) + len(done["restore"])
-        lines.append("Updated %d file%s, committed as %s." % (n, "" if n == 1 else "s", ", ".join(result["commits"])))
+        lines.append("Updated %d file%s." % (n, "" if n == 1 else "s"))
     if done["merge"]:
-        lines.append("Wrote %d .new file%s beside the file%s you changed: %s. Merge each, then delete the .new." % (
-            len(done["merge"]), "" if len(done["merge"]) == 1 else "s", "" if len(done["merge"]) == 1 else "s",
-            ", ".join(path + NEW_SUFFIX for path in done["merge"])))
+        lines.append("Wrote %d .new file%s beside the file%s you changed: %s. Merge each, then remove the .new "
+                     "with git rm in the same commit." % (
+                         len(done["merge"]), "" if len(done["merge"]) == 1 else "s",
+                         "" if len(done["merge"]) == 1 else "s",
+                         ", ".join(path + NEW_SUFFIX for path in done["merge"])))
+    if result["commits"]:
+        lines.append("Committed as %s." % ", ".join(result["commits"]))
     if result["hooks"]:
         lines.append("Refreshed the wall check in: %s." % ", ".join(result["hooks"]))
     for path, why in result["skipped"]:
         lines.append("Skipped %s: %s." % (path, why))
+    if result.get("unstamped"):
+        lines.append("System/garrick-version.json is unchanged: %s. Run the update again to record it." % (
+            result["unstamped"]))
     if result["problems"]:
         lines.append("The check finds errors in files the update wrote, so the version stamp is unchanged:")
         lines += ["  " + x for x in result["problems"]]
@@ -461,6 +573,22 @@ def say_applied(p, result):
 # --------------------------------------------------------------------------- releases
 
 
+# Where 0.1.0 kept the zone template, before it moved under System/templates.
+OLD_ZONE_TEMPLATE = "template/Zones/_zone/"
+
+
+def version_key(tag):
+    """Sort key for a release tag: v0.7.0-rc2 before v0.7.0-rc10 before v0.7.0
+    before v0.10.0.
+    None for a tag that is not a version."""
+    m = re.match(r"^v(\d+(?:\.\d+)*)(?:-(.+))?$", tag)
+    if not m:
+        return None
+    pre = m.group(2)
+    parts = tuple((0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.findall(r"\d+|\D+", pre or ""))
+    return tuple(int(x) for x in m.group(1).split(".")), pre is None, parts
+
+
 def release_hashes(repo=REPO):
     """{path: [SHA-256, ...]} of the files every tagged release's template
     shipped, for release-hashes.json, and the texts of each release's zone
@@ -468,28 +596,33 @@ def release_hashes(repo=REPO):
     recognised once it is filled in."""
     def run(*args):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=True).stdout
-    tags = [t for t in run("tag", "-l", "v*").decode().split() if t]
+    tags = sorted((t for t in run("tag", "-l", "v*").decode().split() if version_key(t)), key=version_key)
     zone = "template/" + "/".join(install.lib().ZONE_TEMPLATE) + "/"
     paths, zone_texts = {}, {}
-    for tag in sorted(tags, key=lambda t: [int(x) if x.isdigit() else x for x in t[1:].split(".")]):
+    for tag in tags:
         for line in run("ls-tree", "-r", "--name-only", tag).decode().splitlines():
+            in_zone = line.startswith((zone, OLD_ZONE_TEMPLATE))
             if line == "CHANGELOG.md":
                 rel = "System/garrick-changelog.md"
+            elif line.startswith(OLD_ZONE_TEMPLATE):
+                rel = None                  # copied into each zone, never to a path of its own
             elif line.startswith("template/") and line != "template/System/context.md":
                 rel = line[len("template/"):]
             else:
                 continue
             data = run("show", "%s:%s" % (tag, line))
-            h = digest(data)
-            paths.setdefault(rel, [])
-            if h not in paths[rel]:
-                paths[rel].append(h)
-            if line.startswith(zone):
+            if rel is not None:
+                h = digest(data)
+                paths.setdefault(rel, [])
+                if h not in paths[rel]:
+                    paths[rel].append(h)
+            if in_zone:
+                zone_prefix = zone if line.startswith(zone) else OLD_ZONE_TEMPLATE
                 try:
                     text = data.decode("utf-8")
                 except UnicodeDecodeError:
                     continue
-                texts = zone_texts.setdefault(line[len(zone):], [])
+                texts = zone_texts.setdefault(line[len(zone_prefix):], [])
                 if text not in texts:
                     texts.append(text)
     return {"releases": tags, "paths": dict(sorted(paths.items())), "zone": dict(sorted(zone_texts.items()))}
@@ -541,9 +674,13 @@ def main(argv=None):
             print(json.dumps(result, indent=2))
         else:
             print(say_applied(p, result))
-        return 1 if result["problems"] else 0
+        return 1 if result["problems"] or result["unstamped"] else 0
     except (UpdateError, install.InstallError) as exc:
         print(exc, file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print("The update stopped: %s. Run it again without --apply to see where the workspace stands." % exc,
+              file=sys.stderr)
         return 1
 
 

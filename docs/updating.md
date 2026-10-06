@@ -23,7 +23,7 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 |---|---|---|
 | Replace | A file still exactly as some Garrick wrote it, with a newer version | Replaces it |
 | Add | A file new in this Garrick | Adds it |
-| Merge | A file you changed that Garrick has changed too | Writes Garrick's version beside it as `<name>.new`. Yours is not touched |
+| Merge | A file you changed that Garrick has changed too | Writes Garrick's version beside it as `<name>.new` and commits it. Yours is not touched |
 | Yours | A starting file you have filled in since, such as a zone's `Todo.md` or a wiki's log | Nothing, now or later |
 | Removed by you | A file Garrick still ships that you deleted | Nothing, unless you name it with `--only` |
 | Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone |
@@ -40,11 +40,13 @@ python3 ~/Downloads/garrick-main/install.py --update . --apply --only "System/to
 
 Say "merge the update" to your assistant. The `update` skill finds the version Garrick wrote before, merges your changes and Garrick's together with git, shows you what Garrick changed, and asks you about any passage you both changed. Until you merge, the check warns that a `.new` file is waiting.
 
-To do it by hand, compare the file with its `.new`, edit the file, then delete the `.new`.
+To do it by hand, compare the file with its `.new`, edit the file, then `git rm` the `.new` and commit the two together.
+
+The `.new` is committed, so a `git clean` or a fresh clone keeps it until you merge. Once it is written, the update counts that version as offered. Merge it, take part of it or remove it unread: the next update leaves the file alone, and offers it again only when a newer Garrick changes it again. Commit the removal: the next merge starts from it.
 
 ## Undoing it
 
-Each repository the update touched has one commit of its own, `Garrick: update to <version>`, holding only the files the update wrote. `git revert` that commit in that repository and the files are back as they were. The `.new` files are never committed; delete them.
+Each repository the update touched has one commit of its own, `Garrick: update to <version>`, holding only the files the update wrote, `.new` files included. `git revert` that commit in that repository and the files are back as they were, and the `.new` files are gone.
 
 ## What it won't do
 

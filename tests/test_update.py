@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO))
 import update  # noqa: E402
 
 STAMP = "System/garrick-version.json"
+OLDER = "0000000"          # the commit an older Garrick's stamp records
 
 
 def sha(data):
@@ -78,6 +79,7 @@ class Case(unittest.TestCase):
         """Make `path` look as an older Garrick wrote it (`old_text`), and then,
         when given, as the user changed it since (`user_text`)."""
         stamp = self.stamp()
+        stamp["commit"] = OLDER
         stamp["files"][path] = sha(old_text)
         (self.root / path).write_text(user_text if user_text is not None else old_text)
         repo = update.repo_of(self.root, path)
@@ -139,9 +141,55 @@ class TestSorting(Case):
         self.apply()
         self.assertEqual("older wording\nmy own line\n", (self.root / path).read_text())
         self.assertEqual(new, (self.root / (path + ".new")).read_bytes())
-        self.assertIn("?? %s.new" % path, self.git(self.root, "status", "--porcelain"))   # never committed
-        self.assertEqual(sha("older wording\n"), self.stamp()["files"][path])         # still Garrick's last
-        self.assertEqual(head, self.head(self.root))          # a merge commits nothing; the stamp has nothing new
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))      # the .new is committed
+        self.assertEqual(sha(new), self.stamp()["files"][path])         # offered: Garrick's newest
+        subjects = self.git(self.root, "log", "--format=%s", head + "..").splitlines()
+        self.assertEqual(2, len(subjects))
+        self.assertTrue(subjects[0].startswith("Garrick: version stamp"))
+        self.assertTrue(subjects[1].startswith("Garrick: update to"))
+        self.assertEqual(path + ".new", self.git(self.root, "show", "--format=", "--name-only", "HEAD~1"))
+
+    def test_a_new_file_survives_a_clean_until_it_is_merged(self):
+        path = "System/skills/threads/SKILL.md"
+        self.as_if_older(path, "older wording\n", "older wording\nmy own line\n")
+        self.apply()
+        self.git(self.root, "clean", "-fdq")
+        self.assertTrue((self.root / (path + ".new")).is_file())
+        self.assertEqual([], [x for k in update.KINDS for x in self.plan()["actions"][k]])
+
+    def test_the_merge_base_is_garricks_version_the_file_last_took_in(self):
+        # The skill's recipe: the later of Garrick's last write of the file and the last removal of its .new.
+        path = "System/skills/threads/SKILL.md"
+        self.as_if_older(path, "older wording\n", "older wording\nmy own line\n")
+        self.apply()
+        newer = (self.root / (path + ".new")).read_text()
+        written = self.git(self.root, "log", "-1", "--format=%H", "-E",
+                           "--grep=^Garrick: (workspace created|update to |.+ created$)", "--", path)
+        self.assertEqual("", self.git(self.root, "log", "-1", "--format=%H", "--diff-filter=D", "--", path + ".new"))
+        self.assertTrue(written)                      # before the merge, the base is Garrick's own write
+        (self.root / path).write_text(newer + "my own line\n")
+        self.git(self.root, "rm", "-q", path + ".new")
+        self.git(self.root, "commit", "-q", "--no-verify", "-m", "Merged Garrick's update into " + path)
+        removed = self.git(self.root, "log", "-1", "--format=%H", "--diff-filter=D", "--", path + ".new")
+        later = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor", written, removed])
+        self.assertEqual(0, later.returncode)
+        self.assertEqual(newer, self.git(self.root, "show", "%s^:%s.new" % (removed, path)) + "\n")
+
+    def test_a_merged_file_is_not_offered_again(self):
+        path = "System/skills/threads/SKILL.md"
+        self.as_if_older(path, "older wording\n", "older wording\nmy own line\n")
+        self.apply()
+        merged = (self.root / (path + ".new")).read_text() + "my own line\n"
+        (self.root / path).write_text(merged)
+        (self.root / (path + ".new")).unlink()
+        self.commit(self.root, "Merged Garrick's update into " + path)
+        p = self.plan()
+        self.assertEqual([], [x for k in update.KINDS for x in p["actions"][k]])
+        self.assertEqual([path], p["kept"])
+        head = self.head(self.root)
+        self.assertFalse(self.apply()["stamped"])
+        self.assertFalse((self.root / (path + ".new")).exists())
+        self.assertEqual(head, self.head(self.root))
 
     def test_a_file_only_you_changed_is_left_and_not_listed(self):
         path = "System/skills/threads/SKILL.md"
@@ -207,6 +255,62 @@ class TestSorting(Case):
         self.assertTrue((self.root / removed).is_file())
         self.assertEqual("", self.git(self.root / "Wikis", "status", "--porcelain"))
 
+    def test_a_stamp_without_a_list_still_knows_what_you_removed(self):
+        # Installed before 0.4.0: the stamp lists no files, so git history says what was there.
+        stamp = self.stamp()
+        del stamp["files"]
+        stamp["commit"] = OLDER
+        self.set_stamp(stamp)
+        removed = "System/skills/threads/SKILL.md"
+        self.git(self.root, "rm", "-q", removed)
+        self.commit(self.root, "not for me")
+        p = self.plan()
+        self.assertEqual([removed], p["actions"]["restore"])
+        self.assertEqual([], p["actions"]["add"])
+        self.apply()
+        self.assertFalse((self.root / removed).exists())
+        self.assertIn(removed, self.stamp()["files"])                # listed now, so it stays removed
+        self.assertEqual([removed], self.plan()["actions"]["restore"])
+
+    def test_a_stamp_without_a_list_gets_one_with_every_file_there(self):
+        stamp = self.stamp()
+        del stamp["files"]
+        stamp["commit"] = OLDER
+        self.set_stamp(stamp)
+        todo = "Zones/Work/Todo.md"
+        (self.root / todo).write_text("# Todo, older\n- [ ] Call Dana\n")
+        self.commit(self.root / "Zones" / "Work", "my todo")
+        self.assertEqual([todo], self.plan()["actions"]["yours"])
+        self.apply()
+        files = self.stamp()["files"]
+        self.assertIn(todo, files)
+        self.assertIsNone(files[todo])                   # there, but what Garrick gave it is unknown
+        self.assertEqual(sorted(update.shipped(update.zones_of(self.root, self.stamp()))), sorted(files))
+        (self.root / todo).unlink()
+        self.commit(self.root / "Zones" / "Work", "no todo for me")
+        p = self.plan()
+        self.assertEqual([todo], p["actions"]["restore"])
+        self.assertEqual([], p["actions"]["add"])
+
+    def test_a_stamp_without_a_list_reads_each_repository_once(self):
+        stamp = self.stamp()
+        del stamp["files"]
+        self.set_stamp(stamp)
+        gone = ["System/skills/threads/SKILL.md", "System/tools/scaffold.py", "System/tools/check.py"]
+        for path in gone:
+            (self.root / path).unlink()
+        self.commit(self.root, "gone")
+        real, calls = update.git, []
+
+        def counting(repo, *args, **kw):
+            calls.append(args[0])
+            return real(repo, *args, **kw)
+
+        with mock.patch.object(update, "git", counting):
+            p = self.plan()
+        self.assertEqual(sorted(gone), p["actions"]["restore"])
+        self.assertEqual(["log", "ls-files"], calls)
+
 
 class TestSafety(Case):
     def test_a_removed_zone_is_not_put_back(self):
@@ -260,6 +364,105 @@ class TestSafety(Case):
         self.assertEqual("# Work, older\n", (self.root / path).read_text())
         self.assertEqual("", self.git(self.root / "Zones" / "Work", "status", "--porcelain"))
 
+    def test_a_refused_commit_removes_the_folders_it_made(self):
+        files = update.shipped(update.zones_of(self.root, self.stamp()))
+        path = next(x for x in sorted(files) if x.startswith("System/skills/") and x.count("/") == 3
+                    and len(list((self.root / x).parent.iterdir())) == 1)
+        folder = (self.root / path).parent
+        shutil.rmtree(folder)
+        stamp = self.stamp()
+        del stamp["files"][path]
+        self.set_stamp(stamp)
+        self.assertEqual([path], self.plan()["actions"]["add"])
+        hook = self.root / ".git" / "hooks" / "commit-msg"
+        hook.write_text("#!/bin/sh\ngrep -q '^Garrick: update to' \"$1\" && exit 1\nexit 0\n")
+        hook.chmod(0o755)
+        result = self.apply()
+        self.assertIn(path, [p for p, why in result["skipped"] if "refused" in why])
+        self.assertFalse(folder.exists())
+
+    def test_a_refused_stamp_is_put_back(self):
+        self.as_if_older("System/tools/scaffold.py", "# older\n")
+        before = (self.root / STAMP).read_bytes()
+        hook = self.root / ".git" / "hooks" / "commit-msg"
+        hook.write_text("#!/bin/sh\ngrep -q '^Garrick: version stamp' \"$1\" && exit 1\nexit 0\n")
+        hook.chmod(0o755)
+        result = self.apply()
+        self.assertFalse(result["stamped"])
+        self.assertIn("put back", result["unstamped"])
+        self.assertEqual(before, (self.root / STAMP).read_bytes())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+        self.assertIn("is unchanged", update.say_applied(self.plan(), result))
+        hook.unlink()
+        self.assertTrue(self.apply()["stamped"])
+
+    def test_a_new_that_cannot_be_written_leaves_nothing_behind(self):
+        path = "System/rules.md"
+        self.as_if_older(path, "# Rules, older\n")
+        real = os.chmod
+
+        def failing(target, mode, *a, **kw):
+            if str(target).endswith(".new.garrick-tmp"):
+                raise OSError(28, "No space left on device", str(target))
+            return real(target, mode, *a, **kw)
+
+        with mock.patch.object(update.os, "chmod", failing):
+            result = self.apply()
+        self.assertIn(path, [p for p, why in result["skipped"] if "put back" in why])
+        self.assertEqual([], result["done"]["merge"])
+        self.assertEqual([], [x.name for x in (self.root / "System").iterdir() if x.name.startswith("rules.md.")])
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+
+    def test_an_update_between_copies_with_no_commit_is_recorded(self):
+        self.as_if_older("System/tools/scaffold.py", "# older\n")
+        stamp = self.stamp()
+        stamp["commit"] = "unknown"
+        self.set_stamp(stamp)
+        copy = {"commit": "unknown", "date": "", "from": "copy"}
+        with mock.patch.object(update.install, "source_version", return_value=copy):
+            self.assertTrue(self.apply(today="2026-10-06")["stamped"])
+            self.assertFalse(self.apply(today="2026-10-06")["stamped"])
+        self.assertEqual([{"from": "unknown", "to": "unknown", "on": "2026-10-06"}], self.stamp()["updates"])
+
+    def test_a_write_that_fails_puts_the_others_back(self):
+        first, second = "System/tools/scaffold.py", "System/tools/garrick_lib.py"
+        self.as_if_older(first, "# older scaffold\n")
+        self.as_if_older(second, "# older lib\n")
+        real = update.write_bytes
+
+        def failing(path, data, mode):
+            if path.name == "garrick_lib.py":
+                raise PermissionError(13, "Permission denied", str(path))
+            real(path, data, mode)
+
+        head = self.head(self.root)
+        with mock.patch.object(update, "write_bytes", failing):
+            result = self.apply()
+        self.assertEqual([], result["done"]["replace"])
+        self.assertEqual({first, second}, {p for p, why in result["skipped"] if "put back" in why})
+        self.assertEqual("# older scaffold\n", (self.root / first).read_text())
+        self.assertEqual("# older lib\n", (self.root / second).read_text())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+        self.assertEqual([], [m for m in self.git(self.root, "log", "--format=%s", head + "..").splitlines()
+                              if m.startswith("Garrick: update to")])
+        self.assertEqual(sorted([first, second]), self.stamp()["left"])
+
+    def test_a_file_left_behind_does_not_restamp_every_run(self):
+        path = "System/tools/scaffold.py"
+        self.as_if_older(path, "# older\n")
+        self.as_if_older("System/tools/garrick_lib.py", "# older lib\n")
+        self.git(self.root, "rm", "-q", "--cached", path)          # another session's change, not committed
+        self.assertTrue(self.apply(today="2026-10-06")["stamped"])
+        head = self.head(self.root)
+        for _ in range(2):
+            result = self.apply(today="2026-10-07")
+            self.assertIn(path, [p for p, _ in result["skipped"]])
+            self.assertFalse(result["stamped"])
+        self.assertEqual(head, self.head(self.root))
+        self.assertEqual([{"from": OLDER, "to": update.install.source_version()["commit"], "on": "2026-10-06"}],
+                         self.stamp()["updates"])
+        self.assertEqual([path], self.stamp()["left"])
+
     def test_an_older_wall_check_is_refreshed(self):
         hook = self.root / "Zones" / "Work" / ".git" / "hooks" / "pre-commit"
         hook.write_text(hook.read_text().replace("refuse a commit", "refuse, in older words, a commit"))
@@ -305,7 +508,8 @@ class TestCommandLine(Case):
         self.assertEqual(["System/tools/scaffold.py"], data["actions"]["replace"])
         r = self.run_update("--apply")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.assertIn("Updated 1 file, committed as", r.stdout)
+        self.assertIn("Updated 1 file.", r.stdout)
+        self.assertIn("Committed as", r.stdout)
         self.assertIn("now records", r.stdout)
 
     def test_refuses_a_folder_that_is_not_a_workspace(self):
@@ -329,6 +533,28 @@ class TestCommandLine(Case):
                             "--json"], capture_output=True, text=True, env=self.env)
         self.assertEqual([], [f for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"])
 
+    def test_the_check_finds_a_new_file_the_stamp_does_not_list(self):
+        stamp = self.stamp()
+        del stamp["files"]
+        self.set_stamp(stamp)
+        (self.root / "Zones/Work/AGENTS.md.new").write_text("newer\n")
+        (self.root / "Zones/Work/notes.new").write_text("mine, with no file beside it\n")
+        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
+                            "--json"], capture_output=True, text=True, env=self.env)
+        found = [f["path"] for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"]
+        self.assertEqual(["Zones/Work/AGENTS.md.new"], found)
+
+    def test_the_check_ignores_a_new_file_beside_one_garrick_does_not_ship(self):
+        raw = self.root / "Wikis/Meetings/raw"
+        raw.mkdir(parents=True, exist_ok=True)
+        (raw / "contract.docx").write_text("an attachment\n")
+        (raw / "contract.docx.new").write_text("another\n")
+        (self.root / "System/rules.md.new").write_text("newer\n")
+        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
+                            "--json"], capture_output=True, text=True, env=self.env)
+        found = [f["path"] for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"]
+        self.assertEqual(["System/rules.md.new"], found)
+
     def test_version_says_it_was_updated(self):
         self.as_if_older("System/tools/scaffold.py", "# older\n")
         self.run_update("--apply", "--today", "2026-10-06")
@@ -344,6 +570,37 @@ def has_tag(tag):
 
 
 class TestReleases(unittest.TestCase):
+    def test_tags_sort_as_versions(self):
+        tags = ["v0.10.0", "v0.7.0", "v0.7.0-rc10", "v0.7.0-rc2", "v0.6.1", "vnext"]
+        self.assertEqual(["v0.6.1", "v0.7.0-rc2", "v0.7.0-rc10", "v0.7.0", "v0.10.0"],
+                         sorted((t for t in tags if update.version_key(t)), key=update.version_key))
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_release_hashes_reads_0_1_0s_zone_template_and_a_pre_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="T", GIT_AUTHOR_EMAIL="t@example.invalid",
+                       GIT_COMMITTER_NAME="T", GIT_COMMITTER_EMAIL="t@example.invalid")
+
+            def git(*args):
+                subprocess.run(["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
+                                *args], check=True, capture_output=True, env=env)
+
+            git("init", "-q")
+            todo = repo / "template" / "Zones" / "_zone" / "Todo.md"
+            todo.parent.mkdir(parents=True)
+            todo.write_text("# {{ZONE}}: the first todo\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", "one")
+            git("tag", "v0.1.0")
+            todo.write_text("# {{ZONE}}: a candidate\n")
+            git("commit", "-q", "-am", "two")
+            git("tag", "v0.1.1-rc1")
+            data = update.release_hashes(repo)
+        self.assertEqual(["v0.1.0", "v0.1.1-rc1"], data["releases"])
+        self.assertEqual({}, data["paths"])
+        self.assertEqual({"Todo.md": ["# {{ZONE}}: the first todo\n", "# {{ZONE}}: a candidate\n"]}, data["zone"])
+
     @unittest.skipUnless(shutil.which("git") and has_tag("v0.6.0"), "needs the release tags")
     def test_release_hashes_are_current(self):
         self.assertEqual(update.release_hashes(), json.loads(update.RELEASE_HASHES.read_text()),

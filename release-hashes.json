@@ -147,15 +147,6 @@
   ],
   "Wikis/Meetings/wiki/sources/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  ],
-  "Zones/_zone/AGENTS.md": [
-   "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b"
-  ],
-  "Zones/_zone/Inbox/.gitkeep": [
-   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  ],
-  "Zones/_zone/Todo.md": [
-   "e1cc15a367fa95aeda05b491179e2f4c59c8a860b9f34809eafdceff2b08a58a"
   ]
  },
  "zone": {
@@ -166,6 +157,7 @@
    ""
   ],
   "Todo.md": [
+   "# {{ZONE}}: open actions\n\nOne line per action: what, for whom, by when. Tick it when done.\n\n## Inbox\n\n- [ ] <action> \u00b7 <project or person> \u00b7 <date>\n\n## Done\n",
    "# {{ZONE}}: open actions\n\nOne line per action: what, which thread it is for, and by when. An action that belongs to no thread names its party or person instead. Tick a line when it is done.\n\n## Inbox\n\n- [ ] <action> \u00b7 <project>, <thread> \u00b7 <date>\n\n## Done\n",
    "# {{ZONE}}: open actions\n\nOne line per action, Obsidian Tasks style. It opens with the thread it is for, `[[Thread]]: `, or with the project when the project is a single thread; an action that belongs to no thread opens with its party or person instead. The dates go last: `\ud83d\udcc5` when it is due, `\ud83d\udeeb` when it cannot start before, and for something you are waiting on, `#waiting` and `\u23f3` the day to chase. Tick a line when it is done.\n\n## Inbox\n\n- [ ] [[<Thread>]]: <action> \ud83d\udcc5 <YYYY-MM-DD>\n\n## Done\n"
   ]

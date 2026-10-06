@@ -1953,11 +1953,17 @@ def check_generated(ws: Workspace) -> List[Finding]:
 def check_updates(ws: Workspace) -> List[Finding]:
     """An update leaves Garrick's newer version of a file you changed beside it,
     as `<name>.new`, for you and your assistant to merge. Until then the file
-    keeps the older version's wording."""
-    stamp = read_version(ws.root)
-    candidates = set(stamp.get("files") or {}) | {"System/rules.md"}
+    keeps the older version's wording. Only files Garrick ships can have one:
+    those the version stamp lists, and System/rules.md. A stamp with no list,
+    from before 0.4.0 and not yet updated, means walking the workspace."""
+    files = read_version(ws.root).get("files")
+    if isinstance(files, dict):
+        candidates = sorted(set(files) | {"System/rules.md"})
+    else:
+        candidates = sorted(rel(ws, new.with_suffix("")) for new in walk_files(ws.root)
+                            if new.suffix == ".new" and new.with_suffix("").is_file())
     out = []
-    for path in sorted(candidates):
+    for path in candidates:
         if (ws.root / (path + ".new")).is_file():
             out.append(Finding(WARNING, "updates", path + ".new",
                                "Garrick's newer %s waits to be merged into yours; merge it, then delete the .new "

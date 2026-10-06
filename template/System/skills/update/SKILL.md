@@ -63,8 +63,8 @@ the workspace with that request.
    ```
    Or only what the user picked, the paths exactly as the report gave them:
    `--apply --only "System/tools/check.py,Wikis/Knowledge/raw/.gitkeep"`.
-   Each repository gets one commit, `Garrick: update to <version>`, so
-   `git revert` undoes it. Say what it printed, in short. If it skipped a
+   Each repository gets one commit, `Garrick: update to <version>`, holding
+   the `.new` files too, so `git revert` undoes it. Say what it printed, in short. If it skipped a
    file because of changes not committed, say which and stop: those changes
    are the user's or another session's, and are never committed for them.
 5. **Merge the `.new` files**, next section, now or whenever the user wants.
@@ -73,12 +73,24 @@ the workspace with that request.
 
 Do one file at a time, and never more than the user has agreed to.
 
-1. **Find Garrick's last version of the file**, the base: the last commit in
-   which Garrick wrote it, in the repository that holds it.
+1. **Find Garrick's version the file last took in**, the base. It is the
+   later of two commits, in the repository that holds the file: the last one
+   in which Garrick wrote the file itself, and the last one that removed a
+   `.new` beside it, a merge or a `.new` the user turned down.
    ```sh
    git log -1 --format=%H -E --grep='^Garrick: (workspace created|update to |.+ created$)' -- "<file>"
-   git show "<that commit>:<file, from the repository's top>" > "<file>.base"
+   git log -1 --format=%H --diff-filter=D -- "<file>.new"
    ```
+   If only one prints a commit, that is the base commit. If both do, the
+   later one is: `git merge-base --is-ancestor <first> <second>` succeeds
+   when the second is later. Then, with paths from the repository's top:
+   ```sh
+   git show "<Garrick's commit>:<file>" > "<file>.base"        # when the base is Garrick's own write
+   git show "<removing commit>^:<file>.new" > "<file>.base"     # when it is a removed .new
+   ```
+   A `.new` the update wrote since and that was never merged does not count:
+   the base stays before it, so its changes are offered along with the newer
+   ones.
 2. **Merge mechanically**, keeping the user's changes and Garrick's together:
    ```sh
    git merge-file -p --diff3 "<file>" "<file>.base" "<file>.new" > "<file>.merged"
@@ -91,10 +103,13 @@ Do one file at a time, and never more than the user has agreed to.
 4. **Resolve each conflict with the user.** A conflict is a passage both
    sides changed. Offer the two versions and a suggestion; the user decides.
    Never resolve one silently in Garrick's favour.
-5. **On a yes**, put the merged text in place of the file, delete `.base`,
-   `.merged` and `.new`, and commit the file alone: `Merged Garrick's update
-   into <file>`. The message does not start with `Garrick:`, so step 1 never
-   takes the user's merge for Garrick's version.
+5. **On a yes**, put the merged text in place of the file, delete `.base` and
+   `.merged`, remove the `.new` with `git rm`, and commit the file and the
+   removal together, nothing else: `Merged Garrick's update into <file>`. The
+   message does not start with `Garrick:`, so step 1 never takes the user's
+   merge for Garrick's version, and the removal is what step 1 finds next
+   time. If the user turns the update down instead, `git rm` the `.new` and
+   commit that alone.
 
 If the file has no commit by Garrick (a workspace older than its history),
 there is no base: show the differences between the file and `.new` and merge
@@ -106,7 +121,8 @@ by hand with the user.
   update command writes the stamp.
 - Never delete a file the update calls retired, or put back one the user
   removed, without being asked.
-- Never commit a `.new` file, and never leave a half-merged file in place:
-  either the merge the user approved, or the file as it was.
+- Never edit a `.new` file: the update committed it as Garrick wrote it. Never
+  leave a half-merged file in place: either the merge the user approved, or
+  the file as it was.
 - Never run the update from inside the workspace's own copy of anything, and
   never point it at a folder that is not the user's workspace.

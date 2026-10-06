@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-06
+
+Three fixes found on the first update of an adopted workspace.
+
 ### Fixed
 
 - An update no longer forgets that a workspace was adopted. A workspace laid out by hand in Garrick's shape and stamped `"from": "adopted"` kept that only until its first update, which replaced it with how the newer Garrick was fetched; the status page then stopped showing the release notes still to come on `main`. The stamp now keeps `adopted`, and each entry in its `updates` says how that Garrick came, as `via`. `check.py --version` names it. ([#10](https://github.com/iamvenuti/garrick/issues/10))
@@ -191,7 +195,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/iamvenuti/garrick/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/iamvenuti/garrick/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/iamvenuti/garrick/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/iamvenuti/garrick/compare/v0.6.0...v0.6.1

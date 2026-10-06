@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-06
+
+The README plays its walkthrough once.
+
+### Fixed
+
+- The README showed the walkthrough twice: GitHub turns every link to an attached video into a player, and the GIF above the walkthrough linked to it. The GIF is gone, and the walkthrough plays once. Nothing in an installed workspace changes.
+
 ## [0.7.0] - 2026-10-06
 
 Updates: a newer Garrick now reaches a workspace you have already installed, without losing what you changed. And a first-run setup that looks at your Mac before it asks you anything.
@@ -177,7 +185,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/iamvenuti/garrick/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/iamvenuti/garrick/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/iamvenuti/garrick/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/iamvenuti/garrick/compare/v0.5.0...v0.6.0

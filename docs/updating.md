@@ -4,7 +4,7 @@ Your workspace is a copy of Garrick, made on the day you installed it. A newer G
 
 ## The short version
 
-1. Get the newer Garrick: download the ZIP from the [latest release](https://github.com/iamvenuti/garrick/releases/latest) and unzip it, or `git pull` in your clone.
+1. Get the newer Garrick: download the ZIP from the [latest release](https://github.com/iamvenuti/garrick/releases/latest) and unzip it, or `git pull` in your clone. Keep it outside your workspace: an update refuses to run from a Garrick inside the workspace it would update.
 2. In your workspace, ask your assistant: "update Garrick from ~/Downloads/garrick-main" (wherever the newer one is).
 3. It tells you what would change, and changes it when you say yes.
 

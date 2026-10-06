@@ -218,6 +218,15 @@ class TestProjects(CheckCase):
         shutil.rmtree(self.acme / "Threads")
         self.assertFinds("projects", "warning", "no threads")
 
+    def test_a_project_takes_a_threads_three_statuses(self):
+        hub = self.acme / "Acme Review.md"
+        text = hub.read_text()
+        for status in ("parked", "done"):
+            hub.write_text(text.replace("status: active", "status: " + status))
+            self.assertClean("projects")
+        hub.write_text(text.replace("status: active", "status: paused"))
+        self.assertFinds("projects", "error", "should be active, parked or done")
+
 
 class TestThreads(CheckCase):
     def test_pass(self):

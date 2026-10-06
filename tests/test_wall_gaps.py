@@ -215,11 +215,12 @@ class TestStatusAndDates(GapCase):
         self.assertIn("'closed'", found[0].message)
         self.assertIn("active, parked or done", found[0].message)
 
-    def test_project_status_outside_the_two(self):
-        self.edit(self.hub, "status: active", "status: parked")
+    def test_project_status_outside_the_three(self):
+        self.edit(self.hub, "status: active", "status: on-hold")
         found = self.findings("projects", "error")
         self.assertEqual(1, len(found), found)
-        self.assertIn("active or done", found[0].message)
+        self.assertIn("'on-hold'", found[0].message)
+        self.assertIn("active, parked or done", found[0].message)
 
     def test_dates_not_written_iso(self):
         self.edit(self.note, "updated: 2026-03-01", "updated: 23 September 2026")

@@ -38,7 +38,8 @@ the workspace with that request.
 1. **Find the newer Garrick.** Ask where it is unless the user said: "Where is
    the newer Garrick? The folder you unzipped, or your clone." It is the
    folder holding `install.py` and `update.py`. Refuse a folder without both,
-   and the workspace itself.
+   the workspace itself, and any folder inside the workspace: ask for the
+   newer Garrick unzipped, or exported from a clone, somewhere outside it.
 2. **Ask it what would change**, from the workspace's top folder:
    ```sh
    python3 "<newer Garrick>/install.py" --update .

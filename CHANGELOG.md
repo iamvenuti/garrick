@@ -4,6 +4,12 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- An update no longer forgets that a workspace was adopted. A workspace laid out by hand in Garrick's shape and stamped `"from": "adopted"` kept that only until its first update, which replaced it with how the newer Garrick was fetched; the status page then stopped showing the release notes still to come on `main`. The stamp now keeps `adopted`, and each entry in its `updates` says how that Garrick came, as `via`. `check.py --version` names it. ([#10](https://github.com/iamvenuti/garrick/issues/10))
+- `check.py` accepts `status: parked` on a project hub. A project with no thread notes is parked as a thread of its own, by saying "park X" or with the status page's *Park* button, and the check then reported an error. ([#11](https://github.com/iamvenuti/garrick/issues/11))
+- When the Garrick an update runs from sits inside the workspace it would update, the refusal now says to move the newer Garrick out, unzipped or exported from a clone, instead of asking you to name the workspace you had already named. [Updating Garrick](docs/updating.md) and the `update` skill say the same. ([#12](https://github.com/iamvenuti/garrick/issues/12))
+
 ## [0.7.1] - 2026-10-06
 
 The README plays its walkthrough once.

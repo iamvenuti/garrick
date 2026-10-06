@@ -493,7 +493,9 @@ def stamp(root, p, done, today=None):
     holding every file Garrick ships that is there, those it left with no
     fingerprint, so that one you delete later counts as removed by you. Nothing
     is written when nothing would change, and if the commit is refused the
-    stamp is put back as it was."""
+    stamp is put back as it was. `from` says how the newer Garrick came, except
+    in a workspace adopted rather than installed, which keeps "adopted"; each
+    entry in `updates` says how its Garrick came, as `via`."""
     lib = install.lib()
     old = lib.read_version(root)
     files = dict(p["recorded"])
@@ -510,12 +512,15 @@ def stamp(root, p, done, today=None):
     offered = [path for kind in ("replace", "add") for path in p["actions"][kind]]
     left = sorted(path for path in offered if path not in written)
     new = {k: v for k, v in install.source_version().items()}
+    via = new.get("from", "")
+    if old.get("from") == "adopted":
+        new["from"] = "adopted"     # laid out by hand, not installed: an update does not change how it began
     if (new.get("commit") == old.get("commit") and files == p["recorded"]
             and left == sorted(old.get("left") or [])):
         return False
     history = list(old.get("updates") or [])
     entry = {"from": old.get("commit", ""), "to": new.get("commit", ""),
-             "on": today or datetime.date.today().isoformat()}
+             "on": today or datetime.date.today().isoformat(), "via": via}
     if (new.get("commit") != old.get("commit") or written) and history[-1:] != [entry]:
         history.append(entry)       # an update between two copies with no commit to tell them apart counts too
     new["files"] = dict(sorted(files.items()))
@@ -636,8 +641,14 @@ def find_workspace(path):
     root = Path(os.path.abspath(root))
     if not (root / "System" / "rules.md").is_file():
         raise UpdateError("%s is not a Garrick workspace: it has no System/rules.md." % root)
-    if install.source_overlap(root):
-        raise UpdateError("%s is the Garrick folder this update runs from, or overlaps it. "
+    overlap = install.source_overlap(root)
+    if overlap == "holds":
+        raise UpdateError("The Garrick this update runs from, %s, is inside the workspace it would update. "
+                          "Unzip the newer Garrick outside it (your Downloads folder will do), or export a release "
+                          "from your clone with `git archive vX.Y.Z | tar -x -C <folder>`, and run install.py "
+                          "from there." % REPO)
+    if overlap:
+        raise UpdateError("%s is the Garrick folder this update runs from, or inside it. "
                           "Name your workspace, such as ~/Garrick." % root)
     return root.resolve()
 

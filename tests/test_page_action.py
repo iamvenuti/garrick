@@ -135,6 +135,15 @@ class TestPark(ActionCase):
         self.assertEqual("Acme Review, Pricing: woken", self.last_commit()[0])
         self.assertEqual("Pricing is already active", self.act(verb="wake", zone="Work", file=rel))
 
+    def test_a_parked_single_thread_project_passes_the_check(self):
+        import check
+        shutil.rmtree(self.work / "Acme Review" / "Threads")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "one thread")
+        self.assertEqual("Acme Review is parked", self.act(verb="park", zone="Work", file="Acme Review/Acme Review.md"))
+        self.assertIn("\nstatus: parked\n", (self.work / "Acme Review" / "Acme Review.md").read_text())
+        self.assertEqual([], [f.message for f in check.run_checks(self.root) if f.severity == "error"])
+
     def test_only_threads(self):
         for rel in ("Todo.md", "Acme Review/Acme Review.md", "Acme Review/Sources/x.md"):
             with self.assertRaises(pa.Refused, msg=rel):

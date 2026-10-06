@@ -422,7 +422,34 @@ class TestSafety(Case):
         with mock.patch.object(update.install, "source_version", return_value=copy):
             self.assertTrue(self.apply(today="2026-10-06")["stamped"])
             self.assertFalse(self.apply(today="2026-10-06")["stamped"])
-        self.assertEqual([{"from": "unknown", "to": "unknown", "on": "2026-10-06"}], self.stamp()["updates"])
+        self.assertEqual([{"from": "unknown", "to": "unknown", "on": "2026-10-06", "via": "copy"}],
+                         self.stamp()["updates"])
+
+    def test_an_adopted_workspace_stays_adopted(self):
+        self.as_if_older("System/tools/scaffold.py", "# older\n")
+        stamp = self.stamp()
+        stamp["from"] = "adopted"
+        self.set_stamp(stamp)
+        download = {"commit": "1234567", "date": "2026-10-06", "from": "download"}
+        with mock.patch.object(update.install, "source_version", return_value=download):
+            self.assertTrue(self.apply(today="2026-10-06")["stamped"])
+        stamp = self.stamp()
+        self.assertEqual("adopted", stamp["from"])
+        self.assertEqual("1234567", stamp["commit"])
+        self.assertEqual([{"from": OLDER, "to": "1234567", "on": "2026-10-06", "via": "download"}], stamp["updates"])
+        lib = update.install.lib()
+        self.assertEqual("Garrick 1234567 of 6 October 2026, from a download. Updated on 6 October 2026 from %s."
+                         % OLDER, lib.say_version(stamp))
+
+    def test_an_installed_workspace_takes_how_the_newer_garrick_came(self):
+        self.as_if_older("System/tools/scaffold.py", "# older\n")
+        stamp = self.stamp()
+        stamp["from"] = "clone"
+        self.set_stamp(stamp)
+        download = {"commit": "1234567", "date": "2026-10-06", "from": "download"}
+        with mock.patch.object(update.install, "source_version", return_value=download):
+            self.apply(today="2026-10-06")
+        self.assertEqual("download", self.stamp()["from"])
 
     def test_a_write_that_fails_puts_the_others_back(self):
         first, second = "System/tools/scaffold.py", "System/tools/garrick_lib.py"
@@ -459,7 +486,8 @@ class TestSafety(Case):
             self.assertIn(path, [p for p, _ in result["skipped"]])
             self.assertFalse(result["stamped"])
         self.assertEqual(head, self.head(self.root))
-        self.assertEqual([{"from": OLDER, "to": update.install.source_version()["commit"], "on": "2026-10-06"}],
+        source = update.install.source_version()
+        self.assertEqual([{"from": OLDER, "to": source["commit"], "on": "2026-10-06", "via": source["from"]}],
                          self.stamp()["updates"])
         self.assertEqual([path], self.stamp()["left"])
 
@@ -520,6 +548,20 @@ class TestCommandLine(Case):
         r = subprocess.run([sys.executable, str(INSTALL), "--update", str(REPO)],
                            capture_output=True, text=True, env=self.env)
         self.assertEqual(1, r.returncode)
+
+    def test_a_refusal_names_the_folder_to_move(self):
+        inner = self.root / "Zones" / "Work" / "garrick"
+        inner.mkdir()
+        with mock.patch.object(update.install, "REPO", inner), mock.patch.object(update, "REPO", inner):
+            with self.assertRaises(update.UpdateError) as caught:
+                update.find_workspace(str(self.root))
+        self.assertIn("The Garrick this update runs from, %s, is inside the workspace" % inner, str(caught.exception))
+        self.assertIn("Unzip the newer Garrick outside it", str(caught.exception))
+        with mock.patch.object(update.install, "REPO", self.base), mock.patch.object(update, "REPO", self.base):
+            with self.assertRaises(update.UpdateError) as caught:
+                update.find_workspace(str(self.root))
+        self.assertEqual("%s is the Garrick folder this update runs from, or inside it. "
+                         "Name your workspace, such as ~/Garrick." % self.root, str(caught.exception))
 
     def test_the_check_warns_until_a_new_file_is_merged(self):
         self.as_if_older("System/rules.md", "# Rules, older\n")

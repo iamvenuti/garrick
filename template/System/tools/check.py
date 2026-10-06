@@ -621,10 +621,11 @@ def check_names(ws: Workspace) -> List[Finding]:
 
 
 # The values the templates and the threads skill write, and nothing else: a
-# thread is set aside with parked and closed with done; a project is closed
-# with done. Any other word reads as live to every tool, whatever it meant.
+# thread is set aside with parked and closed with done. A project takes the
+# same three, since one with no thread notes is parked as a thread of its own.
+# Any other word reads as live to every tool, whatever it meant.
 THREAD_STATUSES = ("active", "parked", "done")
-PROJECT_STATUSES = ("active", "done")
+PROJECT_STATUSES = THREAD_STATUSES
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 

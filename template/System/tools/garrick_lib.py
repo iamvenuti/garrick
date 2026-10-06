@@ -752,7 +752,10 @@ def say_version(stamp: dict) -> str:
     if m and 1 <= int(m.group(2)) <= 12:
         out += " of %d %s %s" % (int(m.group(3)), _MONTH_NAMES[int(m.group(2)) - 1], m.group(1))
     updates = [u for u in (stamp.get("updates") or []) if isinstance(u, dict)]
-    source = {"download": "a download", "clone": "a clone"}.get(stamp.get("from"))
+    how = stamp.get("from")
+    if how == "adopted" and updates:
+        how = updates[-1].get("via")    # an adopted workspace keeps "adopted"; its last update says where it came from
+    source = {"download": "a download", "clone": "a clone"}.get(how)
     if source:
         out += ", %s %s" % ("from" if updates else "installed from", source)
     if stamp.get("modified"):

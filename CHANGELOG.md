@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-06
+
+Updates: a newer Garrick now reaches a workspace you have already installed, without losing what you changed. And a first-run setup that looks at your Mac before it asks you anything.
+
 ### Added
 
 - `install.py --update ~/Garrick` brings an installed workspace up to the Garrick you run it from, without losing what you changed. It reports first and changes nothing until `--apply`. A file still exactly as some Garrick wrote it is replaced. A file you changed that Garrick has changed too gets Garrick's version beside it as `.new`, committed so a clean or a clone keeps it until you merge. Starting files you have filled in, such as a `Todo.md`, are left alone. `System/rules.md` is always merged, never replaced. Nothing is deleted, each repository gets one commit you can revert, and the version stamp changes last. [Updating Garrick](docs/updating.md) has the details.
@@ -173,7 +177,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/iamvenuti/garrick/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/iamvenuti/garrick/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/iamvenuti/garrick/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/iamvenuti/garrick/compare/v0.4.0...v0.5.0

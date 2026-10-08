@@ -4,6 +4,16 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- *Time* and *Cost* on the status page's Threads card, behind the `effort` preview flag: the same rows show the assistant's active time or list-price cost over the last 30 days, largest first, read from Claude Code's own transcripts with no model call. A line under the columns accounts for what no row shows, so the figures add up. `effort.py --record`, run nightly, keeps each day's totals once the transcripts are cleaned up. Claude Code only for now. ([#17](https://github.com/iamvenuti/garrick/issues/17))
+
+### Changed
+
+- The status page's Threads card has a row per project, with a chevron that unfolds its threads; a project with no thread notes is a row of its own. The fold is remembered. ([#14](https://github.com/iamvenuti/garrick/issues/14))
+- The status page's *Overview* is the work alone. The figures at the top (things needing attention, live threads, open actions, files waiting, the check or the assistant's calls) now lead the *Status* tab.
+- The status page has no sidebar. One row pinned at the top holds the name, when the page was built, the tabs, rebuild, Settings and the theme, now three icons. A hidden card is listed in Settings › View until it is shown again.
+
 ## [0.7.2] - 2026-10-06
 
 Three fixes found on the first update of an adopted workspace.

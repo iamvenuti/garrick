@@ -54,18 +54,19 @@ def stamp(t):
 def cards(html):
     """Every thread row's card, by thread name, as the page's script reads it."""
     out = {}
-    for raw in re.findall(r'class="thread"[^>]*data-card="([^"]*)"', html):
+    for raw in re.findall(r'class="thread(?: sub)?"[^>]*data-card="([^"]*)"', html):     # a project's row is not a thread
         data = json.loads(htmllib.unescape(raw))
         out[(data["p"], data["n"])] = data
     return out
 
 
 def thread_order(html, anchor='id="zone-work"'):
-    """Thread names in the order a zone lists them, live ones or its Parked fold."""
+    """Row names in the order a zone lists them, live ones or its Parked fold:
+    each project's row, then its threads."""
     start = html.index(anchor)
     block = html[start:html.index("</details>", start)]
     if anchor.startswith('id="zone-'):
-        block = block.split('<details class="parked"')[0]
+        block = block.split('<details class="parked')[0]
     return [json.loads(htmllib.unescape(raw))["n"] for raw in re.findall(r'data-card="([^"]*)"', block)]
 
 
@@ -335,7 +336,8 @@ class TestTabs(StatusCase):
             self.assertIn('id="%s"' % card_id, overview, card_id)
         for card_id in ("jobs", "checks", "repos", "wikis"):
             self.assertIn('id="%s"' % card_id, machinery, card_id)
-        self.assertIn('class="top"', overview)                                  # the tiles lead the overview
+        self.assertNotIn('class="top"', overview)                               # the overview is the work alone
+        self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))   # the figures lead Status
         self.assertIn('id="tab-status" hidden', html)
 
     def test_a_card_moves_between_tabs_and_reset_puts_it_back(self):
@@ -353,17 +355,34 @@ class TestTabs(StatusCase):
         self.assertLess(machinery.index('id="attention"'), machinery.index('id="jobs"'))
         self.assertNotIn('id="attention"', self.section(html, "overview"))
 
-    def test_the_overview_leads_to_the_cards(self):
+    def test_the_figures_lead_to_the_cards(self):
         self.job(0)
         html = self.page()
-        overview = self.section(html, "overview")
-        targets = re.findall(r'<a class="(?:hero|tile) go"[^>]*href="#([a-z]+)"', overview)
+        machinery = self.section(html, "status")
+        targets = re.findall(r'<a class="(?:hero|tile) go"[^>]*href="#([a-z]+)"', machinery)
         self.assertIn("threads", targets)
         self.assertIn("inboxes", targets)
         for t in targets:
             self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
-        self.assertRegex(html, r'<a class="overall go" href="#(attention|overview)"')
         self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
+
+    def test_one_pinned_row_and_no_sidebar(self):
+        html = self.page()
+        self.assertNotIn("<aside", html)                                      # the tabs move, the cards are in view
+        self.assertNotIn('class="overall', html)                              # the Status tab's own figures say it
+        bar = html[html.index('<header class="bar">'):html.index("</header>")]
+        for piece in ('class="mark"', "<h1>", 'id="age"', 'class="tabs" role="tablist"', 'id="rebuild"', 'id="open-settings"',
+                      'class="seg theme"'):
+            self.assertIn(piece, bar, piece)
+        self.assertIn("header.bar{position:sticky;top:0", status.BAR_CSS)
+        for t in ("auto", "light", "dark"):                                  # icons, each named
+            self.assertRegex(bar, r'<button type="button" data-t="%s" title="[^"]+" aria-label="Theme: [^"]+"><svg' % t)
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', dialog)   # hidden cards are listed in Settings
+        self.assertIn("'<p class=\"hint\">Hidden cards</p>", status.LAYOUT_JS)
+        self.assertIn("var u=e.target.closest('.unhide')", status.LAYOUT_JS)       # and shown again from there
+        self.assertIn("Bring it back from Settings", status.LAYOUT_JS)
+        self.assertIn("document.body.dataset.tab=n", status.JS)
 
     def test_a_failure_marks_the_status_tab(self):
         self.job(0)
@@ -485,7 +504,7 @@ class TestParkedAndCopy(StatusCase):
         self.assertIn("1 live · 1 parked", html)
         card = cards(html)[("Birch Entry", "Market Sizing")]
         self.assertEqual((1, "Market Sizing"), (card["s"], card["w"]))   # the card offers "wake", not "park"
-        self.assertEqual(["Market Sizing"], thread_order(html, 'id="parked-work"'))
+        self.assertEqual(["Birch Entry", "Market Sizing"], thread_order(html, 'id="parked-work"'))
 
     def test_cards_carry_the_phrase_to_say(self):
         html = self.page()
@@ -506,7 +525,7 @@ class TestParkedAndCopy(StatusCase):
             write(self.root / "Zones" / zone / "House" / "Threads" / "Kitchen" / "Kitchen.md", thread_note("House", "Kitchen", ""))
         write(self.root / "Zones" / "Personal" / "House" / "Threads" / "Roof" / "Roof.md", thread_note("House", "Roof", ""))
         html = self.page()
-        rows = [json.loads(htmllib.unescape(raw)) for raw in re.findall(r'class="thread"[^>]*data-card="([^"]*)"', html)]
+        rows = [json.loads(htmllib.unescape(raw)) for raw in re.findall(r'class="thread(?: sub)?"[^>]*data-card="([^"]*)"', html)]
         said = {(c["z"], c["p"], c["n"]): c["w"] for c in rows}
         self.assertEqual("Work, House, Kitchen", said[("Work", "House", "Kitchen")])
         self.assertEqual("Personal, House, Kitchen", said[("Personal", "House", "Kitchen")])
@@ -528,8 +547,9 @@ class TestThreadCards(StatusCase):
     def test_rows_carry_a_card_not_buttons(self):
         html = self.page()
         start = html.index('<div class="zones">')
-        block = html[start:html.index('<div class="legend">', start)]
-        self.assertNotIn("<button", block)
+        block = html[start:html.index('<div class="legend', start)]
+        self.assertEqual(set(re.findall(r'<button type="button" class="(\w+)"', block)), {"pchev"})   # only the folds of a project's threads
+        self.assertEqual(block.count("<button"), block.count('class="pchev"'))
         self.assertNotIn("data-tip", block)
         self.assertEqual({("Acme Review", "Pricing"), ("Birch Entry", "Market Sizing")}, set(cards(html)))
 
@@ -576,8 +596,25 @@ class TestThreadCards(StatusCase):
         write(acme / "beta" / "beta.md", thread_note("Acme Review", "beta", status="parked"))
         write(acme / "Aardvark" / "Aardvark.md", thread_note("Acme Review", "Aardvark", status="parked"))
         html = self.page()
-        self.assertEqual(["alpha", "Market Sizing", "Pricing", "Zebra"], thread_order(html))
-        self.assertEqual(["Aardvark", "beta"], thread_order(html, 'id="parked-work"'))
+        self.assertEqual(["Acme Review", "alpha", "Pricing", "Zebra", "Birch Entry", "Market Sizing"], thread_order(html))   # projects, then threads, by name
+        self.assertEqual(["Acme Review", "Aardvark", "beta"], thread_order(html, 'id="parked-work"'))
+
+
+class TestProjectRows(StatusCase):
+    """Issue #14: threads fold under an expandable row for their project."""
+
+    def test_a_project_row_folds_its_threads(self):
+        write(self.root / "Zones" / "Work" / "Cedar Notes" / "Cedar Notes.md", project_hub("Work", "Cedar Notes", "cedar"))
+        html = self.page()
+        zone = html[html.index('id="zone-work"'):]
+        zone = zone[:zone.index("</details>")]
+        self.assertIn('<button type="button" class="pchev" data-sub="sub-work-acme-review" aria-expanded="false" title="Show its 1 thread">', zone)
+        self.assertIn('<div class="subthreads tsort" id="sub-work-acme-review" hidden><div class="thread sub"', zone)
+        self.assertIn('<span class="muted subn">1 thread</span>', zone)
+        self.assertNotIn('data-sub="sub-work-cedar-notes"', zone)           # a project with no thread notes is a row of its own
+        project = [c for c in re.findall(r'class="thread proj"[^>]*data-card="([^"]*)"', zone)]
+        self.assertEqual({json.loads(htmllib.unescape(c))["kl"] for c in project}, {"project"})
+        self.assertIn("st.get('garrick-fold-'+b.dataset.sub)==='1'", status.JS)   # the fold is remembered
 
 
 class TestSettings(StatusCase):
@@ -687,7 +724,7 @@ class TestLaunchers(StatusCase):
 
     def test_settings_open_from_the_cog(self):
         html = self.page()
-        brand = html[html.index('<div class="brand">'):html.index('class="overall')]
+        brand = html[html.index('<header class="bar">'):html.index("</header>")]
         self.assertIn('id="open-settings"', brand)
         self.assertIn('aria-label="Settings"', brand)
 
@@ -976,8 +1013,8 @@ class TestNameAndMark(StatusCase):
         # Garrick's typeface, from fonts already on the machine: nothing is fetched.
         stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
         self.assertIn("--display:%s;" % stack, status.CSS)
-        for rule in (r"\.brand h1\{[^}]*", r"\.head h2\{[^}]*", r"\.hero \.fig\{[^}]*"):
-            self.assertIn("var(--display)", re.search(rule, status.CSS).group(0))
+        for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*", r"\.hero \.fig\{[^}]*"):
+            self.assertIn("var(--display", re.search(rule, status.CSS + status.BAR_CSS).group(0))
         self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui', status.CSS)
         self.assertNotIn("@font-face", status.CSS)
         self.assertNotIn("url(", status.CSS)
@@ -1250,7 +1287,7 @@ class TestWhatThisMachineHas(StatusCase):
         self.assertIn("if(c&&host){var m={launch:", status.JS)
         self.assertIn("if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now'", status.JS)
         brand = self.page()
-        brand = brand[brand.index('<div class="brand">'):brand.index('class="overall')]
+        brand = brand[brand.index('<header class="bar">'):brand.index("</header>")]
         self.assertIn('id="rebuild"', brand)                      # an icon beside the cog: rebuilds in the app, copies elsewhere
         self.assertIn('data-copy="', brand)
 

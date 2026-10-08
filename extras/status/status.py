@@ -343,6 +343,8 @@ FLAGS = {
                   "in a card of its own."),
     "page-actions": ("Actions", "In Garrick's Status.app: tick and date a line of the Todo list, and park or wake a thread "
                      "from its card. Each changes one line or one status field and commits it, as the skills do."),
+    "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
+               "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
 }
 
 
@@ -422,6 +424,147 @@ def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions:
         cols += '<div class="tzone"><h4>%s <span class="muted">%d</span></h4>%s</div>' % (E(zone), len(rows), items)
     return ('<div id="todolist" class="todotab"><p class="hint">Every open action in the zones, overdue first, read from the notes. '
             'A preview feature.</p><div class="tzones">%s</div></div>' % cols)
+
+
+_EF = None
+
+
+def effort():
+    """effort.py, beside this file: the reader for the time and token ledger."""
+    global _EF
+    if _EF is None:
+        spec = importlib.util.spec_from_file_location("garrick_effort", str(Path(__file__).with_name("effort.py")))
+        _EF = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_EF)
+    return _EF
+
+
+def say_time(secs: float) -> str:
+    m = int(round(secs / 60))
+    return "%d h %02d" % (m // 60, m % 60) if m >= 60 else "%d min" % m if m else "–"
+
+
+def say_cost(usd: float) -> str:
+    return "$%.0f" % usd if usd >= 100 else "$%.2f" % usd if usd else "–"
+
+
+def say_tokens(n: int) -> str:
+    return "%.1f M" % (n / 1e6) if n >= 1e6 else "%d k" % round(n / 1e3) if n >= 1e3 else str(n)
+
+
+class Effort:
+    """The last 30 days of the effort ledger, laid over the Threads card: each
+    row's active time and list-price cost, for the card's Time and Cost views.
+    Rows take their figures with take(), and whatever no row took is said once
+    at the foot by foot(), so the card's figures add up to its total."""
+
+    DAYS = 30
+
+    def __init__(self, rows: Dict[tuple, dict], today: dt.date):
+        since = (today - dt.timedelta(days=self.DAYS - 1)).isoformat()
+        self.fields = ("seconds", "cost", "sessions", "unpriced") + tuple(effort().TOKENS)
+        self.agg: Dict[tuple, dict] = {}
+        for (day, zone, project, thread), r in rows.items():
+            if day >= since:
+                a = self.agg.setdefault((zone, project, thread), {f: 0 for f in self.fields})
+                for f in self.fields:
+                    a[f] += r.get(f) or 0
+        self.used: set = set()
+        per_project: Dict[tuple, dict] = {}
+        for (zone, project, _), a in self.agg.items():
+            p = per_project.setdefault((zone, project), {"seconds": 0, "cost": 0.0})
+            p["seconds"] += a["seconds"]
+            p["cost"] += a["cost"]
+        self.top = {k: max([p[k] for p in per_project.values()] + [0]) or 1 for k in ("seconds", "cost")}
+        self.total = {k: sum(a[k] for a in self.agg.values()) for k in ("seconds", "cost", "sessions")}
+
+    def take(self, keys) -> dict:
+        """The figures of these (zone, project, thread) keys, summed, and
+        marked as shown. A key already shown elsewhere counts once."""
+        out = {f: 0 for f in self.fields}
+        for k in keys:
+            if k in self.agg and k not in self.used:
+                self.used.add(k)
+                for f in self.fields:
+                    out[f] += self.agg[k][f]
+        return out
+
+    def keys(self, zone: str, project: str) -> List[tuple]:
+        return [k for k in self.agg if k[0] == zone and k[1] == project]
+
+    def attrs(self, a: dict) -> str:
+        return ' data-s="%d" data-c="%.4f"' % (a["seconds"], a["cost"])
+
+    def cells(self, a: dict) -> str:
+        """The Time and Cost cells of a row, each a bar against the largest
+        project and a figure; CSS shows the pair the card's view asks for."""
+        tip = "Last %d days: %s input · %s output · %s cache read · %s cache write · %d session%s%s" % (
+            self.DAYS, say_tokens(a["input"]), say_tokens(a["output"]), say_tokens(a["cache_read"]),
+            say_tokens(a["cache_write"]), a["sessions"], "" if a["sessions"] == 1 else "s",
+            " · some messages from a model with no list price, not costed" if a["unpriced"] else "")
+        return "".join('<div class="ebar %s">%s</div><span class="num %s" data-tip="%s">%s</span>'
+                       % (cls, '<i style="width:%.1f%%"></i>' % (a[k] / self.top[k] * 100) if a[k] else "", cls, E(tip), E(say(a[k])))
+                       for cls, k, say in (("mt", "seconds", say_time), ("mc", "cost", say_cost)))
+
+    def zone_meta(self, zone: str, also: Tuple[str, ...] = ()) -> str:
+        a = {k: sum(v[k] for kk, v in self.agg.items() if kk[0] in (zone,) + also) for k in ("seconds", "cost")}
+        return '<span class="meta me">%s · %s</span>' % (E(say_time(a["seconds"])), E(say_cost(a["cost"])))
+
+    def foot(self) -> str:
+        """What no row showed, by kind, then the whole: the line that makes
+        the card's figures add up."""
+        kinds: Dict[str, dict] = {}
+        for k, a in self.agg.items():
+            if k in self.used:
+                continue
+            kind = "outside the zones" if not k[0] else "started in a zone's own folder" if not k[1] else "finished or renamed threads"
+            t = kinds.setdefault(kind, {"seconds": 0, "cost": 0.0})
+            t["seconds"] += a["seconds"]
+            t["cost"] += a["cost"]
+        parts = ["%s %s · %s" % (kind[:1].upper() + kind[1:], say_time(t["seconds"]), say_cost(t["cost"]))
+                 for kind, t in sorted(kinds.items(), key=lambda kv: -kv[1]["seconds"])]
+        return ('<p class="hint me efoot"><b>Last %d days: %s active · %s at list price · %d session%s.</b>%s Claude Code sessions, read '
+                'from their transcripts; Codex is not counted yet. Active time counts the gaps between messages up to five minutes. '
+                'A project&#39;s figure includes its work in no thread. Scheduled jobs are in Assistant calls.</p>'
+                % (self.DAYS, E(say_time(self.total["seconds"])), E(say_cost(self.total["cost"])), self.total["sessions"],
+                   "" if self.total["sessions"] == 1 else "s", (" " + E(" · ".join(parts)) + ".") if parts else ""))
+
+
+def tview_switch() -> str:
+    """Updated, Time, Cost: what the Threads card's bars and figures show."""
+    return ('<div class="tmodes" role="group" aria-label="What the bars show">%s</div>'
+            % "".join('<button type="button" data-tm="%s"%s>%s</button>' % (k, ' class="on"' if k == "updated" else "", label)
+                      for k, label in (("updated", "Updated"), ("time", "Time"), ("cost", "Cost"))))
+
+
+# The Time and Cost views of the Threads card. A row carries all three pairs
+# of cells; the view shows one. A unit (a project with its threads, or a
+# thread alone) carries data-a, its place by name, and data-s and data-c, its
+# figures, so each view can put the largest first and Updated put them back.
+TVIEW_CSS = r"""
+.tmodes{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px;margin:0 0 8px}
+.tmodes button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;cursor:pointer}
+.tmodes button.on{background:var(--wash);color:var(--ink)}
+.tview .mt,.tview .mc,.tview .me{display:none}
+.tview[data-tm="time"] .mt,.tview[data-tm="cost"] .mc{display:block}.tview:not([data-tm="updated"]) .me{display:block}
+.tview:not([data-tm="updated"]) .mu{display:none!important}
+.tview:not([data-tm="updated"]) .thread{grid-template-columns:minmax(0,1fr) 80px 60px}
+.tview .num.mt,.tview .num.mc{text-align:right;font-variant-numeric:tabular-nums}
+.ebar{height:6px;border-radius:3px;background:var(--grid);position:relative}.ebar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent);min-width:2px}
+.efoot{margin-top:10px}.efoot b{font-weight:600;color:var(--ink2)}
+"""
+
+TVIEW_JS = r"""
+document.querySelectorAll('.tview').forEach(function(v){
+var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,x){try{localStorage.setItem(k,x)}catch(e){}}};
+function order(c,m){var key=m==='time'?'s':m==='cost'?'c':null,kids=[].filter.call(c.children,function(x){return x.dataset.a!==undefined});
+kids.sort(function(a,b){if(key){var d=(+b.dataset[key]||0)-(+a.dataset[key]||0);if(d)return d}return a.dataset.a-b.dataset.a});
+var tail=[].filter.call(c.children,function(x){return x.matches('details.parked')})[0]||null;kids.forEach(function(k){c.insertBefore(k,tail)})}
+function mode(m){v.dataset.tm=m;v.querySelectorAll('.tmodes button').forEach(function(b){b.classList.toggle('on',b.dataset.tm===m)});
+v.querySelectorAll('.tsort').forEach(function(c){order(c,m)});st.set('garrick-threads-view',m)}
+v.querySelectorAll('.tmodes button').forEach(function(b){b.onclick=function(){mode(b.dataset.tm)}});
+var m=st.get('garrick-threads-view');if(m&&v.querySelector('.tmodes button[data-tm="'+m+'"]'))mode(m)});
+"""
 
 
 def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
@@ -1201,7 +1344,8 @@ def preview_section(flags: Dict[str, bool]) -> str:
 
 VIEW = ('<section class="setsec"><h3>View</h3><p class="hint">Cards dragged or hidden, folds, the graph&#39;s view and the open tab '
         'are remembered in this window only.</p><div class="gacts"><button class="act" type="button" id="reset-view" '
-        'title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button></div></section>')
+        'title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button></div>'
+        '<div class="hiddencards" id="hidden-cards" hidden></div></section>')
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
@@ -1347,27 +1491,16 @@ CSS = r"""
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
-.app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
-aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:18px}
-.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.brand h1{font:600 18px/1.15 var(--display);margin:0;letter-spacing:.005em}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
-.overall{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
-.overall svg{width:22px;height:22px;flex:none}.overall b{display:block;font-size:13px}.overall span{color:var(--ink2);font-size:12px}
-nav{display:flex;flex-direction:column;gap:1px}
-nav a{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--ink2);font-size:13px}
-nav a:hover{background:var(--wash);text-decoration:none;color:var(--ink)}nav a.on{background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
-nav a .n{margin-left:auto;font-size:11px;color:var(--muted)}nav .sub{padding-left:28px;font-size:12px}
+.app{min-height:100vh}
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--none)}.dot.good{background:var(--good)}.dot.warning{background:var(--warning)}.dot.critical{background:var(--critical)}
-.controls{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding:0 6px}
 .switch{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2);cursor:pointer}
 .switch input{appearance:none;width:30px;height:18px;border-radius:9px;background:var(--base);position:relative;cursor:pointer;margin:0}
 .switch input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
 .switch input:checked{background:var(--accent)}.switch input:checked::after{left:14px}
-.seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
-.seg button{flex:1;border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 0;border-radius:6px;cursor:pointer}.seg button.on{background:var(--wash);color:var(--ink)}
-main{padding:26px 30px 80px;min-width:0}
+main{padding:22px 30px 80px;min-width:0}
 .stale{display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--critical);font-weight:600}
 .top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(var(--tiles,4),minmax(140px,1fr));gap:14px;margin-bottom:18px}
-a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{border-color:var(--base)}a.overall.go{display:flex}
+a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{border-color:var(--base)}
 .hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
 .hero{display:flex;flex-direction:column;justify-content:space-between}
 .hero .fig{font:600 52px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
@@ -1378,7 +1511,7 @@ a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{
 .meter.warning i{background:var(--warning)}.meter.critical i{background:var(--critical)}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start}
 .full{grid-column:span 12}.stack{grid-column:span 5;display:flex;flex-direction:column;gap:16px;min-width:0}.stack.left{grid-column:span 7}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:80px}
 summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
 .head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font:600 16px/1.2 var(--display);margin:0}
 .head .meta{color:var(--muted);font-size:12px;margin-left:auto;text-align:right}
@@ -1421,6 +1554,9 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
+.pchev{border:0;background:none;padding:0 3px 0 0;margin:0;cursor:pointer;color:var(--muted);line-height:0;vertical-align:-2px}
+.pchev .chev{width:13px;height:13px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.thread .t .subn{font-size:11.5px}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:12.5px}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
 .phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
@@ -1428,7 +1564,6 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .gzsel{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
 appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
 background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
-nav .navsec{margin:12px 0 2px;padding:0 10px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .tabs{display:flex;gap:2px;margin:0 0 18px;border-bottom:1px solid var(--line)}
 .tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
 .tabs button:hover{color:var(--ink)}.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
@@ -1460,7 +1595,6 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .grip{cursor:grab}.grip:hover,.hide:hover,.totab:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg,.totab svg{width:14px;height:14px}
 .dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
 .ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
-nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-size:10.5px;color:var(--muted)}
 .hint{font-size:11.5px;color:var(--muted);margin:0}
 .changes .hint{margin:6px 0 2px}.paths{margin:0;padding-left:18px;font-size:12px}.paths code{word-break:break-all}
 .zt{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.zt .act{margin-left:auto;align-self:center}a.act:hover{text-decoration:none}
@@ -1483,17 +1617,53 @@ nav a.off{opacity:.45}nav a.off::after{content:"hidden";margin-left:6px;font-siz
 .gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
-@media (max-width:820px){.app{grid-template-columns:1fr}aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;flex-wrap:wrap}nav .sub{display:none}.controls{margin-top:0}main{padding:16px}
+@media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
 """
+
+# The top row both pages share: the mark and name with when the page was built,
+# the tabs, and the controls, pinned while the page scrolls. Each page passes
+# its own tabs and controls.
+def bar(mark_svg: str, name: str, built: str, tabs: str, controls: str) -> str:
+    return ('<header class="bar"><div class="brand">%s<div class="bname"><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div></div>'
+            '%s%s</header>' % (mark_svg, name, E(built), tabs, controls))
+
+
+# Auto, light and dark as icons, each named for a screen reader and on hover.
+THEME_SEG = ('<div class="seg theme" role="group" aria-label="Theme">'
+             '<button type="button" data-t="auto" title="Follow the system" aria-label="Theme: follow the system">'
+             '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+             '<path d="M8 2.4a5.6 5.6 0 0 1 0 11.2z" fill="currentColor"/></svg></button>'
+             '<button type="button" data-t="light" title="Light" aria-label="Theme: light">'
+             '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+             '<path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" '
+             'stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>'
+             '<button type="button" data-t="dark" title="Dark" aria-label="Theme: dark">'
+             '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 9.6A5.4 5.4 0 0 1 6.4 3a5.4 5.4 0 1 0 6.6 6.6z" fill="none" '
+             'stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button></div>')
+
+BAR_CSS = r"""
+header.bar{position:sticky;top:0;z-index:8;display:flex;align-items:stretch;gap:24px;padding:0 30px;min-height:58px;background:var(--page);border-bottom:1px solid var(--line)}
+.bar .brand{display:flex;align-items:center;gap:10px;flex:none}.bar .brand .mark{width:30px;height:30px;flex:none;display:block}
+.bar h1{font:600 17px/1.1 var(--display,Baskerville,"Baskerville Old Face",Georgia,serif);margin:0;letter-spacing:.005em;white-space:nowrap}
+.bar .bname p{margin:2px 0 0;color:var(--muted);font-size:11.5px;white-space:nowrap}
+.bar .tabs{flex:1;min-width:0;margin:0;border:0;align-self:stretch}
+.bar .tabs button{padding:0 12px;margin-bottom:-1px;border-bottom:2px solid transparent}.bar .tabs button.on{border-bottom-color:var(--accent)}
+.bar .bacts{display:flex;align-items:center;gap:6px;flex:none}
+.seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
+.seg button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 7px;border-radius:6px;cursor:pointer;line-height:0}
+.seg button.on{background:var(--wash);color:var(--ink)}.seg button:hover{color:var(--ink)}.seg.theme svg{width:15px;height:15px}
+html{scroll-padding-top:76px}
+.hiddencards{margin-top:12px}.hiddencards .gacts{margin:4px 0 0}
+@media (max-width:820px){header.bar{flex-wrap:wrap;gap:6px 12px;padding:8px 16px 0}.bar .brand{flex:1}.bar .tabs{order:3;flex-basis:100%;overflow-x:auto}.bar .tabs button{padding:8px 10px}}
+"""
+
 
 # Settings: the dialog, its sections and the cog that opens it. Kept apart so
 # a page built on this one (the workspace's own status page, where it runs
 # ahead of a release) can carry the same dialog with the same look.
 SETTINGS_CSS = r"""
-.brand{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px}.brand h1{flex:1;min-width:0}.brand .bacts{display:flex;gap:0}
-.brand>p{flex-basis:100%;margin:6px 0 0}
 .cog{flex:none;margin:0;padding:5px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;line-height:0}
 .cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
 .launcher-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -1587,10 +1757,14 @@ var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launc
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* A project's threads fold under its row on the Threads card; the fold is remembered. */
+document.querySelectorAll('.pchev').forEach(function(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
+function set(o){box.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}set(st.get('garrick-fold-'+b.dataset.sub)==='1');
+b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var o=box.hidden;set(o);st.set('garrick-fold-'+b.dataset.sub,o?'1':'0')})});
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
 window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
-tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});
+tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});document.body.dataset.tab=n;
 tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
 try{localStorage.setItem('garrick-tab',n)}catch(e){}window.dispatchEvent(new Event('resize'))};
 tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
@@ -1646,8 +1820,6 @@ document.addEventListener('focusin',function(e){if(tRow&&!tRow.contains(e.target
 document.addEventListener('keydown',function(e){if(e.key!=='Escape'||!tRow)return;var r=tRow,back=tc.contains(document.activeElement);tClose();
 if(back){var a=r.querySelector('a');if(a){tQuiet=true;a.focus()}}});
 window.addEventListener('scroll',function(){if(tRow)requestAnimationFrame(tPlace)},{passive:true});window.addEventListener('resize',function(){if(tRow)tPlace()});
-var links={};document.querySelectorAll('nav a[href^="#"]').forEach(function(a){links[a.getAttribute('href').slice(1)]=a});
-if('IntersectionObserver' in window){var io=new IntersectionObserver(function(es){es.forEach(function(x){if(x.isIntersecting&&links[x.target.id]){Object.keys(links).forEach(function(k){links[k].classList.remove('on')});links[x.target.id].classList.add('on')}})},{rootMargin:'-20% 0px -70% 0px'});Object.keys(links).forEach(function(id){var t=document.getElementById(id);if(t)io.observe(t)})}
 })();
 """
 
@@ -1667,18 +1839,20 @@ if(L&&L.v===2){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c
 function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
 st.set(KEY,JSON.stringify({v:2,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
 function sync(){var h=cards().filter(function(e){return e.hidden});
-document.querySelectorAll('nav a[href^="#"]').forEach(function(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');a.classList.toggle('off',!!(c&&c.hidden))});
 cards().forEach(function(c){var b=c.querySelector('.totab'),sec=c.closest('section.tab');if(!b||!sec)return;
 var to=sec.id==='tab-status'?'Overview':'Status';b.title='Move to '+to;b.setAttribute('aria-label','Move '+c.querySelector('h2').textContent+' to '+to)});
-var n=document.getElementById('hidden-note');if(n){n.hidden=!h.length;n.textContent=h.length+' card'+(h.length>1?'s':'')+' hidden. Click one in the list above to bring it back.'}}
+var n=document.getElementById('hidden-cards');if(n){n.hidden=!h.length;n.innerHTML=h.length?'<p class="hint">Hidden cards</p><div class="gacts">'+h.map(function(c){
+var t=c.querySelector('h2').textContent.replace(/[&<>"]/g,function(x){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[x]});
+return'<button class="act unhide" type="button" data-card="'+c.id+'" title="Show '+t+' again">'+t+'</button>'}).join('')+'</div>':''}}
 function toast(t){var el=document.getElementById('toast');if(!el)return;el.textContent=t;el.style.opacity=1;setTimeout(function(){el.style.opacity=0},2600)}
 document.addEventListener('click',function(e){
 var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();var mc=m.closest('.card'),ms=mc.closest('section.tab');
 var to=ms&&ms.id==='tab-status'?'overview':'status',slot=document.querySelector('#tab-'+to+' [data-slot$="left"]');
 if(slot){slot.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+(to==='status'?'Status':'Overview')+'.')}return}
 var b=e.target.closest('.head .hide,.head .grip');if(b){e.preventDefault();e.stopPropagation();
-if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from the sidebar, or Reset view.')}return}
-var a=e.target.closest('nav a[href^="#"]');if(a){var t=document.getElementById(a.getAttribute('href').slice(1)),c=t&&t.closest('.card');if(c&&c.hidden){c.hidden=false;c.open=true;save()}}},true);
+if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from Settings, or Reset view.')}return}
+var u=e.target.closest('.unhide');if(u){var uc=document.getElementById(u.dataset.card),ud=u.closest('dialog');if(ud)ud.close();if(uc){uc.hidden=false;uc.open=true;save();
+var us=uc.closest('section.tab');if(us&&window.StatusTab)StatusTab(us.id.slice(4));uc.scrollIntoView({block:'start'})}}},true);
 var drag=null,ph=document.createElement('div');ph.className='ph';
 document.addEventListener('dragstart',function(e){var g=e.target.closest&&e.target.closest('.grip');if(!g)return;drag=g.closest('.card');
 e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',drag.id);e.dataTransfer.setDragImage(drag.querySelector('summary'),24,20)}catch(x){}
@@ -1952,49 +2126,22 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     acting = flags_on["page-actions"]
     lists = todo_list(ws, link, now.date()) if flags_on["todo-list"] else []
 
-    # ---- sidebar
-    nav = [("overview", "Overview", worst, len(attn) or "")] + ([("graph", "Graph", "", "")] if show_graph else []) + \
-          [("threads", "Threads", "warning" if aging else "good", live)]
-    navh = "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in nav)
-    navh += "".join('<a class="sub" href="#zone-%s">%s<span class="n">%d</span></a>' % (re.sub(r"\W+", "-", z.lower()), E(z), len(T[z]["rows"])) for z in T)
-    # The work first, as the Overview and Todo tabs hold it; then the machinery, as the Status tab does.
-    more = []
-    if TD:                                    # a workspace with no Todo.md gets no Open actions at all
-        more.append(("todo", "Open actions", "good", open_actions))
-    if lists:
-        late = sum(r["late"] for _, rows in lists for r in rows)
-        more.append(("todolist", "Todo list", "warning" if late else "good", sum(len(r) for _, r in lists)))
-    more.append(("inboxes", "Inboxes", "warning" if waiting else "good", waiting or ""))
-    machine = [("checks", "Checks", "critical" if C and (C.get("errors") or C.get("failed")) else "warning" if C and C.get("warnings") else "good",
-                (C.get("errors", 0) + C.get("warnings", 0)) if C and not C.get("failed") else "")]
-    if J:
-        machine.append(("jobs", "Scheduled jobs", "critical" if any(j["state"] == "critical" for j in J) else "good", len(J)))
-    if L:
-        machine.append(("calls", "Assistant calls", "critical" if L["refused_today"] else "good", L["day"]))
-    machine += [("repos", "Repositories", "good", ""), ("wikis", "Wikis", "good", "")]
-    navh += "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in more)
-    navh += '<p class="navsec">Status</p>' + "".join('<a href="#%s"><span class="dot %s"></span>%s<span class="n">%s</span></a>' % (i, s, E(t), E(str(n))) for i, t, s, n in machine)
-    overall = "All clear" if not attn else "%d need%s attention" % (len(attn), "s" if len(attn) == 1 else "")
-    aside = ('<aside><div class="brand">%s<h1>%s</h1><div class="bacts">%s'
-             '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
-             'which Garrick this is, release notes, the view, and how to report a bug">%s</button></div>'
-             '<p>Built %s · <span id="age">just now</span></p></div>'
-             '<a class="overall go" href="#%s">%s<div><b>%s</b><span>%d live thread%s, %d touched this week</span></div></a><nav>%s</nav>'
-             '<div class="controls"><p class="hint" id="hidden-note" hidden></p>'
-
-             '<div class="seg" role="group" aria-label="Theme"><button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div></aside>'
-             % (mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME),
-                '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" title="Copy the command that rebuilds the page" '
-                'data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD),
-                GEAR, now.strftime("%a %d %b, %H:%M"), "attention" if attn else "overview", ICON[worst], E(overall), live, "" if live == 1 else "s", week, navh))
+    # ---- the top row, pinned while the page scrolls: the name and when it was
+    # built, the tabs, and the page's controls. There is no sidebar: the tabs
+    # move between the work and the machinery, the cards are open on the page,
+    # and the Status tab's own figures say whether anything needs attention.
+    controls = ('<div class="bacts"><button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
+                'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
+                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
+                'which Garrick this is, release notes, the view, hidden cards, and how to report a bug">%s</button>%s</div>'
+                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG))
 
     # ---- hero and tiles
     if attn:
-        hero = '<a class="hero go" id="overview" href="#attention"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
+        hero = '<a class="hero go" id="summary" href="#attention"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
             ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
     else:
-        hero = '<div class="hero" id="overview"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
+        hero = '<div class="hero" id="summary"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
     # Each tile leads to the card that explains it, in whichever tab that card sits.
     tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging), "threads")]
     if TD:
@@ -2018,38 +2165,115 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                                        '<div class="attn">%s</div>' % "".join('<a href="%s">%s<span>%s</span></a>' % (h, ICON[k], E(t)) for k, t, h in attn),
                                                        fixed=True)
 
-    # ---- threads, one column per zone
+    # ---- threads, one column per zone: a row per project, its threads folding
+    # under it; a project with no thread notes is a thread row of its own. With
+    # the effort ledger switched on, Time and Cost lay the last 30 days over it.
+    EV = None
+    store = folder / effort().STORE
+    if flags_on["effort"]:
+        try:
+            EV = Effort(effort().ledger(ws, store, now=now), now.date())
+        except Exception:                     # a transcript format this reader does not know: no Time and Cost
+            EV = None
+    said = {t.casefold() for t in (r["thread"] for z in T.values() for r in z["rows"] + z["parked"])}
+    project_n: Dict[str, int] = {}
+    for zz, data in T.items():
+        for p in {r["project"] for r in data["rows"] + data["parked"]}:
+            project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
+
+    def fresh_of(days):
+        return "good" if days is not None and days <= 14 else "warning" if days is not None and days <= 45 else "critical"
+
+    def row_html(r, sub=False, figures=None, parked=False, place=0):
+        days = (now.date() - r["updated"]).days if r["updated"] else None
+        k = fresh_of(days)
+        chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
+        under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
+        bar = '<span class="mu"></span>' if parked else \
+            '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s><div class="t"><a href="%s">%s</a>%s</div>%s'
+                '<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
+                % (" sub" if sub else "", 1 if parked else k == "good", E(thread_card(r, names, link, days, cmux, acting)),
+                   ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "",
+                   E(link(r["note"])), E(r["thread"]),
+                   ("<small>%s</small>" % under if under else (chips and "<small>%s</small>" % chips)),
+                   bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "")), k
+
+    def project_card(zone, project, items, days):
+        hub = items[0]["hub"]
+        party = []
+        for r in items:
+            party += [t for t in r["party"] if t not in party]
+        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": 0, "h": 1,
+             "w": project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else "",
+             "u": link(hub) if hub else link(items[0]["note"]), "pu": ""}
+        if cmux:
+            c["f"] = str((hub or items[0]["note"]).parent)
+        return json.dumps(c, separators=(",", ":"), ensure_ascii=False)
+
+    def units(zone, rs, parked=False):
+        """The rows of a zone, or of its Parked fold, a unit per project."""
+        out, counts = [], {"warning": 0, "critical": 0}
+        groups: Dict[str, list] = {}
+        for r in rs:
+            groups.setdefault(r["project"], []).append(r)
+        for i, (project, items) in enumerate(sorted(groups.items(), key=lambda kv: kv[0].casefold())):
+            alone = len(items) == 1 and items[0]["note"] == items[0]["hub"]
+            if alone:
+                r = items[0]
+                fig = EV.take([(zone, project, r["thread"])] + ([] if parked else [(zone, project, "")])) if EV else None
+                html_, k = row_html(r, figures=fig, parked=parked)
+                counts[k] = counts.get(k, 0) + 1
+                out.append('<div class="tunit" data-a="%d"%s>%s</div>' % (i, EV.attrs(fig) if EV else "", html_))
+                continue
+            subs, newest = [], None
+            figs = []
+            for j, r in enumerate(sorted(items, key=lambda r: r["thread"].casefold())):
+                fig = EV.take([(zone, project, r["thread"])]) if EV else None
+                figs.append(fig)
+                html_, k = row_html(r, sub=True, figures=fig, parked=parked, place=j)
+                counts[k] = counts.get(k, 0) + 1
+                subs.append(html_)
+                d = (now.date() - r["updated"]).days if r["updated"] else None
+                newest = d if newest is None or (d is not None and d < newest) else newest
+            own = EV.take([(zone, project, "")]) if EV else None    # the project's work in no thread, on its own row
+            total = None
+            if EV:
+                total = {f: own[f] + sum(fg[f] for fg in figs) for f in EV.fields}
+            sid = "sub-" + re.sub(r"\W+", "-", ("%s-%s%s" % (zone, project, "-parked" if parked else "")).lower()).strip("-")
+            k = fresh_of(newest)
+            n = len(items)
+            hub_link = link(items[0]["hub"]) if items[0]["hub"] else link(items[0]["note"])
+            bar = '<span class="mu"></span>' if parked else \
+                '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
+            head = ('<div class="thread proj" data-ok="%d" data-card="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
+                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a> <span class="muted subn">%d thread%s</span></div>'
+                    '%s<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
+                    % (1 if parked else k == "good", E(project_card(zone, project, items, newest)), sid, n, "" if n == 1 else "s", CHEV,
+                       E(hub_link), E(project), n, "" if n == 1 else "s", bar,
+                       "%dd" % newest if newest is not None else "—", EV.cells(total) if EV else ""))
+            out.append('<div class="tunit" data-a="%d"%s>%s<div class="subthreads tsort" id="%s" hidden>%s</div></div>'
+                       % (i, EV.attrs(total) if EV else "", head, sid, "".join(subs)))
+        return out, counts
+
     cols = ""
     for z, data in T.items():
-        rows, na, nb = [], 0, 0
-        for r in data["rows"]:
-            days = (now.date() - r["updated"]).days if r["updated"] else None
-            k = "good" if days is not None and days <= 14 else "warning" if days is not None and days <= 45 else "critical"
-            na += k == "warning"
-            nb += k == "critical"
-            chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
-            rows.append('<div class="thread" data-ok="%d" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s%s</small></div>'
-                        '<div class="fresh %s"><i style="width:%.1f%%"></i></div><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (k == "good", E(thread_card(r, names, link, days, cmux, acting)), E(link(r["note"])), E(r["thread"]), E(r["project"]), chips,
-                           k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)), "%dd" % days if days is not None else "—"))
-        held = []
-        for r in data["parked"]:
-            days = (now.date() - r["updated"]).days if r["updated"] else None
-            held.append('<div class="thread" data-ok="1" data-card="%s"><div class="t"><a href="%s">%s</a><small>%s</small></div>'
-                        '<span></span><span class="num muted" style="text-align:right">%s</span></div>'
-                        % (E(thread_card(r, names, link, days, cmux, acting)), E(link(r["note"])), E(r["thread"]), E(r["project"]),
-                           "%dd" % days if days is not None else "—"))
+        live_units, cnt = units(z, data["rows"])
+        held_units, _ = units(z, data["parked"], parked=True) if data["parked"] else ([], None)
         slug = re.sub(r"\W+", "-", z.lower())
-        parked_block = ('<details class="parked" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
-                        % (slug, CHEV, len(held), "".join(held))) if held else ""
-        meta = "%d live" % len(data["rows"]) + (" · %d aging" % na if na else "") + (" · %d stale" % nb if nb else "") + (" · %d done" % data["done"] if data["done"] else "")
-        cols += ('<details class="zone" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta">%s</span></summary>%s%s</details>'
-                 % (slug, CHEV, E(z), E(meta), "".join(rows) or '<p class="muted">No live threads.</p>', parked_block))
-    legend = ('<div class="legend"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
+        parked_block = ('<details class="parked tsort" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
+                        % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
+        meta = "%d live" % len(data["rows"]) + (" · %d aging" % cnt["warning"] if cnt["warning"] else "") + \
+            (" · %d stale" % cnt["critical"] if cnt["critical"] else "") + (" · %d done" % data["done"] if data["done"] else "")
+        cols += ('<details class="zone tsort" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
+                 % (slug, CHEV, E(z), E(meta), EV.zone_meta(z) if EV else "",
+                    "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
+    legend = ('<div class="legend mu"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>Over 45 days</span></div>')
     threads_card = card("threads", "Threads", "",
-                        '<div class="zones">%s</div>%s<p class="hint gsum">%d live · %d parked · by name · hover one for what to do</p>'
-                        % (cols, legend, live, parked_n))
+                        '<div class="tview" data-tm="updated">%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        % (tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
+
 
     # ---- checks
     if C is None:
@@ -2160,17 +2384,18 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     todo_tab = todo_list_card(lists, now.date(), acting) if lists else ""
     # Three tabs: Overview for where the work stands, Todo for the list, Status
     # for the machinery behind it. Cards can be moved between Overview and
-    # Status from their headers, and Reset view puts them back.
+    # Status from their headers, and Reset view puts them back. The figures at
+    # the top count the machinery's state, so they open the Status tab.
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
-    overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s%s</div>'
+    overview = section("overview", False, '<div class="grid"><div class="slot full" data-slot="top">%s%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom"></div></div>' % (top, graph_card, threads_card, todo_card, inbox_card))
+                       '<div class="slot full" data-slot="bottom"></div></div>' % (graph_card, threads_card, todo_card, inbox_card))
     # Needs attention leads the Status tab: what it lists is the machinery's.
-    status_tab = section("status", True, '<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
+    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
-                         % (attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
+                         % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(r["late"] for _, rows in lists for r in rows)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
@@ -2178,13 +2403,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>'
-            % (tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab))
+    header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>'
+            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), aside, main, settings(ws, launch),
-                PANEL_JS, LAYOUT_JS, JS, GRAPH_JS if show_graph else ""))
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
+                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

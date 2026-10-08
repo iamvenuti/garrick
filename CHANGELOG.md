@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-08
+
+A cleaner status page: Overview shows the work and nothing else, one row at the top replaces the sidebar, threads fold under their projects, and a preview shows where the assistant's time and money go.
+
 ### Added
 
 - *Time* and *Cost* on the status page's Threads card, behind the `effort` preview flag: the same rows show the assistant's active time or list-price cost over the last 30 days, largest first, read from Claude Code's own transcripts with no model call. A line under the columns accounts for what no row shows, so the figures add up. `effort.py --record`, run nightly, keeps each day's totals once the transcripts are cleaned up. Claude Code only for now. ([#17](https://github.com/iamvenuti/garrick/issues/17))
@@ -205,7 +209,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/iamvenuti/garrick/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/iamvenuti/garrick/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/iamvenuti/garrick/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/iamvenuti/garrick/compare/v0.6.1...v0.7.0

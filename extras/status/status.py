@@ -389,7 +389,7 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[Tuple[str, List[d
             note = zone / t["file"]
             rows.append(dict(t, when=when, late=late, link=link(note), zone=zone.name,
                              sort=(not late, when or dt.date.max, order.get(t["section"] or "", len(order)), t["text"].casefold())))
-        if rows:
+        if rows or (zone / "Todo.md").is_file():          # an empty list still takes a new line
             out.append((zone.name, sorted(rows, key=lambda r: r["sort"])))
     return out
 
@@ -406,7 +406,23 @@ def todo_buttons(zone: str, r: dict) -> str:
             '<details class="tdate"><summary>Date</summary><div>%s</div></details>' % (req("todo-done"), E(r["text"][:80]), picks))
 
 
-def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions: bool = False) -> str:
+def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
+    """Per zone, the projects the + dialog offers, each with the threads that
+    have notes of their own. A project is parked when all its threads are."""
+    out: Dict[str, List[dict]] = {}
+    for zone, data in T.items():
+        groups: Dict[str, list] = {}
+        for r in data["rows"] + data["parked"]:
+            groups.setdefault(r["project"], []).append(r)
+        out[zone] = [{"name": p, "parked": all(r["status"] == "parked" for r in rs),
+                      "subs": [{"name": r["thread"], "parked": r["status"] == "parked"}
+                               for r in sorted(rs, key=lambda r: r["thread"].casefold()) if r["note"] != r["hub"]]}
+                     for p, rs in groups.items()]
+    return out
+
+
+def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions: bool = False,
+                   projects: Optional[Dict[str, List[dict]]] = None) -> str:
     def chip(r):
         if r["when"] is None:
             return '<span class="chip">waiting</span>' if r["waiting"] else ""
@@ -421,9 +437,12 @@ def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions:
                '<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["thread"] or Path(r["file"]).stem)) if (r["thread"] or r["file"] != "Todo.md") else "",
                md_inline(r["text"]), chip(r), '<span class="muted">%s</span>' % E(r["section"] or "in the thread note"))
             for r in rows)
-        cols += '<div class="tzone"><h4>%s <span class="muted">%d</span></h4>%s</div>' % (E(zone), len(rows), items)
+        add = ('<button type="button" class="act primary tadd-open" data-zone="%s" title="Add an action to %s/Todo.md">＋ Add</button>'
+               % (E(zone), E(zone))) if actions else ""
+        cols += '<div class="tzone"><h4>%s <span class="muted">%d</span>%s</h4>%s</div>' % (E(zone), len(rows), add, items)
+    dialog = add_dialog("".join(add_tree(z, (projects or {}).get(z, [])) for z, _ in lists)) if actions else ""
     return ('<div id="todolist" class="todotab"><p class="hint">Every open action in the zones, overdue first, read from the notes. '
-            'A preview feature.</p><div class="tzones">%s</div></div>' % cols)
+            'A preview feature.</p><div class="tzones">%s</div>%s</div>' % (cols, dialog))
 
 
 _EF = None
@@ -564,6 +583,100 @@ function mode(m){v.dataset.tm=m;v.querySelectorAll('.tmodes button').forEach(fun
 v.querySelectorAll('.tsort').forEach(function(c){order(c,m)});st.set('garrick-threads-view',m)}
 v.querySelectorAll('.tmodes button').forEach(function(b){b.onclick=function(){mode(b.dataset.tm)}});
 var m=st.get('garrick-threads-view');if(m&&v.querySelector('.tmodes button[data-tm="'+m+'"]'))mode(m)});
+"""
+
+
+# ---- adding a line from the Todo list. Shared with the workspace's own page:
+# the dialog, the tree it picks a project or thread from, its styles and its
+# script. Each page supplies only TaddOpen's button and window.TaddSend, the
+# way its request reaches page_action.py.
+def add_tree(zone: str, projects: List[dict]) -> str:
+    """The thread picker: No thread, then each live project with its threads
+    folding under it, then the parked ones under their own label, since an
+    action can still belong to them. `projects` are dicts with name, parked
+    and subs, each sub a dict with name and parked."""
+    name = "tadd-t-%s" % zone
+    out = ['<label class="tnode"><input type="radio" name="%s" value="-" checked><span>No thread</span></label>' % E(name)]
+    shown_parked = False
+    for r in sorted(projects, key=lambda r: (bool(r["parked"]), r["name"].casefold())):
+        if r["parked"] and not shown_parked:
+            out.append('<div class="tsep">Parked</div>')
+            shown_parked = True
+        node = '<label class="tnode"><input type="radio" name="%s" value="%s"><span>%s</span></label>' % (E(name), E(r["name"]), E(r["name"]))
+        if not r["subs"]:
+            out.append('<div class="tproj" data-n="%s"><span class="tchev-sp"></span>%s</div>' % (E(r["name"].lower()), node))
+            continue
+        subs = "".join('<label class="tnode tsub" data-n="%s"><input type="radio" name="%s" value="%s"><span>%s</span>%s</label>'
+                       % (E(t["name"].lower()), E(name), E(r["name"] + "/" + t["name"]), E(t["name"]),
+                          ' <span class="chip">parked</span>' if t["parked"] else "") for t in r["subs"])
+        n = len(r["subs"])
+        count = "%d thread%s" % (n, "" if n == 1 else "s")
+        out.append('<div class="tproj" data-n="%s"><button type="button" class="tchev" aria-expanded="false" title="Show its %s">%s</button>'
+                   '%s<small>%s</small><div class="tsubs" hidden>%s</div></div>' % (E(r["name"].lower()), count, CHEV, node, count, subs))
+    return '<div class="ttree" data-zone="%s" hidden>%s</div>' % (E(zone), "".join(out))
+
+
+def add_dialog(trees: str) -> str:
+    return ('<dialog id="tadd" class="tadd" aria-labelledby="tadd-h"><h3 id="tadd-h">New action in <span id="tadd-zone"></span></h3>'
+            '<label class="tlab" for="tadd-text">What</label><input type="text" id="tadd-text" maxlength="500" autocomplete="off" placeholder="Send the revised terms">'
+            '<div class="tlab">Thread <span class="hint">optional</span><input type="search" id="tadd-filter" placeholder="Filter" aria-label="Filter projects and threads"></div>'
+            '<div class="ttrees">%s</div><div class="tlab">Date <span class="hint">optional</span></div>'
+            '<div class="tadd-dates"><div class="seg" role="group" aria-label="Quick dates"><button type="button" data-q="" class="on">None</button>'
+            '<button type="button" data-q="0">Today</button><button type="button" data-q="1">Tomorrow</button><button type="button" data-q="7">In a week</button></div>'
+            '<input type="date" id="tadd-date" aria-label="Date"></div><p class="hint" id="tadd-where">Goes to the Inbox.</p>'
+            '<div class="tadd-acts"><button type="button" class="act" id="tadd-cancel">Cancel</button>'
+            '<button type="button" class="act primary" id="tadd-ok">Add</button></div></dialog>' % trees)
+
+
+TADD_CSS = r"""
+.act.primary{background:var(--accent);border-color:var(--accent);color:#fff}.act.primary:hover{filter:brightness(1.08);color:#fff}
+dialog.tadd{width:min(520px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:20px 22px;box-shadow:0 18px 60px rgba(0,0,0,.25)}
+dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
+.tadd h3{margin:0 0 14px;font-size:16px}.tadd .tlab{display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:12px;font-weight:600;color:var(--ink2)}
+.tadd .tlab .hint{font-weight:400}.tadd input[type=text],.tadd input[type=search],.tadd input[type=date]{font:inherit;font-size:13px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.tadd #tadd-text{width:100%}.tadd #tadd-filter{margin-left:auto;width:150px;padding:4px 8px;font-size:12px}
+.ttrees{border:1px solid var(--line);border-radius:10px;background:var(--raise);max-height:260px;overflow:auto;padding:6px 8px}
+.tnode{display:inline-flex;align-items:center;gap:7px;padding:4px 2px;font-size:13px;cursor:pointer}.tnode input{accent-color:var(--accent);margin:0}
+.tproj{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;border-top:1px solid var(--grid)}.tproj small{color:var(--muted);font-size:11.5px}
+.tsep{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:10px 2px 2px;border-top:1px solid var(--grid)}
+.tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
+.tchev .chev{width:13px;height:13px}.tchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.tsubs{flex-basis:100%;padding-left:26px;display:flex;flex-direction:column}.tsubs[hidden]{display:none}.tnode.tsub{font-size:12.5px}
+.tadd-dates{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.tadd-dates .seg button{padding:5px 10px;font-size:12px;line-height:1.2}
+.tadd-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.tadd-acts .act{font-size:12.5px;padding:7px 14px}
+.tadd .shake{animation:tshake .3s}@keyframes tshake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+"""
+
+TADD_JS = r"""
+(function(){var dlg=document.getElementById('tadd');if(!dlg)return;
+var dtext=document.getElementById('tadd-text'),ddate=document.getElementById('tadd-date'),dfil=document.getElementById('tadd-filter'),dwhere=document.getElementById('tadd-where'),dz='';
+function at(n){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return d}
+function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function lab(d){return d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}
+function tree(){return dlg.querySelector('.ttree[data-zone="'+dz+'"]')}
+/* where the line will land, as todo_lines.add files it */
+function where(){var v=ddate.value,w=/(^|\s)#waiting/.test(dtext.value),s='Inbox';
+if(v){var n=Math.round((new Date(v+'T12:00:00')-at(0))/864e5);s=w?'Waiting on':n<=7?'This week':'Soon'}
+dwhere.textContent='Goes to '+s+(v?', '+(w?'chase ':'due ')+lab(new Date(v+'T12:00:00')):'')+'.';
+dlg.querySelectorAll('[data-q]').forEach(function(b){b.classList.toggle('on',b.dataset.q===''?!v:iso(at(+b.dataset.q))===v)})}
+function tfilt(){var q=dfil.value.trim().toLowerCase(),t=tree();if(!t)return;t.querySelectorAll('.tsep').forEach(function(x){x.hidden=!!q});
+t.querySelectorAll('.tproj').forEach(function(p){var subs=p.querySelectorAll('.tsub'),any=false;
+subs.forEach(function(x){var m=!q||x.dataset.n.indexOf(q)>=0;x.hidden=!m;any=any||m&&!!q});
+var me=!q||p.dataset.n.indexOf(q)>=0;p.hidden=!(me||any);var box=p.querySelector('.tsubs'),c=p.querySelector('.tchev');
+if(box&&q){box.hidden=!any&&!me;if(me&&!any)subs.forEach(function(x){x.hidden=false})}else if(box){box.hidden=c.getAttribute('aria-expanded')!=='true';subs.forEach(function(x){x.hidden=false})}})}
+window.TaddOpen=function(z){dz=z;document.getElementById('tadd-zone').textContent=z;dlg.querySelectorAll('.ttree').forEach(function(t){t.hidden=t.dataset.zone!==z});
+dtext.value='';ddate.value='';dfil.value='';var none=tree()&&tree().querySelector('input[value="-"]');if(none)none.checked=true;tfilt();where();dlg.showModal();dtext.focus()};
+dlg.addEventListener('click',function(e){var c=e.target.closest('.tchev');if(c){var box=c.parentNode.querySelector('.tsubs'),o=box.hidden;box.hidden=!o;c.setAttribute('aria-expanded',o?'true':'false');return}
+var q=e.target.closest('[data-q]');if(q){ddate.value=q.dataset.q===''?'':iso(at(+q.dataset.q));where();return}
+if(e.target===dlg){var r=dlg.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dlg.close()}});
+ddate.addEventListener('input',where);dtext.addEventListener('input',where);dfil.addEventListener('input',tfilt);
+document.getElementById('tadd-cancel').addEventListener('click',function(){dlg.close()});
+/* sent inside the click that asked for it, as every page action is */
+function add(){var t=dtext.value.replace(/\s+/g,' ').trim();if(!t){dtext.classList.remove('shake');void dtext.offsetWidth;dtext.classList.add('shake');dtext.focus();return}
+var pick=tree()&&tree().querySelector('input:checked');if(window.TaddSend)window.TaddSend(dz,pick?pick.value:'-',ddate.value||'-',t);dlg.close();
+var el=document.getElementById('toast');if(el){el.textContent='Adding to '+dz+': '+t.slice(0,60)+(t.length>60?'…':'');el.style.opacity=1;setTimeout(function(){el.style.opacity=0},3000)}}
+document.getElementById('tadd-ok').addEventListener('click',add);
+dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();add()}})})();
 """
 
 
@@ -1574,6 +1687,7 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .titem .tmeta{display:flex;gap:8px;align-items:center;margin-top:2px;font-size:11.5px}.chip.late{color:var(--critical);border-color:var(--critical)}
 .titem{display:grid;grid-template-columns:auto 1fr;column-gap:10px}.titem>.ttext,.titem>.tmeta{grid-column:2}.titem>.tacts{grid-row:1/3;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:1px}
 .titem:not(:has(.tacts)){display:block}.nohost .tacts{display:none}.nohost .titem{display:block}
+.tzone h4{display:flex;align-items:center;gap:6px}.tzone h4 .tadd-open{margin-left:auto;font-size:11.5px}.nohost .tadd-open{display:none}
 .tick{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--base);background:none;cursor:pointer;padding:0}.tick:hover{border-color:var(--good);background:var(--wash)}
 .tdate{position:relative;font-size:10.5px}.tdate summary{list-style:none;cursor:pointer;color:var(--muted)}.tdate summary::-webkit-details-marker{display:none}
 .tdate>div{position:absolute;z-index:5;left:0;top:16px;display:flex;flex-direction:column;gap:3px;padding:6px;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
@@ -1757,6 +1871,10 @@ var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launc
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
+/* The Todo list's + button (page-actions, in the app): Garrick's dialog opens on
+   that zone, and the app runs page_action.py with the request, then rebuilds. */
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.tadd-open[data-zone]');if(a&&window.TaddOpen)TaddOpen(a.dataset.zone)});
+window.TaddSend=function(z,target,date,text){if(host)host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}})};
 /* A project's threads fold under its row on the Threads card; the fold is remembered. */
 document.querySelectorAll('.pchev').forEach(function(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
 function set(o){box.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}set(st.get('garrick-fold-'+b.dataset.sub)==='1');
@@ -2381,7 +2499,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data))
 
-    todo_tab = todo_list_card(lists, now.date(), acting) if lists else ""
+    todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T)) if lists else ""
     # Three tabs: Overview for where the work stands, Todo for the list, Status
     # for the machinery behind it. Cards can be moved between Overview and
     # Status from their headers, and Reset view puts them back. The figures at
@@ -2409,8 +2527,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
-                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS, GRAPH_JS if show_graph else ""))
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
+                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

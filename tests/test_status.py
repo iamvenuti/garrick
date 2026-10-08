@@ -817,6 +817,24 @@ class TestPreviewFeatures(StatusCase):
         self.assertLess(todo, html.index('id="todolist"'))                    # the list sits in its own tab
         self.assertIn("StatusTab(sec.id.slice(4))", status.JS)                  # a link opens the tab its target is in
 
+    def test_add_a_line_only_with_actions(self):
+        self.todo()
+        self.on()
+        self.assertNotIn('id="tadd"', self.page())
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": True, "page-actions": True}))
+        html = self.page()
+        self.assertIn('<button type="button" class="act primary tadd-open" data-zone="Work"', html)
+        self.assertIn('<button type="button" class="act primary tadd-open" data-zone="Personal"', html)   # an empty list takes a line too
+        dialog = html[html.index('<dialog id="tadd"'):html.index("</dialog>", html.index('<dialog id="tadd"'))]
+        work = dialog[dialog.index('<div class="ttree" data-zone="Work"'):]
+        self.assertIn('value="-" checked><span>No thread</span>', work)
+        self.assertIn('value="Acme Review"', work)                               # a project can be picked
+        self.assertIn('value="Acme Review/Pricing"', work)                       # and a thread under it
+        self.assertIn('<input type="date" id="tadd-date"', dialog)
+        self.assertIn("verb:'todo-add'", status.JS)                               # the app runs page_action.py with it
+        self.assertIn("window.TaddOpen=function(z)", status.TADD_JS)
+        self.assertIn(".nohost .tadd-open{display:none}", status.CSS)             # a browser cannot act
+
     def test_actions_only_when_switched_on(self):
         self.todo()
         self.on()

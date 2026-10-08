@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- *＋ Add* on the status page's Todo list, behind the `page-actions` preview flag, in Garrick's Status.app: a new line in a zone's `Todo.md`, with an optional project or thread picked from a tree of the zone and an optional date. Undated lines go to the Inbox; dated ones where a dated line belongs. `page_action.py` gains `todo-add`, and `todo_lines.py` gains `add()`.
+
 ## [0.8.0] - 2026-10-08
 
 A cleaner status page: Overview shows the work and nothing else, one row at the top replaces the sidebar, threads fold under their projects, and a preview shows where the assistant's time and money go.

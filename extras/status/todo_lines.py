@@ -254,7 +254,7 @@ def set_date(zone_dir, rel, k, date, today=None):
                 section = lines[j][3:].strip()
                 break
     if section == "Inbox" and date:
-        moved = "Waiting on" if p["waiting"] else "This week" if (date - today).days <= 7 else "Soon"
+        moved = section_for(date, p["waiting"], today)
         del lines[i]
         try:
             _insert_top(lines, moved, new)
@@ -266,3 +266,43 @@ def set_date(zone_dir, rel, k, date, today=None):
     _save(path, lines)
     _rekey(zone_dir, k, key(new))
     return p["text"], moved, key(new)
+
+
+def section_for(date, waiting, today=None):
+    """Where a dated line goes in Todo.md: This week when due within seven
+    days, Soon when later, Waiting on when it is a chase. Must match set_date."""
+    today = today or dt.date.today()
+    return "Waiting on" if waiting else "This week" if (date - today).days <= 7 else "Soon"
+
+
+def add(zone_dir, text, label=None, date=None, today=None):
+    """A new open line in the zone's Todo.md: `- [ ] [[label]]: text`, with
+    `📅` for its date, or `⏳` on a `#waiting` line. With no date it goes to
+    the top of the Inbox; with one, where set_date would send it, so a dated
+    line is triaged already. A line already in the list is refused rather
+    than written twice. Returns (the line, its section, its key)."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    text = re.sub(r"^-\s*\[[ xX]\]\s*", "", text)
+    if not text:
+        raise ValueError("there is no text")
+    line = "- [ ] " + ("[[%s]]: " % label if label else "") + text
+    waiting = parse(line)["waiting"]
+    if date:
+        line = fields_last("%s %s %s" % (line, "⏳" if waiting else "📅", date.isoformat()))
+    path = os.path.join(zone_dir, "Todo.md")
+    try:
+        lines = _load(path)
+    except OSError:
+        raise NotFound
+    if any(l.rstrip() == line for l in lines):
+        raise ValueError("that line is already in the list")
+    section = section_for(date, waiting, today) if date else "Inbox"
+    try:
+        _insert_top(lines, section, line)
+    except NotFound:
+        if section == "Inbox":
+            raise
+        section = "Inbox"
+        _insert_top(lines, section, line)
+    _save(path, lines)
+    return line, section, key(line)

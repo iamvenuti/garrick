@@ -6,12 +6,16 @@
         python3 page_action.py --workspace ~/Garrick
 
 Garrick's Status.app runs it when a button on the page asks; nothing else can,
-because a browser has no way to reach it. Five verbs, each changing one thing
+because a browser has no way to reach it. Seven verbs, each changing one thing
 and committing it in the zone's repository, as the skills would:
 
     todo-done   tick a Todo line, with Obsidian Tasks' ✅ date
     todo-undo   reopen a line ticked from the page
     todo-date   set or clear its date: 📅, or ⏳ on a #waiting line; "-" clears
+    todo-add    a new line in the zone's Todo.md, from the Todo list's + button:
+                {"zone", "text", "target": "-", "Project" or "Project/Thread",
+                "date": an ISO date or "-"}; the Inbox, or with a date where a
+                dated line goes; a line already there is refused
     park        a thread note's status to parked, with a dated entry
     wake        and back to active
     run         start a scheduled job now, through launchd, so it keeps its
@@ -36,7 +40,7 @@ import sys
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-VERBS = ("todo-done", "todo-undo", "todo-date", "park", "wake", "run")
+VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
@@ -117,6 +121,45 @@ def todo(ws: Path, req: dict) -> str:
     return say
 
 
+def todo_add(ws: Path, req: dict) -> str:
+    """A new line in the zone's Todo.md. The target is checked against the
+    folders: a project with its hub, or a thread with its note. The link names
+    the thread, or the note's path when another note in the zone has its name."""
+    tl = todo_lines()
+    zone = zone_dir(ws, req.get("zone"))
+    note = zone / "Todo.md"
+    if not note.is_file():
+        raise Refused("%s has no Todo.md" % zone.name)
+    text, target, raw = req.get("text"), req.get("target") or "-", req.get("date") or "-"
+    if not isinstance(text, str) or len(text) > 1000 or not isinstance(target, str) or not isinstance(raw, str):
+        raise Refused("not a line to add")
+    label = None
+    if target != "-":
+        parts = target.split("/")
+        if len(parts) not in (1, 2) or any(not p or p.startswith((".", "_")) or p in ("..", "Threads") for p in parts):
+            raise Refused("not a project or thread: %r" % target)
+        found = zone / parts[0] / (parts[0] + ".md") if len(parts) == 1 else zone / parts[0] / "Threads" / parts[1] / (parts[1] + ".md")
+        if not found.is_file():
+            raise Refused("no %s called %r in %s" % ("project" if len(parts) == 1 else "thread", target, zone.name))
+        name = parts[-1]
+        same = sum(1 for n in tl.notes(str(zone)) if Path(n).stem.lower() == name.lower())
+        label = name if same <= 1 else "%s|%s" % (found.relative_to(zone).with_suffix("").as_posix(), name)
+    try:
+        when = None if raw == "-" else dt.date.fromisoformat(raw)
+    except ValueError:
+        raise Refused("not a date: %r" % raw)
+    before = note.read_bytes()
+    try:
+        line, section, _ = tl.add(str(zone), text, label, when)
+    except ValueError as e:
+        raise Refused(str(e))
+    except tl.NotFound:
+        raise Refused("%s's Todo.md has no Inbox section" % zone.name)
+    said = tl.parse(line)["text"]
+    commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
+    return "Added to %s: %s" % (section, said)
+
+
 def park(ws: Path, req: dict, today: dt.date) -> str:
     """The threads skill's Park and Wake: the status, `updated:`, a dated entry, a commit."""
     zone = zone_dir(ws, req.get("zone"))
@@ -195,6 +238,8 @@ def act(ws: Path, req, today=None) -> str:
         return run_job(req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
+    if req["verb"] == "todo-add":
+        return todo_add(ws, req)
     return todo(ws, req)
 
 

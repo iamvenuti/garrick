@@ -120,6 +120,43 @@ class TestTodo(ActionCase):
         self.assertEqual(before, (personal / "Todo.md").read_bytes())
 
 
+class TestAdd(ActionCase):
+    """The Todo list's + button: one new line, committed, or nothing at all."""
+
+    def add(self, **req):
+        return self.act(verb="todo-add", zone="Work", **req)
+
+    def test_a_line_with_no_thread_tops_the_inbox(self):
+        self.assertEqual("Added to Inbox: Book the room | twice", self.add(text="  Book the room |  twice ", target="-", date="-"))
+        todo = (self.work / "Todo.md").read_text()
+        self.assertIn("## Inbox\n\n- [ ] Book the room | twice\n- [ ] [[Pricing]]", todo)
+        self.assertEqual(("Work: added to Inbox, Book the room | twice", ""), self.last_commit())
+
+    def test_a_thread_and_a_date(self):
+        write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace("## Done", "## This week\n\n## Soon\n\n## Done"))
+        git(self.work, "commit", "-qam", "sections")
+        soon = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        self.assertEqual("Added to This week: Call Dana", self.add(text="Call Dana", target="Acme Review/Pricing", date=soon))
+        self.assertIn("## This week\n\n- [ ] [[Pricing]]: Call Dana 📅 %s\n" % soon, (self.work / "Todo.md").read_text())
+        self.add(text="Chase the quote #waiting", target="Acme Review", date=soon)      # no Waiting on section: the Inbox
+        self.assertIn("- [ ] [[Acme Review]]: Chase the quote #waiting ⏳ %s\n" % soon, (self.work / "Todo.md").read_text())
+
+    def test_a_shared_name_is_linked_by_its_path(self):
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing"))
+        self.add(text="Compare the two", target="Acme Review/Pricing")
+        self.assertIn("- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]: Compare the two\n", (self.work / "Todo.md").read_text())
+
+    def test_refusals_change_nothing(self):
+        before = (self.work / "Todo.md").read_bytes()
+        for req in ({"text": "", "target": "-"}, {"text": "x", "target": "../Personal"}, {"text": "x", "target": "Acme Review/Threads"},
+                    {"text": "x", "target": "Acme Review/Nope"}, {"text": "x", "target": "No Such"}, {"text": "x", "date": "soon"},
+                    {"text": "Acme Corp: Invoice for September"}, {"text": 7}, {"text": "x" * 1001}):
+            with self.assertRaises(pa.Refused, msg=req):
+                self.add(**req)
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
+
+
 class TestPark(ActionCase):
     def test_park_and_wake_as_the_skill_does(self):
         rel = "Acme Review/Threads/Pricing/Pricing.md"

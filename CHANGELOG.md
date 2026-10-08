@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-08
+
+Add an action from the status page's Todo list.
+
 ### Added
 
 - *＋ Add* on the status page's Todo list, behind the `page-actions` preview flag, in Garrick's Status.app: a new line in a zone's `Todo.md`, with an optional project or thread picked from a tree of the zone and an optional date. Undated lines go to the Inbox; dated ones where a dated line belongs. `page_action.py` gains `todo-add`, and `todo_lines.py` gains `add()`.
@@ -213,7 +217,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/iamvenuti/garrick/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/iamvenuti/garrick/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/iamvenuti/garrick/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/iamvenuti/garrick/compare/v0.7.0...v0.7.1

@@ -4,9 +4,13 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-08
+
+Garrick's Status in the menu bar, as a preview: your projects and threads one click from any app.
+
 ### Added
 
-- Garrick's Status in the menu bar, behind the `menu-bar` preview flag, in Garrick's Status.app: an icon with the live threads of the zone the graph shows, each opening a session in the app picked in Settings, and a red dot when the Status tab has one. Settings › Menu bar switches the icon on, opens the app at login and records a hotkey for the menu. With the icon on, closing the window leaves the app in the menu bar. Rebuild the app with `make-app.sh` to get it.
+- Garrick's Status in the menu bar, behind the `menu-bar` preview flag, in Garrick's Status.app. An icon lists the live projects of the zone the graph shows; pointing at one opens a line of app icons, the ways its card offers to open it, then its threads, each with its own icons. Clicking a project's or a thread's name opens it with the default from Settings, the same as clicking a thread's name in the window. The icon carries the *Status* tab's red dot. Settings › Menu bar switches the icon on, opens the app at login and records a hotkey that opens the menu from any app. With the icon on, closing the window leaves the app in the menu bar. Rebuild the app with `make-app.sh` to get it.
 
 ## [0.8.1] - 2026-10-08
 
@@ -221,7 +225,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/iamvenuti/garrick/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/iamvenuti/garrick/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/iamvenuti/garrick/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/iamvenuti/garrick/compare/v0.7.1...v0.7.2

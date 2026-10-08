@@ -870,7 +870,8 @@ class TestPreviewFeatures(StatusCase):
         write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
         html = self.page()
         self.assertRegex(html, r'Menu bar</b><span class="chip on">on</span>')
-        self.assertIn('<section class="setsec apponly" id="menu-settings">', html)
+        self.assertIn('<section class="setsec apponly" id="menu-settings" hidden>', html)   # until the app answers
+        self.assertIn("if(!host||!box)return;box.hidden=false", status.MENU_SETTINGS_JS)
         for control in ('id="menu-show"', 'id="menu-login"', 'id="menu-hotkey"'):   # the three settings
             self.assertIn(control, html)
         self.assertIn(".nohost .apponly{display:none}", status.SETTINGS_CSS)   # a browser has no menu bar to offer
@@ -901,7 +902,7 @@ class TestPreviewFeatures(StatusCase):
         for key in ("'garrick-graph-place'", "'garrick-default'", "'garrick-launchers'"):
             self.assertIn("g(%s)" % key, status.MENU_JS)
         self.assertIn("document.addEventListener('change',function(){setTimeout(sync,0)},true)", status.MENU_JS)
-        self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_JS)     # the app's settings do not rebuild the page
+        self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_SETTINGS_JS)     # the app's settings do not rebuild the page
 
     def test_a_project_without_threads_is_its_own_thread(self):
         write(self.root / "Zones" / "Work" / "Solo" / "Solo.md",

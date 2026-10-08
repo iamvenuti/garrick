@@ -692,13 +692,21 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 MENU_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
-function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var el=document.getElementById('menu-data'),data=null;try{data=el?JSON.parse(el.textContent):null}catch(e){}
 function sync(){var on={};try{on=JSON.parse(g('garrick-launchers')||'{}')}catch(e){}
 host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:g('garrick-default')||'note',
 launchers:(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}})}
 sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
-var box=document.getElementById('menu-settings');if(!box)return;
+})();
+"""
+
+# Settings › Menu bar's controls, for any page that carries menu_settings():
+# shown only inside the app, which answers them. Shared with pages built
+# elsewhere, which send the menu's rows their own way.
+MENU_SETTINGS_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
+function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey');
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
 if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
@@ -1381,7 +1389,7 @@ def menu_settings() -> str:
     """Settings › Menu bar (preview, menu-bar), shown in Garrick's Status.app
     only: the icon, opening at login, and the shortcut that opens the menu.
     The app keeps all three, so they hold when the window is closed."""
-    return ('<section class="setsec apponly" id="menu-settings"><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
+    return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
             'threads of the zone the graph shows; choosing one opens a session on it in the app picked above. Close the window and '
             'the icon stays.</p>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show in the menu bar'
@@ -2616,7 +2624,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
                 E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
-                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + MENU_JS, GRAPH_JS if show_graph else ""))
+                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + MENU_JS + MENU_SETTINGS_JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -345,6 +345,8 @@ FLAGS = {
                      "from its card. Each changes one line or one status field and commits it, as the skills do."),
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
+    "menu-bar": ("Menu bar", "In Garrick's Status.app: an icon in the menu bar with the live threads of the zone the graph shows, "
+                 "each opening a session, and a red dot when something failed. Switched on in the app's Settings."),
 }
 
 
@@ -677,6 +679,45 @@ var pick=tree()&&tree().querySelector('input:checked');if(window.TaddSend)window
 var el=document.getElementById('toast');if(el){el.textContent='Adding to '+dz+': '+t.slice(0,60)+(t.length>60?'…':'');el.style.opacity=1;setTimeout(function(){el.style.opacity=0},3000)}}
 document.getElementById('tadd-ok').addEventListener('click',add);
 dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();add()}})})();
+"""
+
+
+# Preview, menu-bar. Inside Garrick's Status.app the page hands the app what
+# its menu bar icon lists: the build's own rows (#menu-data, absent with the
+# flag off, which takes the icon away), with the zone the graph shows and the
+# app a thread opens in, both kept in this window's storage. It sends them at
+# load and after any change, so the menu follows the graph's drop-down and
+# Settings. Settings › Menu bar is the app's, not the page's: the app puts
+# its values in window.GarrickApp and keeps what is chosen here.
+MENU_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
+var el=document.getElementById('menu-data'),data=null;try{data=el?JSON.parse(el.textContent):null}catch(e){}
+function sync(){var on={};try{on=JSON.parse(g('garrick-launchers')||'{}')}catch(e){}
+host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:g('garrick-default')||'note',
+launchers:(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}})}
+sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
+var box=document.getElementById('menu-settings');if(!box)return;
+var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey');
+function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
+if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
+window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
+/* the app's settings: kept by the app, so a change here does not rebuild the page */
+function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
+show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
+login.addEventListener('change',function(e){tell(e,{login:login.checked})});
+var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
+function name(e){var c=e.code;if(/^Key[A-Z]$/.test(c))return c.slice(3);if(/^Digit\d$/.test(c))return c.slice(5);if(/^F\d{1,2}$/.test(c))return c;
+return{Space:'Space',Minus:'-',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`'}[c]||null}
+key.addEventListener('keydown',function(e){if(e.key==='Tab')return;e.preventDefault();e.stopPropagation();
+if(e.key==='Escape'){key.blur();return}
+if((e.key==='Backspace'||e.key==='Delete')&&!(e.metaKey||e.ctrlKey||e.altKey)){host.postMessage({app:{hotkey:null}});return}
+var n=name(e);if(!n)return;if(!(e.metaKey||e.ctrlKey||e.altKey)&&!/^F\d/.test(n)){say('Use ⌘, ⌃ or ⌥ with the key.');return}
+var mods=MOD.filter(function(m){return e[m[0]]});
+host.postMessage({app:{hotkey:{code:e.code,mods:mods.map(function(m){return m[2]}),label:mods.map(function(m){return m[1]}).join('')+n}}})});
+document.getElementById('menu-hotkey-clear').onclick=function(){host.postMessage({app:{hotkey:null}})};
+})();
 """
 
 
@@ -1311,6 +1352,47 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
 
 
+def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool) -> dict:
+    """What the app's menu bar icon lists (preview, menu-bar): per zone, its
+    live projects by name, each with its live threads by name, and whether
+    the Status tab carries its red dot. A thread gives its name, the name to
+    say, its note's link and, where an app can open it, its folder. The app
+    keeps the zone the graph shows; parked threads stay out, as do figures."""
+    zones = []
+    for zone, data in T.items():
+        groups: Dict[str, list] = {}
+        for r in data["rows"]:
+            groups.setdefault(r["project"], []).append(r)
+        projects = []
+        for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
+            ts = []
+            for r in sorted(rs, key=lambda r: r["thread"].casefold()):
+                t = {"n": r["thread"], "w": names[(zone, project, r["thread"])], "u": link(r["note"])}
+                if folders:
+                    t["f"] = str(r["note"].parent)
+                ts.append(t)
+            alone = len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]
+            projects.append({"n": project, "alone": alone, "t": ts})
+        zones.append({"z": zone, "p": projects})
+    return {"trouble": trouble, "zones": zones}
+
+
+def menu_settings() -> str:
+    """Settings › Menu bar (preview, menu-bar), shown in Garrick's Status.app
+    only: the icon, opening at login, and the shortcut that opens the menu.
+    The app keeps all three, so they hold when the window is closed."""
+    return ('<section class="setsec apponly" id="menu-settings"><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
+            'threads of the zone the graph shows; choosing one opens a session on it in the app picked above. Close the window and '
+            'the icon stays.</p>'
+            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show in the menu bar'
+            '<small>A red dot on it when something on the Status tab failed</small></span></label></div>'
+            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'
+            '<small id="menu-login-note">Starts the app when you log in, with the window as you left it</small></span></label></div>'
+            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small>Opens the menu from any app</small></span></label>'
+            '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
+            '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div></section>')
+
+
 def copy(label: str, text: str, say: str) -> str:
     """A button that copies a phrase for your assistant, or a command for your
     terminal. The page acts on nothing itself."""
@@ -1473,7 +1555,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s</dialog>'
-            % (launcher_choices(installed, bool(mac_app("Obsidian"))), VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
+            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + (menu_settings() if preview_flags(ws)["menu-bar"] else ""),
+               VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
 def script_json(data) -> str:
@@ -1783,6 +1866,9 @@ SETTINGS_CSS = r"""
 .launcher-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .launcher-default{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}.launcher-default input{accent-color:var(--accent)}
 .launcher-default:has(input:disabled){opacity:.4}
+.nohost .apponly{display:none}.launcher-choice:has(input:disabled){opacity:.5}.hotkey{display:flex;gap:6px;align-items:center}
+.hotkey input{width:150px;font:inherit;font-size:13px;text-align:center;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px;cursor:pointer}
+.hotkey input:focus{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings{position:relative}dialog.settings .sclose{position:absolute;top:14px;right:14px;width:30px;height:30px;display:flex;align-items:center;
 justify-content:center;font-size:20px;line-height:1;border:0;background:none;color:var(--muted);border-radius:8px;cursor:pointer}
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
@@ -2522,13 +2608,15 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>'
-            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab))
+    menu = ('<script type="application/json" id="menu-data">%s</script>' % script_json(menu_data(T, names, link, cmux, trouble))
+            if flags_on["menu-bar"] else "")
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
+            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
                 E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
-                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS, GRAPH_JS if show_graph else ""))
+                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + MENU_JS, GRAPH_JS if show_graph else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:

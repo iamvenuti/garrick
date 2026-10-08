@@ -13,9 +13,16 @@
 //     project's or thread's folder. The page offers Open in cmux only where
 //     cmux was installed when it was built; the app checks again on the click;
 //   - every link the page holds (a note in Obsidian, a file, the web) goes to
-//     the app macOS uses for it.
+//     the app macOS uses for it;
+//   - with the preview menu-bar on, an icon in the menu bar listing the live
+//     threads of the zone the graph shows, each opening a session, with a red
+//     dot when the Status tab has one. Settings › Menu bar switches it on,
+//     opens the app at login and sets a hotkey for the menu; the app keeps
+//     those three in its own defaults, as it keeps the menu between launches.
 // Nothing here changes a file in the workspace, as nothing on the page does.
 import AppKit
+import Carbon.HIToolbox
+import ServiceManagement
 import WebKit
 
 let info = Bundle.main.infoDictionary ?? [:]
@@ -33,11 +40,38 @@ let maxAge: TimeInterval = 30 * 60
 // and quits: the test that the page loads, sees the app and is answered.
 let checking = CommandLine.arguments.contains("--check")
 
+// What the app keeps between launches, in its own defaults: the three menu bar
+// settings, the menu as the page last gave it, and whether the window was open.
+let defaults = UserDefaults.standard
+let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
+func savedMenu() -> [String: Any]? {
+	defaults.data(forKey: kMenu).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+}
+// Left in the menu bar with the window closed, it starts that way again.
+let startHidden = !checking && defaults.bool(forKey: kMenuBar) && savedMenu() != nil
+	&& defaults.object(forKey: kWindowShown) as? Bool == false
+
+// The page names a key by where it sits (KeyboardEvent.code); Carbon by the same place.
+let keyCodes: [String: Int] = [
+	"KeyA": kVK_ANSI_A, "KeyB": kVK_ANSI_B, "KeyC": kVK_ANSI_C, "KeyD": kVK_ANSI_D, "KeyE": kVK_ANSI_E, "KeyF": kVK_ANSI_F,
+	"KeyG": kVK_ANSI_G, "KeyH": kVK_ANSI_H, "KeyI": kVK_ANSI_I, "KeyJ": kVK_ANSI_J, "KeyK": kVK_ANSI_K, "KeyL": kVK_ANSI_L,
+	"KeyM": kVK_ANSI_M, "KeyN": kVK_ANSI_N, "KeyO": kVK_ANSI_O, "KeyP": kVK_ANSI_P, "KeyQ": kVK_ANSI_Q, "KeyR": kVK_ANSI_R,
+	"KeyS": kVK_ANSI_S, "KeyT": kVK_ANSI_T, "KeyU": kVK_ANSI_U, "KeyV": kVK_ANSI_V, "KeyW": kVK_ANSI_W, "KeyX": kVK_ANSI_X,
+	"KeyY": kVK_ANSI_Y, "KeyZ": kVK_ANSI_Z,
+	"Digit0": kVK_ANSI_0, "Digit1": kVK_ANSI_1, "Digit2": kVK_ANSI_2, "Digit3": kVK_ANSI_3, "Digit4": kVK_ANSI_4,
+	"Digit5": kVK_ANSI_5, "Digit6": kVK_ANSI_6, "Digit7": kVK_ANSI_7, "Digit8": kVK_ANSI_8, "Digit9": kVK_ANSI_9,
+	"Minus": kVK_ANSI_Minus, "Equal": kVK_ANSI_Equal, "BracketLeft": kVK_ANSI_LeftBracket, "BracketRight": kVK_ANSI_RightBracket,
+	"Backslash": kVK_ANSI_Backslash, "Semicolon": kVK_ANSI_Semicolon, "Quote": kVK_ANSI_Quote, "Comma": kVK_ANSI_Comma,
+	"Period": kVK_ANSI_Period, "Slash": kVK_ANSI_Slash, "Backquote": kVK_ANSI_Grave, "Space": kVK_Space,
+	"F1": kVK_F1, "F2": kVK_F2, "F3": kVK_F3, "F4": kVK_F4, "F5": kVK_F5, "F6": kVK_F6,
+	"F7": kVK_F7, "F8": kVK_F8, "F9": kVK_F9, "F10": kVK_F10, "F11": kVK_F11, "F12": kVK_F12,
+]
+
 func modified(_ url: URL) -> Date? {
 	(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
 }
 
-final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 	var window: NSWindow!
 	var web: WKWebView!
 	var watcher: DispatchSourceFileSystemObject?
@@ -45,11 +79,17 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 	var rebuilding = false
 	var pendingReload: DispatchWorkItem?
 	var heard: [String] = []          // what --check caught instead of acting on
+	var statusItem: NSStatusItem?
+	var menuState: [String: Any]?     // what the page last said the menu lists
+	var hotKey: EventHotKeyRef?
+	var hotKeyHandler: EventHandlerRef?
+	var hourly: Timer?
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		NSApp.mainMenu = menu()
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(self, name: "garrick")
+		config.userContentController.addUserScript(appScript())
 		web = WKWebView(frame: .zero, configuration: config)
 		web.navigationDelegate = self
 		web.uiDelegate = self
@@ -60,6 +100,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		                  backing: .buffered, defer: false)
 		window.title = "Garrick's Status"
 		window.contentView = web
+		window.isReleasedWhenClosed = false   // closed into the menu bar, it opens again
+		window.delegate = self
 		window.center()
 		window.setFrameAutosaveName("GarrickStatus")
 		if checking {
@@ -69,15 +111,38 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			}
 			return load()
 		}
-		window.makeKeyAndOrderFront(nil)
+		menuState = savedMenu()
+		if defaults.bool(forKey: kMenuBar) && menuState != nil { showStatusItem() }
+		_ = setHotKey(defaults.dictionary(forKey: kHotkey))
+		// Out of sight, nothing brings the app forward to check the page's age.
+		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
+		if !startHidden { showWindow() }
 
 		watch()
 		if FileManager.default.fileExists(atPath: page.path) { load() }
 		freshen()
-		NSApp.activate(ignoringOtherApps: true)
 	}
 
-	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+	// With the icon in the menu bar, closing the window leaves the app there.
+	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { statusItem == nil }
+
+	func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
+		if !hasVisibleWindows { showWindow() }
+		return true
+	}
+
+	func windowWillClose(_ note: Notification) {
+		guard statusItem != nil else { return }
+		defaults.set(false, forKey: kWindowShown)
+		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's is there
+	}
+
+	@objc func showWindow(_ sender: Any? = nil) {
+		NSApp.setActivationPolicy(.regular)
+		window.makeKeyAndOrderFront(nil)
+		NSApp.activate(ignoringOtherApps: true)
+		defaults.set(true, forKey: kWindowShown)
+	}
 
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
 	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen() } }
@@ -153,7 +218,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 
 	func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
 		guard let body = message.body as? [String: Any] else { return }
+		if let m = body["menu"] {
+			if checking { menuState = m as? [String: Any]; return heard.append("menu") }
+			return setMenu(m as? [String: Any])
+		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
+		if let request = body["app"] as? [String: Any] { return setting(request) }
 		if let text = body["copy"] as? String, !text.isEmpty {
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(text, forType: .string)
@@ -275,6 +345,237 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 		}
 	}
 
+	// MARK: the menu bar (preview, menu-bar)
+
+	// Settings › Menu bar shows the app's own values: they are put in the page
+	// before it runs, and again whenever one changes.
+	func appState() -> [String: Any] {
+		var login: Any = NSNull()             // null: this macOS cannot add a login item this way
+		if #available(macOS 13, *) { login = SMAppService.mainApp.status == .enabled }
+		return ["menubar": defaults.bool(forKey: kMenuBar), "login": login,
+		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? ""]
+	}
+
+	func appJSON() -> String {
+		(try? JSONSerialization.data(withJSONObject: appState())).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+	}
+
+	func appScript() -> WKUserScript {
+		WKUserScript(source: "window.GarrickApp=\(appJSON());", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+	}
+
+	func pushAppState() {
+		web.configuration.userContentController.removeAllUserScripts()
+		web.configuration.userContentController.addUserScript(appScript())
+		web.evaluateJavaScript("window.GarrickAppSet&&window.GarrickAppSet(\(appJSON()))")
+	}
+
+	func setting(_ request: [String: Any]) {
+		if let on = request["menubar"] as? Bool {
+			defaults.set(on, forKey: kMenuBar)
+			if on && menuState != nil {
+				showStatusItem()
+				toast("Garrick is in the menu bar. Close the window and it stays there.")
+			} else {
+				hideStatusItem()
+				toast(on ? "Rebuilding the page for the menu." : "Taken out of the menu bar.")
+				if on { freshen(force: true) }
+			}
+		}
+		if let on = request["login"] as? Bool {
+			if #available(macOS 13, *) {
+				let service = SMAppService.mainApp
+				do {
+					if on { try service.register() } else { try service.unregister() }
+					if service.status == .requiresApproval {
+						toast("Allow Garrick's Status in System Settings, under Login Items.")
+						SMAppService.openSystemSettingsLoginItems()
+					} else {
+						toast(on ? "Garrick's Status opens when you log in." : "Garrick's Status no longer opens at login.")
+					}
+				} catch {
+					toast("macOS did not change the login item: \(error.localizedDescription)")
+				}
+			}
+		}
+		if let key = request["hotkey"] {
+			let spec = key as? [String: Any]
+			if setHotKey(spec) {
+				defaults.set(spec, forKey: kHotkey)
+				toast(spec == nil ? "No hotkey." : "\(spec?["label"] as? String ?? "That") opens the menu from any app.")
+			} else {
+				_ = setHotKey(defaults.dictionary(forKey: kHotkey))   // keep the one that worked
+				toast("Another app already uses that shortcut. Try another.")
+			}
+		}
+		pushAppState()
+	}
+
+	// The page sends the menu at every load and change; nil means the flag is
+	// off, which takes the icon away and brings the window back if it was hidden.
+	func setMenu(_ m: [String: Any]?) {
+		menuState = m
+		if let m, let data = try? JSONSerialization.data(withJSONObject: m) {
+			defaults.set(data, forKey: kMenu)
+		} else {
+			defaults.removeObject(forKey: kMenu)
+		}
+		if m != nil && defaults.bool(forKey: kMenuBar) { showStatusItem() } else { hideStatusItem() }
+	}
+
+	func showStatusItem() {
+		if statusItem == nil {
+			let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+			let menu = NSMenu()
+			menu.delegate = self
+			item.menu = menu
+			item.button?.toolTip = "Garrick's Status"
+			statusItem = item
+		}
+		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
+		statusItem?.button?.image = icon(trouble: trouble)
+		statusItem?.button?.setAccessibilityLabel(trouble ? "Garrick's Status: something failed" : "Garrick's Status")
+	}
+
+	func hideStatusItem() {
+		guard let item = statusItem else { return }
+		NSStatusBar.system.removeStatusItem(item)
+		statusItem = nil
+		if !window.isVisible { showWindow() }  // never leave the app with nothing to click
+	}
+
+	// Garrick's mark, from make-app.sh, with the Status tab's red dot.
+	func icon(trouble: Bool) -> NSImage {
+		let size = NSSize(width: 18, height: 18)
+		let mark = Bundle.main.image(forResource: "MenuIcon") ?? NSApp.applicationIconImage ?? NSImage()
+		return NSImage(size: size, flipped: false) { rect in
+			mark.draw(in: rect.insetBy(dx: 1, dy: 1))
+			if trouble {
+				let dot = NSRect(x: rect.maxX - 7.5, y: rect.maxY - 7.5, width: 7.5, height: 7.5)
+				NSColor.white.setFill(); NSBezierPath(ovalIn: dot).fill()
+				NSColor.systemRed.setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: 1, dy: 1)).fill()
+			}
+			return true
+		}
+	}
+
+	// Filled as it opens, so it is always the page's latest; an old page is
+	// rebuilt meanwhile, and the next opening shows the result.
+	func menuNeedsUpdate(_ menu: NSMenu) {
+		fill(menu)
+		freshen()
+	}
+
+	// The zone the graph shows: All shows every zone; a wiki, or a zone gone
+	// since, falls back to Work, as the graph does, or to every zone.
+	func shownZones() -> [[String: Any]] {
+		let zones = (menuState?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
+		let place = menuState?["place"] as? String ?? ""
+		if place != "*", let z = zones.first(where: { $0["z"] as? String == place }) { return [z] }
+		if place != "*", let z = zones.first(where: { $0["z"] as? String == "Work" }) { return [z] }
+		return zones
+	}
+
+	// The app picked in Settings for clicking a thread; where that is the note,
+	// the first session app on offer, and the note only when there is none.
+	func chosenLauncher() -> String {
+		let offered = menuState?["launchers"] as? [String] ?? []
+		let picked = menuState?["def"] as? String ?? "note"
+		if picked != "note" && offered.contains(picked) { return picked }
+		return ["claude", "cmux", "codex"].first(where: offered.contains) ?? "note"
+	}
+
+	func fill(_ menu: NSMenu) {
+		menu.removeAllItems()
+		func header(_ title: String) -> NSMenuItem {
+			if #available(macOS 14, *) { return NSMenuItem.sectionHeader(title: title) }
+			let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+			i.isEnabled = false
+			return i
+		}
+		func row(_ t: [String: Any], indent: Int) -> NSMenuItem {
+			let i = NSMenuItem(title: t["n"] as? String ?? "", action: #selector(openThread(_:)), keyEquivalent: "")
+			i.target = self
+			i.representedObject = t
+			i.indentationLevel = indent
+			if let w = t["w"] as? String, !w.isEmpty { i.toolTip = "open \(w)" }
+			return i
+		}
+		for (n, zone) in shownZones().enumerated() {
+			if n > 0 { menu.addItem(.separator()) }
+			menu.addItem(header(zone["z"] as? String ?? ""))
+			let projects = zone["p"] as? [[String: Any]] ?? []
+			if projects.isEmpty {
+				let none = NSMenuItem(title: "No live threads", action: nil, keyEquivalent: "")
+				none.isEnabled = false
+				menu.addItem(none)
+			}
+			for p in projects {
+				let threads = p["t"] as? [[String: Any]] ?? []
+				if p["alone"] as? Bool == true, let t = threads.first {
+					menu.addItem(row(t, indent: 0))
+					continue
+				}
+				let name = NSMenuItem(title: p["n"] as? String ?? "", action: nil, keyEquivalent: "")
+				name.attributedTitle = NSAttributedString(string: name.title, attributes: [
+					.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor])
+				name.isEnabled = false
+				menu.addItem(name)
+				threads.forEach { menu.addItem(row($0, indent: 1)) }
+			}
+		}
+		menu.addItem(.separator())
+		let open = NSMenuItem(title: "Open Garrick's Status", action: #selector(showWindow(_:)), keyEquivalent: "")
+		open.target = self
+		menu.addItem(open)
+		menu.addItem(NSMenuItem(title: "Quit Garrick's Status", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+	}
+
+	// A session on the thread, as its card's button opens one.
+	@objc func openThread(_ sender: NSMenuItem) {
+		guard let t = sender.representedObject as? [String: Any] else { return }
+		let app = chosenLauncher()
+		if checking { return heard.append("menu:" + app) }
+		let phrase = (t["w"] as? String).map { $0.isEmpty ? "" : "open " + $0 } ?? ""
+		if app != "note", let folder = t["f"] as? String {
+			launch(app, folder, phrase: phrase)
+		} else if let u = t["u"] as? String, let url = URL(string: u) {
+			NSWorkspace.shared.open(url)
+		}
+	}
+
+	// A system-wide shortcut through Carbon's hot keys, which need no
+	// Accessibility permission. It opens the menu, or the window when the
+	// icon is off. False when the shortcut is someone else's.
+	func setHotKey(_ spec: [String: Any]?) -> Bool {
+		if let old = hotKey { UnregisterEventHotKey(old); hotKey = nil }
+		guard let spec else { return true }
+		guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return false }
+		var mods: UInt32 = 0
+		for m in spec["mods"] as? [String] ?? [] {
+			switch m {
+			case "cmd": mods |= UInt32(cmdKey)
+			case "alt": mods |= UInt32(optionKey)
+			case "ctrl": mods |= UInt32(controlKey)
+			case "shift": mods |= UInt32(shiftKey)
+			default: break
+			}
+		}
+		if hotKeyHandler == nil {
+			var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+			InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+				DispatchQueue.main.async { (NSApp.delegate as? StatusApp)?.hotKeyPressed() }
+				return noErr
+			}, 1, &pressed, nil, &hotKeyHandler)
+		}
+		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: 1)   // 'GRKS'
+		return RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &hotKey) == noErr
+	}
+
+	func hotKeyPressed() {
+		if let button = statusItem?.button { button.performClick(nil) } else { showWindow() }
+	}
+
 	// MARK: links
 
 	func webView(_ webView: WKWebView, decidePolicyFor nav: WKNavigationAction,
@@ -316,6 +617,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 			""") { result, error in
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				print(result as? String ?? "error: \(String(describing: error))")
+				// The menu bar's menu, filled from what the page sent, and its first thread pressed.
+				if self.menuState != nil {
+					let m = NSMenu()
+					self.fill(m)
+					let rows = m.items.filter { $0.action == #selector(self.openThread(_:)) }
+					print("menu: \(rows.count) threads in \(self.shownZones().count) zone(s)")
+					if let first = rows.first { self.openThread(first) }
+				} else {
+					print("menu: none")
+				}
 				print("heard: \(self.heard)")
 				exit(0)
 			}
@@ -386,5 +697,5 @@ final class StatusApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 let app = NSApplication.shared
 let delegate = StatusApp()
 app.delegate = delegate
-app.setActivationPolicy(checking ? .prohibited : .regular)
+app.setActivationPolicy(checking ? .prohibited : startHidden ? .accessory : .regular)
 app.run()

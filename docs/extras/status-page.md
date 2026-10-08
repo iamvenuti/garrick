@@ -63,6 +63,8 @@ Some features are in Garrick's source before they are in a release. They are off
   - Codex keeps its sessions elsewhere, in another format, and is not counted yet; the card says so.
   - Only names, durations and figures reach the page, never a line of a transcript.
 
+- **`menu-bar`**: Garrick's Status in the menu bar, in Garrick's Status.app only. See [In the menu bar](#in-the-menu-bar).
+
 A preview feature may still change. When one is released it is switched on for everyone and its flag goes away.
 
 ## Thread cards
@@ -117,6 +119,18 @@ System/status/app/make-app.sh
 ```
 
 It compiles `GarrickStatus.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. `--dest` puts it elsewhere. It will not replace another app of the same name. Drag it to the Dock to keep it there. To test it, `"$HOME/Applications/Garrick's Status.app/Contents/MacOS/GarrickStatus" --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
+
+### In the menu bar
+
+With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app only, with three settings that the app keeps itself:
+
+- **Show in the menu bar** puts Garrick's mark in the menu bar. Closing the window then leaves the app there, without a Dock icon, and *Open Garrick's Status* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark means the same as the red dot on the *Status* tab: something failed.
+- **Open at login** starts the app when you log in, as a login item. It opens the way you left it: in the menu bar alone if its window was closed. It needs macOS 13 or later; macOS may ask you to allow it under *Login Items* in System Settings.
+- **Hotkey** opens the menu from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
+
+The menu lists the live threads of the zone the graph shows, as last picked in the window, under their projects and by name, with nothing else: no bars, no figures, no parked threads. With *All* picked it lists every zone, and with a wiki picked it lists Work. Choosing a thread opens a session on it the way its card's button does, in the app chosen as the default under *Opening a thread*; where the default is the note, in the first of Claude, cmux and Codex that is installed and ticked. At the foot are *Open Garrick's Status* and *Quit*.
+
+The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. Rebuild the app with `make-app.sh` after updating Garrick to get the icon; the flag alone does not add it to an app built before.
 
 ## Buttons that copy, not act
 

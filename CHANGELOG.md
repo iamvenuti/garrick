@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Garrick's Status in the menu bar, behind the `menu-bar` preview flag, in Garrick's Status.app: an icon with the live threads of the zone the graph shows, each opening a session in the app picked in Settings, and a red dot when the Status tab has one. Settings › Menu bar switches the icon on, opens the app at login and records a hotkey for the menu. With the icon on, closing the window leaves the app in the menu bar. Rebuild the app with `make-app.sh` to get it.
+
 ## [0.8.1] - 2026-10-08
 
 Add an action from the status page's Todo list.

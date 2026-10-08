@@ -59,6 +59,8 @@ inner = re.sub(r'(<rect[^>]*?)rx="[^"]*"', r'\1rx="14.4"', inner, count=1)
 open(work + "/icon.svg", "w").write(
     '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
     '<g transform="translate(100 100) scale(12.875)">%s</g></svg>' % inner)
+# The menu bar's icon is the favicon cut, edge to edge.
+open(work + "/menu.svg", "w").write(mod.mark(full=False, image=True).replace('viewBox="0 0 64 64"', 'viewBox="0 0 64 64" width="256" height="256"', 1))
 with open(work + "/Garrick's Status.app/Contents/Info.plist", "wb") as f:
     plistlib.dump({
         "CFBundleIdentifier": "local.garrick.status", "CFBundleName": "Garrick's Status",
@@ -77,6 +79,9 @@ for s in 16 32 128 256 512; do
   sips -z $((s*2)) $((s*2)) "$WORK/icon-1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Resources/AppIcon.icns"
+sips -s format png "$WORK/menu.svg" --out "$WORK/menu-256.png" >/dev/null
+sips -z 18 18 "$WORK/menu-256.png" --out "$BUNDLE/Resources/MenuIcon.png" >/dev/null
+sips -z 36 36 "$WORK/menu-256.png" --out "$BUNDLE/Resources/MenuIcon@2x.png" >/dev/null
 
 # Signed ad hoc: macOS refuses to launch an unsigned app on Apple silicon.
 codesign --force --sign - "$WORK/$NAME" 2>/dev/null

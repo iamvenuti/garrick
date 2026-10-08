@@ -857,6 +857,52 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 
+    def menu(self, html):
+        m = re.search(r'<script type="application/json" id="menu-data">(.*?)</script>', html, re.S)
+        return json.loads(m.group(1)) if m else None
+
+    def test_the_menu_bar_only_when_switched_on(self):
+        html = self.page()
+        self.assertIsNone(self.menu(html))                                  # the app takes its icon away
+        self.assertNotIn('id="menu-settings"', html)
+        self.assertRegex(html, r'Menu bar</b><span class="chip">off</span>')
+        self.assertIn("host.postMessage({menu:data&&", status.MENU_JS)       # it still tells the app there is none
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
+        html = self.page()
+        self.assertRegex(html, r'Menu bar</b><span class="chip on">on</span>')
+        self.assertIn('<section class="setsec apponly" id="menu-settings">', html)
+        for control in ('id="menu-show"', 'id="menu-login"', 'id="menu-hotkey"'):   # the three settings
+            self.assertIn(control, html)
+        self.assertIn(".nohost .apponly{display:none}", status.SETTINGS_CSS)   # a browser has no menu bar to offer
+
+    def test_what_the_menu_lists(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
+        work = self.root / "Zones" / "Work"
+        write(work / "Acme Review" / "Threads" / "Renewal" / "Renewal.md", thread_note("Acme Review", "Renewal", "acme", status="parked"))
+        write(work / "Solo" / "Solo.md", project_hub("Work", "Solo", "acme"))
+        menu = self.menu(self.page())
+        self.assertFalse(menu["trouble"])
+        zones = {z["z"]: z for z in menu["zones"]}
+        self.assertEqual({"Work", "Personal"}, set(zones))
+        self.assertEqual([], zones["Personal"]["p"])
+        projects = {p["n"]: p for p in zones["Work"]["p"]}
+        self.assertEqual(["Acme Review", "Birch Entry", "Solo"], list(projects))           # by name
+        self.assertEqual(["Pricing"], [t["n"] for t in projects["Acme Review"]["t"]])       # parked threads stay out
+        self.assertFalse(projects["Acme Review"]["alone"])
+        self.assertTrue(projects["Solo"]["alone"])                                          # a project that is its own thread
+        pricing = projects["Acme Review"]["t"][0]
+        self.assertEqual({"n", "w", "u"}, set(pricing))                                     # names and a link, no figures
+        self.assertEqual("Pricing", pricing["w"])
+        work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
+        pricing = work_zone["p"][0]["t"][0]
+        self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), pricing["f"])   # a folder where an app can open it
+
+    def test_the_menu_follows_the_graph_and_settings(self):
+        for key in ("'garrick-graph-place'", "'garrick-default'", "'garrick-launchers'"):
+            self.assertIn("g(%s)" % key, status.MENU_JS)
+        self.assertIn("document.addEventListener('change',function(){setTimeout(sync,0)},true)", status.MENU_JS)
+        self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_JS)     # the app's settings do not rebuild the page
+
     def test_a_project_without_threads_is_its_own_thread(self):
         write(self.root / "Zones" / "Work" / "Solo" / "Solo.md",
               "---\ntitle: Solo\ntype: project\nparty: acme\nstatus: dormant\nupdated: 2026-03-02\n---\n\n# Solo\n")
@@ -1340,6 +1386,17 @@ class TestApp(unittest.TestCase):
         for bundle in ("claudeBundle", "codexBundle"):
             self.assertIn("withBundleIdentifier: %s" % bundle, swift)
         self.assertIn("guard let folder = inWorkspace(path)", swift)          # only a folder of this workspace
+
+    def test_the_menu_bar(self):
+        swift = (self.APP / "GarrickStatus.swift").read_text()
+        self.assertIn("statusItem == nil }", swift)                           # with the icon, closing the window keeps the app
+        self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
+        self.assertNotIn("AXIsProcessTrusted", swift)
+        self.assertIn("SMAppService.mainApp", swift)                          # open at login, as a login item
+        self.assertIn('["claude", "cmux", "codex"]', swift)                   # the note is no session: the first app on offer
+        self.assertIn("if !window.isVisible { showWindow() }", swift)          # never an app with nothing to click
+        make = (self.APP / "make-app.sh").read_text()
+        self.assertIn("MenuIcon@2x.png", make)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):

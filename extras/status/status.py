@@ -345,8 +345,8 @@ FLAGS = {
                      "from its card. Each changes one line or one status field and commits it, as the skills do."),
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
-    "menu-bar": ("Menu bar", "In Garrick's Status.app: an icon in the menu bar with the live threads of the zone the graph shows, "
-                 "each opening a session, and a red dot when something failed. Switched on in the app's Settings."),
+    "menu-bar": ("Menu bar", "In Garrick's Status.app: an icon in the menu bar with the live projects and threads of the zone the "
+                 "graph shows, each opening as its card does, and a red dot when something failed. Switched on in the app's Settings."),
 }
 
 
@@ -694,7 +694,7 @@ MENU_JS = r"""
 function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
 var el=document.getElementById('menu-data'),data=null;try{data=el?JSON.parse(el.textContent):null}catch(e){}
 function sync(){var on={};try{on=JSON.parse(g('garrick-launchers')||'{}')}catch(e){}
-host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:g('garrick-default')||'note',
+host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:g('garrick-default')||'note',note:on.note!==false,
 launchers:(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}})}
 sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
 })();
@@ -1363,9 +1363,23 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool) -> dict:
     """What the app's menu bar icon lists (preview, menu-bar): per zone, its
     live projects by name, each with its live threads by name, and whether
-    the Status tab carries its red dot. A thread gives its name, the name to
-    say, its note's link and, where an app can open it, its folder. The app
-    keeps the zone the graph shows; parked threads stay out, as do figures."""
+    the Status tab carries its red dot. A project or thread gives its name,
+    the name to say, its note's link and, where an app can open it, its
+    folder: the app offers the same actions its card does. A project with no
+    thread notes is its own thread. The app keeps the zone the graph shows;
+    parked threads stay out, as do figures."""
+    said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
+    project_n: Dict[str, int] = {}
+    for data in T.values():
+        for p in {r["project"] for r in data["rows"] + data["parked"]}:
+            project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
+
+    def entry(name, say, note):
+        e = {"n": name, "w": say, "u": link(note)}
+        if folders:
+            e["f"] = str(note.parent)
+        return e
+
     zones = []
     for zone, data in T.items():
         groups: Dict[str, list] = {}
@@ -1373,14 +1387,14 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
             groups.setdefault(r["project"], []).append(r)
         projects = []
         for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
-            ts = []
-            for r in sorted(rs, key=lambda r: r["thread"].casefold()):
-                t = {"n": r["thread"], "w": names[(zone, project, r["thread"])], "u": link(r["note"])}
-                if folders:
-                    t["f"] = str(r["note"].parent)
-                ts.append(t)
-            alone = len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]
-            projects.append({"n": project, "alone": alone, "t": ts})
+            if len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]:          # its own thread
+                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"]), t=[]))
+                continue
+            hub = rs[0]["hub"] or rs[0]["note"]
+            say = project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else ""
+            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"])
+                       for r in sorted(rs, key=lambda r: r["thread"].casefold())]
+            projects.append(dict(entry(project, say, hub), t=threads))
         zones.append({"z": zone, "p": projects})
     return {"trouble": trouble, "zones": zones}
 
@@ -1390,8 +1404,8 @@ def menu_settings() -> str:
     only: the icon, opening at login, and the shortcut that opens the menu.
     The app keeps all three, so they hold when the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
-            'threads of the zone the graph shows; choosing one opens a session on it in the app picked above. Close the window and '
-            'the icon stays.</p>'
+            'projects of the zone the graph shows, with their threads. Click one to open it as a thread&#39;s name would, or point at it '
+            'for the other apps above. Close the window and the icon stays.</p>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show in the menu bar'
             '<small>A red dot on it when something on the Status tab failed</small></span></label></div>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'

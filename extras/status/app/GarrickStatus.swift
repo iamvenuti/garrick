@@ -71,6 +71,91 @@ func modified(_ url: URL) -> Date? {
 	(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
 }
 
+// A menu row that is both a button and a submenu: AppKit gives a plain item
+// with a submenu no action, so the row is a view that draws itself, runs its
+// default on a click and leaves the hover to open its submenu.
+final class RowView: NSView {
+	let title: String
+	let click: () -> Void
+	init(_ title: String, click: @escaping () -> Void) {
+		self.title = title
+		self.click = click
+		let width = (title as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 0)]).width
+		super.init(frame: NSRect(x: 0, y: 0, width: max(200, ceil(width) + 60), height: 22))
+		autoresizingMask = [.width]
+		setAccessibilityElement(true)
+		setAccessibilityRole(.menuItem)
+		setAccessibilityLabel(title)
+	}
+	required init?(coder: NSCoder) { nil }
+
+	override func draw(_ dirty: NSRect) {
+		let lit = enclosingMenuItem?.isHighlighted == true
+		if lit {
+			NSColor.selectedContentBackgroundColor.setFill()
+			NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 4, yRadius: 4).fill()
+		}
+		let ink: NSColor = lit ? .selectedMenuItemTextColor : .labelColor
+		let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: ink]
+		let h = (title as NSString).size(withAttributes: attrs).height
+		(title as NSString).draw(at: NSPoint(x: 21, y: (bounds.height - h) / 2), withAttributes: attrs)
+		if enclosingMenuItem?.hasSubmenu == true {     // the chevron AppKit draws for a plain item
+			let x = bounds.maxX - 17, y = bounds.midY
+			let path = NSBezierPath()
+			path.move(to: NSPoint(x: x, y: y + 4)); path.line(to: NSPoint(x: x + 4, y: y)); path.line(to: NSPoint(x: x, y: y - 4))
+			path.lineWidth = 1.6; path.lineCapStyle = .round; path.lineJoinStyle = .round
+			(lit ? ink : NSColor.secondaryLabelColor).setStroke()
+			path.stroke()
+		}
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		enclosingMenuItem?.menu?.cancelTracking()
+		DispatchQueue.main.async(execute: click)
+	}
+}
+
+// A row's actions on one line: the icon of each app it can open in, the
+// default on a tinted square, each named in its tooltip. A click runs it and
+// closes the menu.
+final class ActionBar: NSView {
+	let acts: [[String: Any]]
+	let pick: ([String: Any]) -> Void
+	let side: CGFloat = 24, gap: CGFloat = 10, pad: CGFloat = 16
+
+	init(_ acts: [[String: Any]], pick: @escaping ([String: Any]) -> Void) {
+		self.acts = acts
+		self.pick = pick
+		super.init(frame: NSRect(x: 0, y: 0, width: pad * 2 + CGFloat(acts.count) * (side + gap) - gap, height: side + 12))
+		for (n, a) in acts.enumerated() {
+			let b = NSButton(frame: NSRect(x: pad + CGFloat(n) * (side + gap), y: 6, width: side, height: side))
+			b.isBordered = false
+			b.imageScaling = .scaleProportionallyUpOrDown
+			b.image = a["icon"] as? NSImage
+			b.toolTip = a["l"] as? String
+			b.setAccessibilityLabel(a["l"] as? String)
+			b.tag = n
+			b.target = self
+			b.action = #selector(press(_:))
+			addSubview(b)
+		}
+	}
+	required init?(coder: NSCoder) { nil }
+
+	override func draw(_ dirty: NSRect) {
+		guard let n = acts.firstIndex(where: { $0["d"] as? Bool == true }) else { return }
+		let r = NSRect(x: pad + CGFloat(n) * (side + gap) - 4, y: 2, width: side + 8, height: side + 8)
+		NSColor.controlAccentColor.withAlphaComponent(0.25).setFill()
+		NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+	}
+
+	@objc func press(_ sender: NSButton) {
+		enclosingMenuItem?.menu?.cancelTracking()
+		let a = acts[sender.tag]
+		DispatchQueue.main.async { self.pick(a) }
+	}
+}
+
 final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 	var window: NSWindow!
 	var web: WKWebView!
@@ -462,8 +547,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Filled as it opens, so it is always the page's latest; an old page is
 	// rebuilt meanwhile, and the next opening shows the result.
 	func menuNeedsUpdate(_ menu: NSMenu) {
+		guard menu === statusItem?.menu else { return }   // a row's submenu is built with its row
 		fill(menu)
 		freshen()
+	}
+
+	// A view-backed row repaints only when told: the highlight moves here.
+	func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+		menu.items.forEach { $0.view?.needsDisplay = true }
 	}
 
 	// The zone the graph shows: All shows every zone; a wiki, or a zone gone
@@ -476,53 +567,37 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return zones
 	}
 
-	// The app picked in Settings for clicking a thread; where that is the note,
-	// the first session app on offer, and the note only when there is none.
-	func chosenLauncher() -> String {
-		let offered = menuState?["launchers"] as? [String] ?? []
+	// A row's actions, as its card offers them: the note's own link, then each
+	// app switched on in Settings that can open its folder. The one Settings
+	// picks for clicking a thread is the default, and the note where it is not
+	// on offer.
+	func acts(_ r: [String: Any]) -> [[String: Any]] {
+		var out: [[String: Any]] = []
+		if menuState?["note"] as? Bool != false, let u = r["u"] as? String { out.append(["k": "note", "u": u]) }
+		if let f = r["f"] as? String {
+			for k in menuState?["launchers"] as? [String] ?? [] { out.append(["k": k, "f": f, "w": r["w"] as? String ?? ""]) }
+		}
 		let picked = menuState?["def"] as? String ?? "note"
-		if picked != "note" && offered.contains(picked) { return picked }
-		return ["claude", "cmux", "codex"].first(where: offered.contains) ?? "note"
+		let n = out.firstIndex(where: { $0["k"] as? String == picked }) ?? out.firstIndex(where: { $0["k"] as? String == "note" }) ?? 0
+		if !out.isEmpty { out[n]["d"] = true }
+		return out
 	}
 
+	// The menu: the shown zone's projects. Hovering one opens its actions and
+	// its threads; hovering a thread opens its actions. Clicking a project or a
+	// thread itself runs its default.
 	func fill(_ menu: NSMenu) {
 		menu.removeAllItems()
-		func header(_ title: String) -> NSMenuItem {
-			if #available(macOS 14, *) { return NSMenuItem.sectionHeader(title: title) }
-			let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-			i.isEnabled = false
-			return i
-		}
-		func row(_ t: [String: Any], indent: Int) -> NSMenuItem {
-			let i = NSMenuItem(title: t["n"] as? String ?? "", action: #selector(openThread(_:)), keyEquivalent: "")
-			i.target = self
-			i.representedObject = t
-			i.indentationLevel = indent
-			if let w = t["w"] as? String, !w.isEmpty { i.toolTip = "open \(w)" }
-			return i
-		}
 		for (n, zone) in shownZones().enumerated() {
 			if n > 0 { menu.addItem(.separator()) }
 			menu.addItem(header(zone["z"] as? String ?? ""))
 			let projects = zone["p"] as? [[String: Any]] ?? []
 			if projects.isEmpty {
-				let none = NSMenuItem(title: "No live threads", action: nil, keyEquivalent: "")
+				let none = NSMenuItem(title: "No live projects", action: nil, keyEquivalent: "")
 				none.isEnabled = false
 				menu.addItem(none)
 			}
-			for p in projects {
-				let threads = p["t"] as? [[String: Any]] ?? []
-				if p["alone"] as? Bool == true, let t = threads.first {
-					menu.addItem(row(t, indent: 0))
-					continue
-				}
-				let name = NSMenuItem(title: p["n"] as? String ?? "", action: nil, keyEquivalent: "")
-				name.attributedTitle = NSAttributedString(string: name.title, attributes: [
-					.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor])
-				name.isEnabled = false
-				menu.addItem(name)
-				threads.forEach { menu.addItem(row($0, indent: 1)) }
-			}
+			projects.forEach { menu.addItem(row($0)) }
 		}
 		menu.addItem(.separator())
 		let open = NSMenuItem(title: "Open Garrick's Status", action: #selector(showWindow(_:)), keyEquivalent: "")
@@ -531,16 +606,72 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		menu.addItem(NSMenuItem(title: "Quit Garrick's Status", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
 	}
 
-	// A session on the thread, as its card's button opens one.
-	@objc func openThread(_ sender: NSMenuItem) {
-		guard let t = sender.representedObject as? [String: Any] else { return }
-		let app = chosenLauncher()
-		if checking { return heard.append("menu:" + app) }
-		let phrase = (t["w"] as? String).map { $0.isEmpty ? "" : "open " + $0 } ?? ""
-		if app != "note", let folder = t["f"] as? String {
-			launch(app, folder, phrase: phrase)
-		} else if let u = t["u"] as? String, let url = URL(string: u) {
-			NSWorkspace.shared.open(url)
+	func header(_ title: String) -> NSMenuItem {
+		if #available(macOS 14, *) { return NSMenuItem.sectionHeader(title: title) }
+		let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+		i.isEnabled = false
+		return i
+	}
+
+	// A project or a thread: a row that runs its default when clicked, with a
+	// submenu of its actions on one line and, for a project, its threads.
+	func row(_ r: [String: Any]) -> NSMenuItem {
+		let acts = acts(r)
+		let fallback = acts.first(where: { $0["d"] as? Bool == true })
+		let item = NSMenuItem(title: r["n"] as? String ?? "", action: nil, keyEquivalent: "")
+		item.view = RowView(item.title) { [weak self] in if let a = fallback { self?.run(a) } }
+		let sub = NSMenu()
+		sub.delegate = self
+		if !acts.isEmpty {
+			let bar = NSMenuItem()
+			bar.view = ActionBar(acts.map { a in a.merging(["icon": icon(a), "l": label(a)]) { _, new in new } }) { [weak self] a in self?.run(a) }
+			sub.addItem(bar)
+		}
+		let threads = r["t"] as? [[String: Any]] ?? []
+		if !threads.isEmpty {
+			sub.addItem(.separator())
+			sub.addItem(header("Threads"))
+			threads.forEach { sub.addItem(row($0)) }
+		}
+		item.submenu = sub
+		return item
+	}
+
+	func label(_ a: [String: Any]) -> String {
+		switch a["k"] as? String ?? "" {
+		case "note": return (a["u"] as? String ?? "").hasPrefix("obsidian:") ? "Open in Obsidian" : "Open the note"
+		case "finder": return "Reveal in Finder"
+		case "cmux": return "Open in cmux"
+		case "codex": return "Open in Codex"
+		case "claude": return "Open in Claude"
+		default: return ""
+		}
+	}
+
+	// The icon of the app an action opens: for the note, the app macOS opens it in.
+	func icon(_ a: [String: Any]) -> NSImage {
+		let k = a["k"] as? String ?? ""
+		let bundles = ["finder": "com.apple.finder", "cmux": cmuxBundle, "codex": codexBundle, "claude": claudeBundle]
+		var app: URL?
+		if k == "note", let u = a["u"] as? String, let url = URL(string: u) {
+			app = NSWorkspace.shared.urlForApplication(toOpen: url)
+		} else if let id = bundles[k] {
+			app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+		}
+		if let app { return NSWorkspace.shared.icon(forFile: app.path) }
+		return NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil) ?? NSImage()
+	}
+
+	// An action: the note's link to macOS, or the folder to an app, as the
+	// card's button opens it.
+	func run(_ a: [String: Any]) {
+		let k = a["k"] as? String ?? ""
+		if checking { return heard.append("menu:" + k) }
+		if k == "note" {
+			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+		} else if let f = a["f"] as? String {
+			let w = a["w"] as? String ?? ""
+			launch(k, f, phrase: w.isEmpty ? "" : "open " + w)
 		}
 	}
 
@@ -621,9 +752,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if self.menuState != nil {
 					let m = NSMenu()
 					self.fill(m)
-					let rows = m.items.filter { $0.action == #selector(self.openThread(_:)) }
-					print("menu: \(rows.count) threads in \(self.shownZones().count) zone(s)")
-					if let first = rows.first { self.openThread(first) }
+					let rows = m.items.compactMap { $0.view as? RowView }
+					let threads = m.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.view is RowView }.count
+					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)")
+					rows.first?.click()
 				} else {
 					print("menu: none")
 				}

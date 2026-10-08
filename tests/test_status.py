@@ -887,21 +887,26 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual({"Work", "Personal"}, set(zones))
         self.assertEqual([], zones["Personal"]["p"])
         projects = {p["n"]: p for p in zones["Work"]["p"]}
-        self.assertEqual(["Acme Review", "Birch Entry", "Solo"], list(projects))           # by name
-        self.assertEqual(["Pricing"], [t["n"] for t in projects["Acme Review"]["t"]])       # parked threads stay out
-        self.assertFalse(projects["Acme Review"]["alone"])
-        self.assertTrue(projects["Solo"]["alone"])                                          # a project that is its own thread
-        pricing = projects["Acme Review"]["t"][0]
-        self.assertEqual({"n", "w", "u"}, set(pricing))                                     # names and a link, no figures
+        self.assertEqual(["Acme Review", "Birch Entry", "Solo"], list(projects))           # projects first, by name
+        acme = projects["Acme Review"]
+        self.assertEqual(["Pricing"], [t["n"] for t in acme["t"]])                          # parked threads stay out
+        self.assertEqual({"n", "w", "u", "t"}, set(acme))                                   # names and links, no figures
+        self.assertIn("Acme%20Review", acme["u"])                                           # the project's own hub
+        self.assertEqual("Acme Review", acme["w"])
+        self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
+        self.assertEqual("Solo", projects["Solo"]["w"])
+        pricing = acme["t"][0]
+        self.assertEqual({"n", "w", "u"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
-        pricing = work_zone["p"][0]["t"][0]
-        self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), pricing["f"])   # a folder where an app can open it
+        self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
+        self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])
 
     def test_the_menu_follows_the_graph_and_settings(self):
         for key in ("'garrick-graph-place'", "'garrick-default'", "'garrick-launchers'"):
             self.assertIn("g(%s)" % key, status.MENU_JS)
         self.assertIn("document.addEventListener('change',function(){setTimeout(sync,0)},true)", status.MENU_JS)
+        self.assertIn("note:on.note!==false", status.MENU_JS)                                  # the note's link, unless switched off
         self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_SETTINGS_JS)     # the app's settings do not rebuild the page
 
     def test_a_project_without_threads_is_its_own_thread(self):
@@ -1394,7 +1399,10 @@ class TestApp(unittest.TestCase):
         self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
         self.assertNotIn("AXIsProcessTrusted", swift)
         self.assertIn("SMAppService.mainApp", swift)                          # open at login, as a login item
-        self.assertIn('["claude", "cmux", "codex"]', swift)                   # the note is no session: the first app on offer
+        self.assertIn("final class RowView: NSView", swift)                   # a row is clicked and opens a submenu
+        self.assertIn("override func mouseUp(with event: NSEvent)", swift)
+        self.assertIn("final class ActionBar: NSView", swift)                 # the actions on one line, as icons
+        self.assertIn("guard menu === statusItem?.menu else { return }", swift)   # a submenu is never refilled with the menu
         self.assertIn("if !window.isVisible { showWindow() }", swift)          # never an app with nothing to click
         make = (self.APP / "make-app.sh").read_text()
         self.assertIn("MenuIcon@2x.png", make)

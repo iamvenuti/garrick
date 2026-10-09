@@ -902,6 +902,14 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
         self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])
 
+    def test_the_menu_offers_the_inbox(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        write(self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "call.txt", "A: hello\n")
+        intake = self.menu(self.page(launchers=("claude",)))["intake"]
+        self.assertEqual({"n": "Process the Inbox", "w": "process the inbox", "f": str(self.root), "c": 2}, intake)   # the page's own count
+        self.assertNotIn("intake", self.menu(self.page()))                    # nothing installed to open it in
+
     def test_the_menu_follows_the_graph_and_settings(self):
         for key in ("'garrick-graph-place'", "'garrick-default'", "'garrick-launchers'"):
             self.assertIn("g(%s)" % key, status.MENU_JS)

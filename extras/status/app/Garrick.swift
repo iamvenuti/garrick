@@ -353,8 +353,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// A folder of this workspace that still exists, or nil, with the page rebuilt.
 	func inWorkspace(_ path: String) -> URL? {
 		let folder = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+		let root = workspace.standardizedFileURL.path
 		var isDir: ObjCBool = false
-		guard folder.path.hasPrefix(workspace.standardizedFileURL.path + "/"),
+		guard folder.path == root || folder.path.hasPrefix(root + "/"),     // the root: Process the Inbox
 		      FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue else {
 			toast("That folder is not in this workspace any more. Rebuilding the page.")
 			freshen(force: true)
@@ -653,6 +654,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// thread itself runs its default.
 	func fill(_ menu: NSMenu) {
 		menu.removeAllItems()
+		if let inbox = inboxItem() {
+			menu.addItem(inbox)
+			menu.addItem(.separator())
+		}
 		for (n, zone) in shownZones().enumerated() {
 			if n > 0 { menu.addItem(.separator()) }
 			menu.addItem(header(zone["z"] as? String ?? ""))
@@ -761,6 +766,40 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let image = icon(trouble: false)
 		image.size = NSSize(width: side, height: side)
 		return image
+	}
+
+	// MARK: process the inbox
+	// One row for everything waiting: the intake skill reads each item and
+	// decides whether it is a conversation, reading or project material. The
+	// row opens the Settings default assistant (Claude, Codex or cmux; the
+	// first of those switched on when the default is the note or Finder) at the
+	// workspace root with "process the inbox", as a thread's row opens with
+	// "open X": Claude gets it typed in, Codex and cmux on the clipboard.
+	func inboxItem() -> NSMenuItem? {
+		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
+		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
+		let on = menuState?["launchers"] as? [String] ?? []
+		let assistants = ["claude", "codex", "cmux"].filter(on.contains)
+		let picked = menuState?["def"] as? String ?? ""
+		guard let app = assistants.contains(picked) ? picked : assistants.first else { return nil }
+		let title = row["n"] as? String ?? "Process the Inbox"
+		let item = NSMenuItem(title: title, action: #selector(processInbox(_:)), keyEquivalent: "")
+		item.target = self
+		item.representedObject = ["k": app, "f": folder, "w": phrase]
+		let n = row["c"] as? Int ?? 0
+		let text = NSMutableAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
+		text.append(NSAttributedString(string: "  " + (n == 0 ? "empty" : "\(n) waiting"),
+		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		item.attributedTitle = text
+		show(item, symbol("tray.and.arrow.down"))
+		item.toolTip = "Opens \(label(["k": app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		return item
+	}
+
+	@objc func processInbox(_ sender: NSMenuItem) {
+		guard let r = sender.representedObject as? [String: String], let k = r["k"], let f = r["f"] else { return }
+		if checking { return heard.append("menu:inbox") }
+		launch(k, f, phrase: r["w"] ?? "")
 	}
 
 	// MARK: keep awake
@@ -955,6 +994,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					let rows = m.items.compactMap { $0.view as? RowView }
 					let threads = m.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.view is RowView }.count
 					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)")
+					if let inbox = m.items.first(where: { $0.action == #selector(self.processInbox(_:)) }) {
+						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "?")")
+					} else {
+						print("inbox: none")
+					}
 					rows.first?.click()
 				} else {
 					print("menu: none")

@@ -2647,8 +2647,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
-    menu = ('<script type="application/json" id="menu-data">%s</script>' % script_json(menu_data(T, names, link, cmux, trouble))
-            if flags_on["menu-bar"] else "")
+    menu = ""
+    if flags_on["menu-bar"]:
+        md = menu_data(T, names, link, cmux, trouble)
+        if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
+            md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB)}
+        menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'

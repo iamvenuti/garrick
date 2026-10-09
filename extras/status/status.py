@@ -346,7 +346,8 @@ FLAGS = {
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
     "menu-bar": ("Menu bar", "In the Garrick app: an icon in the menu bar with the live projects and threads of the zone the "
-                 "graph shows, each opening as its card does, and a red dot when something failed. Switched on in the app's Settings."),
+                 "graph shows, each opening as its card does, and a red dot when something failed; or the same list in a panel "
+                 "that slides out from a screen edge or from under the notch. Switched on in the app's Settings."),
 }
 
 
@@ -707,13 +708,16 @@ MENU_SETTINGS_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
-var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey');
+var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
+/* an app built before the panel says no style, and its row stays hidden */
+if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
 if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
 window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 /* the app's settings: kept by the app, so a change here does not rebuild the page */
 function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
+if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
 login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
 function name(e){var c=e.code;if(/^Key[A-Z]$/.test(c))return c.slice(3);if(/^Digit\d$/.test(c))return c.slice(5);if(/^F\d{1,2}$/.test(c))return c;
@@ -1401,16 +1405,21 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
 
 def menu_settings() -> str:
     """Settings › Menu bar (preview, menu-bar), shown in Garrick.app
-    only: the icon, opening at login, and the shortcut that opens the menu.
-    The app keeps all three, so they hold when the window is closed."""
+    only: the icon or a panel at a screen edge, opening at login, and the
+    shortcut that opens either. The app keeps them all, so they hold when
+    the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
             'projects of the zone the graph shows, with their threads. Click one to open it as a thread&#39;s name would, or point at it '
             'for the other apps above. Close the window and the icon stays.</p>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show in the menu bar'
             '<small>A red dot on it when something on the Status tab failed</small></span></label></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-style"><span>Shows as'
+            '<small>A panel opens when the pointer rests at its edge, or on the notch</small></span></label>'
+            '<select id="menu-style" class="menu-style"><option value="icon">Menu bar icon</option><option value="left">Panel from the left</option>'
+            '<option value="right">Panel from the right</option><option value="top">Panel from the top</option></select></div>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'
             '<small id="menu-login-note">Starts the app when you log in, with the window as you left it</small></span></label></div>'
-            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small>Opens the menu from any app</small></span></label>'
+            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small>Opens the menu or the panel from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
             '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div></section>')
 
@@ -1904,6 +1913,8 @@ SETTINGS_CSS = r"""
 .nohost .apponly{display:none}.launcher-choice:has(input:disabled){opacity:.5}.hotkey{display:flex;gap:6px;align-items:center}
 .hotkey input{width:150px;font:inherit;font-size:13px;text-align:center;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px;cursor:pointer}
 .hotkey input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.menu-style{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.menu-style:disabled{opacity:.5}
 dialog.settings{position:relative}dialog.settings .sclose{position:absolute;top:14px;right:14px;width:30px;height:30px;display:flex;align-items:center;
 justify-content:center;font-size:20px;line-height:1;border:0;background:none;color:var(--muted);border-radius:8px;cursor:pointer}
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}

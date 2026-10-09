@@ -872,8 +872,11 @@ class TestPreviewFeatures(StatusCase):
         self.assertRegex(html, r'Menu bar</b><span class="chip on">on</span>')
         self.assertIn('<section class="setsec apponly" id="menu-settings" hidden>', html)   # until the app answers
         self.assertIn("if(!host||!box)return;box.hidden=false", status.MENU_SETTINGS_JS)
-        for control in ('id="menu-show"', 'id="menu-login"', 'id="menu-hotkey"'):   # the three settings
+        for control in ('id="menu-show"', 'id="menu-style"', 'id="menu-login"', 'id="menu-hotkey"'):   # the four settings
             self.assertIn(control, html)
+        for edge in ("left", "right", "top"):
+            self.assertIn('<option value="%s">' % edge, html)
+        self.assertIn("'style' in a?'':'none'", status.MENU_SETTINGS_JS)    # an app without the panel never shows the choice
         self.assertIn(".nohost .apponly{display:none}", status.SETTINGS_CSS)   # a browser has no menu bar to offer
 
     def test_what_the_menu_lists(self):
@@ -1433,6 +1436,18 @@ class TestApp(unittest.TestCase):
         self.assertIn("if !window.isVisible { showWindow() }", swift)          # never an app with nothing to click
         self.assertIn("NSColor.labelColor.setFill()", swift)                 # the mark in the menu bar's own colours
         self.assertIn("NSAppearance.currentDrawing()", swift)
+
+    def test_the_panel(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn("enum PanelEdge: String { case left, right, top }", swift)
+        self.assertIn("[.borderless, .nonactivatingPanel]", swift)             # it never brings the app forward
+        self.assertIn(".canJoinAllSpaces, .fullScreenAuxiliary", swift)        # on every Space, beside full-screen apps
+        self.assertIn("auxiliaryTopLeftArea", swift)                           # the notch, from the screen itself
+        self.assertIn("addGlobalMonitorForEvents(matching: [.mouseMoved", swift)   # the pointer, which needs no permission
+        self.assertNotIn("addGlobalMonitorForEvents(matching: [.keyDown", swift)   # keys from other apps would
+        self.assertIn("asyncAfter(deadline: .now() + 0.25", swift)              # resting at the edge, not passing by
+        self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
+        self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):

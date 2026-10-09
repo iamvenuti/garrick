@@ -124,11 +124,12 @@ It compiles `Garrick.swift` with the Xcode command line tools, which a Mac that 
 
 ### In the menu bar
 
-With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app only, with three settings that the app keeps itself:
+With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app only, with four settings that the app keeps itself:
 
 - **Show in the menu bar** puts Garrick's mark in the menu bar, drawn in the menu bar's own colours. Closing the window then leaves the app there, without a Dock icon, and *Open Garrick* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark means the same as the red dot on the *Status* tab: something failed.
+- **Shows as** picks where the menu lives: *Menu bar icon*, or a panel that slides out from the left or right edge of the screen, or down from the top. See [As a panel](#as-a-panel).
 - **Open at login** starts the app when you log in, as a login item. It opens the way you left it: in the menu bar alone if its window was closed. It needs macOS 13 or later; macOS may ask you to allow it under *Login Items* in System Settings.
-- **Hotkey** opens the menu from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
+- **Hotkey** opens the menu, or the panel, from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
 
 The menu lists the live projects of the zone the graph shows, as last picked in the window, by name. With *All* picked it lists every zone, and with a wiki picked it lists Work. Point at a project and its submenu opens: a line of app icons, the ways its card offers to open it (the note, *Reveal in Finder*, Claude, Codex, cmux, as switched on in Settings), then its live threads. Point at a thread for its own line of icons. Click an icon to open the project or thread in that app; hover one for its name. Click a project's or a thread's name itself and it opens the way clicking a thread's name does in the window: the default chosen under *Opening a thread*, which sits on a tinted square in the line of icons. Nothing else is listed: no bars, no figures, no parked threads. At the foot are *Open Garrick's Status* and *Quit*. The keyboard moves through the menu and opens a submenu, but Return on a name does nothing; click it, or pick its icon.
 
@@ -138,7 +139,19 @@ The menu lists the live projects of the zone the graph shows, as last picked in 
 
 *While an Agent Is Working* checks once a minute whether Claude Code or Codex is in the middle of a turn, and keeps the Mac awake only then. It reads their transcripts on this Mac, through `agents_working.py` beside `status.py`, and calls no model. A transcript not written for 30 minutes no longer counts, so a session that crashed mid-turn lets the Mac sleep, and so does a single command that runs longer than that without output. Run `python3 System/status/agents_working.py --verbose` to see what it sees. This choice is the only one remembered when the app restarts. A forgotten *Until Turned Off* should not come back at login.
 
-The app holds the Mac awake itself, so quitting it, or a crash, lets the Mac sleep again. Taking the icon out of the menu bar turns Keep awake off. A MacBook with its lid closed and no external display sleeps anyway: only an administrator's `pmset` setting can change that, and Garrick doesn't try.
+The app holds the Mac awake itself, so quitting it, or a crash, lets the Mac sleep again. Taking the icon out of the menu bar, or the panel off its edge, turns Keep awake off. A MacBook with its lid closed and no external display sleeps anyway: only an administrator's `pmset` setting can change that, and Garrick doesn't try.
+
+#### As a panel
+
+With *Shows as* set to a panel, the icon leaves the menu bar and the same list lives in a panel at the edge you picked. Rest the pointer against that edge for a quarter of a second and the panel slides out; move away and it slides back. The hotkey opens it too, with the cursor in its filter: type part of a name and Return opens the first thread that matches. A click in another app closes it, and so does Escape when the panel has the keyboard. The panel never brings Garrick forward, so the app you were in stays in front.
+
+The panel shows every project of the zone with its threads already open under it; the chevron beside a project folds them. Point at a row for its app icons, as in the menu's submenu, and click its name to open it the default way. *Process the Inbox* is at the top, and *Keep awake*, *Open Garrick* and *Quit* at the foot. A red *Something failed* in its header means what the red dot on the mark means.
+
+*From the top* grows down out of the notch on a MacBook that has one, black like the notch, and opens when the pointer rests on the notch itself, where the menu bar has no items. On a display without a notch it hangs from the middle of the menu bar, and the middle 200 points of the top edge open it. Only an outer edge of the screen counts: an edge where the pointer can carry on to another display never opens it.
+
+Three edges can collide with macOS. On the left, Stage Manager shows its strip of recent apps there, and a Dock placed on the left lives there too. At the top, *Automatically hide and show the menu bar* shows the menu bar when the pointer rests there. The right edge collides with neither: Notification Center opens with a trackpad swipe, not by resting the pointer there.
+
+Seeing where the pointer is needs no permission in macOS; only reading keys typed in other apps would, and the panel never does.
 
 The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. Rebuild the app with `make-app.sh` after updating Garrick to get the icon; the flag alone does not add it to an app built before.
 

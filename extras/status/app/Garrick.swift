@@ -21,12 +21,16 @@
 //     dot when the Status tab has one, and Keep awake: for a time, until
 //     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
 //     opens the app at login and sets a hotkey for the menu; the app keeps
-//     those three in its own defaults, as it keeps the menu between launches.
+//     those three in its own defaults, as it keeps the menu between launches;
+//   - instead of the icon, the same menu as a panel that slides out from the
+//     left or right edge of the screen, or down from under the notch, when the
+//     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as).
 // Nothing here changes a file in the workspace, as nothing on the page does.
 import AppKit
 import Carbon.HIToolbox
 import IOKit.pwr_mgt
 import ServiceManagement
+import SwiftUI
 import WebKit
 
 let info = Bundle.main.infoDictionary ?? [:]
@@ -48,6 +52,10 @@ let checking = CommandLine.arguments.contains("--check")
 // settings, the menu as the page last gave it, and whether the window was open.
 let defaults = UserDefaults.standard
 let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
+// Where the menu shows: unset or "icon" in the menu bar, or a panel from an edge.
+let kStyle = "menuStyle"
+enum PanelEdge: String { case left, right, top }
+func savedEdge() -> PanelEdge? { defaults.string(forKey: kStyle).flatMap(PanelEdge.init) }
 // Keep awake: only the agent-driven mode outlives a quit, since a forgotten
 // "until turned off" should not come back at login; and whether the display stays on too.
 let kAwakeWorking = "awakeWhileWorking", kAwakeDisplay = "awakeDisplay"
@@ -188,6 +196,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var pendingReload: DispatchWorkItem?
 	var heard: [String] = []          // what --check caught instead of acting on
 	var statusItem: NSStatusItem?
+	var edgePanel: EdgePanel?
+	// Living outside the window, as an icon or a panel: closing the window keeps the app.
+	var resident: Bool { statusItem != nil || edgePanel != nil }
 	var menuState: [String: Any]?     // what the page last said the menu lists
 	var hotKey: EventHotKeyRef?
 	var hotKeyHandler: EventHandlerRef?
@@ -214,6 +225,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		window.contentView = web
 		window.isReleasedWhenClosed = false   // closed into the menu bar, it opens again
 		window.delegate = self
+		window.acceptsMouseMovedEvents = true   // so the panel's edge is felt with this window in front too
 		window.center()
 		window.setFrameAutosaveName("GarrickStatus")   // the name it had as Garrick, so the window keeps its place
 		if checking {
@@ -224,9 +236,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return load()
 		}
 		menuState = savedMenu()
-		if defaults.bool(forKey: kMenuBar) && menuState != nil { showStatusItem() }
+		present()
 		_ = setHotKey(defaults.dictionary(forKey: kHotkey))
-		if statusItem != nil && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
+		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
 		if !startHidden { showWindow() }
@@ -236,8 +248,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		freshen()
 	}
 
-	// With the icon in the menu bar, closing the window leaves the app there.
-	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { statusItem == nil }
+	// With the icon in the menu bar, or the panel at an edge, closing the window leaves the app there.
+	func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { edgePanel == nil && statusItem == nil }
 
 	func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
 		if !hasVisibleWindows { showWindow() }
@@ -245,9 +257,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	func windowWillClose(_ note: Notification) {
-		guard statusItem != nil else { return }
+		guard resident else { return }
 		defaults.set(false, forKey: kWindowShown)
-		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's is there
+		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's or the panel is there
 	}
 
 	@objc func showWindow(_ sender: Any? = nil) {
@@ -466,7 +478,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func appState() -> [String: Any] {
 		var login: Any = NSNull()             // null: this macOS cannot add a login item this way
 		if #available(macOS 13, *) { login = SMAppService.mainApp.status == .enabled }
-		return ["menubar": defaults.bool(forKey: kMenuBar), "login": login,
+		return ["menubar": defaults.bool(forKey: kMenuBar), "style": savedEdge()?.rawValue ?? "icon", "login": login,
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? ""]
 	}
 
@@ -504,13 +516,20 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	func setting(_ request: [String: Any]) {
+		if let style = request["style"] as? String {
+			defaults.set(PanelEdge(rawValue: style)?.rawValue ?? "icon", forKey: kStyle)
+			if defaults.bool(forKey: kMenuBar) && menuState != nil {
+				present()
+				toast(whereItIs())
+			}
+		}
 		if let on = request["menubar"] as? Bool {
 			defaults.set(on, forKey: kMenuBar)
 			if on && menuState != nil {
-				showStatusItem()
-				toast("Garrick is in the menu bar. Close the window and it stays there.")
+				present()
+				toast(whereItIs())
 			} else {
-				hideStatusItem()
+				takeAway()
 				toast(on ? "Rebuilding the page for the menu." : "Taken out of the menu bar.")
 				if on { freshen(force: true) }
 			}
@@ -545,7 +564,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The page sends the menu at every load and change; nil means the flag is
-	// off, which takes the icon away and brings the window back if it was hidden.
+	// off, which takes the icon or the panel away and brings the window back if it was hidden.
 	func setMenu(_ m: [String: Any]?) {
 		menuState = m
 		if let m, let data = try? JSONSerialization.data(withJSONObject: m) {
@@ -553,7 +572,33 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		} else {
 			defaults.removeObject(forKey: kMenu)
 		}
-		if m != nil && defaults.bool(forKey: kMenuBar) { showStatusItem() } else { hideStatusItem() }
+		present()
+	}
+
+	// The icon or the panel, whichever Settings picks, or neither.
+	func present() {
+		guard menuState != nil, defaults.bool(forKey: kMenuBar) else { return takeAway() }
+		if let edge = savedEdge() {
+			removeStatusItem()
+			if edgePanel?.edge != edge {
+				edgePanel?.close()
+				edgePanel = EdgePanel(edge) { [weak self] m in self?.fillPanel(m) }
+			}
+			edgePanel?.refresh()
+		} else {
+			edgePanel?.close()
+			edgePanel = nil
+			showStatusItem()
+		}
+	}
+
+	func whereItIs() -> String {
+		switch savedEdge() {
+		case .left?: return "Rest the pointer at the left edge of the screen for Garrick's panel. Close the window and it stays there."
+		case .right?: return "Rest the pointer at the right edge of the screen for Garrick's panel. Close the window and it stays there."
+		case .top?: return "Rest the pointer on the notch, or the top of the screen, for Garrick's panel. Close the window and it stays there."
+		case nil: return "Garrick is in the menu bar. Close the window and it stays there."
+		}
 	}
 
 	func showStatusItem() {
@@ -570,10 +615,18 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		statusItem?.button?.setAccessibilityLabel((trouble ? "Garrick: something failed" : "Garrick") + (held.isEmpty ? "" : ", keeping the Mac awake"))
 	}
 
-	func hideStatusItem() {
+	func removeStatusItem() {
 		guard let item = statusItem else { return }
 		NSStatusBar.system.removeStatusItem(item)
 		statusItem = nil
+	}
+
+	// Neither icon nor panel.
+	func takeAway() {
+		guard resident else { return }
+		removeStatusItem()
+		edgePanel?.close()
+		edgePanel = nil
 		setAwake(.off, remember: false)    // its controls live in the menu; never hold the Mac awake out of reach
 		if !window.isVisible { showWindow() }  // never leave the app with nothing to click
 	}
@@ -778,18 +831,22 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// first of those switched on when the default is the note or Finder) at the
 	// workspace root with "process the inbox", as a thread's row opens with
 	// "open X": Claude gets it typed in, Codex and cmux on the clipboard.
-	func inboxItem() -> NSMenuItem? {
+	func inbox() -> (title: String, waiting: Int, act: [String: String])? {
 		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
 		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
 		let on = menuState?["launchers"] as? [String] ?? []
 		let assistants = ["claude", "codex", "cmux"].filter(on.contains)
 		let picked = menuState?["def"] as? String ?? ""
 		guard let app = assistants.contains(picked) ? picked : assistants.first else { return nil }
-		let title = row["n"] as? String ?? "Process the Inbox"
+		return (row["n"] as? String ?? "Process the Inbox", row["c"] as? Int ?? 0, ["k": app, "f": folder, "w": phrase])
+	}
+
+	func inboxItem() -> NSMenuItem? {
+		guard let row = inbox(), let app = row.act["k"], let phrase = row.act["w"] else { return nil }
+		let title = row.title, n = row.waiting, act = row.act
 		let item = NSMenuItem(title: title, action: #selector(processInbox(_:)), keyEquivalent: "")
 		item.target = self
-		item.representedObject = ["k": app, "f": folder, "w": phrase]
-		let n = row["c"] as? Int ?? 0
+		item.representedObject = act
 		let text = NSMutableAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
 		text.append(NSAttributedString(string: "  " + (n == 0 ? "empty" : "\(n) waiting"),
 		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
@@ -803,6 +860,46 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard let r = sender.representedObject as? [String: String], let k = r["k"], let f = r["f"] else { return }
 		if checking { return heard.append("menu:inbox") }
 		launch(k, f, phrase: r["w"] ?? "")
+	}
+
+	// MARK: the panel
+	// The menu's rows for the panel: the same zones, rows, actions and Keep
+	// awake, each running as its menu item does.
+	func fillPanel(_ m: PanelModel) {
+		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
+		m.trouble = trouble
+		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
+		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
+		m.inbox = inbox().map { title, n, act in
+			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting") { [weak self] in
+				guard let self, let k = act["k"], let f = act["f"] else { return }
+				if checking { return self.heard.append("panel:inbox") }
+				self.launch(k, f, phrase: act["w"] ?? "")
+			}
+		}
+		m.awakeLabel = "Keep Awake" + awakeState()
+		m.awakeHeld = !held.isEmpty
+		switch awake {
+		case .off: m.awakeTag = 0
+		case .on: m.awakeTag = 3
+		case .whileWorking: m.awakeTag = 4
+		case .until: m.awakeTag = -1
+		}
+		m.display = defaults.bool(forKey: kAwakeDisplay)
+		m.pickAwake = { [weak self] tag in self?.pickAwake(tag: tag) }
+		m.openApp = { [weak self] in self?.showWindow() }
+	}
+
+	func panelRow(_ r: [String: Any]) -> PanelRow {
+		let acts = acts(r)
+		let fallback = acts.first(where: { $0["d"] as? Bool == true })
+		let name = r["n"] as? String ?? ""
+		return PanelRow(id: (r["f"] as? String ?? r["u"] as? String ?? "") + "\u{0}" + name, name: name,
+		                acts: acts.enumerated().map { n, a in
+		                	PanelAct(id: n, icon: icon(a), label: label(a), isDefault: a["d"] as? Bool == true) { [weak self] in self?.run(a) }
+		                },
+		                threads: (r["t"] as? [[String: Any]] ?? []).map(panelRow),
+		                open: fallback.map { a in { [weak self] in self?.run(a) } })
 	}
 
 	// MARK: keep awake
@@ -863,6 +960,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			                               "Garrick: Keep awake" as CFString, &id) == kIOReturnSuccess { held[type] = id }
 		}
 		if was != !held.isEmpty && statusItem != nil { showStatusItem() }
+		if was != !held.isEmpty { edgePanel?.refresh() }
 	}
 
 	// The menu's Keep awake row: its title says the state, its submenu the choices.
@@ -904,8 +1002,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
-	@objc func pickAwake(_ sender: NSMenuItem) {
-		switch sender.tag {
+	@objc func pickAwake(_ sender: NSMenuItem) { pickAwake(tag: sender.tag) }
+
+	func pickAwake(tag: Int) {
+		defer { edgePanel?.refresh() }
+		switch tag {
 		case 1: setAwake(.until(Date().addingTimeInterval(3600)))
 		case 2: setAwake(.until(Date().addingTimeInterval(3 * 3600)))
 		case 3: setAwake(.on)
@@ -946,7 +1047,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	func hotKeyPressed() {
-		if let button = statusItem?.button { button.performClick(nil) } else { showWindow() }
+		if let panel = edgePanel { panel.toggle() }
+		else if let button = statusItem?.button { button.performClick(nil) } else { showWindow() }
 	}
 
 	// MARK: links
@@ -1002,7 +1104,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					} else {
 						print("inbox: none")
 					}
+					let panel = PanelModel()
+					self.fillPanel(panel)
+					let projects = panel.zones.flatMap { $0.rows }
+					print("panel: \(projects.count) projects, \(projects.reduce(0) { $0 + $1.threads.count }) threads")
 					rows.first?.click()
+					projects.first?.open?()
 				} else {
 					print("menu: none")
 				}
@@ -1070,6 +1177,447 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
 		])
 		return bar
+	}
+}
+
+// MARK: the panel (preview, menu-bar)
+// The menu as a panel that slides out from the left or right edge of the
+// screen, or down from under the notch. It holds the same rows as the menu and
+// runs them the same way; StatusApp.fillPanel fills it from the page's menu.
+// It opens when the pointer rests at its edge for a moment, or with the
+// hotkey, and never takes the app forward: the app you were in stays in
+// front. Seeing the pointer needs no permission; only keys would.
+
+struct PanelAct: Identifiable {
+	let id: Int
+	let icon: NSImage
+	let label: String
+	let isDefault: Bool
+	let run: () -> Void
+}
+
+struct PanelRow: Identifiable {
+	let id: String
+	let name: String
+	let acts: [PanelAct]
+	let threads: [PanelRow]
+	let open: (() -> Void)?
+}
+
+struct PanelZone: Identifiable {
+	var id: String { name }
+	let name: String
+	let rows: [PanelRow]
+}
+
+struct PanelInbox {
+	let title: String
+	let note: String
+	let run: () -> Void
+}
+
+final class PanelModel: ObservableObject {
+	@Published var zones: [PanelZone] = []
+	@Published var inbox: PanelInbox?
+	@Published var trouble = false
+	@Published var mark = NSImage()
+	@Published var awakeLabel = "Keep Awake"
+	@Published var awakeHeld = false
+	@Published var awakeTag = 0
+	@Published var display = false
+	@Published var filter = ""
+	@Published var topInset: CGFloat = 0     // the notch's height, which the panel's top hides under
+	@Published var typing = 0                // bumped when the hotkey opens it, to put the cursor in the filter
+	var pickAwake: (Int) -> Void = { _ in }
+	var openApp: () -> Void = {}
+	var after: () -> Void = {}
+	// Close first, then act, so the app that opens comes forward over a panel already leaving.
+	func perform(_ f: @escaping () -> Void) { after(); f() }
+}
+
+// One project or thread: its name runs the default, a chevron folds a
+// project's threads, and pointing at it shows the icons of its other apps.
+struct PanelLine: View {
+	let row: PanelRow
+	let depth: Int
+	let folded: Bool?
+	let toggle: () -> Void
+	let perform: (@escaping () -> Void) -> Void
+	@State private var hover = false
+
+	var body: some View {
+		HStack(spacing: 6) {
+			if let folded {
+				Button(action: toggle) {
+					Image(systemName: folded ? "chevron.right" : "chevron.down")
+						.font(.system(size: 9, weight: .semibold))
+						.foregroundColor(.secondary)
+						.frame(width: 12, height: 16)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+			} else {
+				Color.clear.frame(width: 12, height: 16)
+			}
+			Text(row.name)
+				.font(.system(size: 13, weight: depth == 0 ? .medium : .regular))
+				.foregroundColor(depth == 0 ? .primary : .primary.opacity(0.85))
+				.lineLimit(1)
+				.truncationMode(.tail)
+			Spacer(minLength: 8)
+			if hover {
+				HStack(spacing: 4) {
+					ForEach(row.acts) { a in
+						Button { perform(a.run) } label: {
+							Image(nsImage: a.icon).resizable().frame(width: 18, height: 18)
+								.padding(2)
+								.background(RoundedRectangle(cornerRadius: 5).fill(a.isDefault ? Color.accentColor.opacity(0.3) : .clear))
+						}
+						.buttonStyle(.plain)
+						.help(a.label)
+					}
+				}
+			}
+		}
+		.padding(.leading, CGFloat(depth) * 18)
+		.padding(.horizontal, 8)
+		.padding(.vertical, 4)
+		.background(RoundedRectangle(cornerRadius: 6).fill(hover ? Color.primary.opacity(0.09) : .clear))
+		.contentShape(Rectangle())
+		.onHover { hover = $0 }
+		.onTapGesture { if let open = row.open { perform(open) } }
+	}
+}
+
+struct PanelView: View {
+	@ObservedObject var model: PanelModel
+	@State private var folded: Set<String> = []
+	@FocusState private var typing: Bool
+
+	var query: String { model.filter.trimmingCharacters(in: .whitespaces).lowercased() }
+
+	// Filtered: a project whose name matches keeps all its threads; otherwise only the threads that match.
+	func shown(_ rows: [PanelRow]) -> [PanelRow] {
+		guard !query.isEmpty else { return rows }
+		return rows.compactMap { r in
+			if r.name.lowercased().contains(query) { return r }
+			let t = r.threads.filter { $0.name.lowercased().contains(query) }
+			return t.isEmpty ? nil : PanelRow(id: r.id, name: r.name, acts: r.acts, threads: t, open: r.open)
+		}
+	}
+
+	// Return opens the first thread that matches, or the first project.
+	func first() -> (() -> Void)? {
+		let rows = model.zones.flatMap { shown($0.rows) }
+		if !query.isEmpty, let t = rows.flatMap({ $0.threads }).first(where: { $0.name.lowercased().contains(query) }) { return t.open }
+		return rows.first?.open
+	}
+
+	func awake(_ title: String, _ tag: Int, _ on: Bool) -> some View {
+		Toggle(title, isOn: Binding(get: { on }, set: { _ in model.pickAwake(tag) }))
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 8) {
+			HStack(spacing: 8) {
+				Image(nsImage: model.mark).resizable().frame(width: 16, height: 16)
+				Text("Garrick").font(.system(size: 13, weight: .semibold))
+				Spacer()
+				if model.trouble {
+					Text("Something failed").font(.system(size: 11)).foregroundColor(.red)
+				}
+			}
+			TextField("Find a project or thread", text: $model.filter)
+				.textFieldStyle(.roundedBorder)
+				.focused($typing)
+				.onSubmit { if let open = first() { model.perform(open) } }
+			ScrollView {
+				VStack(alignment: .leading, spacing: 1) {
+					if let inbox = model.inbox, query.isEmpty {
+						HStack(spacing: 6) {
+							Image(systemName: "tray.and.arrow.down").frame(width: 12)
+							Text(inbox.title).font(.system(size: 13, weight: .medium))
+							Text(inbox.note).font(.system(size: 12)).foregroundColor(.secondary)
+							Spacer()
+						}
+						.padding(.horizontal, 8).padding(.vertical, 5)
+						.contentShape(Rectangle())
+						.onTapGesture { model.perform(inbox.run) }
+						Divider().padding(.vertical, 4)
+					}
+					ForEach(model.zones) { zone in
+						Text(zone.name.uppercased())
+							.font(.system(size: 10, weight: .semibold))
+							.foregroundColor(.secondary)
+							.padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
+						let rows = shown(zone.rows)
+						if rows.isEmpty {
+							Text(query.isEmpty ? "No live projects" : "Nothing matches")
+								.font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 8)
+						}
+						ForEach(rows) { r in
+							let shut = query.isEmpty && folded.contains(r.id)
+							PanelLine(row: r, depth: 0, folded: r.threads.isEmpty ? nil : shut,
+							          toggle: { if folded.contains(r.id) { folded.remove(r.id) } else { folded.insert(r.id) } },
+							          perform: model.perform)
+							if !shut {
+								ForEach(r.threads) { t in
+									PanelLine(row: t, depth: 1, folded: nil, toggle: {}, perform: model.perform)
+								}
+							}
+						}
+					}
+				}
+			}
+			Divider()
+			HStack(spacing: 12) {
+				Menu {
+					awake("Off", 0, model.awakeTag == 0)
+					awake("For 1 Hour", 1, false)
+					awake("For 3 Hours", 2, false)
+					awake("Until Turned Off", 3, model.awakeTag == 3)
+					awake("While an Agent Is Working", 4, model.awakeTag == 4)
+					Divider()
+					awake("Display Stays On Too", 5, model.display)
+				} label: {
+					Text(model.awakeLabel).font(.system(size: 12))
+				}
+				.menuStyle(.borderlessButton)
+				.fixedSize()
+				Spacer()
+				Button { model.perform(model.openApp) } label: {
+					Image(nsImage: model.mark).resizable().frame(width: 15, height: 15)
+				}
+				.help("Open Garrick")
+				Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
+					.help("Quit Garrick")
+			}
+			.buttonStyle(.plain)
+		}
+		.padding(12)
+		.padding(.top, model.topInset)
+		.onReceive(model.$typing.dropFirst()) { _ in typing = true }
+	}
+}
+
+// A borderless panel that can take the keys for the filter without bringing the app forward.
+final class SlidePanel: NSPanel {
+	override var canBecomeKey: Bool { true }
+	override var canBecomeMain: Bool { false }
+}
+
+final class EdgePanel: NSObject, NSWindowDelegate {
+	let edge: PanelEdge
+	let model = PanelModel()
+	let panel: SlidePanel
+	let clip: NSView
+	let host: NSHostingView<PanelView>
+	let fill: (PanelModel) -> Void
+	let width: CGFloat = 340, gap: CGFloat = 6
+	var monitors: [Any] = []
+	var dwell: DispatchWorkItem?
+	var watch: Timer?
+	var away: Date?            // when the pointer left the open panel
+	var shut = NSRect.zero     // where it slides back to
+	var shown = false, byKey = false
+
+	init(_ edge: PanelEdge, fill: @escaping (PanelModel) -> Void) {
+		self.edge = edge
+		self.fill = fill
+		panel = SlidePanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 400),
+		                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+		panel.level = .statusBar               // over the menu bar, so the top one grows out of the notch
+		panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+		panel.isOpaque = false
+		panel.backgroundColor = .clear
+		panel.hasShadow = true
+		panel.hidesOnDeactivate = false
+		panel.isReleasedWhenClosed = false
+		panel.isFloatingPanel = true
+		panel.acceptsMouseMovedEvents = true
+		if edge == .top {
+			// The notch is black, so the panel that comes out of it is too.
+			clip = NSView()
+			clip.wantsLayer = true
+			clip.layer?.backgroundColor = NSColor.black.cgColor
+			panel.appearance = NSAppearance(named: .darkAqua)
+		} else {
+			let v = NSVisualEffectView()
+			v.material = .menu
+			v.blendingMode = .behindWindow
+			v.state = .active
+			v.wantsLayer = true
+			clip = v
+		}
+		clip.layer?.cornerRadius = 14
+		clip.layer?.masksToBounds = true
+		host = NSHostingView(rootView: PanelView(model: model))
+		if #available(macOS 13, *) { host.sizingOptions = [] }   // the panel sizes itself; the content follows
+		// Pinned to the side it slides from, so a narrower panel shows its inner edge first.
+		switch edge {
+		case .left: host.autoresizingMask = [.minXMargin]
+		case .right: host.autoresizingMask = [.maxXMargin]
+		case .top: host.autoresizingMask = [.maxYMargin, .minXMargin, .maxXMargin]
+		}
+		super.init()
+		clip.autoresizingMask = [.width, .height]
+		clip.addSubview(host)
+		panel.contentView = clip
+		panel.delegate = self
+		model.after = { [weak self] in self?.close(animated: true) }
+		arm()
+	}
+
+	// The notch, where the screen has one: the gap between the two parts of the menu bar beside it.
+	func notch(_ s: NSScreen) -> NSRect? {
+		guard #available(macOS 12, *), s.safeAreaInsets.top > 0,
+		      let l = s.auxiliaryTopLeftArea, let r = s.auxiliaryTopRightArea, r.minX > l.maxX else { return nil }
+		return NSRect(x: l.maxX, y: s.frame.maxY - s.safeAreaInsets.top, width: r.minX - l.maxX, height: s.safeAreaInsets.top)
+	}
+
+	// Where it rests open on a screen, where it slides from, and how much of its top the notch hides.
+	func frames(_ s: NSScreen) -> (open: NSRect, shut: NSRect, inset: CGFloat) {
+		let f = s.frame, v = s.visibleFrame
+		switch edge {
+		case .left:
+			let r = NSRect(x: f.minX + gap, y: v.minY + gap, width: width, height: v.height - 2 * gap)
+			return (r, NSRect(x: r.minX, y: r.minY, width: 1, height: r.height), 0)
+		case .right:
+			let r = NSRect(x: f.maxX - gap - width, y: v.minY + gap, width: width, height: v.height - 2 * gap)
+			return (r, NSRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height), 0)
+		case .top:
+			let h = min(560, v.height * 0.7), w = width + 40
+			if let n = notch(s) {
+				let r = NSRect(x: n.midX - max(w, n.width + 80) / 2, y: f.maxY - n.height - h, width: max(w, n.width + 80), height: n.height + h)
+				return (r, n, n.height)
+			}
+			let r = NSRect(x: f.midX - w / 2, y: v.maxY - h, width: w, height: h)
+			return (r, NSRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1), 0)
+		}
+	}
+
+	// The pointer at the panel's edge: an outer edge of the screen, not one
+	// that leads to another display, and for the top, only across the notch
+	// (or the middle of the menu bar on a screen without one), where the menu bar has no items.
+	func atEdge(_ p: NSPoint) -> Bool {
+		guard let s = NSScreen.screens.first(where: { NSMouseInRect(p, $0.frame, false) }) else { return false }
+		let f = s.frame
+		func outer(_ q: NSPoint) -> Bool { !NSScreen.screens.contains { NSMouseInRect(q, $0.frame, false) } }
+		switch edge {
+		case .left: return p.x <= f.minX + 1 && p.y < s.visibleFrame.maxY && outer(NSPoint(x: f.minX - 2, y: p.y))
+		case .right: return p.x >= f.maxX - 2 && p.y < s.visibleFrame.maxY && outer(NSPoint(x: f.maxX + 2, y: p.y))
+		case .top:
+			guard p.y >= f.maxY - 2, outer(NSPoint(x: p.x, y: f.maxY + 2)) else { return false }
+			let n = notch(s) ?? NSRect(x: f.midX - 100, y: f.maxY, width: 200, height: 0)
+			return p.x >= n.minX && p.x <= n.maxX
+		}
+	}
+
+	// The pointer, from wherever it is: other apps' events for the edge, this
+	// app's own when its window is in front. Escape closes it, and a click in
+	// another app does too.
+	func arm() {
+		if let m = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: { [weak self] _ in self?.moved() }) { monitors.append(m) }
+		if let m = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] e in self?.moved(); return e }) { monitors.append(m) }
+		if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in self?.close(animated: true) }) { monitors.append(m) }
+		if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] e in
+			guard let self, self.shown, e.keyCode == 53 else { return e }   // Escape
+			self.close(animated: true)
+			return nil
+		}) { monitors.append(m) }
+	}
+
+	// Resting at the edge for a quarter of a second opens it, so passing by does not.
+	func moved() {
+		guard !shown else { return }
+		if atEdge(NSEvent.mouseLocation) {
+			guard dwell == nil else { return }
+			let work = DispatchWorkItem { [weak self] in
+				guard let self else { return }
+				self.dwell = nil
+				if !self.shown && self.atEdge(NSEvent.mouseLocation) { self.open(byKey: false) }
+			}
+			dwell = work
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+		} else {
+			dwell?.cancel()
+			dwell = nil
+		}
+	}
+
+	func refresh() { fill(model) }
+
+	func toggle() { if shown { close(animated: true) } else { open(byKey: true) } }
+
+	func open(byKey: Bool) {
+		fill(model)
+		let p = NSEvent.mouseLocation
+		guard let s = NSScreen.screens.first(where: { NSMouseInRect(p, $0.frame, false) }) ?? NSScreen.main else { return }
+		let (to, from, inset) = frames(s)
+		model.topInset = inset
+		if edge == .top {
+			// Under the notch, only the lower corners are round: the top meets the screen's edge.
+			clip.layer?.maskedCorners = inset > 0 ? [.layerMinXMinYCorner, .layerMaxXMinYCorner] : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+		}
+		// Laid out open, then shrunk to where it slides from, so the content keeps its place.
+		panel.setFrame(to, display: false)
+		host.frame = clip.bounds
+		panel.setFrame(from, display: false)
+		shut = from
+		shown = true
+		self.byKey = byKey
+		away = nil
+		panel.orderFrontRegardless()
+		if byKey {
+			panel.makeKey()
+			model.typing += 1
+		}
+		NSAnimationContext.runAnimationGroup { c in
+			c.duration = 0.2
+			c.timingFunction = CAMediaTimingFunction(name: .easeOut)
+			panel.animator().setFrame(to, display: true)
+		} completionHandler: { [weak self] in self?.panel.invalidateShadow() }
+		if !byKey {
+			watch = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.stillHere() }
+		}
+	}
+
+	// Opened by the pointer, it closes when the pointer has been away a moment.
+	func stillHere() {
+		let p = NSEvent.mouseLocation
+		if panel.frame.insetBy(dx: -16, dy: -16).contains(p) || atEdge(p) || panel.isKeyWindow {
+			away = nil
+		} else if let a = away {
+			if -a.timeIntervalSinceNow > 0.35 { close(animated: true) }
+		} else {
+			away = Date()
+		}
+	}
+
+	func windowDidResignKey(_ note: Notification) { if shown { close(animated: true) } }
+
+	func close(animated: Bool = false) {
+		watch?.invalidate()
+		watch = nil
+		guard shown || !animated else { return }
+		if !animated {
+			monitors.forEach(NSEvent.removeMonitor)
+			monitors = []
+			dwell?.cancel()
+			shown = false
+			panel.orderOut(nil)
+			return
+		}
+		shown = false
+		model.filter = ""
+		NSAnimationContext.runAnimationGroup { c in
+			c.duration = 0.15
+			c.timingFunction = CAMediaTimingFunction(name: .easeIn)
+			panel.animator().setFrame(shut, display: true)
+		} completionHandler: { [weak self] in
+			guard let self, !self.shown else { return }
+			self.panel.orderOut(nil)
+		}
 	}
 }
 

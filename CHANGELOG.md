@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- *Shows as* in the status page app's Settings › Menu bar (preview `menu-bar`): the menu as a panel that slides out from the left or right edge of the screen, or down from under the notch, instead of an icon in the menu bar. It opens when the pointer rests at its edge, or with the hotkey, which also puts the cursor in a filter for the threads. It holds what the menu holds, with each project's threads open under it. See [As a panel](docs/extras/status-page.md#as-a-panel).
+
 ## [0.12.1] - 2026-10-09
 
 The status page's Mac app builds again with an Xcode older than macOS 27's, and the zone guard no longer stops a session opened in `System/`.

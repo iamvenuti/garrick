@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The README plays the walkthrough with the new mark.
+
 ## [0.10.0] - 2026-10-09
 
 A new mark, and the Mac app takes Garrick's name.

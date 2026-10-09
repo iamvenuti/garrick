@@ -12,7 +12,7 @@ Underneath, Claude Code or Codex does the work, in its desktop app or a terminal
 
 Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the agent rules for using it, and checks project files for specific signs of information crossing a declared boundary.
 
-https://github.com/user-attachments/assets/83ce60b8-a4d4-402f-bc24-804eaddda3c1
+https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 
 *The walkthrough, 98 seconds, with [captions](docs/assets/garrick-launch-video.srt). Dramatised with fictional data; it illustrates the intended workflow.*
 

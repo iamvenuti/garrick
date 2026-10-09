@@ -1,8 +1,10 @@
 export type Note = {
   path: string
+  rel: string
   where: string
   title: string
   status: string | null
+  heading: string | null
   lead: string | null
   resume: string | null
 }

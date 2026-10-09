@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildIndex, fileHref, label, linkify, lookup, markCells, parseNote, plain } from './register'
+import { buildIndex, fileHref, label, linkify, lookup, markCells, parseNote, plain, resumePrompt, wrapPrompt } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -50,7 +50,14 @@ describe('parsing', () => {
   test('a finished thread reads its Outcome block', () => {
     const parsed = parseNote('---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned on 2 October.\n')
     expect(parsed.status).toBe('done')
+    expect(parsed.heading).toBe('Outcome')
     expect(parsed.lead).toBe('Signed on 2 October.')
+  })
+
+  test('the prompts name the thread and its note', () => {
+    const n = { path: '/v/Zones/Work/Acme/Acme.md', rel: 'Zones/Work/Acme/Acme.md', where: 'Work › Acme', title: 'Acme', ...parseNote(NOTE) }
+    expect(resumePrompt(n)).toBe('Open Acme: read the Resume here block in `Zones/Work/Acme/Acme.md` and tell me in two sentences where it stands and the next action.')
+    expect(wrapPrompt(n)).toMatch(/^Wrap Acme: rewrite the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
   })
 
   test('the mark is 6×3 cells of three u32 words each', () => {
@@ -68,29 +75,70 @@ describe('parsing', () => {
   })
 })
 
+const BAND = {
+  plugin: 'garrick-band',
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100 },
+} as any
+
+async function inThread($: any, on: any, text: string) {
+  const cwd = `${ROOT}/Zones/Work/Acme`
+  on('session.cwd', async () => ({ value: cwd }))
+  on('fs.exists', async (_$: any, e: any) => ({
+    value: e.path === `${ROOT}/System/rules.md` || e.path === `${cwd}/Acme.md`,
+  }))
+  on('fs.read', async () => ({ value: text }))
+  on('turn.complete', async () => ({ text: '' }))
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+}
+
 describe('band', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
     test(`draws the thread on ${surface}`, async ($, on) => {
-      const cwd = `${ROOT}/Zones/Work/Acme`
-      on('session.cwd', async () => ({ value: cwd }))
-      on('fs.exists', async (_$, e: any) => ({
-        value: e.path === `${ROOT}/System/rules.md` || e.path === `${cwd}/Acme.md`,
-      }))
-      on('fs.read', async () => ({ value: NOTE }))
-      on('turn.complete', async () => ({ text: '' }))
-
-      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
-      const band = await $.ui.mount({
-        plugin: 'garrick-band',
-        surface,
-        component: 'AbovePrompt',
-        props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100 } as any,
-      } as any)
+      await inThread($, on, NOTE)
+      const band = await $.ui.mount({ ...BAND, surface })
 
       expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
-      expect(await band.find({ key: 'resume' })).toBeDefined()
+      for (const key of ['resume', 'wrap', 'clear', 'note', 'hide']) expect(await band.find({ key })).toBeDefined()
+    })
+
+    test(`Resume and Wrap submit the thread's prompt on ${surface}`, async ($, on) => {
+      const submitted: string[] = []
+      on('prompt.submit', async (_$, e: any) => {
+        submitted.push(e.text)
+        return { text: e.text }
+      })
+      await inThread($, on, NOTE)
+      const band = await $.ui.mount({ ...BAND, surface })
+
+      await band.press({ key: 'resume' })
+      await band.press({ key: 'wrap' })
+      expect(submitted).toHaveLength(2)
+      expect(submitted[0]).toMatch(/^Open Acme: read the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
+      expect(submitted[1]).toMatch(/^Wrap Acme:/)
+    })
+
+    test(`Clear runs /clear on ${surface}`, async ($, on) => {
+      const ran: string[] = []
+      on('command.run', async (_$, e: any) => {
+        ran.push(e.command)
+        return {}
+      })
+      await inThread($, on, NOTE)
+      const band = await $.ui.mount({ ...BAND, surface })
+
+      await band.press({ key: 'clear' })
+      expect(ran).toEqual(['clear'])
     })
   }
+
+  test('a finished thread offers no Wrap', async ($, on) => {
+    await inThread($, on, '---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned on 2 October.\n')
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    expect(await band.find({ key: 'resume' })).toBeDefined()
+    expect(await band.find({ key: 'wrap' })).toBeUndefined()
+  })
 })
 
 describe('outside a project', () => {
@@ -109,6 +157,8 @@ describe('outside a project', () => {
 
     expect(await band.find({ text: /Wikis › Meetings/ })).toBeDefined()
     expect(await band.find({ key: 'resume' })).toBeUndefined()
+    expect(await band.find({ key: 'wrap' })).toBeUndefined()
+    expect(await band.find({ key: 'clear' })).toBeDefined()
   })
 })
 

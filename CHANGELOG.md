@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The Garrick band's *Resume here* button resumes the thread instead of only showing its block: it asks the assistant to read the Resume here block and say where the thread stands and what comes next. The band also gains *Wrap*, which rewrites the block and adds the day's entry, and *Clear*, which runs `/clear`. *Note* still shows the whole block in a pane without calling the model. Each button has a letter, and `/garrick resume`, `/garrick wrap` and `/garrick note` do the same from the prompt.
+
 ## [0.11.1] - 2026-10-09
 
 The zone guard: the assistant checks with you before it edits outside the project you opened it in.

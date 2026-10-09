@@ -59,18 +59,29 @@ export function plain(markdown: string): string {
     .trim()
 }
 
-// The frontmatter status, the Resume here block, and its first paragraph.
-export function parseNote(text: string): Pick<Note, 'status' | 'lead' | 'resume'> {
+// The frontmatter status, the Resume here block, its heading and its first paragraph.
+export function parseNote(text: string): Pick<Note, 'status' | 'heading' | 'lead' | 'resume'> {
   const status = /^---\n[\s\S]*?^status:\s*(\S+)[\s\S]*?^---$/m.exec(text)?.[1] ?? null
-  const start = text.search(/^### (Resume here|Outcome)\s*$/m)
-  if (start < 0) return { status, lead: null, resume: null }
+  const match = /^### (Resume here|Outcome)\s*$/m.exec(text)
+  if (match === null) return { status, heading: null, lead: null, resume: null }
+  const start = match.index
 
   const body = text.slice(start).replace(/^### .*\n/, '')
   const end = body.search(/^#{2,3} /m)
   const resume = (end < 0 ? body : body.slice(0, end)).trim()
   const lead = resume.split(/\n\s*\n/).find(p => !p.startsWith('|')) ?? null
 
-  return { status, lead: lead === null ? null : plain(lead), resume }
+  return { status, heading: match[1]!, lead: lead === null ? null : plain(lead), resume }
+}
+
+// What the band's buttons say to the assistant, in the person's own words, so
+// the rules' "Open X" and "wrap X" phrases apply.
+export function resumePrompt(n: Note): string {
+  return `Open ${n.title}: read the ${n.heading ?? 'Resume here'} block in \`${n.rel}\` and tell me in two sentences where it stands and the next action.`
+}
+
+export function wrapPrompt(n: Note): string {
+  return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.`
 }
 
 // Walk up from the working directory to the workspace root (the folder holding
@@ -91,13 +102,20 @@ async function findNote($: any): Promise<Note | null> {
     if (!(await $.fs.exists(path))) continue
     const text: string = await $.fs.read(path)
     const where = label(folder.slice(root.length + 1))
+    const rel = path.slice(root.length + 1)
 
-    return { path, where, title: basename(folder), ...parseNote(text) }
+    return { path, rel, where, title: basename(folder), ...parseNote(text) }
   }
   const where = label(chain[0]!.slice(root.length + 1))
 
-  return { path: '', where: where || 'Home', title: where, status: null, lead: null, resume: null }
+  return { path: '', rel: '', where: where || 'Home', title: where, status: null, heading: null, lead: null, resume: null }
 }
+
+// The band's four actions, shared by its buttons and /garrick.
+const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focus: true, closeOnEscape: true })
+const resume = ($: any, n: Note) => $.prompt.submit({ text: resumePrompt(n), asUser: true })
+const wrap = ($: any, n: Note) => $.prompt.submit({ text: wrapPrompt(n), asUser: true })
+const clear = ($: any) => $.command.run({ command: 'clear' })
 
 async function refresh($: any) {
   const found = await findNote($).catch(() => null)
@@ -209,8 +227,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'garrick',
-      description: 'Show or hide the Garrick band; "resume" opens the Resume here pane',
-      argumentHint: '[resume]',
+      description: 'Show or hide the Garrick band; "resume" or "wrap" the thread, "note" shows its Resume here block',
+      argumentHint: '[resume|wrap|note]',
     })
     await refresh($)
     await reindex($).catch(() => undefined)
@@ -234,10 +252,22 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'garrick' }, async ($, e) => {
-    if (String(e.args ?? '').trim() === 'resume') {
-      await $.ui.open({ id: PANE, title: 'Resume here', focus: true, closeOnEscape: true })
+    const arg = String(e.args ?? '').trim()
+    if (arg !== '') {
+      const current = await read($, note)
+      if (current?.resume == null) return { text: 'No Resume here block above this folder.' }
+      if (arg === 'note') {
+        await openNote($, current)
 
-      return { text: 'Resume pane opened.' }
+        return { text: 'Resume here pane opened.' }
+      }
+      if (arg === 'resume' || arg === 'wrap') {
+        void (arg === 'resume' ? resume($, current) : wrap($, current))
+
+        return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
+      }
+
+      return { text: `Unknown argument "${arg}": use resume, wrap or note.` }
     }
     const hidden = await update($, isHidden, was => !was)
 
@@ -269,17 +299,15 @@ export const register: Register = on => {
           <Text dimColor wrap="truncate-end">
             {current.lead ?? 'No Resume here block above this folder.'}
           </Text>
-          {current.resume && (
-            <Box flexDirection="row" gap={1}>
-              <Button
-                key="resume"
-                label="Resume here"
-                plain
-                onPress={() => void $.ui.open({ id: PANE, title: current.title, focus: true, closeOnEscape: true })}
-              />
-              <Button key="hide" label="Hide" plain dimColor onPress={() => update($, isHidden, () => true)} />
-            </Box>
-          )}
+          <Box flexDirection="row" gap={2}>
+            {current.resume && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
+            {current.resume && current.status !== 'done' && (
+              <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
+            )}
+            <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
+            {current.resume && <Button key="note" label="Note" hotkey="n" plain dimColor onPress={() => void openNote($, current)} />}
+            <Button key="hide" label="Hide" hotkey="h" plain dimColor onPress={() => update($, isHidden, () => true)} />
+          </Box>
         </Box>
       </Box>
     )

@@ -1,6 +1,6 @@
 # Extra: the Garrick band, a Claude Code mod
 
-A session opened in a thread folder doesn't know where it is until the assistant has read the thread note. That takes a turn, and the answer scrolls away. When the assistant names a file in a reply, the path is plain text, so you go to Finder and look for it. `garrick-band` fixes both in Claude Code without spending a token.
+A session opened in a thread folder doesn't know where it is until the assistant has read the thread note. That takes a turn, and the answer scrolls away. When the assistant names a file in a reply, the path is plain text, so you go to Finder and look for it. `garrick-band` fixes both in Claude Code, and spends no tokens until you press one of its buttons.
 
 It is Claude Code only, and optional. Core Garrick never depends on it. It displays what your notes already say and enforces nothing, so a Codex session misses only the display.
 
@@ -11,11 +11,16 @@ Above the prompt:
 - The Garrick mark, a 6×3 tile of terminal cells drawn with half blocks, so the terminal needs no image support.
 - `Garrick · <Zone> › <Project> › <Thread>`, with the note's `status` in colour: green for active, yellow for parked, grey for done.
 - The first paragraph of the thread's `### Resume here` block, cut to one line. On a finished thread it shows `### Outcome` instead.
-- *Resume here*, which opens the whole block in a pane, and *Hide*.
+- A row of actions. Click one, or press ctrl+x tab to reach the band and then its letter:
+  - *Resume* (`r`) asks the assistant to read the Resume here block and say where the thread stands and what comes next, the rules' "Open X". You get the answer in the conversation, where you can carry on from it.
+  - *Wrap* (`w`) asks it to rewrite the Resume here block and add today's dated entry, the rules' "wrap X". A finished thread has no Wrap.
+  - *Clear* (`c`) runs `/clear`, which starts a new conversation in the same folder. The band stays, so *Resume* is one click away. `/resume` brings back the conversation you cleared.
+  - *Note* (`n`) shows the whole block in a pane. It reads the file and sends nothing to the model.
+  - *Hide* (`h`).
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.
 
-`/garrick` shows or hides the band, and `/garrick resume` opens the pane.
+`/garrick` shows or hides the band. `/garrick resume`, `/garrick wrap` and `/garrick note` do what the buttons do.
 
 In the assistant's replies, a path in backticks becomes a link, so Cmd-click opens the file in its default app, or a folder in Finder:
 
@@ -24,7 +29,7 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 
-How it finds the note: from the session's folder it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. It only reads files and never calls a model. The one process it runs is that `find`.
+How it finds the note: from the session's folder it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and never calls a model. *Resume* and *Wrap* send a prompt in your name, only when you press them. The one process it runs is that `find`.
 
 ## Load it
 

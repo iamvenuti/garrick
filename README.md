@@ -1,4 +1,4 @@
-<img src="docs/assets/garrick-mark.svg" alt="Garrick's mark: Gr on blue" width="96" align="right">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/garrick-mark-on-navy.svg"><img src="docs/assets/garrick-mark.svg" alt="Garrick's mark: a cabinet of three compartments, one of them open" width="96" align="right"></picture>
 
 # Garrick
 
@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/83ce60b8-a4d4-402f-bc24-804eaddda3c1
 
 ## Start small
 
-![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls between the parties you declare. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and Garrick's Status to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
+![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls between the parties you declare. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).
@@ -75,7 +75,7 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, Garrick's Status, cmux and phone access are optional.](docs/architecture/overview.png)
+![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, the status page, cmux and phone access are optional.](docs/architecture/overview.png)
 
 Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
 
@@ -85,7 +85,7 @@ Download the [interactive diagram](docs/architecture/overview.html) and open it 
 
 Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
 
-[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page, Garrick's Status, which opens in a browser or in its own Mac app. Add one when it solves a problem you have; none is required for the first session.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page, which opens in a browser or in the Garrick app for the Mac. Add one when it solves a problem you have; none is required for the first session.
 
 ## Status and documentation
 

@@ -200,7 +200,7 @@
     {
       "id": "status",
       "type": "external",
-      "label": "Garrick's Status",
+      "label": "Status page",
       "sublabel": "optional, read-only",
       "pos": [
         290,
@@ -396,7 +396,7 @@
       "title": "Tools around it",
       "items": [
         "You talk to your assistant in its desktop app, or in cmux or on your phone; it follows the rules and does the work across everything",
-        "Obsidian lets you browse all of it; Garrick's Status shows on one page where every thread stands and what needs attention. Both only read, and both are optional, like cmux and the phone"
+        "Obsidian lets you browse all of it; the status page shows where every thread stands and what needs attention. Both only read, and both are optional, like cmux and the phone"
       ]
     }
   ]

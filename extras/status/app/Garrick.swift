@@ -1,4 +1,4 @@
-// Garrick's Status.app: the status page in a window of its own, for the Dock
+// Garrick.app: the status page in a window of its own, for the Dock
 // and the app launcher. It shows System/generated/status.html and nothing else,
 // so the page is still made in one place, status.py. Built by make-app.sh,
 // which writes the workspace, the Python to run and status.py's flags into
@@ -183,12 +183,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
 		                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
 		                  backing: .buffered, defer: false)
-		window.title = "Garrick's Status"
+		window.title = "Garrick"
 		window.contentView = web
 		window.isReleasedWhenClosed = false   // closed into the menu bar, it opens again
 		window.delegate = self
 		window.center()
-		window.setFrameAutosaveName("GarrickStatus")
+		window.setFrameAutosaveName("GarrickStatus")   // the name it had as Garrick, so the window keeps its place
 		if checking {
 			guard FileManager.default.fileExists(atPath: page.path) else {
 				print("no page at \(page.path): build it with status.py first")   // the check would wait for it forever
@@ -473,10 +473,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				do {
 					if on { try service.register() } else { try service.unregister() }
 					if service.status == .requiresApproval {
-						toast("Allow Garrick's Status in System Settings, under Login Items.")
+						toast("Allow Garrick in System Settings, under Login Items.")
 						SMAppService.openSystemSettingsLoginItems()
 					} else {
-						toast(on ? "Garrick's Status opens when you log in." : "Garrick's Status no longer opens at login.")
+						toast(on ? "Garrick opens when you log in." : "Garrick no longer opens at login.")
 					}
 				} catch {
 					toast("macOS did not change the login item: \(error.localizedDescription)")
@@ -514,12 +514,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let menu = NSMenu()
 			menu.delegate = self
 			item.menu = menu
-			item.button?.toolTip = "Garrick's Status"
+			item.button?.toolTip = "Garrick"
 			statusItem = item
 		}
 		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
 		statusItem?.button?.image = icon(trouble: trouble)
-		statusItem?.button?.setAccessibilityLabel(trouble ? "Garrick's Status: something failed" : "Garrick's Status")
+		statusItem?.button?.setAccessibilityLabel(trouble ? "Garrick: something failed" : "Garrick")
 	}
 
 	func hideStatusItem() {
@@ -529,14 +529,25 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if !window.isVisible { showWindow() }  // never leave the app with nothing to click
 	}
 
-	// Garrick's mark, from make-app.sh, with the Status tab's red dot.
+	// Garrick's mark, the small cut from status.py on its 64-unit grid: the
+	// walls in the menu bar's own text colour, the open compartment in the
+	// mark's blue for that ground, and the Status tab's red dot. Drawn at each
+	// draw, so it follows the menu bar from light to dark.
 	func icon(trouble: Bool) -> NSImage {
-		let size = NSSize(width: 18, height: 18)
-		let mark = Bundle.main.image(forResource: "MenuIcon") ?? NSApp.applicationIconImage ?? NSImage()
-		return NSImage(size: size, flipped: false) { rect in
-			mark.draw(in: rect.insetBy(dx: 1, dy: 1))
+		NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
+			let m = rect.insetBy(dx: 1, dy: 1), k = m.width / 64
+			func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSBezierPath {
+				NSBezierPath(rect: NSRect(x: m.minX + x * k, y: m.minY + y * k, width: w * k, height: h * k))
+			}
+			let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+			NSColor.labelColor.setFill()
+			box(4, 4, 20, 56).fill()
+			box(28, 32, 32, 28).fill()
+			(dark ? NSColor(srgbRed: 0x8E / 255, green: 0xB1 / 255, blue: 0xF5 / 255, alpha: 1)
+			      : NSColor(srgbRed: 0x3D / 255, green: 0x73 / 255, blue: 0xE0 / 255, alpha: 1)).setFill()
+			box(28, 4, 32, 24).fill()
 			if trouble {
-				let dot = NSRect(x: rect.maxX - 7.5, y: rect.maxY - 7.5, width: 7.5, height: 7.5)
+				let dot = NSRect(x: rect.maxX - 7.5, y: rect.minY, width: 7.5, height: 7.5)
 				NSColor.white.setFill(); NSBezierPath(ovalIn: dot).fill()
 				NSColor.systemRed.setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: 1, dy: 1)).fill()
 			}
@@ -600,10 +611,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			projects.forEach { menu.addItem(row($0)) }
 		}
 		menu.addItem(.separator())
-		let open = NSMenuItem(title: "Open Garrick's Status", action: #selector(showWindow(_:)), keyEquivalent: "")
+		let open = NSMenuItem(title: "Open Garrick", action: #selector(showWindow(_:)), keyEquivalent: "")
 		open.target = self
 		menu.addItem(open)
-		menu.addItem(NSMenuItem(title: "Quit Garrick's Status", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+		menu.addItem(NSMenuItem(title: "Quit Garrick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
 	}
 
 	func header(_ title: String) -> NSMenuItem {
@@ -789,15 +800,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			i.keyEquivalentModifierMask = mods
 			return i
 		}
-		sub("Garrick's Status", [
-			item("About Garrick's Status", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+		sub("Garrick", [
+			item("About Garrick", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
 			item("Settings…", #selector(openSettings(_:)), ","),
 			.separator(),
-			item("Hide Garrick's Status", #selector(NSApplication.hide(_:)), "h"),
+			item("Hide Garrick", #selector(NSApplication.hide(_:)), "h"),
 			item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
 			item("Show All", #selector(NSApplication.unhideAllApplications(_:)), ""),
 			.separator(),
-			item("Quit Garrick's Status", #selector(NSApplication.terminate(_:)), "q"),
+			item("Quit Garrick", #selector(NSApplication.terminate(_:)), "q"),
 		])
 		sub("File", [
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),

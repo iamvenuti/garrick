@@ -1,6 +1,6 @@
 # Extra: a status page
 
-One page, Garrick's Status, that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser, or in a small [Mac app](#a-mac-app) of its own. It needs no server, no account and no network, and it works whether or not you use Obsidian or cmux: each time it is built, it checks which of them this machine has and offers only what will work.
+One page that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser, or in a small [Mac app](#a-mac-app) of its own. It needs no server, no account and no network, and it works whether or not you use Obsidian or cmux: each time it is built, it checks which of them this machine has and offers only what will work.
 
 ## What it shows
 
@@ -51,7 +51,7 @@ Some features are in Garrick's source before they are in a release. They are off
 
 - **`todo-list`**: a *Todo list* card with every open action in the zones. It shows each action's thread, its section of `Todo.md` (or "in the thread note" when it sits there), and its dates as Obsidian Tasks writes them: a due date with `📅`, a day to chase a `#waiting` line with `⏳`. Overdue actions come first. It reads the notes and changes nothing.
 
-- **`page-actions`**: buttons that change your notes, in Garrick's Status.app only. On the Todo list, a circle ticks an action and *Date* sets or clears its date, and *＋ Add* beside each zone's name writes a new one: the text, optionally a project or thread picked from a tree of the zone's projects with their threads folded under them, and optionally a date. The line goes to the top of the Inbox in the zone's `Todo.md`, opening with `[[Thread]]: ` when you picked one; with a date it goes where a dated line belongs, *This week* within seven days, *Soon* after that, *Waiting on* for a `#waiting` line. A line already in the list is refused. On a thread's card, *Park* and *Wake* replace the phrases to copy. Each button changes one line or one `status:` field, the same way the skills would: ticking adds Obsidian Tasks' `✅` date, and parking sets `status: parked`, moves `updated:` and adds a dated "Parked." entry. Each change is then committed in the zone's repository, through its wall check. If the wall check refuses the commit, the file is put back as it was. The app runs `page_action.py` from the same folder as `status.py`, so copy both. A browser has no way to reach it, so there the buttons stay hidden.
+- **`page-actions`**: buttons that change your notes, in the Garrick app only. On the Todo list, a circle ticks an action and *Date* sets or clears its date, and *＋ Add* beside each zone's name writes a new one: the text, optionally a project or thread picked from a tree of the zone's projects with their threads folded under them, and optionally a date. The line goes to the top of the Inbox in the zone's `Todo.md`, opening with `[[Thread]]: ` when you picked one; with a date it goes where a dated line belongs, *This week* within seven days, *Soon* after that, *Waiting on* for a `#waiting` line. A line already in the list is refused. On a thread's card, *Park* and *Wake* replace the phrases to copy. Each button changes one line or one `status:` field, the same way the skills would: ticking adds Obsidian Tasks' `✅` date, and parking sets `status: parked`, moves `updated:` and adds a dated "Parked." entry. Each change is then committed in the zone's repository, through its wall check. If the wall check refuses the commit, the file is put back as it was. The app runs `page_action.py` from the same folder as `status.py`, so copy both. A browser has no way to reach it, so there the buttons stay hidden.
 
 - **`effort`**: *Time* and *Cost* on the Threads card. The same rows show the assistant's active time, or its list-price cost, over the last 30 days instead of how long since each note moved, largest first; *Updated* puts them back by name, and the page remembers the choice. A project's row counts all of its work, its threads and what it did in no thread; each thread shows its own. A line under the columns gives the total and whatever no row shows: sessions outside the zones (in `System/`, a wiki or the workspace root), sessions started in a zone's own folder, and threads finished or renamed since, so the figures add up. Hover a figure for its raw tokens and sessions. It reads Claude Code's own transcripts in `~/.claude/projects/`, with no model call, through `effort.py` beside `status.py`, so copy both:
   - *Which thread.* The folder a session ran in gives the zone and project; a thread's own folder gives the thread. Otherwise the thread is the one whose `Threads/<X>/` notes the session wrote or edited most, and a project with no thread notes is its own thread. Anything left counts as the project's own work rather than a guess. A session started above the zones is placed by the notes it wrote.
@@ -63,7 +63,7 @@ Some features are in Garrick's source before they are in a release. They are off
   - Codex keeps its sessions elsewhere, in another format, and is not counted yet; the card says so.
   - Only names, durations and figures reach the page, never a line of a transcript.
 
-- **`menu-bar`**: Garrick's Status in the menu bar, in Garrick's Status.app only. See [In the menu bar](#in-the-menu-bar).
+- **`menu-bar`**: Garrick in the menu bar, in the Garrick app only. See [In the menu bar](#in-the-menu-bar).
 
 A preview feature may still change. When one is released it is switched on for everyone and its flag goes away.
 
@@ -106,7 +106,7 @@ The page says how old it is, and turns its banner red when it is more than a day
 
 ## A Mac app
 
-*Garrick's Status.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
+*Garrick.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
 
 - **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
 - **Its buttons do what they say.** The top row's circular arrow becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Project and thread cards gain *Open in Claude*, *Open in Codex* and *Open in cmux*, for the ones that are installed and switched on in [Settings](#settings). The app menu's *Settings…* (⌘-comma) opens Settings.
@@ -118,13 +118,13 @@ Build it once, from the workspace:
 System/status/app/make-app.sh
 ```
 
-It compiles `GarrickStatus.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. `--dest` puts it elsewhere. It will not replace another app of the same name. Drag it to the Dock to keep it there. To test it, `"$HOME/Applications/Garrick's Status.app/Contents/MacOS/GarrickStatus" --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
+It compiles `Garrick.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. `--dest` puts it elsewhere. It will not replace another app of the same name, and it replaces a build from before 0.10.0, when the app was called *Garrick's Status*, keeping its settings. Drag it to the Dock to keep it there. To test it, `~/Applications/Garrick.app/Contents/MacOS/Garrick --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
 
 ### In the menu bar
 
 With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app only, with three settings that the app keeps itself:
 
-- **Show in the menu bar** puts Garrick's mark in the menu bar. Closing the window then leaves the app there, without a Dock icon, and *Open Garrick's Status* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark means the same as the red dot on the *Status* tab: something failed.
+- **Show in the menu bar** puts Garrick's mark in the menu bar, drawn in the menu bar's own colours. Closing the window then leaves the app there, without a Dock icon, and *Open Garrick* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark means the same as the red dot on the *Status* tab: something failed.
 - **Open at login** starts the app when you log in, as a login item. It opens the way you left it: in the menu bar alone if its window was closed. It needs macOS 13 or later; macOS may ask you to allow it under *Login Items* in System Settings.
 - **Hotkey** opens the menu from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
 
@@ -158,7 +158,7 @@ Each cell is one day, coloured by how the day *ended*: red when its last run fai
 
 ## The mark
 
-The mark is a white *Gr* on Garrick's blue, `#3D73E0`, like a tile in the periodic table, with a small *ai* in its corner. The tab icon is the same tile with *Gr* alone, since the *ai* cannot be read at that size. The letters are outlines of Baskervville, a Baskerville revival under the SIL Open Font License, carried in the page itself. The blue is also the page's accent in the light theme. The dark theme uses a lighter blue of the same hue, `#6590E6`, with a contrast of at least 4.5 to 1 against every dark surface.
+The mark is a cabinet of three compartments: a narrow spine, the open one in Garrick's blue and a closed one beneath, for each party's work in its own place and one thing open at a time. It follows the page's theme: navy `#1E2833` and blue `#3D73E0` in the light theme, cream `#F5F0E6` and the lighter `#8EB1F5` in the dark one, where `#3D73E0` would fall to 3.4 to 1. The tab icon is the small cut, drawn on the 16-pixel grid so its walls stay a pixel wide, and follows your browser's light or dark setting. The Mac app's icon is the mark on a navy tile. `#3D73E0` is also the page's accent in the light theme. The dark theme's accent is a lighter blue of the same hue, `#6590E6`, with a contrast of at least 4.5 to 1 against every dark surface. [The mark's note](../assets/brand.md) has the files and colours.
 
 ## What you lose without it
 

@@ -5,7 +5,7 @@
     echo '{"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "…"}' | \\
         python3 page_action.py --workspace ~/Garrick
 
-Garrick's Status.app runs it when a button on the page asks; nothing else can,
+Garrick.app runs it when a button on the page asks; nothing else can,
 because a browser has no way to reach it. Seven verbs, each changing one thing
 and committing it in the zone's repository, as the skills would:
 

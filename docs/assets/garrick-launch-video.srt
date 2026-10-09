@@ -55,13 +55,13 @@ SAM: Board said March, and Theo's budget comes Wednesday. Wrap up.
 Tomorrow, Claude or Codex picks up from that note, not from a lost conversation.
 
 15
-00:01:23,300 --> 00:01:28,889
-And an optional page, Garrick's Status, answers two questions: is anything wrong, and where was I?
+00:01:23,300 --> 00:01:28,377
+And an optional status page answers two questions: is anything wrong, and where was I?
 
 16
-00:01:30,189 --> 00:01:33,922
+00:01:29,677 --> 00:01:33,410
 Your work, remembered, in files you own, with boundaries you declare.
 
 17
-00:01:34,422 --> 00:01:35,190
+00:01:33,910 --> 00:01:34,678
 Garrick.

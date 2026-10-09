@@ -671,7 +671,7 @@ class TestSettings(StatusCase):
         self.assertIn("invented names", report)
 
     def test_the_app_opens_it(self):
-        swift = (REPO / "extras" / "status" / "app" / "GarrickStatus.swift").read_text(encoding="utf-8")
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.StatusSettings.open()", swift)
         self.assertIn("window.StatusSettings=", status.JS)
 
@@ -1062,22 +1062,41 @@ class TestJobs(StatusCase):
 
 
 class TestNameAndMark(StatusCase):
-    def test_called_garricks_status(self):
-        html = self.page()
-        self.assertIn("<title>Garrick&#x27;s Status</title>", html)
-        self.assertIn("<h1>Garrick&#x27;s Status</h1>", html)
+    def test_called_garrick(self):
+        html = self.page()                                  # the page is called as the app is
+        self.assertIn("<title>Garrick</title>", html)
+        self.assertIn("<h1>Garrick</h1>", html)
 
     def test_mark_beside_the_heading_and_in_the_tab(self):
         html = self.page()
         brand = html[html.index('<div class="brand">'):html.index("<h1>")]
         self.assertIn('class="mark" aria-hidden="true"', brand)
-        self.assertIn('fill="#3D73E0"', brand)
-        self.assertEqual(2, brand.count("<path"))           # Gr alone: the small "ai" cannot be read at heading size
+        self.assertEqual(2, brand.count("<path"))           # the cabinet: the walls in ink, the open compartment in blue
+        self.assertIn('class="mi" fill="#1E2833"', brand)
+        self.assertIn('class="mb" fill="#3D73E0"', brand)
         icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml,([^"]+)">', html)
         svg = urllib.parse.unquote(icon.group(1))
         self.assertTrue(svg.startswith('<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'))
-        self.assertIn('fill="#3D73E0"', svg)
-        self.assertEqual(2, svg.count("<path"))             # the favicon cut: Gr alone
+        self.assertEqual(2, svg.count("<path"))
+        self.assertIn('d="M24 4V60H6', svg)                 # the small cut, on the 16-pixel grid
+        self.assertIn("@media (prefers-color-scheme:dark){.mi{fill:#F5F0E6}.mb{fill:#8EB1F5}}", svg)
+
+    def test_mark_follows_the_theme(self):
+        # Navy and BRAND on light; cream and the lighter blue on dark, chosen or automatic.
+        self.assertIn(".mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}", status.CSS)
+        light = re.search(r":root\{[^}]*--mark-ink:(#[0-9a-f]{6});--mark-blue:(#[0-9a-f]{6})\}", status.CSS).groups()
+        self.assertEqual((status.MARK_INK.lower(), status.BRAND.lower()), light)
+        dark = re.findall(r"color-scheme:dark;[^}]*--mark-ink:(#[0-9a-f]{6});--mark-blue:(#[0-9a-f]{6})\}", status.CSS)
+        self.assertEqual([(status.MARK_INK_ON_DARK.lower(), status.BRAND_ON_DARK.lower())] * 2, dark)
+
+    def test_app_icon_is_the_mark_on_a_navy_tile(self):
+        icon = status.app_icon()
+        self.assertTrue(icon.startswith('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"'))
+        self.assertIn('<rect x="100" y="100" width="824" height="824" rx="185.4" fill="%s"/>' % status.MARK_INK, icon)
+        self.assertIn('fill="%s"' % status.MARK_INK_ON_DARK, icon)
+        self.assertIn('fill="%s"' % status.BRAND_ON_DARK, icon)
+        self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
+        self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
     def test_display_headings_in_baskerville(self):
         # Garrick's typeface, from fonts already on the machine: nothing is fetched.
@@ -1382,10 +1401,10 @@ class TestApp(unittest.TestCase):
 
     def test_the_app_is_built_not_shipped(self):
         self.assertTrue(os.access(self.APP / "make-app.sh", os.X_OK))
-        self.assertEqual({"GarrickStatus.swift", "make-app.sh"}, {p.name for p in self.APP.iterdir() if not p.name.startswith(".")})
+        self.assertEqual({"Garrick.swift", "make-app.sh"}, {p.name for p in self.APP.iterdir() if not p.name.startswith(".")})
 
     def test_the_app_changes_no_file(self):
-        swift = (self.APP / "GarrickStatus.swift").read_text()
+        swift = (self.APP / "Garrick.swift").read_text()
         self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile"}, set(re.findall(r"FileManager\.default\.(\w+)", swift)))   # it only looks
         self.assertNotIn("write(to:", swift)
         self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
@@ -1394,7 +1413,7 @@ class TestApp(unittest.TestCase):
         self.assertIn("guard let folder = inWorkspace(path)", swift)          # only a folder of this workspace
 
     def test_the_menu_bar(self):
-        swift = (self.APP / "GarrickStatus.swift").read_text()
+        swift = (self.APP / "Garrick.swift").read_text()
         self.assertIn("statusItem == nil }", swift)                           # with the icon, closing the window keeps the app
         self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
         self.assertNotIn("AXIsProcessTrusted", swift)
@@ -1404,15 +1423,15 @@ class TestApp(unittest.TestCase):
         self.assertIn("final class ActionBar: NSView", swift)                 # the actions on one line, as icons
         self.assertIn("guard menu === statusItem?.menu else { return }", swift)   # a submenu is never refilled with the menu
         self.assertIn("if !window.isVisible { showWindow() }", swift)          # never an app with nothing to click
-        make = (self.APP / "make-app.sh").read_text()
-        self.assertIn("MenuIcon@2x.png", make)
+        self.assertIn("NSColor.labelColor.setFill()", swift)                 # the mark in the menu bar's own colours
+        self.assertIn("NSAppearance.currentDrawing()", swift)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):
         import subprocess
         if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
             self.skipTest("no swiftc")
-        done = subprocess.run(["xcrun", "swiftc", "-typecheck", str(self.APP / "GarrickStatus.swift")], capture_output=True, text=True)
+        done = subprocess.run(["xcrun", "swiftc", "-typecheck", str(self.APP / "Garrick.swift")], capture_output=True, text=True)
         self.assertEqual(0, done.returncode, done.stderr)
 
 

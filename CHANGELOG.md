@@ -4,6 +4,16 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-09
+
+A new mark, and the Mac app takes Garrick's name.
+
+### Changed
+
+- A new mark: a cabinet of three compartments, a narrow spine on the left, the open one in blue and a closed one beneath it, for work kept in its own place and one thing open at a time. It replaces the *Gr* tile in `docs/assets/garrick-mark.svg`, with a version for dark grounds, a one-colour version, a small cut on the 16 px grid for favicons (`garrick-mark-favicon.svg`, which follows the browser's dark mode), a lockup with the wordmark in Baskervville and a macOS app icon. The blue stays `#3D73E0` on light grounds and takes the deck's lighter `#8EB1F5` on navy. [The mark's note](docs/assets/brand.md) lists the files and colours. The README, the deck, the social card, the adoption ladder, the walkthrough video and the status page all carry it: the page's heading mark follows its light or dark theme, and its tab icon follows the browser's.
+- Garrick's Status.app is now **Garrick.app**, and the page it shows is headed *Garrick*. The app's icon is the mark on a navy tile. In the menu bar the mark is drawn in the menu bar's own colours, light or dark, with the open compartment in blue. `make-app.sh` builds `Garrick.app` from `Garrick.swift` and replaces a build of *Garrick's Status.app*; the app keeps its bundle identifier, so its settings, window place, menu and hotkey carry over. If it opened at login, switch *Open at login* off and on again in Settings › Menu bar. Rebuild the app with `make-app.sh` to get it.
+- The walkthrough video carries the new mark and says "status page" where it named Garrick's Status; the architecture overview and the docs call it the status page too.
+
 ## [0.9.0] - 2026-10-08
 
 Garrick's Status in the menu bar, as a preview: your projects and threads one click from any app.
@@ -225,7 +235,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/iamvenuti/garrick/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/iamvenuti/garrick/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/iamvenuti/garrick/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/iamvenuti/garrick/compare/v0.7.2...v0.8.0

@@ -1,4 +1,4 @@
-<img src="docs/assets/garrick-mark.svg" alt="Garrick's mark: Gr on blue" width="96" align="right">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/garrick-mark-on-navy.svg"><img src="docs/assets/garrick-mark.svg" alt="Garrick's mark: a cabinet of three compartments, one of them open" width="96" align="right"></picture>
 
 # Garrick
 

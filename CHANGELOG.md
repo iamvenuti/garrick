@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- A new mark: a cabinet of three compartments, a narrow spine on the left, the open one in blue and a closed one beneath it, for work kept in its own place and one thing open at a time. It replaces the *Gr* tile in `docs/assets/garrick-mark.svg`, with a version for dark grounds, a one-colour version, a small cut on the 16 px grid for favicons (`garrick-mark-favicon.svg`, which follows the browser's dark mode), a lockup with the wordmark in Baskervville and a macOS app icon. The blue stays `#3D73E0` on light grounds and takes the deck's lighter `#8EB1F5` on navy. [The mark's note](docs/assets/brand.md) lists the files and colours. The README shows it; the deck, the social card, the adoption ladder and the status page still carry the *Gr* tile.
+
 ## [0.7.2] - 2026-10-06
 
 Three fixes found on the first update of an adopted workspace.

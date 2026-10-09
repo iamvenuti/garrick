@@ -18,12 +18,14 @@
 //     the app macOS uses for it;
 //   - with the preview menu-bar on, an icon in the menu bar listing the live
 //     threads of the zone the graph shows, each opening a session, with a red
-//     dot when the Status tab has one. Settings › Menu bar switches it on,
+//     dot when the Status tab has one, and Keep awake: for a time, until
+//     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
 //     opens the app at login and sets a hotkey for the menu; the app keeps
 //     those three in its own defaults, as it keeps the menu between launches.
 // Nothing here changes a file in the workspace, as nothing on the page does.
 import AppKit
 import Carbon.HIToolbox
+import IOKit.pwr_mgt
 import ServiceManagement
 import WebKit
 
@@ -46,6 +48,12 @@ let checking = CommandLine.arguments.contains("--check")
 // settings, the menu as the page last gave it, and whether the window was open.
 let defaults = UserDefaults.standard
 let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
+// Keep awake: only the agent-driven mode outlives a quit, since a forgotten
+// "until turned off" should not come back at login; and whether the display stays on too.
+let kAwakeWorking = "awakeWhileWorking", kAwakeDisplay = "awakeDisplay"
+enum Awake: Equatable { case off, on, until(Date), whileWorking }
+// agents_working.py, beside status.py: exit 0 when an assistant is mid-turn, 1 when none is, 2 when it cannot tell.
+let agentsCheck = builder.deletingLastPathComponent().appendingPathComponent("agents_working.py")
 func savedMenu() -> [String: Any]? {
 	defaults.data(forKey: kMenu).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
 }
@@ -184,6 +192,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var hotKey: EventHotKeyRef?
 	var hotKeyHandler: EventHandlerRef?
 	var hourly: Timer?
+	var awake: Awake = .off
+	var held: [String: IOPMAssertionID] = [:]   // the sleep assertions this app holds, by type
+	var agentsBusy: Bool?                       // the last check: nil when it could not tell
+	var awakeTimer: Timer?
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		NSApp.mainMenu = menu()
@@ -214,6 +226,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		menuState = savedMenu()
 		if defaults.bool(forKey: kMenuBar) && menuState != nil { showStatusItem() }
 		_ = setHotKey(defaults.dictionary(forKey: kHotkey))
+		if statusItem != nil && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
 		if !startHidden { showWindow() }
@@ -552,22 +565,24 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			statusItem = item
 		}
 		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
-		statusItem?.button?.image = icon(trouble: trouble)
-		statusItem?.button?.setAccessibilityLabel(trouble ? "Garrick: something failed" : "Garrick")
+		statusItem?.button?.image = icon(trouble: trouble, awake: !held.isEmpty)
+		statusItem?.button?.setAccessibilityLabel((trouble ? "Garrick: something failed" : "Garrick") + (held.isEmpty ? "" : ", keeping the Mac awake"))
 	}
 
 	func hideStatusItem() {
 		guard let item = statusItem else { return }
 		NSStatusBar.system.removeStatusItem(item)
 		statusItem = nil
+		setAwake(.off, remember: false)    // its controls live in the menu; never hold the Mac awake out of reach
 		if !window.isVisible { showWindow() }  // never leave the app with nothing to click
 	}
 
 	// Garrick's mark, the small cut from status.py on its 64-unit grid: the
 	// walls in the menu bar's own text colour, the open compartment in the
-	// mark's blue for that ground, and the Status tab's red dot. Drawn at each
-	// draw, so it follows the menu bar from light to dark.
-	func icon(trouble: Bool) -> NSImage {
+	// mark's blue for that ground, the Status tab's red dot at the top right,
+	// and an amber dot at the bottom right while Keep awake holds the Mac.
+	// Drawn at each draw, so it follows the menu bar from light to dark.
+	func icon(trouble: Bool, awake: Bool = false) -> NSImage {
 		NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
 			let m = rect.insetBy(dx: 1, dy: 1), k = m.width / 64
 			func box(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> NSBezierPath {
@@ -584,6 +599,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				let dot = NSRect(x: rect.maxX - 7.5, y: rect.minY, width: 7.5, height: 7.5)
 				NSColor.white.setFill(); NSBezierPath(ovalIn: dot).fill()
 				NSColor.systemRed.setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: 1, dy: 1)).fill()
+			}
+			if awake {
+				let dot = NSRect(x: rect.maxX - 7.5, y: rect.maxY - 7.5, width: 7.5, height: 7.5)
+				NSColor.white.setFill(); NSBezierPath(ovalIn: dot).fill()
+				NSColor.systemOrange.setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: 1, dy: 1)).fill()
 			}
 			return true
 		}
@@ -645,6 +665,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			projects.forEach { menu.addItem(row($0)) }
 		}
 		menu.addItem(.separator())
+		menu.addItem(awakeItem())
 		let open = NSMenuItem(title: "Open Garrick", action: #selector(showWindow(_:)), keyEquivalent: "")
 		open.target = self
 		menu.addItem(open)
@@ -717,6 +738,117 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
 			launch(k, f, phrase: w.isEmpty ? "" : "open " + w)
+		}
+	}
+
+	// MARK: keep awake
+	// macOS's own power assertions, as caffeinate takes them, held by this
+	// process: macOS drops them when the app quits or crashes, so nothing is
+	// left keeping the Mac awake. System sleep only, unless *Display stays on
+	// too*. A closed lid without an external display still sleeps: only root
+	// can stop that (pmset disablesleep), and this does not try.
+
+	func setAwake(_ mode: Awake, remember: Bool = true) {
+		awake = mode
+		if remember { defaults.set(mode == .whileWorking, forKey: kAwakeWorking) }
+		agentsBusy = nil
+		awakeTimer?.invalidate()
+		awakeTimer = mode == .off ? nil : Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.awakeTick() }
+		awakeTick()
+	}
+
+	// Once a minute while a mode is on: end a timed one that has run out, or ask
+	// agents_working.py whether an assistant is mid-turn.
+	func awakeTick() {
+		switch awake {
+		case .off: hold(false)
+		case .on: hold(true)
+		case .until(let end): if end.timeIntervalSinceNow <= 0 { setAwake(.off) } else { hold(true) }
+		case .whileWorking:
+			let p = Process()
+			p.executableURL = URL(fileURLWithPath: python)
+			p.arguments = [agentsCheck.path]
+			p.standardOutput = FileHandle.nullDevice
+			p.standardError = FileHandle.nullDevice
+			p.terminationHandler = { proc in
+				DispatchQueue.main.async {
+					guard self.awake == .whileWorking else { return }
+					let status = proc.terminationStatus
+					self.agentsBusy = status == 0 ? true : status == 1 ? false : nil
+					self.hold(status == 0)
+				}
+			}
+			do { try p.run() } catch { agentsBusy = nil; hold(false) }
+		}
+	}
+
+	func hold(_ on: Bool) {
+		var wanted: [String] = []
+		if on {
+			wanted.append(kIOPMAssertionTypePreventUserIdleSystemSleep as String)
+			if defaults.bool(forKey: kAwakeDisplay) { wanted.append(kIOPMAssertionTypePreventUserIdleDisplaySleep as String) }
+		}
+		let was = !held.isEmpty
+		for (type, id) in held where !wanted.contains(type) {
+			IOPMAssertionRelease(id)
+			held[type] = nil
+		}
+		for type in wanted where held[type] == nil {
+			var id = IOPMAssertionID(0)
+			if IOPMAssertionCreateWithName(type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+			                               "Garrick: Keep awake" as CFString, &id) == kIOReturnSuccess { held[type] = id }
+		}
+		if was != !held.isEmpty && statusItem != nil { showStatusItem() }
+	}
+
+	// The menu's Keep awake row: its title says the state, its submenu the choices.
+	func awakeItem() -> NSMenuItem {
+		let item = NSMenuItem(title: "Keep Awake" + awakeState(), action: nil, keyEquivalent: "")
+		let sub = NSMenu()
+		func choice(_ title: String, _ tag: Int, _ on: Bool) {
+			let i = NSMenuItem(title: title, action: #selector(pickAwake(_:)), keyEquivalent: "")
+			i.target = self
+			i.tag = tag
+			i.state = on ? .on : .off
+			sub.addItem(i)
+		}
+		choice("Off", 0, awake == .off)
+		choice("For 1 Hour", 1, false)
+		choice("For 3 Hours", 2, false)
+		choice("Until Turned Off", 3, awake == .on)
+		choice("While an Agent Is Working", 4, awake == .whileWorking)
+		sub.addItem(.separator())
+		choice("Display Stays On Too", 5, defaults.bool(forKey: kAwakeDisplay))
+		item.submenu = sub
+		return item
+	}
+
+	func awakeState() -> String {
+		switch awake {
+		case .off: return ""
+		case .on: return " · On"
+		case .until(let end):
+			let m = max(1, Int(ceil(end.timeIntervalSinceNow / 60)))
+			return " · " + (m >= 60 ? "\(m / 60) h \(m % 60) min" : "\(m) min") + " left"
+		case .whileWorking:
+			switch agentsBusy {
+			case true?: return " · An Agent Is Working"
+			case false?: return " · No Agent Working"
+			case nil: return held.isEmpty ? " · Checking Agents" : " · Agents Unseen"
+			}
+		}
+	}
+
+	@objc func pickAwake(_ sender: NSMenuItem) {
+		switch sender.tag {
+		case 1: setAwake(.until(Date().addingTimeInterval(3600)))
+		case 2: setAwake(.until(Date().addingTimeInterval(3 * 3600)))
+		case 3: setAwake(.on)
+		case 4: setAwake(.whileWorking)
+		case 5:
+			defaults.set(!defaults.bool(forKey: kAwakeDisplay), forKey: kAwakeDisplay)
+			awakeTick()
+		default: setAwake(.off)
 		}
 	}
 

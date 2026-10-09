@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Added
 
+- *Keep awake* in the status page's menu bar (preview `menu-bar`): for an hour, three hours, until turned off, or while Claude Code or Codex is mid-turn, read from their transcripts by the new `extras/status/agents_working.py`. The display can stay on too. The app holds macOS's power assertions itself, so a quit or crash releases them, and the menu bar mark carries an amber dot while it holds the Mac awake.
 - [A desktop toolkit](docs/extras/toolkit.md), a page among the extras: the Mac apps the author runs around a workspace, for opening Markdown files, dictating and watching usage, each as a slot any app can fill. It warns that a dictation app's cloud cleanup sends what you said to that model's provider. Garrick ships none of them.
 
 ### Changed

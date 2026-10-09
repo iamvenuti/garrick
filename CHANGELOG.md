@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- [A desktop toolkit](docs/extras/toolkit.md), a page among the extras: the Mac apps the author runs around a workspace, for opening Markdown files, dictating and watching usage, each as a slot any app can fill. It warns that a dictation app's cloud cleanup sends what you said to that model's provider. Garrick ships none of them.
+
 ## [0.11.2] - 2026-10-09
 
 The Garrick band resumes the thread, and wraps and clears it.

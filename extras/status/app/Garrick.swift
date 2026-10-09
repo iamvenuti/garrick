@@ -649,9 +649,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return out
 	}
 
-	// The menu: the shown zone's projects. Hovering one opens its actions and
-	// its threads; hovering a thread opens its actions. Clicking a project or a
-	// thread itself runs its default.
+	// The menu: Process the Inbox, then the shown zone's projects. Hovering one
+	// opens its actions and its threads; hovering a thread opens its actions.
+	// Clicking a project or a thread itself runs its default.
 	func fill(_ menu: NSMenu) {
 		menu.removeAllItems()
 		if let inbox = inboxItem() {

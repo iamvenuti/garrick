@@ -667,9 +667,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		menu.addItem(.separator())
 		menu.addItem(awakeItem())
 		let open = NSMenuItem(title: "Open Garrick", action: #selector(showWindow(_:)), keyEquivalent: "")
+		open.image = mark(16)
 		open.target = self
 		menu.addItem(open)
-		menu.addItem(NSMenuItem(title: "Quit Garrick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+		let quit = NSMenuItem(title: "Quit Garrick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+		quit.image = symbol("power")
+		menu.addItem(quit)
 	}
 
 	func header(_ title: String) -> NSMenuItem {
@@ -741,6 +744,18 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// A menu row's icon: an SF Symbol, drawn in the menu's own text colour.
+	func symbol(_ name: String) -> NSImage? {
+		NSImage(systemSymbolName: name, accessibilityDescription: nil)
+	}
+
+	// Garrick's mark at a menu row's size, as the menu bar draws it.
+	func mark(_ side: CGFloat) -> NSImage {
+		let image = icon(trouble: false)
+		image.size = NSSize(width: side, height: side)
+		return image
+	}
+
 	// MARK: keep awake
 	// macOS's own power assertions, as caffeinate takes them, held by this
 	// process: macOS drops them when the app quits or crashes, so nothing is
@@ -804,6 +819,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The menu's Keep awake row: its title says the state, its submenu the choices.
 	func awakeItem() -> NSMenuItem {
 		let item = NSMenuItem(title: "Keep Awake" + awakeState(), action: nil, keyEquivalent: "")
+		item.image = symbol(held.isEmpty ? "cup.and.saucer" : "cup.and.saucer.fill")
 		let sub = NSMenu()
 		func choice(_ title: String, _ tag: Int, _ on: Bool) {
 			let i = NSMenuItem(title: title, action: #selector(pickAwake(_:)), keyEquivalent: "")

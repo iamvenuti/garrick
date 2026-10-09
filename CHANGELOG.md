@@ -8,6 +8,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - [A desktop toolkit](docs/extras/toolkit.md), a page among the extras: the Mac apps the author runs around a workspace, for opening Markdown files, dictating and watching usage, each as a slot any app can fill. It warns that a dictation app's cloud cleanup sends what you said to that model's provider. Garrick ships none of them.
 
+### Changed
+
+- In the status page's Mac app, a card's ways to open a project or thread are the apps' icons, as in its menu bar: the note's app, Finder, cmux, Codex and Claude, the default on a tinted square, each named when you hover it. The app hands the page the icons, so a browser keeps the words.
+
+### Fixed
+
+- The graph's panel offered no *Open in Claude*, *Open in Codex*, *Open in cmux* or *Reveal in Finder* on any note, and no *Park* that acts; a thread's or a project's note there now offers what its card in the list does.
+
 ## [0.11.2] - 2026-10-09
 
 The Garrick band resumes the thread, and wraps and clears it.

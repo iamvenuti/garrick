@@ -1835,6 +1835,14 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop h4,.tcard h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}.tcard h4{margin-right:0}
 .gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
+/* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
+   menu bar, the default on a tinted square. A browser keeps the words. */
+.act[data-k=note]{--ic:var(--icon-note)}.act[data-k=note][href^="obsidian:"]{--ic:var(--icon-obsidian,var(--icon-note))}
+.act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}
+.appicons .gacts{align-items:center}
+.appicons .act[data-k]{width:34px;height:34px;padding:0;font-size:0;color:transparent;border-color:transparent;border-radius:8px;background:transparent var(--ic) center/26px no-repeat}
+.appicons .act[data-k][data-d]{background-color:color-mix(in srgb,var(--accent) 22%,transparent)}
+.appicons .act[data-k]:hover{border-color:var(--base)}
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:12.5px;padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
@@ -1931,9 +1939,13 @@ function prefs(){try{return JSON.parse(localStorage.getItem('garrick-launchers')
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
 function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='finder'?'Showed '+o.n+' in Finder.':k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
 :(p?'Opened '+LABEL[k]+' in '+o.n+'. Paste “'+p+'” to your assistant.':'Opened '+LABEL[k]+' in '+o.n+'.');
-return'<button class="act" type="button" data-launch="'+k+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+(k==='finder'?'Reveal in Finder':'Open in '+LABEL[k])+'</button>'}
-function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'">Open</a>';if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
+var l=k==='finder'?'Reveal in Finder':'Open in '+LABEL[k];
+return'<button class="act" type="button" data-launch="'+k+'" data-k="'+k+'"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+l+'</button>'}
+/* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
+function dmark(k,o){var d=null;try{d=localStorage.getItem('garrick-default')}catch(x){}if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
+function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
+if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
 if(o.w)a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
 function park(o){var v=o.s?'wake':'park';return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
 +'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
@@ -2269,7 +2281,7 @@ var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=
 var esc=Panel.esc;
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
-var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,pu:hub&&hub!==n?hub.u:''};
+var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,pa:n.pa,pu:hub&&hub!==n?hub.u:''};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)

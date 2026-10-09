@@ -76,7 +76,9 @@ Hover a thread in the list, or move to it with the keyboard, and a card opens un
 - *Park*, at the top right beside the thread's name, copies "park Pricing", the phrase that sets it aside; on a parked thread it is *Wake*. With the preview `page-actions` on, in the Mac app, it parks or wakes the thread itself.
 - *Open in Claude*, *Open in Codex* and *Open in cmux*, only in the [Mac app](#a-mac-app), one for each of those apps that is installed and switched on in [Settings](#settings). Claude starts a session in the thread's folder with "open Pricing" typed in. Codex and [cmux](cmux.md) open the folder with "open Pricing" on the clipboard. A project gets the same buttons for its own folder.
 
-The graph's panel offers the same actions under the same labels. On a project's hub note it also offers "open Acme Review", unless a thread has the same name. Names are said in the shortest form that is unique, the way the threads skill says them: "Pricing", or "Acme Review, Pricing" when two projects have a thread called Pricing, and "Work, House, Kitchen" when projects called House in two zones both have a Kitchen thread. Escape closes the card, and moving the pointer away does too.
+In the Mac app, *Open* and the app buttons are drawn as the apps' icons, the same line its [menu bar](#in-the-menu-bar) shows: the note's app first, then Finder, cmux, Codex and Claude. The one a click on the thread's name runs sits on a tinted square. Hover an icon for its name. A browser shows the words.
+
+The graph's panel offers the same actions under the same labels, the app buttons included, for a thread's note as for a project's hub. On a project's hub note it also offers "open Acme Review", unless a thread has the same name. Names are said in the shortest form that is unique, the way the threads skill says them: "Pricing", or "Acme Review, Pricing" when two projects have a thread called Pricing, and "Work, House, Kitchen" when projects called House in two zones both have a Kitchen thread. Escape closes the card, and moving the pointer away does too.
 
 ## What it shows, and what it leaves out
 
@@ -109,7 +111,7 @@ The page says how old it is, and turns its banner red when it is more than a day
 *Garrick.app* shows the page in a window of its own, so it sits in the Dock and the app launcher instead of a browser tab. It is a viewer for the one file and nothing more, so the page is still built by `status.py` alone. What it adds:
 
 - **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
-- **Its buttons do what they say.** The top row's circular arrow becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Project and thread cards gain *Open in Claude*, *Open in Codex* and *Open in cmux*, for the ones that are installed and switched on in [Settings](#settings). The app menu's *Settings…* (⌘-comma) opens Settings.
+- **Its buttons do what they say.** The top row's circular arrow becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Project and thread cards, and the graph's panel, gain *Open in Claude*, *Open in Codex* and *Open in cmux*, for the ones that are installed and switched on in [Settings](#settings), and show every way to open a note as its app's icon. The app menu's *Settings…* (⌘-comma) opens Settings.
 - **Links go where your Mac sends them**: a note to Obsidian or your Markdown app, a log to its viewer.
 
 Build it once, from the workspace:

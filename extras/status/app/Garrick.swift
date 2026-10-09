@@ -12,6 +12,8 @@
 //     Rebuild now runs status.py, and Open in cmux opens a cmux tab in a
 //     project's or thread's folder. The page offers Open in cmux only where
 //     cmux was installed when it was built; the app checks again on the click;
+//   - it gives the page each app's icon, so a card's ways to open a note
+//     show as the icons its menu bar draws, where a browser shows words;
 //   - every link the page holds (a note in Obsidian, a file, the web) goes to
 //     the app macOS uses for it;
 //   - with the preview menu-bar on, an icon in the menu bar listing the live
@@ -154,6 +156,19 @@ final class ActionBar: NSView {
 		let a = acts[sender.tag]
 		DispatchQueue.main.async { self.pick(a) }
 	}
+}
+
+// An app's icon as a PNG data URL, for the page: the same icon the menu bar
+// draws, so a card's ways to open a note look as its menu row's do.
+func pngURL(_ image: NSImage, side: Int = 64) -> String? {
+	guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+	                                 samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+	                                 bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+	NSGraphicsContext.saveGraphicsState()
+	NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+	image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+	NSGraphicsContext.restoreGraphicsState()
+	return rep.representation(using: .png, properties: [:]).map { "url(data:image/png;base64,\($0.base64EncodedString()))" }
 }
 
 final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -445,8 +460,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		(try? JSONSerialization.data(withJSONObject: appState())).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 	}
 
+	// Each installed app's icon as --icon-<key> on the page's root, with
+	// .appicons, which the page reads as "draw the ways to open a note as
+	// icons". The note's own is Obsidian's for an obsidian: link and the
+	// Markdown app's otherwise. Made once.
+	lazy var iconJSON: String = {
+		var urls: [String: String] = [:]
+		let bundles = ["obsidian": "md.obsidian", "finder": "com.apple.finder", "cmux": cmuxBundle, "codex": codexBundle, "claude": claudeBundle]
+		for (key, id) in bundles {
+			if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) { urls[key] = pngURL(NSWorkspace.shared.icon(forFile: app.path)) }
+		}
+		let md = URL(fileURLWithPath: workspace.path + "/AGENTS.md")
+		urls["note"] = pngURL(NSWorkspace.shared.urlForApplication(toOpen: md).map { NSWorkspace.shared.icon(forFile: $0.path) }
+			?? NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil) ?? NSImage())
+		return (try? JSONSerialization.data(withJSONObject: urls)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+	}()
+
 	func appScript() -> WKUserScript {
-		WKUserScript(source: "window.GarrickApp=\(appJSON());", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+		WKUserScript(source: """
+			window.GarrickApp=\(appJSON());(function(i){var r=document.documentElement;r.classList.add('appicons');
+			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
+			""", injectionTime: .atDocumentStart, forMainFrameOnly: true)
 	}
 
 	func pushAppState() {

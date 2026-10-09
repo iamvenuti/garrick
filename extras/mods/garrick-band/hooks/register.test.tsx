@@ -83,7 +83,8 @@ const BAND = {
 
 async function inThread($: any, on: any, text: string, extra: string[] = []) {
   const cwd = `${ROOT}/Zones/Work/Acme`
-  on('session.cwd', async () => ({ value: cwd }))
+  on('session.root', async () => ({ value: cwd }))
+  on('session.cwd', async () => ({ value: `${ROOT}/System/tools` }))      // a cd in a tool call: the band keeps its thread
   on('env.get', async () => ({ value: '/Users/someone' }))
   on('fs.exists', async (_$: any, e: any) => ({
     value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...extra].includes(e.path),
@@ -145,6 +146,7 @@ describe('band', () => {
 
 describe('outside a project', () => {
   test('shows the place with no Resume line', async ($, on) => {
+    on('session.root', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
     on('session.cwd', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
     on('fs.exists', async (_$, e: any) => ({ value: e.path === `${ROOT}/System/rules.md` }))
     on('turn.complete', async () => ({ text: '' }))

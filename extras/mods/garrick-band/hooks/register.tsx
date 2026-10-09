@@ -144,10 +144,13 @@ export function paneMarkdown(markdown: string, resolve: (target: string) => stri
   })
 }
 
-// Walk up from the working directory to the workspace root (the folder holding
+// Walk up from the session's folder to the workspace root (the folder holding
 // System/rules.md); the first folder whose own <Folder>.md exists is the thread.
+// The folder is the one the session started in ($.session.root()), not the
+// shell's: a `cd` in a tool call moves $.session.cwd(), and the band would lose
+// its thread after that turn.
 async function findNote($: any): Promise<Note | null> {
-  let dir: string = await $.session.cwd()
+  let dir: string = await $.session.root()
   const chain: string[] = []
   while (dir !== '/') {
     chain.push(dir)

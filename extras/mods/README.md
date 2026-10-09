@@ -30,7 +30,7 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 
-How it finds the note: from the session's folder it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and never calls a model. *Resume* and *Wrap* send a prompt in your name, only when you press them. It runs two processes: that `find`, and `open` when you press *Finder* or *Obsidian*.
+How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and never calls a model. *Resume* and *Wrap* send a prompt in your name, only when you press them. It runs two processes: that `find`, and `open` when you press *Finder* or *Obsidian*.
 
 ## Load it
 

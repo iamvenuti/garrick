@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Activity, Note } from '../types'
+import type { Activity, Note, Thread } from '../types'
 
 // Garrick blue, from docs/assets/garrick-mark.svg.
 const BLUE = 0x3d73e0
@@ -79,6 +79,13 @@ export function parseNote(text: string): Pick<Note, 'status' | 'heading' | 'lead
 // the rules' "Open X" and "wrap X" phrases apply.
 export function resumePrompt(n: Note): string {
   return `Open ${n.title}: read the ${n.heading ?? 'Resume here'} block in \`${n.rel}\` and tell me in two sentences where it stands and the next action.`
+}
+
+// At a project whose resume points are in its threads: where each one stands.
+export function projectResumePrompt(n: Note): string {
+  const notes = n.threads.map(t => `\`${t.rel}\``).join(', ')
+
+  return `Open ${n.title}: read the Resume here block of each of its live threads (${notes}) and tell me in a sentence or two for each where it stands and the next action.`
 }
 
 export function wrapPrompt(n: Note): string {
@@ -167,7 +174,11 @@ async function findNote($: any): Promise<Note | null> {
     const where = label(folder.slice(root.length + 1))
     const rel = path.slice(root.length + 1)
 
-    return { path, rel, where, title: basename(folder), ...parseNote(text), ...(await openers($, chain, folder)) }
+    const parsed = parseNote(text)
+    const threads = parsed.resume === null ? await liveThreads($, folder, root) : []
+    const lead = threads.length ? `${threads.length === 1 ? 'Thread' : `${threads.length} threads`}: ${threads.map(t => t.title).join(', ')}` : parsed.lead
+
+    return { path, rel, where, title: basename(folder), ...parsed, lead, threads, ...(await openers($, chain, folder)) }
   }
   // No thread note above the folder (System/, the root, a wiki): nothing to
   // resume or wrap, but Finder still shows the folder and, in a wiki, Obsidian
@@ -181,8 +192,25 @@ async function findNote($: any): Promise<Note | null> {
   return {
     path: target, rel: target.slice(root.length + 1), where: where || 'Home', title: where || 'Home',
     status: null, heading: null, lead: null, resume: null,
-    finder: open.finder, obsidian: open.obsidian && target === index,
+    finder: open.finder, obsidian: open.obsidian && target === index, threads: [],
   }
+}
+
+// A project's live threads: Threads/<Thread>/<Thread>.md with a Resume here
+// block, not done or parked, by name.
+async function liveThreads($: any, folder: string, root: string): Promise<Thread[]> {
+  const entries = await $.fs.list(`${folder}/Threads`).catch(() => [])
+  const out: Thread[] = []
+  for (const e of [...entries].sort((a: any, b: any) => a.name.localeCompare(b.name))) {
+    if (e.kind !== 'dir' || e.name.startsWith('.') || e.name.startsWith('_')) continue
+    const path = `${folder}/Threads/${e.name}/${e.name}.md`
+    if (!(await $.fs.exists(path))) continue
+    const parsed = parseNote(await $.fs.read(path))
+    if (parsed.resume === null || parsed.status === 'done' || parsed.status === 'parked') continue
+    out.push({ title: e.name, rel: path.slice(root.length + 1), heading: parsed.heading, resume: parsed.resume.slice(0, 20000) })
+  }
+
+  return out
 }
 
 // Finder wherever macOS's `open` is there; Obsidian when it is installed and a
@@ -207,7 +235,8 @@ export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIC
 
 // The band's actions, shared by its buttons and /garrick.
 const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focus: true, closeOnEscape: true })
-const resume = ($: any, n: Note) => $.prompt.submit({ text: resumePrompt(n), asUser: true })
+const resume = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? resumePrompt(n) : projectResumePrompt(n), asUser: true })
+const resumable = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0)
 const wrap = ($: any, n: Note) => $.prompt.submit({ text: wrapPrompt(n), asUser: true })
 const clear = ($: any) => $.command.run({ command: 'clear' })
 async function opener($: any, args: string[], app: string) {
@@ -400,7 +429,8 @@ export const register: Register = on => {
 
       return { text: `Opening ${current.title} in ${arg === 'finder' ? 'Finder' : 'Obsidian'}.` }
     }
-    if (current?.resume == null) return { text: 'No Resume here block above this folder.' }
+    if (!resumable(current)) return { text: 'No Resume here block above this folder.' }
+    if (arg === 'wrap' && current.resume === null) return { text: `${current.title} keeps its resume points in its threads; wrap one of them.` }
     if (arg === 'note') {
       await openNote($, current)
 
@@ -452,12 +482,12 @@ export const register: Register = on => {
             </Text>
           )}
           <Box flexDirection="row" gap={2}>
-            {current.resume && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
+            {resumable(current) && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
             {current.resume && current.status !== 'done' && (
               <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
             )}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
-            {current.resume && <Button key="note" label="Note" hotkey="n" plain dimColor onPress={() => void openNote($, current)} />}
+            {resumable(current) && <Button key="note" label="Note" hotkey="n" plain dimColor onPress={() => void openNote($, current)} />}
             {current.finder && <Button key="finder" label="Finder" hotkey="f" plain dimColor onPress={() => void finder($, current)} />}
             {current.obsidian && <Button key="obsidian" label="Obsidian" hotkey="o" plain dimColor onPress={() => void obsidian($, current)} />}
           </Box>
@@ -472,22 +502,31 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Markdown } = $.ui.resolve(e)
     const current = await read($, note)
-    if (current?.resume == null) return <Text dimColor>No Resume here block found.</Text>
+    if (!resumable(current)) return <Text dimColor>No Resume here block found.</Text>
     const byTarget = (target: string) => {
       if (index === null) return null
       const rel = lookup(index, /\.[A-Za-z0-9]{1,5}$/.test(target) ? target : `${target}.md`, '')
 
       return rel === null ? null : `${index.root}/${rel}`
     }
-    const text = await linkify(paneMarkdown(current.resume.slice(0, 20000), byTarget), await resolver($))
+    // The note's own block, or at a project kept in threads, each thread's.
+    const blocks: Thread[] = current.resume !== null
+      ? [{ title: current.heading ?? 'Resume here', rel: current.rel, heading: current.heading, resume: current.resume }]
+      : current.threads.map(t => ({ ...t, title: `${t.title} · ${t.heading ?? 'Resume here'}` }))
+    const resolve = await resolver($)
+    const texts = await Promise.all(blocks.map(b => linkify(paneMarkdown(b.resume.slice(0, 20000), byTarget), resolve)))
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" gap={2}>
-          <Text bold color="#3d73e0">{current.heading ?? 'Resume here'}</Text>
-          <Text dimColor wrap="truncate-end">{current.rel}</Text>
-        </Box>
-        <Markdown text={text} />
+        {blocks.map((b, i) => (
+          <Box key={`block-${i}`} flexDirection="column" gap={1}>
+            <Box flexDirection="row" gap={2}>
+              <Text bold color="#3d73e0">{b.title}</Text>
+              <Text dimColor wrap="truncate-end">{b.rel}</Text>
+            </Box>
+            <Markdown text={texts[i]!} />
+          </Box>
+        ))}
         {(current.obsidian || current.finder) && (
           <Box flexDirection="row" gap={2}>
             {current.obsidian && <Button key="pane-obsidian" label="Open in Obsidian" hotkey="o" plain onPress={() => void obsidian($, current)} />}

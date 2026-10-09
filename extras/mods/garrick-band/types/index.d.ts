@@ -11,6 +11,16 @@ export type Note = {
   // it is installed and the note sits in a vault.
   finder: boolean
   obsidian: boolean
+  // A project whose hub has no Resume here block: its live threads, each with
+  // its own block. Empty for a thread, or a project that is its own thread.
+  threads: Thread[]
+}
+
+export type Thread = {
+  title: string
+  rel: string
+  heading: string | null
+  resume: string
 }
 
 // The last prompt of the session and the step the assistant is on.

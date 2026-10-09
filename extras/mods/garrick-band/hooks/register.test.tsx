@@ -55,7 +55,7 @@ describe('parsing', () => {
   })
 
   test('the prompts name the thread and its note', () => {
-    const n = { path: '/v/Zones/Work/Acme/Acme.md', rel: 'Zones/Work/Acme/Acme.md', where: 'Work › Acme', title: 'Acme', ...parseNote(NOTE), finder: true, obsidian: false }
+    const n = { path: '/v/Zones/Work/Acme/Acme.md', rel: 'Zones/Work/Acme/Acme.md', where: 'Work › Acme', title: 'Acme', ...parseNote(NOTE), finder: true, obsidian: false, threads: [] }
     expect(resumePrompt(n)).toBe('Open Acme: read the Resume here block in `Zones/Work/Acme/Acme.md` and tell me in two sentences where it stands and the next action.')
     expect(wrapPrompt(n)).toMatch(/^Wrap Acme: rewrite the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
   })
@@ -244,6 +244,50 @@ const ENGINE = async ($: any, e: any) => {
   const { Text } = $.ui.resolve(e)
   return <Text>engine</Text>
 }
+
+describe('a project kept in threads', () => {
+  const HUB = '---\nstatus: active\n---\n# Acme\n\n## Active threads\n\n- Pricing\n'
+  const thread = (status: string, block: string) => `---\nstatus: ${status}\n---\n## State of play\n\n### Resume here\n\n${block}\n`
+  const files: Record<string, string> = {
+    [`${ROOT}/Zones/Work/Acme/Acme.md`]: HUB,
+    [`${ROOT}/Zones/Work/Acme/Threads/Pricing/Pricing.md`]: thread('active', 'Pricing waits on legal.'),
+    [`${ROOT}/Zones/Work/Acme/Threads/Renewal/Renewal.md`]: thread('active', 'Renewal is signed off.'),
+    [`${ROOT}/Zones/Work/Acme/Threads/Old/Old.md`]: thread('done', 'Finished.'),
+  }
+
+  async function atProject($: any, on: any) {
+    const submitted: string[] = []
+    on('ui.render', ENGINE)
+    on('prompt.submit', async (_$: any, e: any) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    on('session.root', async () => ({ value: `${ROOT}/Zones/Work/Acme` }))
+    on('session.cwd', async () => ({ value: `${ROOT}/Zones/Work/Acme` }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({ value: e.path === `${ROOT}/System/rules.md` || e.path in files }))
+    on('fs.read', async (_$: any, e: any) => ({ value: files[e.path] ?? '' }))
+    on('fs.list', async () => ({ value: ['Renewal', 'Old', 'Pricing'].map(name => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })) }) as any)
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    return submitted
+  }
+
+  test('names its live threads, resumes them all, and offers no Wrap', async ($, on) => {
+    const submitted = await atProject($, on)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /2 threads: Pricing, Renewal/ })).toBeDefined()
+    expect(await band.find({ key: 'note' })).toBeDefined()
+    expect(await band.find({ key: 'wrap' })).toBeUndefined()
+    await band.press({ key: 'resume' })
+    expect(submitted[0]).toBe('Open Acme: read the Resume here block of each of its live threads (`Zones/Work/Acme/Threads/Pricing/Pricing.md`, `Zones/Work/Acme/Threads/Renewal/Renewal.md`) and tell me in a sentence or two for each where it stands and the next action.')
+  })
+
+  test('/garrick wrap at the project asks for a thread', async ($, on) => {
+    await atProject($, on)
+    expect((await $.command.run({ command: 'garrick', args: 'wrap' } as any)).text).toMatch(/wrap one of them/)
+  })
+})
 
 describe('show and hide', () => {
   test('/garrick hide takes the band away and /garrick brings it back', async ($, on) => {

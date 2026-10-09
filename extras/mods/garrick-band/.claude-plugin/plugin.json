@@ -1,0 +1,9 @@
+{
+  "name": "garrick-band",
+  "version": "0.1.0",
+  "description": "The Garrick mark and the current thread above the prompt, and clickable file paths in replies",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Garrick"
+  }
+}

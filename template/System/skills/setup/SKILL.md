@@ -49,6 +49,10 @@ mode* in the `threads` skill describes.
      it for them.
    - Only if there is more than one assistant or app: "Which one will you
      use day to day?"
+   - Only if Claude Code runs in a terminal: "Do you want the Garrick band,
+     the thread you're in and where it stands, above the prompt?" A yes
+     means loading the mod in `extras/mods/garrick-band/` of the Garrick
+     download: say how, from its README, never change the settings for them.
 4. **Write `System/setup.md`**, or rewrite it if it exists, re-reading it
    first. Facts only, in this shape, and nothing about the user's work or
    parties: that belongs in `System/context.md`.

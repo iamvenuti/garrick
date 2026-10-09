@@ -29,6 +29,9 @@ jobs:
           if [ "${{ matrix.python }}" = system ]; then py=/usr/bin/python3; else py=python; fi
           echo "PY=$py" >> "$GITHUB_ENV"
           "$py" --version
+      - name: Install Claude Code, for the mod's checks
+        # The version extras/mods/README.md names as tested.
+        run: npm install -g @anthropic-ai/claude-code@2.1.295
       - name: Run the suite
         env:
           # Comma-separated real names that must never appear. Empty on forks: the test skips.

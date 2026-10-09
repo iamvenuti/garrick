@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-09
+
+The Garrick band: a Claude Code mod that shows the thread you are in above the prompt.
+
+### Added
+
+- The Garrick band, a Claude Code mod in `extras/mods/garrick-band/` ([#20](https://github.com/iamvenuti/garrick/issues/20)). Above the prompt it draws the mark, the zone, project and thread you are in with its status, and the first line of its Resume here block, with a button for the whole block; `/garrick` hides it. In replies it turns file paths in backticks into links you can Cmd-click. It reads files only and never calls a model. Optional and Claude Code only: [its README](extras/mods/README.md) says how to load it, the setup skill offers it, and CI validates and tests it on Claude Code 2.1.295.
+
 ### Changed
 
 - The README plays the walkthrough with the new mark.
@@ -239,7 +247,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/iamvenuti/garrick/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/iamvenuti/garrick/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/iamvenuti/garrick/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/iamvenuti/garrick/compare/v0.8.0...v0.8.1

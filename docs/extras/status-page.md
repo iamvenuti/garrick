@@ -134,7 +134,7 @@ Each cell is one day, coloured by how the day *ended*: red when its last run fai
 
 ## The mark
 
-The mark is a white *Gr* on Garrick's blue, `#3D73E0`, like a tile in the periodic table, with a small *ai* in its corner. The tab icon is the same tile with *Gr* alone, since the *ai* cannot be read at that size. The letters are outlines of Baskervville, a Baskerville revival under the SIL Open Font License, carried in the page itself. The blue is also the page's accent in the light theme. The dark theme uses a lighter blue of the same hue, `#6590E6`, with a contrast of at least 4.5 to 1 against every dark surface.
+The mark is a cabinet of three compartments: a narrow spine, the open one in Garrick's blue and a closed one beneath, for each party's work in its own place and one thing open at a time. It follows the page's theme: navy `#1E2833` and blue `#3D73E0` in the light theme, cream `#F5F0E6` and the lighter `#8EB1F5` in the dark one, where `#3D73E0` would fall to 3.4 to 1. The tab icon is the small cut, drawn on the 16-pixel grid so its walls stay a pixel wide, and follows your browser's light or dark setting. The Mac app's icon is the mark on a navy tile. `#3D73E0` is also the page's accent in the light theme. The dark theme's accent is a lighter blue of the same hue, `#6590E6`, with a contrast of at least 4.5 to 1 against every dark surface. [The mark's note](../assets/brand.md) has the files and colours.
 
 ## What you lose without it
 

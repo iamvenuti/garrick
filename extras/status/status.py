@@ -1241,43 +1241,47 @@ def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = Tr
     return " ".join(shlex.quote(w) for w in words + ["--open"])
 
 
-# Garrick's mark: a white Gr on brand blue, like an element tile, and a small
-# "ai" in the full mark. The letters are outlines of Baskervville, a Baskerville
-# revival released under the SIL Open Font License, so the page carries them as
-# paths and needs no font. The favicon cut is Gr alone, larger and centred:
-# the "ai" cannot be read at 16 pixels.
+# Garrick's mark: a cabinet of three compartments behind walls, a narrow spine
+# on the left, the open one in blue and a closed one beneath. The blue is one
+# colour tuned for each ground: BRAND on light, the lighter BRAND_ON_DARK on
+# dark, where BRAND falls to 3.4 to 1. The small cut, for 32 pixels and below,
+# is drawn on the 16-pixel grid so its walls stay a pixel wide in the tab.
 BRAND = "#3D73E0"
-_G = ("M397 -11Q325 -11 263.5 15.5Q202 42 157.0 90.5Q112 139 87.0 204.5Q62 270 62 348Q62 427 88.0 495.5Q114 564 160.5 615.0"
-      "Q207 666 269.0 695.0Q331 724 403 724Q436 724 468.0 717.5Q500 711 536 692Q558 681 570.0 677.0Q582 673 592 673Q621 673 621 710"
-      "H646L644 595L646 478H621Q619 543 590.5 591.5Q562 640 513.5 667.0Q465 694 402 694Q289 694 226.5 604.0Q164 514 164 350"
-      "Q164 190 224.5 104.5Q285 19 398 19Q451 19 495.0 36.5Q539 54 565.5 83.0Q592 112 592 146V174Q592 218 571.5 237.0Q551 256 496 261"
-      "L453 265V289L619 285L773 289V265L728 261Q667 255 667 174V156Q667 118 689 79L703 54L680 39Q656 75 629 75Q619 75 611.5 71.5"
-      "Q604 68 576 48Q533 17 490.0 3.0Q447 -11 397 -11Z")
-_R = ("M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V329Q116 378 97.5 395.5Q79 413 28 413V436Q68 436 105.5 439.0"
-      "Q143 442 186 448L175 333H186V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM184 269 173 312"
-      "Q194 391 228.0 422.5Q262 454 304 454Q344 454 358.0 434.0Q372 414 372 394Q372 372 359.0 358.0Q346 344 323 344Q305 344 293.0 353.5"
-      "Q281 363 281 378Q281 383 282.0 387.0Q283 391 284 398Q285 402 285.5 405.0Q286 408 286 410Q286 420 272 420Q254 420 236.5 399.5"
-      "Q219 379 205.0 345.0Q191 311 184 269Z")
-_A = ("M405 -11Q362 -11 343.5 16.0Q325 43 325 104V320Q325 379 302.5 404.0Q280 429 227 429Q191 429 169.5 420.0Q148 411 148 396"
-      "Q148 392 149.5 387.5Q151 383 152 377Q157 357 157 349Q157 333 144.5 321.5Q132 310 112 310Q93 310 81.0 323.5Q69 337 69 358"
-      "Q69 386 91.5 407.5Q114 429 153.5 441.5Q193 454 244 454Q323 454 359.0 416.5Q395 379 395 296V116Q395 65 403.0 44.5Q411 24 430 24"
-      "Q444 24 455.5 33.5Q467 43 472 59L490 52Q472 -11 405 -11ZM163 -11Q112 -11 81.0 14.0Q50 39 50 79Q50 117 81.0 151.5Q112 186 180 223"
-      "Q210 240 247.0 256.5Q284 273 329 289L330 270Q233 230 180.5 182.0Q128 134 128 87Q128 58 145.0 42.0Q162 26 193 26Q221 26 248.5 40.5"
-      "Q276 55 297.5 78.5Q319 102 328 130L334 97Q309 47 263.5 18.0Q218 -11 163 -11Z")
-_I = ("M28 -3V20L44 22Q77 26 92.0 33.5Q107 41 111.5 61.0Q116 81 116 121V332Q116 377 98.0 395.0Q80 413 35 413H28V436Q78 436 114.5 438.5"
-      "Q151 441 186 448V121Q186 81 190.5 61.0Q195 41 210.5 33.5Q226 26 258 22L274 20V-3L151 0ZM132 554Q106 554 91.0 572.0Q76 590 76 615"
-      "Q76 641 91.0 658.5Q106 676 132 676Q161 676 174.5 658.5Q188 641 188 615Q188 590 174.5 572.0Q161 554 132 554Z")
+BRAND_ON_DARK = "#8EB1F5"
+MARK_INK = "#1E2833"
+MARK_INK_ON_DARK = "#F5F0E6"
+_MARK = {
+    True: ("M22.75 6V58H8.5C7.12 58 6 56.88 6 55.5V8.5C6 7.12 7.12 6 8.5 6ZM26.75 32H58V55.5C58 56.88 56.88 58 55.5 58H26.75Z",
+           "M26.75 6H55.5C56.88 6 58 7.12 58 8.5V28H26.75Z"),
+    False: ("M24 4V60H6C4.9 60 4 59.1 4 58V6C4 4.9 4.9 4 6 4ZM28 32H60V58C60 59.1 59.1 60 58 60H28Z",
+            "M28 4H58C59.1 4 60 4.9 60 6V28H28Z"),
+}
 
 
 def mark(full: bool = True, attrs: str = "", image: bool = False) -> str:
-    """The mark as SVG: the full one with "ai", or the favicon cut. An SVG
-    used as an image needs its namespace; one inside the page does not."""
-    glyphs = ([(_G, 8.28, 48.54, 0.04384), (_R, 42.69, 48.54, 0.04384), (_A, 50.99, 60.86, 0.01310), (_I, 57.41, 60.86, 0.01310)]
-              if full else [(_G, 2.08, 49.50, 0.04910), (_R, 40.62, 49.50, 0.04910)])
-    paths = "".join('<path d="%s" fill="#fff" transform="translate(%.2f %.2f) scale(%.5f -%.5f)"/>' % (d, x, y, k, k)
-                    for d, x, y, k in glyphs)
-    return ('<svg viewBox="0 0 64 64"%s%s><rect width="64" height="64" rx="3.5" fill="%s"/>%s</svg>'
-            % (' xmlns="http://www.w3.org/2000/svg"' if image else "", attrs, BRAND, paths))
+    """The mark as SVG: the full one, or the small cut. Inside the page its
+    colours follow the page's theme through CSS; an SVG used as an image needs
+    its namespace and follows the browser's own light or dark setting."""
+    ink, blue = _MARK[full]
+    if image:
+        style = ("<style>.mi{fill:%s}.mb{fill:%s}@media (prefers-color-scheme:dark){.mi{fill:%s}.mb{fill:%s}}</style>"
+                 % (MARK_INK, BRAND, MARK_INK_ON_DARK, BRAND_ON_DARK))
+        return ('<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">%s<path class="mi" d="%s"/><path class="mb" d="%s"/></svg>'
+                % (style, ink, blue))
+    return ('<svg viewBox="0 0 64 64"%s><path class="mi" fill="%s" d="%s"/><path class="mb" fill="%s" d="%s"/></svg>'
+            % (attrs, MARK_INK, ink, BRAND, blue))
+
+
+def app_icon() -> str:
+    """The Mac app's icon at 1024 pixels: the mark in its dark colours on a navy
+    tile, on the macOS icon grid (an 824-unit rounded square, centred), with
+    the mark at three fifths of the tile. Plain fills, so any rasteriser draws it."""
+    ink, blue = _MARK[True]
+    k = 0.6 * 824 / 52
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+            '<rect x="100" y="100" width="824" height="824" rx="185.4" fill="%s"/>'
+            '<g transform="translate(%.2f %.2f) scale(%.4f)"><path fill="%s" d="%s"/><path fill="%s" d="%s"/></g></svg>'
+            % (MARK_INK, 512 - 32 * k, 512 - 32 * k, k, MARK_INK_ON_DARK, ink, BRAND_ON_DARK, blue))
 
 
 def favicon() -> str:
@@ -1339,17 +1343,17 @@ def meter(value: float, cap: float, label: str, right: str) -> str:
 CSS = r"""
 :root{color-scheme:light;--display:"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif;--page:#f4f3f0;--side:#ecebe6;--surface:#fcfcfb;--raise:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
 --line:rgba(11,11,11,.10);--grid:#e1e0d9;--base:#c3c2b7;--accent:#3d73e0;--track:#cfdcf7;--wash:rgba(61,115,224,.10);
---good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--none:#e6e5df;--shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.04)}
+--good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--none:#e6e5df;--shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.04);--mark-ink:#1e2833;--mark-blue:#3d73e0}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none}}
+--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}}
 :root[data-theme="dark"]{color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none}
+--ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:22px 14px;display:flex;flex-direction:column;gap:18px}
-.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.brand h1{font:600 18px/1.15 var(--display);margin:0;letter-spacing:.005em}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px}.brand .mark{width:34px;height:34px;flex:none;display:block}.mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}.brand h1{font:600 18px/1.15 var(--display);margin:0;letter-spacing:.005em}.brand p{margin:2px 0 0;color:var(--muted);font-size:12px}
 .overall{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
 .overall svg{width:22px;height:22px;flex:none}.overall b{display:block;font-size:13px}.overall span{color:var(--ink2);font-size:12px}
 nav{display:flex;flex-direction:column;gap:1px}

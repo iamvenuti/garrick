@@ -964,13 +964,32 @@ class TestNameAndMark(StatusCase):
         html = self.page()
         brand = html[html.index('<div class="brand">'):html.index("<h1>")]
         self.assertIn('class="mark" aria-hidden="true"', brand)
-        self.assertIn('fill="#3D73E0"', brand)
-        self.assertEqual(2, brand.count("<path"))           # Gr alone: the small "ai" cannot be read at heading size
+        self.assertEqual(2, brand.count("<path"))           # the cabinet: the walls in ink, the open compartment in blue
+        self.assertIn('class="mi" fill="#1E2833"', brand)
+        self.assertIn('class="mb" fill="#3D73E0"', brand)
         icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml,([^"]+)">', html)
         svg = urllib.parse.unquote(icon.group(1))
         self.assertTrue(svg.startswith('<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">'))
-        self.assertIn('fill="#3D73E0"', svg)
-        self.assertEqual(2, svg.count("<path"))             # the favicon cut: Gr alone
+        self.assertEqual(2, svg.count("<path"))
+        self.assertIn('d="M24 4V60H6', svg)                 # the small cut, on the 16-pixel grid
+        self.assertIn("@media (prefers-color-scheme:dark){.mi{fill:#F5F0E6}.mb{fill:#8EB1F5}}", svg)
+
+    def test_mark_follows_the_theme(self):
+        # Navy and BRAND on light; cream and the lighter blue on dark, chosen or automatic.
+        self.assertIn(".mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}", status.CSS)
+        light = re.search(r":root\{[^}]*--mark-ink:(#[0-9a-f]{6});--mark-blue:(#[0-9a-f]{6})\}", status.CSS).groups()
+        self.assertEqual((status.MARK_INK.lower(), status.BRAND.lower()), light)
+        dark = re.findall(r"color-scheme:dark;[^}]*--mark-ink:(#[0-9a-f]{6});--mark-blue:(#[0-9a-f]{6})\}", status.CSS)
+        self.assertEqual([(status.MARK_INK_ON_DARK.lower(), status.BRAND_ON_DARK.lower())] * 2, dark)
+
+    def test_app_icon_is_the_mark_on_a_navy_tile(self):
+        icon = status.app_icon()
+        self.assertTrue(icon.startswith('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"'))
+        self.assertIn('<rect x="100" y="100" width="824" height="824" rx="185.4" fill="%s"/>' % status.MARK_INK, icon)
+        self.assertIn('fill="%s"' % status.MARK_INK_ON_DARK, icon)
+        self.assertIn('fill="%s"' % status.BRAND_ON_DARK, icon)
+        self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
+        self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
     def test_display_headings_in_baskerville(self):
         # Garrick's typeface, from fonts already on the machine: nothing is fetched.

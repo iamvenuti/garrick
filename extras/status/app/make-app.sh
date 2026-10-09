@@ -45,20 +45,16 @@ mkdir -p "$BUNDLE/MacOS" "$BUNDLE/Resources"
 
 xcrun swiftc -O -o "$BUNDLE/MacOS/GarrickStatus" "$HERE/GarrickStatus.swift"
 
-# The icon is Garrick's mark from status.py, the one the page carries, on the
-# macOS icon grid: an 824-unit rounded square on a 1024 canvas. The plist is
-# written by plistlib, so no path or flag can break it.
+# The icon is Garrick's mark from status.py, the one the page carries, on a
+# navy tile on the macOS icon grid. The plist is written by plistlib, so no
+# path or flag can break it.
 "$PY" - "$STATUS" "$WORK" "$WS" "$PY" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
-import importlib.util, plistlib, re, sys
+import importlib.util, plistlib, sys
 status, work, ws, py, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
 spec = importlib.util.spec_from_file_location("status", status)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-inner = re.search(r"<svg[^>]*>(.*)</svg>", mod.mark(full=True, image=True), re.S).group(1)
-inner = re.sub(r'(<rect[^>]*?)rx="[^"]*"', r'\1rx="14.4"', inner, count=1)
-open(work + "/icon.svg", "w").write(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
-    '<g transform="translate(100 100) scale(12.875)">%s</g></svg>' % inner)
+open(work + "/icon.svg", "w").write(mod.app_icon())
 with open(work + "/Garrick's Status.app/Contents/Info.plist", "wb") as f:
     plistlib.dump({
         "CFBundleIdentifier": "local.garrick.status", "CFBundleName": "Garrick's Status",

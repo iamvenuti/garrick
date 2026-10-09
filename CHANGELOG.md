@@ -4,6 +4,18 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-09
+
+The zone guard: the assistant checks with you before it edits outside the project you opened it in.
+
+### Added
+
+- The zone guard, a hook for Claude Code and Codex in `extras/hooks/zone_guard.py`. Before the assistant edits a file in another project, another zone, a wiki or `System/`, it stops once and names both places. Claude Code asks you in its permission prompt and remembers a place you allow for the rest of the session. Codex hooks can't ask, so the first edit there is refused with the same sentence and a second one goes through. Edits inside the session's project, in its zone's loose files such as `Todo.md`, or outside the workspace go ahead, and so does any session opened at the workspace root. Optional: [its README](extras/hooks/README.md) says how to load it, and the setup skill offers it.
+
+### Changed
+
+- `System/rules.md` adds writing outside the session's project to the things to stop and ask about first. It holds with or without the guard, and covers what the guard can't see, such as a shell command that writes a file.
+
 ## [0.11.0] - 2026-10-09
 
 The Garrick band: a Claude Code mod that shows the thread you are in above the prompt.
@@ -247,7 +259,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/iamvenuti/garrick/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/iamvenuti/garrick/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/iamvenuti/garrick/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/iamvenuti/garrick/compare/v0.8.1...v0.9.0

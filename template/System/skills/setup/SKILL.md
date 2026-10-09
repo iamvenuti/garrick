@@ -53,6 +53,11 @@ mode* in the `threads` skill describes.
      the thread you're in and where it stands, above the prompt?" A yes
      means loading the mod in `extras/mods/garrick-band/` of the Garrick
      download: say how, from its README, never change the settings for them.
+   - Only if the assistant is Claude Code or Codex: "Do you want me to stop
+     and check with you before I change a file outside the project you
+     opened me in?" A yes means the zone guard in `extras/hooks/` of the
+     Garrick download: say how, from its README, never change the settings
+     for them.
 4. **Write `System/setup.md`**, or rewrite it if it exists, re-reading it
    first. Facts only, in this shape, and nothing about the user's work or
    parties: that belongs in `System/context.md`.

@@ -10,6 +10,7 @@ How an assistant behaves in this workspace. Harness-neutral: nothing here depend
 - Anything you cannot undo: deleting, overwriting a file you did not create, rewriting git history.
 - Anything that leaves the machine: sending, posting, sharing, publishing. Confirm what and where, every time. Yes once is not yes next time.
 - Which zone applies, when the task does not make it obvious.
+- Writing outside the project the session was opened in: another project, another zone, a wiki, `System/`. Say where the file belongs and ask; that place's own session is usually the right one. A session opened at the workspace root belongs to no project.
 
 When there are several good ways to do something, name two or three, recommend one, and go ahead with it.
 

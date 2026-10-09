@@ -88,6 +88,12 @@ export function projectResumePrompt(n: Note): string {
   return `Open ${n.title}: read the Resume here block of each of its live threads (${notes}) and tell me in a sentence or two for each where it stands and the next action.`
 }
 
+// At a project kept in threads: thread-wrap works out from the session which
+// thread the work was for, and says so when it was none.
+export function projectWrapPrompt(n: Note): string {
+  return `Wrap ${n.title}: wrap the thread this session worked on, and the hub \`${n.rel}\` too if its status changed. If the session touched no thread, say so and stop.`
+}
+
 export function wrapPrompt(n: Note): string {
   return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.`
 }
@@ -237,7 +243,7 @@ export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIC
 const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focus: true, closeOnEscape: true })
 const resume = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? resumePrompt(n) : projectResumePrompt(n), asUser: true })
 const resumable = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0)
-const wrap = ($: any, n: Note) => $.prompt.submit({ text: wrapPrompt(n), asUser: true })
+const wrap = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? wrapPrompt(n) : projectWrapPrompt(n), asUser: true })
 const clear = ($: any) => $.command.run({ command: 'clear' })
 async function opener($: any, args: string[], app: string) {
   const { exitCode } = await $.process.run(['/usr/bin/open', ...args])
@@ -430,14 +436,15 @@ export const register: Register = on => {
       return { text: `Opening ${current.title} in ${arg === 'finder' ? 'Finder' : 'Obsidian'}.` }
     }
     if (!resumable(current)) return { text: 'No Resume here block above this folder.' }
-    if (arg === 'wrap' && current.resume === null) return { text: `${current.title} keeps its resume points in its threads; wrap one of them.` }
     if (arg === 'note') {
       await openNote($, current)
 
       return { text: 'Resume here pane opened.' }
     }
     if (arg === 'resume' || arg === 'wrap') {
-      void (arg === 'resume' ? resume($, current) : wrap($, current))
+      // Submitted once this hook has answered: a prompt submitted from inside a
+      // command.run hook would wait on the very turn the hook is holding.
+      $.clock.after(50, () => void (arg === 'resume' ? resume($, current) : wrap($, current)))
 
       return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
     }
@@ -483,7 +490,7 @@ export const register: Register = on => {
           )}
           <Box flexDirection="row" gap={2}>
             {resumable(current) && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
-            {current.resume && current.status !== 'done' && (
+            {resumable(current) && current.status !== 'done' && (
               <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
             )}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />

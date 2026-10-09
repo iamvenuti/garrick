@@ -19,7 +19,7 @@ Above the prompt:
   - *Finder* (`f`) shows the thread note in Finder, on a Mac.
   - *Obsidian* (`o`) opens the thread note in Obsidian. It is offered only when Obsidian is installed and the note sits in a vault, so a folder like `System/`, which is not a vault, gets no Obsidian.
 
-  At a project whose hub has no Resume here block because each thread keeps its own, the band names the live threads (`2 threads: Pricing, Renewal`). *Resume* asks where each one stands, and *Note* shows every thread's block. *Wrap* is left out, because a wrap belongs to one thread. Parked and done threads are left out too.
+  At a project whose hub has no Resume here block because each thread keeps its own, the band names the live threads (`2 threads: Pricing, Renewal`). *Resume* asks where each one stands, *Note* shows every thread's block, and *Wrap* asks the assistant to wrap the thread this session worked on, and the hub too if its status changed. When the session touched no thread, it says so and stops. Parked and done threads are left out.
 
   Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
 

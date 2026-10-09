@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 
 import { buildIndex, cut, fileHref, label, linkify, lookup, markCells, obsidianUrl, paneMarkdown, parseNote, plain, promptLine, resumePrompt, stepLine, wrapPrompt } from './register'
 
@@ -247,6 +247,7 @@ const ENGINE = async ($: any, e: any) => {
 
 describe('a project kept in threads', () => {
   const HUB = '---\nstatus: active\n---\n# Acme\n\n## Active threads\n\n- Pricing\n'
+  let clock: any
   const thread = (status: string, block: string) => `---\nstatus: ${status}\n---\n## State of play\n\n### Resume here\n\n${block}\n`
   const files: Record<string, string> = {
     [`${ROOT}/Zones/Work/Acme/Acme.md`]: HUB,
@@ -257,6 +258,7 @@ describe('a project kept in threads', () => {
 
   async function atProject($: any, on: any) {
     const submitted: string[] = []
+    clock = mock.clock(on)
     on('ui.render', ENGINE)
     on('prompt.submit', async (_$: any, e: any) => {
       submitted.push(e.text)
@@ -273,19 +275,23 @@ describe('a project kept in threads', () => {
     return submitted
   }
 
-  test('names its live threads, resumes them all, and offers no Wrap', async ($, on) => {
+  test('names its live threads, resumes them all, and wraps the one worked on', async ($, on) => {
     const submitted = await atProject($, on)
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await band.find({ text: /2 threads: Pricing, Renewal/ })).toBeDefined()
     expect(await band.find({ key: 'note' })).toBeDefined()
-    expect(await band.find({ key: 'wrap' })).toBeUndefined()
     await band.press({ key: 'resume' })
+    await band.press({ key: 'wrap' })
     expect(submitted[0]).toBe('Open Acme: read the Resume here block of each of its live threads (`Zones/Work/Acme/Threads/Pricing/Pricing.md`, `Zones/Work/Acme/Threads/Renewal/Renewal.md`) and tell me in a sentence or two for each where it stands and the next action.')
+    expect(submitted[1]).toBe('Wrap Acme: wrap the thread this session worked on, and the hub `Zones/Work/Acme/Acme.md` too if its status changed. If the session touched no thread, say so and stop.')
   })
 
-  test('/garrick wrap at the project asks for a thread', async ($, on) => {
-    await atProject($, on)
-    expect((await $.command.run({ command: 'garrick', args: 'wrap' } as any)).text).toMatch(/wrap one of them/)
+  test('/garrick wrap at the project wraps the thread worked on', async ($, on) => {
+    const submitted = await atProject($, on)
+    expect((await $.command.run({ command: 'garrick', args: 'wrap' } as any)).text).toBe('Wrapping Acme.')
+    expect(submitted).toEqual([])                       // not from inside the command's own hook
+    await clock.advance(100)
+    expect(submitted[0]).toMatch(/^Wrap Acme: wrap the thread this session worked on/)
   })
 })
 

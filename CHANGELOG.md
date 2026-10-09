@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-09
+
+The status page's Mac app gains Keep awake, Process the Inbox and app icons in its menu bar, and the Garrick band follows the session and works at every level of the workspace.
+
 ### Added
 
 - *Process the Inbox* at the top of the status page's menu bar (preview `menu-bar`): how many items wait in the inboxes, and one click to open your default assistant at the workspace root with "process the inbox".
@@ -20,7 +24,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
-- At a project whose resume points live in its threads, the Garrick band offered only *Clear*, because the hub has no Resume here block. It now names the live threads, *Resume* asks where each stands, and *Note* shows each thread's block.
+- At a project whose resume points live in its threads, the Garrick band offered only *Clear*, because the hub has no Resume here block. It now names the live threads, *Resume* asks where each stands, *Note* shows each thread's block, and *Wrap* wraps the thread the session worked on.
+- `/garrick resume` and `/garrick wrap` submitted their prompt from inside the command, which Claude Code refuses because the command holds the turn. They now submit it just after the command answers.
 - Outside a thread (in `System/`, at the workspace root or in a wiki), the Garrick band offered only *Clear*. It now offers *Finder* on the folder too, and in a wiki *Obsidian* on its index.
 - The Garrick band could lose its thread and show only *Clear*. It looked for the thread note from the shell's current folder, which moves whenever the assistant runs `cd` in a command, so after such a turn it found no note. It now looks from the folder the session started in.
 - `/garrick` could leave the band hidden. It toggled the mod's own flag, which knew nothing of Claude Code's `[-]` fold, so after a fold it hid the band instead of showing it. Typed during a turn, it also waited for the turn to end. `/garrick` now always shows the band, `/garrick hide` hides it, and both answer at once.
@@ -289,7 +294,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/iamvenuti/garrick/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/iamvenuti/garrick/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/iamvenuti/garrick/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/iamvenuti/garrick/compare/v0.10.0...v0.11.0

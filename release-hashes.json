@@ -14,7 +14,8 @@
   "v0.8.0",
   "v0.8.1",
   "v0.9.0",
-  "v0.10.0"
+  "v0.10.0",
+  "v0.11.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -37,7 +38,8 @@
    "be698a51a667385adcd7ecd18b2476fa04b4ab00d4a6b1dee182112ec5dd2153",
    "310cd490f253cb86cd1d9372c933d5134f216f0dd137f61110f3e912c67ac798",
    "fba9bfadf272071231ccb2e2b3fb723ac1704ed4b43e4bdd173d55815376063d",
-   "39266ad6c9fc20261dbae0a746caba23dba08de405e4d57c5651685f9d8e07e1"
+   "39266ad6c9fc20261dbae0a746caba23dba08de405e4d57c5651685f9d8e07e1",
+   "9d840e1709e4f7e578994aeb5b63d7c0707ff2ce0573dcb862040b6178ef1208"
   ],
   "System/rules.md": [
    "045d6d76404b9a352161fb4b9dc93fc896e03ff206de01765d491a3eedefa35b",
@@ -75,7 +77,8 @@
    "dd82f9dff87197978b2f7b0578838419e89acab13e4b1b374ddd9eced3fe226b"
   ],
   "System/skills/setup/SKILL.md": [
-   "779320e6f49c4ba86731b7b83f410d4ca2dc0e44ba925682ea3caa4b5c74ae8c"
+   "779320e6f49c4ba86731b7b83f410d4ca2dc0e44ba925682ea3caa4b5c74ae8c",
+   "013ec756f02291a7ca83c592bcc38f4548cd5ed6190b3008e669fc4e7f4dd813"
   ],
   "System/skills/threads/SKILL.md": [
    "28f2517a535fa9fe92bf4972f511c9a9533f6e6c0274d5de1d36b07a7d5c6ae7",

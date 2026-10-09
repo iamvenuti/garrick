@@ -145,6 +145,41 @@ describe('band', () => {
 })
 
 describe('outside a project', () => {
+  test('a wiki offers Finder on its folder and Obsidian on its index', async ($, on) => {
+    const ran: string[][] = []
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
+    })
+    on('session.root', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
+    on('session.cwd', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$, e: any) => ({
+      value: [`${ROOT}/System/rules.md`, '/usr/bin/open', '/Applications/Obsidian.app', `${ROOT}/Wikis/.obsidian`,
+              `${ROOT}/Wikis/Meetings/wiki/index.md`].includes(e.path),
+    }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'resume' })).toBeUndefined()
+    expect(await band.find({ key: 'finder' })).toBeDefined()
+    await band.press({ key: 'obsidian' })
+    expect(JSON.stringify(ran)).toContain(obsidianUrl(`${ROOT}/Wikis/Meetings/wiki/index.md`))
+  })
+
+  test('System offers Finder on the folder, and no Obsidian', async ($, on) => {
+    on('session.root', async () => ({ value: `${ROOT}/System` }))
+    on('session.cwd', async () => ({ value: `${ROOT}/System` }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$, e: any) => ({ value: [`${ROOT}/System/rules.md`, '/usr/bin/open', '/Applications/Obsidian.app'].includes(e.path) }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /System/ })).toBeDefined()
+    expect(await band.find({ key: 'finder' })).toBeDefined()
+    expect(await band.find({ key: 'obsidian' })).toBeUndefined()
+  })
+
   test('shows the place with no Resume line', async ($, on) => {
     on('session.root', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
     on('session.cwd', async () => ({ value: `${ROOT}/Wikis/Meetings` }))

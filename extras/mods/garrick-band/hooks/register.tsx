@@ -169,11 +169,19 @@ async function findNote($: any): Promise<Note | null> {
 
     return { path, rel, where, title: basename(folder), ...parseNote(text), ...(await openers($, chain, folder)) }
   }
-  const where = label(chain[0]!.slice(root.length + 1))
+  // No thread note above the folder (System/, the root, a wiki): nothing to
+  // resume or wrap, but Finder still shows the folder and, in a wiki, Obsidian
+  // opens its index.
+  const here = chain[0]!
+  const where = label(here.slice(root.length + 1))
+  const index = `${here}/wiki/index.md`
+  const target = (await $.fs.exists(index)) ? index : here
+  const open = await openers($, chain, here)
 
   return {
-    path: '', rel: '', where: where || 'Home', title: where, status: null, heading: null, lead: null, resume: null,
-    finder: false, obsidian: false,
+    path: target, rel: target.slice(root.length + 1), where: where || 'Home', title: where || 'Home',
+    status: null, heading: null, lead: null, resume: null,
+    finder: open.finder, obsidian: open.obsidian && target === index,
   }
 }
 

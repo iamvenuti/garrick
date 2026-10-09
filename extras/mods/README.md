@@ -19,6 +19,8 @@ Above the prompt:
   - *Finder* (`f`) shows the thread note in Finder, on a Mac.
   - *Obsidian* (`o`) opens the thread note in Obsidian. It is offered only when Obsidian is installed and the note sits in a vault, so a folder like `System/`, which is not a vault, gets no Obsidian.
 
+  Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
+
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.
 
 The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick resume`, `/garrick wrap`, `/garrick note`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band.

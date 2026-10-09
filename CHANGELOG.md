@@ -20,6 +20,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- Outside a thread (in `System/`, at the workspace root or in a wiki), the Garrick band offered only *Clear*. It now offers *Finder* on the folder too, and in a wiki *Obsidian* on its index.
 - The Garrick band could lose its thread and show only *Clear*. It looked for the thread note from the shell's current folder, which moves whenever the assistant runs `cd` in a command, so after such a turn it found no note. It now looks from the folder the session started in.
 - `/garrick` could leave the band hidden. It toggled the mod's own flag, which knew nothing of Claude Code's `[-]` fold, so after a fold it hid the band instead of showing it. Typed during a turn, it also waited for the turn to end. `/garrick` now always shows the band, `/garrick hide` hides it, and both answer at once.
 - The graph's panel offered no *Open in Claude*, *Open in Codex*, *Open in cmux* or *Reveal in Finder* on any note, and no *Park* that acts; a thread's or a project's note there now offers what its card in the list does.

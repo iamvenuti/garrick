@@ -10,10 +10,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- The Garrick band's second line follows the session: once you send a prompt it shows that prompt's first line, and while the assistant works, the step it is on (`Editing register.tsx`, `Run the tests`). Before the first prompt, and after `/clear`, it shows the Resume here line as before.
+- The band gains *Finder* (`f`) and *Obsidian* (`o`), which open the thread note. Obsidian is offered only where it is installed and the note sits in a vault. `/garrick finder` and `/garrick obsidian` do the same.
+- The band's *Note* pane turns wikilinks and file paths into links a click opens, and offers *Open in Obsidian* and *Reveal in Finder* for the whole note.
+- The band's own *Hide* button is gone: the `[-]` beside the band, which is Claude Code's, folds it. `/garrick hide` takes it away and `/garrick` brings it back.
 - In the status page's Mac app, a card's ways to open a project or thread are the apps' icons, as in its menu bar: the note's app, Finder, cmux, Codex and Claude, the default on a tinted square, each named when you hover it. The app hands the page the icons, so a browser keeps the words.
 
 ### Fixed
 
+- `/garrick` could leave the band hidden. It toggled the mod's own flag, which knew nothing of Claude Code's `[-]` fold, so after a fold it hid the band instead of showing it. Typed during a turn, it also waited for the turn to end. `/garrick` now always shows the band, `/garrick hide` hides it, and both answer at once.
 - The graph's panel offered no *Open in Claude*, *Open in Codex*, *Open in cmux* or *Reveal in Finder* on any note, and no *Park* that acts; a thread's or a project's note there now offers what its card in the list does.
 
 ## [0.11.2] - 2026-10-09

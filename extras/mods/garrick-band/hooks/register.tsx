@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Note } from '../types'
+import type { Activity, Note } from '../types'
 
 // Garrick blue, from docs/assets/garrick-mark.svg.
 const BLUE = 0x3d73e0
@@ -10,6 +10,7 @@ const PANE = 'garrick-resume'
 
 const note = atom({ plugin: 'garrick-band', key: 'note' } as const, null)
 const isHidden = atom({ plugin: 'garrick-band', key: 'isHidden' } as const, false)
+const activity = atom({ plugin: 'garrick-band', key: 'activity' } as const, null)
 
 // The mark, the cabinet, as a 6×3 cell tile: a 6×6 grid of half-block pixels,
 // two to a cell. The spine and the closed compartment are drawn in the
@@ -84,6 +85,65 @@ export function wrapPrompt(n: Note): string {
   return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.`
 }
 
+// --- What the session is doing --------------------------------------------
+// The prompt as one line: its first line with text in it, markup stripped.
+export function promptLine(text: string): string {
+  const line = text.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
+
+  return plain(line)
+}
+
+// One tool call as a few words: what it touches, not how.
+export function stepLine(e: Record<string, any>): string {
+  const tool = String(e.tool ?? '')
+  const file = e.file_path ?? e.notebook_path
+  const first = (v: unknown) => String(v ?? '').split('\n')[0]!.trim()
+  switch (tool) {
+    case 'Bash':
+      return e.description ? first(e.description) : `$ ${first(e.command)}`
+    case 'Read':
+      return `Reading ${basename(String(file ?? ''))}`
+    case 'Edit':
+    case 'NotebookEdit':
+      return `Editing ${basename(String(file ?? ''))}`
+    case 'Write':
+      return `Writing ${basename(String(file ?? ''))}`
+    case 'Grep':
+    case 'Glob':
+      return `Searching for ${first(e.pattern)}`
+    case 'Agent':
+    case 'Task':
+      return `Agent: ${first(e.description)}`
+    case 'Skill':
+      return `Skill: ${first(e.skill)}`
+    case 'WebSearch':
+      return `Searching the web for ${first(e.query)}`
+    case 'WebFetch':
+      return `Fetching ${first(e.url).replace(/^https?:\/\//, '').split('/')[0]}`
+  }
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
+  if (mcp) return `${mcp[1]!.replace(/^claude_ai_/, '').replace(/_/g, ' ')}: ${mcp[2]!.replace(/_/g, ' ')}`
+
+  return tool
+}
+
+// The prompt cut to leave room for the step after it on one row.
+export function cut(text: string, room: number): string {
+  return text.length <= room ? text : text.slice(0, Math.max(1, room - 1)).trimEnd() + '…'
+}
+
+// The Resume block for the pane: wikilinks become links to the file they name,
+// or their label where none matches, so the renderer draws them as text a
+// click opens rather than as brackets. An escaped pipe in a table is a link's.
+export function paneMarkdown(markdown: string, resolve: (target: string) => string | null): string {
+  return markdown.replace(/\[\[([^\]|\\]+)(?:\\?\|([^\]]+))?\]\]/g, (_, target: string, shown?: string) => {
+    const words = shown ?? basename(target)
+    const abs = resolve(target.trim())
+
+    return abs ? `[${words}](${fileHref(abs)})` : words
+  })
+}
+
 // Walk up from the working directory to the workspace root (the folder holding
 // System/rules.md); the first folder whose own <Folder>.md exists is the thread.
 async function findNote($: any): Promise<Note | null> {
@@ -104,18 +164,47 @@ async function findNote($: any): Promise<Note | null> {
     const where = label(folder.slice(root.length + 1))
     const rel = path.slice(root.length + 1)
 
-    return { path, rel, where, title: basename(folder), ...parseNote(text) }
+    return { path, rel, where, title: basename(folder), ...parseNote(text), ...(await openers($, chain, folder)) }
   }
   const where = label(chain[0]!.slice(root.length + 1))
 
-  return { path: '', rel: '', where: where || 'Home', title: where, status: null, heading: null, lead: null, resume: null }
+  return {
+    path: '', rel: '', where: where || 'Home', title: where, status: null, heading: null, lead: null, resume: null,
+    finder: false, obsidian: false,
+  }
 }
 
-// The band's four actions, shared by its buttons and /garrick.
+// Finder wherever macOS's `open` is there; Obsidian when it is installed and a
+// folder from the note up to the workspace root is a vault (holds .obsidian).
+async function openers($: any, chain: string[], folder: string): Promise<Pick<Note, 'finder' | 'obsidian'>> {
+  const finder: boolean = await $.fs.exists('/usr/bin/open')
+  if (!finder) return { finder, obsidian: false }
+  const home: string = (await $.env.get('HOME')) ?? ''
+  const installed = (await $.fs.exists('/Applications/Obsidian.app')) || (await $.fs.exists(`${home}/Applications/Obsidian.app`))
+  let vault = false
+  for (const dir of chain.slice(chain.indexOf(folder))) {
+    if (await $.fs.exists(`${dir}/.obsidian`)) {
+      vault = true
+      break
+    }
+  }
+
+  return { finder, obsidian: installed && vault }
+}
+
+export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIComponent(abs)
+
+// The band's actions, shared by its buttons and /garrick.
 const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focus: true, closeOnEscape: true })
 const resume = ($: any, n: Note) => $.prompt.submit({ text: resumePrompt(n), asUser: true })
 const wrap = ($: any, n: Note) => $.prompt.submit({ text: wrapPrompt(n), asUser: true })
 const clear = ($: any) => $.command.run({ command: 'clear' })
+async function opener($: any, args: string[], app: string) {
+  const { exitCode } = await $.process.run(['/usr/bin/open', ...args])
+  if (exitCode !== 0) $.ui.toast(`${app} did not open the note.`)
+}
+const finder = ($: any, n: Note) => opener($, ['-R', n.path], 'Finder')
+const obsidian = ($: any, n: Note) => opener($, [obsidianUrl(n.path)], 'Obsidian')
 
 async function refresh($: any) {
   const found = await findNote($).catch(() => null)
@@ -225,11 +314,15 @@ const STATUS_COLOR: Record<string, string> = { active: 'green', parked: 'yellow'
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // immediate: typed while a turn runs, it answers at once instead of
+    // waiting for the turn to end.
     await $.command.register({
       name: 'garrick',
-      description: 'Show or hide the Garrick band; "resume" or "wrap" the thread, "note" shows its Resume here block',
-      argumentHint: '[resume|wrap|note]',
+      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note',
+      argumentHint: '[hide|resume|wrap|note|finder|obsidian]',
+      immediate: true,
     })
+    await update($, activity, () => null)
     await refresh($)
     await reindex($).catch(() => undefined)
 
@@ -238,7 +331,31 @@ export const register: Register = on => {
 
   // The note may have been rewritten by the turn (thread-wrap, an edit), and
   // files may have been added.
+  on('prompt.submit', async ($, e, next) => {
+    const prompt = promptLine(e.text)
+    if (prompt !== '') await update($, activity, () => ({ prompt, step: null })).catch(() => undefined)
+
+    return next(e)
+  })
+
+  // The main conversation's calls only: a subagent's would flicker past.
+  on('tool.call', async ($, e, next) => {
+    if ((e as any).agentId === undefined) {
+      const step = stepLine(e as any)
+      await update($, activity, a => (a === null ? null : { ...a, step })).catch(() => undefined)
+    }
+
+    return next(e)
+  })
+
+  on('command.run', { command: 'clear' }, async ($, e, next) => {
+    await update($, activity, () => null).catch(() => undefined)
+
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
+    await update($, activity, a => (a === null ? null : { ...a, step: null }))
     await refresh($)
     await reindex($).catch(() => undefined)
 
@@ -251,33 +368,47 @@ export const register: Register = on => {
     return text === e.props.text ? next(e) : next({ ...e, props: { ...e.props, text } })
   })
 
+  // /garrick shows the band and /garrick hide takes it away; any other word
+  // shows it too. Not a toggle: the [-] beside the band is Claude Code's own
+  // fold, which a mod can neither read nor undo, so a toggle would guess wrong.
   on('command.run', { command: 'garrick' }, async ($, e) => {
-    const arg = String(e.args ?? '').trim()
-    if (arg !== '') {
-      const current = await read($, note)
-      if (current?.resume == null) return { text: 'No Resume here block above this folder.' }
-      if (arg === 'note') {
-        await openNote($, current)
+    const arg = String(e.args ?? '').trim().toLowerCase()
+    if (arg === 'hide') {
+      await update($, isHidden, () => true)
 
-        return { text: 'Resume here pane opened.' }
-      }
-      if (arg === 'resume' || arg === 'wrap') {
-        void (arg === 'resume' ? resume($, current) : wrap($, current))
-
-        return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
-      }
-
-      return { text: `Unknown argument "${arg}": use resume, wrap or note.` }
+      return { text: 'Garrick band hidden. /garrick brings it back.' }
     }
-    const hidden = await update($, isHidden, was => !was)
+    await update($, isHidden, () => false)
+    const shown = 'Garrick band shown. If it is folded under [+], ctrl+x ctrl+a opens it.'
+    if (arg === '' || arg === 'show') return { text: shown }
+    const current = await read($, note)
+    if (arg === 'finder' || arg === 'obsidian') {
+      if (current === null || current.path === '') return { text: 'No project or thread note above this folder.' }
+      if (!current[arg]) return { text: arg === 'finder' ? 'Finder is not available here.' : 'This note is not in an Obsidian vault, or Obsidian is not installed.' }
+      void (arg === 'finder' ? finder($, current) : obsidian($, current))
 
-    return { text: hidden ? 'Garrick band hidden.' : 'Garrick band shown.' }
+      return { text: `Opening ${current.title} in ${arg === 'finder' ? 'Finder' : 'Obsidian'}.` }
+    }
+    if (current?.resume == null) return { text: 'No Resume here block above this folder.' }
+    if (arg === 'note') {
+      await openNote($, current)
+
+      return { text: 'Resume here pane opened.' }
+    }
+    if (arg === 'resume' || arg === 'wrap') {
+      void (arg === 'resume' ? resume($, current) : wrap($, current))
+
+      return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
+    }
+
+    return { text: `Unknown argument "${arg}": use hide, resume, wrap, note, finder or obsidian.` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, note)
     if (e.props.hasSurvey || current === null || (await read($, isHidden))) return next(e)
 
+    const doing = await read($, activity)
     const { Box, Text, Button, ...rest } = $.ui.resolve(e)
     const Raster = (rest as any).Raster
     const mark = Raster ? (
@@ -296,9 +427,19 @@ export const register: Register = on => {
             <Text bold>{current.where}</Text>
             {current.status && <Text color={STATUS_COLOR[current.status] ?? 'gray'}> {current.status}</Text>}
           </Text>
-          <Text dimColor wrap="truncate-end">
-            {current.lead ?? 'No Resume here block above this folder.'}
-          </Text>
+          {doing === null ? (
+            <Text dimColor wrap="truncate-end">
+              {current.lead ?? 'No Resume here block above this folder.'}
+            </Text>
+          ) : (
+            <Text wrap="truncate-end">
+              <Text color="#3d73e0">› </Text>
+              <Text dimColor={!e.props.isWorking}>
+                {e.props.isWorking && doing.step ? cut(doing.prompt, Math.floor(e.props.bodyColumns * 0.5)) : doing.prompt}
+              </Text>
+              {e.props.isWorking && doing.step && <Text dimColor> · {doing.step}</Text>}
+            </Text>
+          )}
           <Box flexDirection="row" gap={2}>
             {current.resume && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
             {current.resume && current.status !== 'done' && (
@@ -306,22 +447,42 @@ export const register: Register = on => {
             )}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
             {current.resume && <Button key="note" label="Note" hotkey="n" plain dimColor onPress={() => void openNote($, current)} />}
-            <Button key="hide" label="Hide" hotkey="h" plain dimColor onPress={() => update($, isHidden, () => true)} />
+            {current.finder && <Button key="finder" label="Finder" hotkey="f" plain dimColor onPress={() => void finder($, current)} />}
+            {current.obsidian && <Button key="obsidian" label="Obsidian" hotkey="o" plain dimColor onPress={() => void obsidian($, current)} />}
           </Box>
         </Box>
       </Box>
     )
   })
 
+  // The block as the renderer draws a reply: tables, emphasis, and links a
+  // click opens, wikilinks and file paths included. For the whole note, typeset,
+  // the pane offers Obsidian and Finder as the band does.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Markdown } = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown } = $.ui.resolve(e)
     const current = await read($, note)
     if (current?.resume == null) return <Text dimColor>No Resume here block found.</Text>
+    const byTarget = (target: string) => {
+      if (index === null) return null
+      const rel = lookup(index, /\.[A-Za-z0-9]{1,5}$/.test(target) ? target : `${target}.md`, '')
+
+      return rel === null ? null : `${index.root}/${rel}`
+    }
+    const text = await linkify(paneMarkdown(current.resume.slice(0, 20000), byTarget), await resolver($))
 
     return (
-      <Box flexDirection="column">
-        <Text dimColor wrap="truncate-end">{current.path}</Text>
-        <Markdown text={current.resume.slice(0, 10000)} />
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" gap={2}>
+          <Text bold color="#3d73e0">{current.heading ?? 'Resume here'}</Text>
+          <Text dimColor wrap="truncate-end">{current.rel}</Text>
+        </Box>
+        <Markdown text={text} />
+        {(current.obsidian || current.finder) && (
+          <Box flexDirection="row" gap={2}>
+            {current.obsidian && <Button key="pane-obsidian" label="Open in Obsidian" hotkey="o" plain onPress={() => void obsidian($, current)} />}
+            {current.finder && <Button key="pane-finder" label="Reveal in Finder" hotkey="f" plain dimColor onPress={() => void finder($, current)} />}
+          </Box>
+        )}
       </Box>
     )
   })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildIndex, fileHref, label, linkify, lookup, markCells, parseNote, plain, resumePrompt, wrapPrompt } from './register'
+import { buildIndex, cut, fileHref, label, linkify, lookup, markCells, obsidianUrl, paneMarkdown, parseNote, plain, promptLine, resumePrompt, stepLine, wrapPrompt } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -55,7 +55,7 @@ describe('parsing', () => {
   })
 
   test('the prompts name the thread and its note', () => {
-    const n = { path: '/v/Zones/Work/Acme/Acme.md', rel: 'Zones/Work/Acme/Acme.md', where: 'Work › Acme', title: 'Acme', ...parseNote(NOTE) }
+    const n = { path: '/v/Zones/Work/Acme/Acme.md', rel: 'Zones/Work/Acme/Acme.md', where: 'Work › Acme', title: 'Acme', ...parseNote(NOTE), finder: true, obsidian: false }
     expect(resumePrompt(n)).toBe('Open Acme: read the Resume here block in `Zones/Work/Acme/Acme.md` and tell me in two sentences where it stands and the next action.')
     expect(wrapPrompt(n)).toMatch(/^Wrap Acme: rewrite the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
   })
@@ -81,11 +81,12 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100 },
 } as any
 
-async function inThread($: any, on: any, text: string) {
+async function inThread($: any, on: any, text: string, extra: string[] = []) {
   const cwd = `${ROOT}/Zones/Work/Acme`
   on('session.cwd', async () => ({ value: cwd }))
+  on('env.get', async () => ({ value: '/Users/someone' }))
   on('fs.exists', async (_$: any, e: any) => ({
-    value: e.path === `${ROOT}/System/rules.md` || e.path === `${cwd}/Acme.md`,
+    value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...extra].includes(e.path),
   }))
   on('fs.read', async () => ({ value: text }))
   on('turn.complete', async () => ({ text: '' }))
@@ -99,7 +100,8 @@ describe('band', () => {
       const band = await $.ui.mount({ ...BAND, surface })
 
       expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
-      for (const key of ['resume', 'wrap', 'clear', 'note', 'hide']) expect(await band.find({ key })).toBeDefined()
+      for (const key of ['resume', 'wrap', 'clear', 'note']) expect(await band.find({ key })).toBeDefined()
+      expect(await band.find({ key: 'finder' })).toBeUndefined()
     })
 
     test(`Resume and Wrap submit the thread's prompt on ${surface}`, async ($, on) => {
@@ -198,5 +200,103 @@ describe('paths', () => {
     expect(out).toContain('[`System/rules.md`](file:///v/System/rules.md)')
     expect(out).toContain('`claude plugin test`')
     expect(out).toContain('```\n`System/rules.md`\n```')
+  })
+})
+
+const ENGINE = async ($: any, e: any) => {
+  const { Text } = $.ui.resolve(e)
+  return <Text>engine</Text>
+}
+
+describe('show and hide', () => {
+  test('/garrick hide takes the band away and /garrick brings it back', async ($, on) => {
+    on('ui.render', ENGINE)
+    await inThread($, on, NOTE)
+    const mount = () => $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await $.command.run({ command: 'garrick', args: 'hide' } as any)).text).toMatch(/hidden/)
+    expect(await (await mount()).find({ key: 'resume' })).toBeUndefined()
+    expect((await $.command.run({ command: 'garrick' } as any)).text).toMatch(/^Garrick band shown/)
+    expect(await (await mount()).find({ key: 'resume' })).toBeDefined()
+    expect((await $.command.run({ command: 'garrick' } as any)).text).toMatch(/^Garrick band shown/)  // never a toggle
+    expect(await (await mount()).find({ key: 'resume' })).toBeDefined()
+  })
+
+  test('any action brings a hidden band back', async ($, on) => {
+    on('ui.render', ENGINE)
+    await inThread($, on, NOTE)
+    await $.command.run({ command: 'garrick', args: 'hide' } as any)
+    await $.command.run({ command: 'garrick', args: 'note' } as any).catch(() => undefined)
+    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ key: 'resume' })).toBeDefined()
+  })
+})
+
+describe('Finder and Obsidian', () => {
+  const VAULT = [`/usr/bin/open`, `/Applications/Obsidian.app`, `${ROOT}/Zones/Work/.obsidian`]
+
+  test('both show where open, Obsidian and a vault are there, and open the note', async ($, on) => {
+    const ran: string[][] = []
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
+    })
+    await inThread($, on, NOTE, VAULT)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'obsidian' })
+    await band.press({ key: 'finder' })
+    const calls = ran.map(r => JSON.stringify(r))
+    expect(calls.some(c => c.includes(obsidianUrl(`${ROOT}/Zones/Work/Acme/Acme.md`)))).toBe(true)
+    expect(calls.some(c => c.includes('"-R"'))).toBe(true)
+  })
+
+  test('no Obsidian outside a vault', async ($, on) => {
+    await inThread($, on, NOTE, VAULT.slice(0, 2))
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'finder' })).toBeDefined()
+    expect(await band.find({ key: 'obsidian' })).toBeUndefined()
+  })
+
+  test('the Obsidian link carries the path encoded', () => {
+    expect(obsidianUrl('/v/a b/#1.md')).toBe('obsidian://open?path=%2Fv%2Fa%20b%2F%231.md')
+  })
+})
+
+describe('activity', () => {
+  test('the band shows the last prompt and the step it is on', async ($, on) => {
+    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
+    on('tool.call', async () => ({ result: '' }))
+    await inThread($, on, NOTE)
+    await $.prompt.submit({ text: '\n  Fix the **pricing** table\nand more' } as any)
+    await $.tool.call({ tool: 'Edit', file_path: '/v/x/sheet.md', old_string: 'a', new_string: 'b' } as any).catch(() => undefined)
+    const working = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } })
+    expect(await working.find({ text: /Fix the pricing table/ })).toBeDefined()
+    expect(await working.find({ text: /Editing sheet\.md/ })).toBeDefined()
+    expect(await working.find({ text: /Where it stands/ })).toBeUndefined()
+  })
+
+  test('before any prompt the band shows the Resume line', async ($, on) => {
+    await inThread($, on, NOTE)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /Where it stands/ })).toBeDefined()
+  })
+
+  test('steps and prompts in a few words', () => {
+    expect(promptLine('\n\n  Open **Acme**: read [[a/b|the note]]\nsecond')).toBe('Open Acme: read the note')
+    expect(stepLine({ tool: 'Bash', command: 'npm test', description: 'Run the tests' })).toBe('Run the tests')
+    expect(stepLine({ tool: 'Bash', command: 'ls -la\npwd' })).toBe('$ ls -la')
+    expect(stepLine({ tool: 'Read', file_path: '/v/a/b.md' })).toBe('Reading b.md')
+    expect(stepLine({ tool: 'Grep', pattern: 'TODO' })).toBe('Searching for TODO')
+    expect(stepLine({ tool: 'mcp__claude_ai_Gmail__search_threads' })).toBe('Gmail: search threads')
+    expect(cut('abcdefghij', 5)).toBe('abcd…')
+    expect(cut('abc', 5)).toBe('abc')
+  })
+})
+
+describe('pane', () => {
+  test('wikilinks become links to their file, or their label', () => {
+    const resolve = (t: string) => (t === 'Acme/Deliverables/x' ? '/v/Zones/Work/Acme/Deliverables/x.md' : null)
+    expect(paneMarkdown('See [[Acme/Deliverables/x|the sheet]] and [[Gone/y]].', resolve)).toBe(
+      'See [the sheet](file:///v/Zones/Work/Acme/Deliverables/x.md) and y.',
+    )
+    expect(paneMarkdown('| a | [[Acme/Deliverables/x\\|sheet]] |', resolve)).toBe('| a | [sheet](file:///v/Zones/Work/Acme/Deliverables/x.md) |')
   })
 })

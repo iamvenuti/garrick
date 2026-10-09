@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-09
+
+The Garrick band resumes the thread, and wraps and clears it.
+
 ### Changed
 
 - The Garrick band's *Resume here* button resumes the thread instead of only showing its block: it asks the assistant to read the Resume here block and say where the thread stands and what comes next. The band also gains *Wrap*, which rewrites the block and adds the day's entry, and *Clear*, which runs `/clear`. *Note* still shows the whole block in a pane without calling the model. Each button has a letter, and `/garrick resume`, `/garrick wrap` and `/garrick note` do the same from the prompt.
@@ -263,7 +267,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/iamvenuti/garrick/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/iamvenuti/garrick/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/iamvenuti/garrick/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/iamvenuti/garrick/compare/v0.9.0...v0.10.0

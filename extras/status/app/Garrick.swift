@@ -1226,7 +1226,7 @@ final class PanelModel: ObservableObject {
 	@Published var awakeTag = 0
 	@Published var display = false
 	@Published var filter = ""
-	@Published var topInset: CGFloat = 0     // the notch's height, which the panel's top hides under
+	@Published var inset = NSEdgeInsets()    // room for the curves that meet the screen's edge, and for the notch
 	@Published var typing = 0                // bumped when the hotkey opens it, to put the cursor in the filter
 	var pickAwake: (Int) -> Void = { _ in }
 	var openApp: () -> Void = {}
@@ -1327,10 +1327,17 @@ struct PanelView: View {
 					Text("Something failed").font(.system(size: 11)).foregroundColor(.red)
 				}
 			}
-			TextField("Find a project or thread", text: $model.filter)
-				.textFieldStyle(.roundedBorder)
-				.focused($typing)
-				.onSubmit { if let open = first() { model.perform(open) } }
+			HStack(spacing: 6) {
+				Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
+				TextField("Find a project or thread", text: $model.filter)
+					.textFieldStyle(.plain)
+					.font(.system(size: 12))
+					.focused($typing)
+					.onSubmit { if let open = first() { model.perform(open) } }
+			}
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.background(Capsule().fill(Color.primary.opacity(0.08)))
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
 					if let inbox = model.inbox, query.isEmpty {
@@ -1395,8 +1402,83 @@ struct PanelView: View {
 			.buttonStyle(.plain)
 		}
 		.padding(12)
-		.padding(.top, model.topInset)
+		.padding(.top, model.inset.top)
+		.padding(.leading, model.inset.left)
+		.padding(.bottom, model.inset.bottom)
+		.padding(.trailing, model.inset.right)
 		.onReceive(model.$typing.dropFirst()) { _ in typing = true }
+	}
+}
+
+// The panel's outline. It is flush with the screen edge it comes out of and
+// meets that edge in two concave curves, as the notch meets the top of the
+// screen, with round corners on the side facing in. The top one is black,
+// like the notch; the side ones are the frosted material of a popover.
+final class EdgeShape: NSView {
+	static let ear: CGFloat = 12, corner: CGFloat = 22
+	let edge: PanelEdge
+	let effect: NSVisualEffectView?
+
+	init(_ edge: PanelEdge) {
+		self.edge = edge
+		if edge == .top {
+			effect = nil
+		} else {
+			let v = NSVisualEffectView()
+			v.material = .popover
+			v.blendingMode = .behindWindow
+			v.state = .active
+			effect = v
+		}
+		super.init(frame: .zero)
+		if let effect { addSubview(effect) }
+	}
+	required init?(coder: NSCoder) { nil }
+
+	// Drawn as if it hung from the top of the screen, w along the edge and
+	// h away from it, then turned to the edge it belongs to.
+	func outline(_ size: NSSize) -> NSBezierPath {
+		let along = edge == .top ? size.width : size.height, depth = edge == .top ? size.height : size.width
+		let e = min(EdgeShape.ear, depth / 2, along / 4)
+		let c = max(0, min(EdgeShape.corner, depth - e, (along - 2 * e) / 2))
+		let w = along, h = depth
+		let p = NSBezierPath()
+		p.move(to: NSPoint(x: 0, y: h))
+		p.appendArc(withCenter: NSPoint(x: 0, y: h - e), radius: e, startAngle: 90, endAngle: 0, clockwise: true)
+		p.line(to: NSPoint(x: e, y: c))
+		p.appendArc(withCenter: NSPoint(x: e + c, y: c), radius: c, startAngle: 180, endAngle: 270, clockwise: false)
+		p.line(to: NSPoint(x: w - e - c, y: 0))
+		p.appendArc(withCenter: NSPoint(x: w - e - c, y: c), radius: c, startAngle: 270, endAngle: 360, clockwise: false)
+		p.line(to: NSPoint(x: w - e, y: h - e))
+		p.appendArc(withCenter: NSPoint(x: w, y: h - e), radius: e, startAngle: 180, endAngle: 90, clockwise: true)
+		p.close()
+		let t = NSAffineTransform()
+		switch edge {
+		case .top: break
+		case .right: t.transformStruct = NSAffineTransformStruct(m11: 0, m12: 1, m21: 1, m22: 0, tX: 0, tY: 0)        // its top on the right
+		case .left: t.transformStruct = NSAffineTransformStruct(m11: 0, m12: 1, m21: -1, m22: 0, tX: depth, tY: 0)   // its top on the left
+		}
+		p.transform(using: t as AffineTransform)
+		return p
+	}
+
+	override func setFrameSize(_ size: NSSize) {
+		super.setFrameSize(size)
+		if let effect {
+			effect.frame = bounds
+			effect.maskImage = NSImage(size: size, flipped: false) { [weak self] _ in
+				NSColor.black.setFill()
+				self?.outline(size).fill()
+				return true
+			}
+		}
+		needsDisplay = true
+	}
+
+	override func draw(_ dirty: NSRect) {
+		guard effect == nil else { return }
+		NSColor.black.setFill()
+		outline(bounds.size).fill()
 	}
 }
 
@@ -1410,10 +1492,10 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 	let edge: PanelEdge
 	let model = PanelModel()
 	let panel: SlidePanel
-	let clip: NSView
+	let clip: EdgeShape
 	let host: NSHostingView<PanelView>
 	let fill: (PanelModel) -> Void
-	let width: CGFloat = 340, gap: CGFloat = 6
+	let width: CGFloat = 290
 	var monitors: [Any] = []
 	var dwell: DispatchWorkItem?
 	var watch: Timer?
@@ -1435,22 +1517,8 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		panel.isReleasedWhenClosed = false
 		panel.isFloatingPanel = true
 		panel.acceptsMouseMovedEvents = true
-		if edge == .top {
-			// The notch is black, so the panel that comes out of it is too.
-			clip = NSView()
-			clip.wantsLayer = true
-			clip.layer?.backgroundColor = NSColor.black.cgColor
-			panel.appearance = NSAppearance(named: .darkAqua)
-		} else {
-			let v = NSVisualEffectView()
-			v.material = .menu
-			v.blendingMode = .behindWindow
-			v.state = .active
-			v.wantsLayer = true
-			clip = v
-		}
-		clip.layer?.cornerRadius = 14
-		clip.layer?.masksToBounds = true
+		clip = EdgeShape(edge)
+		if edge == .top { panel.appearance = NSAppearance(named: .darkAqua) }   // white on the notch's black
 		host = NSHostingView(rootView: PanelView(model: model))
 		if #available(macOS 13, *) { host.sizingOptions = [] }   // the panel sizes itself; the content follows
 		// Pinned to the side it slides from, so a narrower panel shows its inner edge first.
@@ -1475,24 +1543,36 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		return NSRect(x: l.maxX, y: s.frame.maxY - s.safeAreaInsets.top, width: r.minX - l.maxX, height: s.safeAreaInsets.top)
 	}
 
-	// Where it rests open on a screen, where it slides from, and how much of its top the notch hides.
-	func frames(_ s: NSScreen) -> (open: NSRect, shut: NSRect, inset: CGFloat) {
-		let f = s.frame, v = s.visibleFrame
+	// As tall as what it lists, up to most of the screen: a guess from the
+	// rows, since a scrolling list has no height of its own.
+	func contentHeight() -> CGFloat {
+		let rows = model.zones.reduce(0) { $0 + max(1, $1.rows.count) + $1.rows.reduce(0) { $0 + $1.threads.count } }
+		return 24 + 36 + (model.inbox == nil ? 0 : 38) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
+	}
+
+	// Where it rests open on a screen, where it slides from, and the room its curves and the notch take.
+	func frames(_ s: NSScreen) -> (open: NSRect, shut: NSRect, inset: NSEdgeInsets) {
+		let f = s.frame, v = s.visibleFrame, e = EdgeShape.ear
 		switch edge {
-		case .left:
-			let r = NSRect(x: f.minX + gap, y: v.minY + gap, width: width, height: v.height - 2 * gap)
-			return (r, NSRect(x: r.minX, y: r.minY, width: 1, height: r.height), 0)
-		case .right:
-			let r = NSRect(x: f.maxX - gap - width, y: v.minY + gap, width: width, height: v.height - 2 * gap)
-			return (r, NSRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height), 0)
+		case .left, .right:
+			let h = min(contentHeight() + 2 * e, v.height - 16)
+			let y = max(v.minY + 8, min(v.midY - h / 2, v.maxY - 8 - h))
+			let x = edge == .left ? f.minX : f.maxX - width
+			let r = NSRect(x: x, y: y, width: width, height: h)
+			let from = NSRect(x: edge == .left ? f.minX : f.maxX - 1, y: y, width: 1, height: h)
+			return (r, from, NSEdgeInsets(top: e, left: edge == .left ? 0 : 4, bottom: e, right: edge == .right ? 0 : 4))
 		case .top:
-			let h = min(560, v.height * 0.7), w = width + 40
-			if let n = notch(s) {
-				let r = NSRect(x: n.midX - max(w, n.width + 80) / 2, y: f.maxY - n.height - h, width: max(w, n.width + 80), height: n.height + h)
-				return (r, n, n.height)
-			}
-			let r = NSRect(x: f.midX - w / 2, y: v.maxY - h, width: w, height: h)
-			return (r, NSRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1), 0)
+			let n = notch(s)
+			let lid = n?.height ?? 0
+			let h = min(contentHeight(), v.height * 0.75) + lid
+			let w = max(width + 80, (n?.width ?? 0) + 80) + 2 * e
+			let mid = n?.midX ?? f.midX
+			let top = n == nil ? v.maxY : f.maxY
+			let r = NSRect(x: mid - w / 2, y: top - h, width: w, height: h)
+			// Out of the notch itself where there is one, so it seems to grow from it.
+			let from = n.map { NSRect(x: $0.minX - e, y: $0.minY, width: $0.width + 2 * e, height: $0.height) }
+				?? NSRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1)
+			return (r, from, NSEdgeInsets(top: lid, left: e, bottom: 4, right: e))
 		}
 	}
 
@@ -1554,11 +1634,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		let p = NSEvent.mouseLocation
 		guard let s = NSScreen.screens.first(where: { NSMouseInRect(p, $0.frame, false) }) ?? NSScreen.main else { return }
 		let (to, from, inset) = frames(s)
-		model.topInset = inset
-		if edge == .top {
-			// Under the notch, only the lower corners are round: the top meets the screen's edge.
-			clip.layer?.maskedCorners = inset > 0 ? [.layerMinXMinYCorner, .layerMaxXMinYCorner] : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-		}
+		model.inset = inset
 		// Laid out open, then shrunk to where it slides from, so the content keeps its place.
 		panel.setFrame(to, display: false)
 		host.frame = clip.bounds

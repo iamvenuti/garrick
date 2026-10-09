@@ -6,8 +6,9 @@ A session opened in a thread belongs to that thread's project. An edit there,
 or to a file lying loose in the project's zone folder (a zone's Todo.md), goes
 ahead. An edit anywhere else in the workspace (another project, another zone,
 a wiki, System/) is stopped once, with a sentence naming both places. A
-session opened at the workspace root, or outside any workspace, is never
-stopped, and neither is an edit outside the workspace: the scratchpad, /tmp,
+session opened at the workspace root, in System/, or outside any workspace,
+is never stopped: System/ describes the whole workspace, so its sessions work
+across it, and neither is an edit outside the workspace: the scratchpad, /tmp,
 the assistant's own memory.
 
 It is a hook for two harnesses, reading the event on stdin:
@@ -68,8 +69,8 @@ def parts(root, path):
 def home_place(names):
     """The folder a session opened at `names` (relative to the root) may write
     in, as relative names. [] means anywhere: the root itself."""
-    if not names:
-        return []
+    if not names or names[0] == "System":
+        return []              # the root, or System/, which governs every zone
     if names[0] == "Zones":
         return names[:3]       # a project, or the zone or Zones/ itself
     if names[0] == "Wikis":
@@ -103,7 +104,9 @@ def target_place(names):
     """The place a file belongs to, for naming and remembering it."""
     if names[0] == "Zones":
         return names[:3] if len(names) > 3 else names[:2]
-    return home_place(names)
+    if names[0] == "Wikis":
+        return names[:2]
+    return names[:1]
 
 
 def edits(event):

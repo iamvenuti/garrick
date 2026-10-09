@@ -103,6 +103,14 @@ class ZoneGuardTest(unittest.TestCase):
     def test_a_session_at_the_root_is_never_stopped(self):
         self.assertIsNone(self.claude(self.root / "Zones/Personal/Home/Home.md", home=self.root))
 
+    def test_a_session_in_system_is_never_stopped(self):
+        for home in (self.root / "System", self.root / "System/tools"):
+            for target in ("Zones/Personal/Home/Home.md", "Zones/Work/Acme Review/x.md",
+                           "Wikis/Meetings/wiki/index.md", "Wikis/Knowledge/wiki/index.md"):
+                self.assertIsNone(self.claude(self.root / target, home=home))
+        patch = "*** Begin Patch\n*** Update File: ../Zones/Work/Birch Entry/x.md\n*** End Patch\n"
+        self.assertIsNone(self.codex(patch, home=self.root / "System"))
+
     def test_a_zone_session_may_write_its_zone(self):
         zone = self.root / "Zones/Work"
         self.assertIsNone(self.claude(self.root / "Zones/Work/Birch Entry/x.md", home=zone))

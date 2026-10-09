@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The zone guard (`extras/hooks/zone_guard.py`) no longer stops a session opened in `System/`. `System/` governs every zone and wiki, so a session there works across them without asking, as one at the workspace root already did. `System/rules.md` says so.
+
 ## [0.12.0] - 2026-10-09
 
 The status page's Mac app gains Keep awake, Process the Inbox and app icons in its menu bar, and the Garrick band follows the session and works at every level of the workspace.

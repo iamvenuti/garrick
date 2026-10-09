@@ -667,11 +667,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		menu.addItem(.separator())
 		menu.addItem(awakeItem())
 		let open = NSMenuItem(title: "Open Garrick", action: #selector(showWindow(_:)), keyEquivalent: "")
-		open.image = mark(16)
+		show(open, mark(16))
 		open.target = self
 		menu.addItem(open)
 		let quit = NSMenuItem(title: "Quit Garrick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
-		quit.image = symbol("power")
+		show(quit, symbol("power"))
 		menu.addItem(quit)
 	}
 
@@ -742,6 +742,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let w = a["w"] as? String ?? ""
 			launch(k, f, phrase: w.isEmpty ? "" : "open " + w)
 		}
+	}
+
+	// A row's icon, kept visible: macOS 27 hides menu item images unless the
+	// item asks for them.
+	func show(_ item: NSMenuItem, _ image: NSImage?) {
+		item.image = image
+		if #available(macOS 27, *) { item.preferredImageVisibility = .visible }
 	}
 
 	// A menu row's icon: an SF Symbol, drawn in the menu's own text colour.
@@ -819,7 +826,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The menu's Keep awake row: its title says the state, its submenu the choices.
 	func awakeItem() -> NSMenuItem {
 		let item = NSMenuItem(title: "Keep Awake" + awakeState(), action: nil, keyEquivalent: "")
-		item.image = symbol(held.isEmpty ? "cup.and.saucer" : "cup.and.saucer.fill")
+		show(item, symbol(held.isEmpty ? "cup.and.saucer" : "cup.and.saucer.fill"))
 		let sub = NSMenu()
 		func choice(_ title: String, _ tag: Int, _ on: Bool) {
 			let i = NSMenuItem(title: title, action: #selector(pickAwake(_:)), keyEquivalent: "")

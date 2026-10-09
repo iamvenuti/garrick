@@ -750,10 +750,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// A row's icon, kept visible: macOS 27 hides menu item images unless the
-	// item asks for them.
+	// item asks for them (preferredImageVisibility = .visible, 1). Set by name,
+	// so the app still compiles with an SDK older than macOS 27's.
 	func show(_ item: NSMenuItem, _ image: NSImage?) {
 		item.image = image
-		if #available(macOS 27, *) { item.preferredImageVisibility = .visible }
+		if item.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) {
+			item.setValue(1, forKey: "preferredImageVisibility")
+		}
 	}
 
 	// A menu row's icon: an SF Symbol, drawn in the menu's own text colour.

@@ -4,9 +4,17 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-09
+
+The status page's Mac app builds again with an Xcode older than macOS 27's, and the zone guard no longer stops a session opened in `System/`.
+
 ### Changed
 
 - The zone guard (`extras/hooks/zone_guard.py`) no longer stops a session opened in `System/`. `System/` governs every zone and wiki, so a session there works across them without asking, as one at the workspace root already did. `System/rules.md` says so.
+
+### Fixed
+
+- `make-app.sh` failed with an Xcode older than macOS 27's: 0.12.0 kept the menu's icons visible through an API those SDKs do not have. The app now sets it by name, so it builds with any SDK and the icons still show on macOS 27.
 
 ## [0.12.0] - 2026-10-09
 
@@ -298,7 +306,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/iamvenuti/garrick/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/iamvenuti/garrick/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/iamvenuti/garrick/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/iamvenuti/garrick/compare/v0.11.0...v0.11.1

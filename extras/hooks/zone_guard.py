@@ -27,10 +27,22 @@ stays where the session started however often a command changes folder;
 otherwise the event's cwd. A scheduled job (GARRICK_HEADLESS=1) has nobody to
 ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
+
+    python3 zone_guard.py --check
+
+says whether the guard is registered where it must run, and changes nothing:
+Claude Code on PreToolUse and PostToolUse for the four editing tools, in
+~/.claude/settings.json, and Codex on PreToolUse for apply_patch, in
+~/.codex/hooks.json, each with a command whose zone_guard.py exists. An
+assistant with no folder in your home (~/.claude, ~/.codex) is skipped. Exit
+0 when every assistant found has it, 1 when one does not or none was found.
+Whether Codex trusts the hook (its /hooks) is not written where this can
+read it.
 """
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 
@@ -202,7 +214,93 @@ def decide(event):
                                    "permissionDecisionReason": reason}}
 
 
+# --------------------------------------------------------------------------- --check
+
+
+def registered(path, event, tools):
+    """Problems with the guard's hook for `event` in the settings file at
+    `path`: [] when an entry whose matcher covers every one of `tools` runs a
+    zone_guard.py that exists."""
+    shown = path.replace(os.path.expanduser("~"), "~", 1)
+    try:
+        with open(path) as f:
+            hooks = json.load(f).get("hooks") or {}
+        entries = hooks.get(event) or []
+    except FileNotFoundError:
+        return ["%s does not exist" % shown]
+    except (OSError, ValueError, AttributeError):
+        return ["%s is not readable JSON with a hooks block" % shown]
+    best = None
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        for hook in entry.get("hooks") or []:
+            scripts = guard_paths(hook.get("command", "") if isinstance(hook, dict) else "")
+            if not scripts:
+                continue
+            missed = [t for t in tools if not matches(str(entry.get("matcher") or ""), t)]
+            gone = [p for p in scripts if not os.path.isfile(p)]
+            if not missed and not gone:
+                return []
+            problem = []
+            if missed:
+                problem.append("its %s hook misses %s" % (event, ", ".join(missed)))
+            if gone:
+                problem.append("its %s hook runs %s, which does not exist" % (event, gone[0]))
+            best = best or ["%s: %s" % (shown, "; ".join(problem))]
+    return best or ["%s runs no zone guard on %s for %s" % (shown, event, "|".join(tools))]
+
+
+def guard_paths(command):
+    """The zone_guard.py files a hook's command names, with ~ and $HOME
+    expanded."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    return [os.path.expanduser(os.path.expandvars(w)) for w in words if w.endswith("zone_guard.py")]
+
+
+def matches(matcher, tool):
+    """Whether a hook matcher picks `tool`, as both assistants read one: empty
+    or `*` for every tool, otherwise a pattern such as `Edit|Write`."""
+    if matcher in ("", "*"):
+        return True
+    try:
+        return re.fullmatch(matcher, tool) is not None
+    except re.error:
+        return tool in matcher.split("|")
+
+
+def check():
+    """Print, for each assistant, whether the guard runs there. 0 when it runs
+    for every assistant found, 1 otherwise."""
+    home = os.path.expanduser("~")
+    places = (("Claude Code", os.path.join(home, ".claude"), "settings.json",
+               (("PreToolUse", CLAUDE_TOOLS), ("PostToolUse", CLAUDE_TOOLS))),
+              ("Codex", os.path.join(home, ".codex"), "hooks.json", (("PreToolUse", ("apply_patch",)),)))
+    found, ok = 0, True
+    for name, folder, settings, events in places:
+        if not os.path.isdir(folder):
+            print("%s: not on this machine (no ~/%s), skipped." % (name, os.path.basename(folder)))
+            continue
+        found += 1
+        problems = []
+        for event, tools in events:
+            problems += registered(os.path.join(folder, settings), event, tools)
+        if problems:
+            ok = False
+            print("%s: the zone guard is not registered. %s." % (name, "; ".join(problems)))
+        else:
+            print("%s: the zone guard is registered on %s." % (name, " and ".join(e for e, _ in events)))
+    if not found:
+        print("Neither Claude Code nor Codex is set up for this user, so the guard runs nowhere.")
+    return 0 if ok and found else 1
+
+
 def main():
+    if sys.argv[1:] == ["--check"]:
+        return check()
     if os.environ.get("GARRICK_HEADLESS") == "1":
         return 0
     try:

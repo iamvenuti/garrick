@@ -210,6 +210,23 @@ To check it by hand after installing or updating: open the tab and click *Rebuil
 
 The buttons that change something (the preview `page-actions`) all go through `page_action.py`, from the Mac app, the [Obsidian plugin](#in-obsidian) or [Ask](#ask).
 
+Each request names one verb, and `page_action.py` takes these and no others. A new verb is a new way for the page to change your workspace, so the test suite fails until it is listed here, where a reviewer sees it.
+
+| Verb | What it does |
+|---|---|
+| `todo-done` | Ticks a Todo line, with Obsidian Tasks' `✅` date |
+| `todo-undo` | Reopens a line ticked from the page |
+| `todo-date` | Sets or clears a line's date: `📅`, or `⏳` on a `#waiting` line |
+| `todo-add` | Writes a new line in a zone's `Todo.md`, and refuses one already there |
+| `park` | Sets a thread's `status:` to `parked`, with a dated entry |
+| `wake` | Sets it back to `active`, with a dated entry |
+| `run` | Starts a scheduled job now, through launchd, unless it holds its lock |
+| `settings` | Saves how a thread opens, for every viewer of the page |
+| `open` | With the [cmux extra](cmux.md): a tab for a thread or project, resumed |
+| `close` | With the cmux extra: closes its tabs, unless one is mid-turn |
+| `startup` | With the cmux extra: starts cmux and brings back the day's tabs |
+| `shutdown` | With the cmux extra: wraps each session, then quits cmux |
+
 - **A log.** Every request, done or refused, is one line in `page-actions.log` in the jobs folder: `~/Library/Logs/garrick-jobs/` on a Mac, or `GARRICK_JOBS_DIR`, the folder the [scheduled jobs](scheduled-jobs.md) use. A line holds the time, the verb, the fields that verb reads (the zone, the note, the line's key, the date, the job) and what came of it. The text of a new Todo line is cut to 60 characters, and nothing else a request carries is written. A request from Ask ends `(ask)`.
 - **A second click finds its line.** A line is named by a hash of its exact text, and giving it a date changes the text. Until the page rebuilds, a second click on the same row still carries the old name. For an hour, `page_action.py` remembers which old name became which new one, note by note, in `todo-rekeys.json` beside the log, so a second date, a tick or an undo lands on the line you meant. A line changed any other way is still refused, and the page rebuilds.
 - **Run now waits for a running job.** *Run now* on a job's strip starts the job through launchd. If the job still holds its lock, the folder `<job>.lock` that `job.py` keeps in the jobs folder, it is already running, and the button says so instead. A lock past the time its `until` file names belongs to a run that died, and the job starts.

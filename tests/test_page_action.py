@@ -13,6 +13,7 @@ import datetime as dt
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -397,3 +398,18 @@ class TestScript(ActionCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerbsTest(unittest.TestCase):
+    """The page may only ask for the verbs docs/extras/status-page.md lists:
+    a verb added to page_action.py fails here until it is documented, and so
+    reviewed."""
+
+    def test_the_verbs_are_the_documented_list(self):
+        text = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
+        section = text.split("## What the actions keep", 1)[1].split("\n## ", 1)[0]
+        documented = re.findall(r"^\| `([a-z-]+)` \|", section, re.M)
+        self.assertEqual(len(documented), len(set(documented)), documented)
+        accepted = list(pa.VERBS) + list(pa.CMUX_VERBS)
+        self.assertEqual(len(accepted), len(set(accepted)), accepted)
+        self.assertEqual(sorted(accepted), sorted(documented))

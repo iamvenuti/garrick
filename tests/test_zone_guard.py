@@ -185,3 +185,84 @@ class ZoneGuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckTest(unittest.TestCase):
+    """`zone_guard.py --check` against a home folder made for the test."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(os.path.realpath(self.tmp.name))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def check(self):
+        env = dict(os.environ, HOME=str(self.home))
+        done = subprocess.run([sys.executable, str(GUARD), "--check"], capture_output=True, text=True,
+                              env=env, timeout=30)
+        return done.returncode, done.stdout
+
+    def write(self, rel, data):
+        path = self.home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+
+    def hooks(self, matcher, command, *events):
+        entry = [{"matcher": matcher, "hooks": [{"type": "command", "command": command, "timeout": 5}]}]
+        return {"hooks": {e: entry for e in events}}
+
+    def test_nothing_set_up_is_not_registered(self):
+        code, out = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("Claude Code: not on this machine", out)
+        self.assertIn("runs nowhere", out)
+
+    def test_registered_for_both(self):
+        command = "python3 %s" % GUARD
+        self.write(".claude/settings.json", self.hooks("Edit|Write|MultiEdit|NotebookEdit", command,
+                                                       "PreToolUse", "PostToolUse"))
+        self.write(".codex/hooks.json", self.hooks("apply_patch", command, "PreToolUse"))
+        code, out = self.check()
+        self.assertEqual(0, code, out)
+        self.assertIn("Claude Code: the zone guard is registered on PreToolUse and PostToolUse.", out)
+        self.assertIn("Codex: the zone guard is registered on PreToolUse.", out)
+
+    def test_one_assistant_is_enough_when_it_is_the_only_one(self):
+        self.write(".codex/hooks.json", self.hooks("apply_patch", "python3 '%s'" % GUARD, "PreToolUse"))
+        code, out = self.check()
+        self.assertEqual(0, code, out)
+        self.assertIn("Claude Code: not on this machine (no ~/.claude), skipped.", out)
+
+    def test_what_is_missing_is_named(self):
+        command = "python3 %s" % GUARD
+        self.write(".claude/settings.json", self.hooks("Edit|Write", command, "PreToolUse"))
+        (self.home / ".codex").mkdir()
+        def settings():
+            return {p: p.read_bytes() for d in (".claude", ".codex")
+                    for p in (self.home / d).rglob("*") if p.is_file()}
+        before = settings()
+        code, out = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("PreToolUse hook misses MultiEdit, NotebookEdit", out)
+        self.assertIn("runs no zone guard on PostToolUse", out)
+        self.assertIn("Codex: the zone guard is not registered. ~/.codex/hooks.json does not exist.", out)
+        self.assertEqual(before, settings())                         # changed nothing
+
+    def test_a_guard_that_moved_is_not_registered(self):
+        moved = "python3 $HOME/garrick/extras/hooks/zone_guard.py"
+        self.write(".claude/settings.json", self.hooks("*", moved, "PreToolUse", "PostToolUse"))
+        code, out = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("runs %s/garrick/extras/hooks/zone_guard.py, which does not exist" % self.home, out)
+        guard = self.home / "garrick" / "extras" / "hooks" / "zone_guard.py"
+        guard.parent.mkdir(parents=True)
+        guard.write_text("")
+        self.assertEqual(0, self.check()[0])
+
+    def test_another_hook_does_not_count(self):
+        self.write(".claude/settings.json", self.hooks("Edit|Write|MultiEdit|NotebookEdit", "python3 /x/lint.py",
+                                                       "PreToolUse", "PostToolUse"))
+        code, out = self.check()
+        self.assertEqual(1, code)
+        self.assertIn("runs no zone guard on PreToolUse", out)

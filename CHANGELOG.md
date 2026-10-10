@@ -39,11 +39,16 @@ What changed in each release. Dates are when the release was tagged. The format 
 - A project about the workspace itself can live in `System/<Project>/`, in no zone, and is checked like any other.
 - `check.py --quick`: every check but the comparison of wording with the meetings, the slow part on a large workspace.
 - The check warns when one of Garrick's own tools in `System/tools/` was changed here, or the version stamp does not read.
+- `job.py check-scripts <file>...` reads job scripts, or the plists that run them, for a line that runs `claude -p` or `codex exec` itself instead of going through `agent.py`, and exits 1 when it finds one.
+- A job run with `--agent` that exits 0 having added no line to the ledger says so in its log and with `no_call` in its heartbeat: either it had nothing to ask, or it reaches the assistant around `agent.py`, where no cap or deny profile holds it.
+- `zone_guard.py --check` says whether the zone guard is registered for Claude Code and Codex, on every event and editing tool, from a script that exists, and changes nothing. It exits 1 when an assistant found lacks it. See [the zone guard](extras/hooks/README.md#check-it).
+- The status page's actions doc lists every verb `page_action.py` takes, and a test fails when the two differ, so a new verb is reviewed before it ships.
 
 ### Changed
 
 - The idle notice repeats every `GARRICK_IDLE_DAYS` days while a job stays idle, rather than on every run, and `GARRICK_IDLE_DAYS=0` turns the alarm off. `GARRICK_NOTIFY=1` follows the same throttle: a lasting failure no longer raises a notification on every run.
 - A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
+- `agent.py` refuses a Claude call, with exit 64 and nothing called, when its deny profile has lost an entry in `CORE_DENY`: sending, replying to and forwarding mail, binning mail and Drive files, making and deleting calendar events, sharing a Drive file, editing or commenting on a Notion page, and `curl`, `git push` and `rm`. A test holds the shipped profile to the same set.
 - The deny profile for unattended Claude calls adds publishing Claude documents, the remaining Notion writes, starting or messaging other agent sessions, and the browser and computer-use servers.
 - `System/rules.md` says what "open X", "close X" and "close for the day" do where the desk skill is installed, and the `threads` skill hands those phrases to it.
 - Deliverables are checked in each thread's `Deliverables/` and in `archive/` too. Build intermediates (`build/`, `render/`, `specs/`), scripts, a `README.md` and a folder of build output are not deliverables, and an undated folder of dated deliverables is read inside.

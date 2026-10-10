@@ -19,7 +19,8 @@
   "v0.11.1",
   "v0.11.2",
   "v0.12.0",
-  "v0.12.1"
+  "v0.12.1",
+  "v0.13.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -47,7 +48,8 @@
    "feca672bff411c915c1af293604e7d6cbece2b26f763f67e4df64c8a4b157ba4",
    "091376dd00661b9df8e7366d61cea7eb4ecf514e0e7110dcdd7efc35785c629d",
    "e29144e6f3ae09497064bf8bee78b142845e8cf14d6ce1d71e1fca4a893f53d6",
-   "8d1464bcf5aa079f4b1cd08d5ad7da122a17ab189dda72f236cbc25d6c303f8c"
+   "8d1464bcf5aa079f4b1cd08d5ad7da122a17ab189dda72f236cbc25d6c303f8c",
+   "66f6243f570e5a2950fff59b5834fd9f492f20d77405eba64cc5a1f6a646f95f"
   ],
   "System/rules.md": [
    "045d6d76404b9a352161fb4b9dc93fc896e03ff206de01765d491a3eedefa35b",

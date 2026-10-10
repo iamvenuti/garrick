@@ -17,6 +17,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 - The cmux extra, `extras/cmux/`: the `desk` skill and command keep one cmux tab per thread, for Claude Code and Codex alike. "Open Pricing" opens the thread's tab, or brings it forward, and its session starts on "open Pricing". "Close Pricing" has that session wrap the thread, then closes the tab. "Close for the day" wraps each tab used today in its own session, runs the commands you list under `before_quit`, then quits cmux; "shut everything down" quits without wrapping; "start the day" brings the tabs back and resumes any that came back empty. Nothing is closed or quit under a session that is mid-turn. Settings in `System/desk.json`, all optional. See [cmux](docs/extras/cmux.md).
 - `cmuxlib.sessions_by_folder()` in the cmux extra: which folders have a live session, and whether it is idle or working, read from cmux's records and each session's transcript, for the status page.
 - Four status page actions in `extras/status/page_action.py`, available when the cmux extra sits beside it and cmux is installed: `open` and `close` a project's or thread's tab, `startup` and `shutdown`. `close` is refused while a session there is mid-turn; `shutdown` checks first and then goes on in the background.
+- An Obsidian plugin for the status page, in `extras/status/obsidian/`. It shows the page in an Obsidian tab with the buttons the Mac app gives it: Copy, *Rebuild now*, Finder, cmux, Codex and Claude, and the preview `page-actions` through `page_action.py`. It finds the workspace at or above the vault, or as named in its settings, and hides parked projects and threads in the file explorer. See [In Obsidian](docs/extras/status-page.md#in-obsidian).
+- The preview `ask`: the status app's panel field, and a box ⌘G opens, answer a request in plain words ("open Pricing in Claude", "park the launch video", "what's open") and act on it. `ask.py` keeps a warm assistant session on `GARRICK_HARNESS` and `GARRICK_ASK_TIER`, under the scheduled jobs' deny profile and caps. It sees only names and states, and what it proposes is checked and run through `page_action.py`. Off, the field opens your assistant, as before. See [Ask](docs/extras/status-page.md#ask).
+- `page-actions.log` in the jobs folder: one line for every request the page's buttons make, done or refused, naming only the fields its verb reads.
+- A `settings` request to `page_action.py`, which saves *Opening a thread* to `System/generated/status-settings.json`, so every viewer of the page can share it.
+- Edit › Cut, Paste, Undo and Redo in the status app, so ⌘V works in the Todo list's *Add* field and the panel's field. Safari's Web Inspector can open the app's page.
 
 ### Changed
 
@@ -29,6 +34,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - A sign-in check that does not answer within 90 seconds, as when the Mac sleeps in the middle of it, no longer stops an assistant job: only a definite "not signed in" does.
 - A job's lock whose process has gone, as after a crash, is taken over at the next run instead of blocking it for up to an hour.
+- A second click on a Todo row before the page rebuilt was refused: a date changes a line's key, and the row still carried the old one. `page_action.py` now follows a line it re-dated in the last hour, so a second date, a tick or an undo lands on it.
+- *Run now* said a job was running when its last run still held the lock, and the new run only skipped. It now says the job is already running.
 
 ## [0.14.0] - 2026-10-10
 

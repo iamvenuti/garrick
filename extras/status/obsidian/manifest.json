@@ -1,0 +1,9 @@
+{
+	"id": "garrick-status",
+	"name": "Garrick",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Shows a Garrick workspace's status page in an Obsidian tab, with its buttons working as in Garrick.app, and hides parked projects and threads in the file explorer.",
+	"author": "Garrick",
+	"isDesktopOnly": true
+}

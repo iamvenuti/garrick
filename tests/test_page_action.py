@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,9 @@ class ActionCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name).resolve() / "Workspace"
+        self.jobs = Path(self._tmp.name).resolve() / "jobs"         # never the real jobs folder
+        self._env = os.environ.get("GARRICK_JOBS_DIR")
+        os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)
         build_workspace(self.root)
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook
@@ -62,6 +66,10 @@ class ActionCase(unittest.TestCase):
         git(self.work, "commit", "-q", "-m", "start")
 
     def tearDown(self):
+        if self._env is None:
+            os.environ.pop("GARRICK_JOBS_DIR", None)
+        else:
+            os.environ["GARRICK_JOBS_DIR"] = self._env
         self._tmp.cleanup()
 
     def key(self, text):
@@ -118,6 +126,43 @@ class TestTodo(ActionCase):
         with self.assertRaisesRegex(pa.Refused, "not committed, so nothing changed"):
             self.act(verb="todo-done", zone="Personal", file="Todo.md", key=key)
         self.assertEqual(before, (personal / "Todo.md").read_bytes())
+
+
+class TestRekey(ActionCase):
+    """A second click on a row before the page rebuilds carries the key the
+    line had when the page was built; the handler follows it to the line."""
+
+    def test_a_second_date_finds_the_line(self):
+        key = self.key("Invoice")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-12")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-14")
+        self.assertIn("- [ ] Acme Corp: Invoice for September 📅 2026-10-14\n", (self.work / "Todo.md").read_text())
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-20")       # a third: the chain moves on
+        self.assertIn("Invoice for September 📅 2026-10-20\n", (self.work / "Todo.md").read_text())
+
+    def test_done_and_undo_after_a_date(self):
+        key = self.key("Invoice")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-12")
+        self.assertEqual("Done: Acme Corp: Invoice for September", self.act(verb="todo-done", zone="Work", file="Todo.md", key=key))
+        self.assertEqual("Reopened: Acme Corp: Invoice for September", self.act(verb="todo-undo", zone="Work", file="Todo.md", key=key))
+        self.assertIn("- [ ] Acme Corp: Invoice for September 📅 2026-10-12\n", (self.work / "Todo.md").read_text())
+
+    def test_only_within_the_hour_and_the_note(self):
+        key = self.key("Invoice")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-12")
+        self.assertEqual({}, pa.rekeys("Personal", "Todo.md"))           # another note's map is its own
+        store = self.jobs / "todo-rekeys.json"
+        aged = {k: [v[0], v[1] - 2 * 3600] for k, v in json.loads(store.read_text()).items()}
+        store.write_text(json.dumps(aged))
+        with self.assertRaisesRegex(pa.Refused, "changed since the page was built"):
+            self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-14")
+
+    def test_a_line_dated_back_drops_out(self):
+        key = self.key("Invoice")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="2026-10-12")
+        self.act(verb="todo-date", zone="Work", file="Todo.md", key=key, date="-")
+        self.assertEqual(key, self.key("Invoice"))
+        self.assertNotIn(key, pa.rekeys("Work", "Todo.md"))
 
 
 class TestAdd(ActionCase):
@@ -217,6 +262,121 @@ class TestRun(ActionCase):
         finally:
             pa.kickstart = real
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())      # running a job changes no note
+
+
+class TestRunLock(ActionCase):
+    """Run reads job.py's lock: a job still running is refused, a stale lock is not."""
+
+    def setUp(self):
+        super().setUp()
+        self.started = []
+        self._real = (pa.job_label, pa.kickstart)
+        pa.job_label = lambda name, folder=None: "com.garrick." + name
+        pa.kickstart = lambda label: self.started.append(label) or True
+
+    def tearDown(self):
+        pa.job_label, pa.kickstart = self._real
+        super().tearDown()
+
+    def lock(self, until=None):
+        lock = self.jobs / "whats-open.lock"
+        lock.mkdir(parents=True)
+        if until is not None:
+            (lock / "until").write_text("%d 4242\n" % until)
+        return lock
+
+    def test_a_held_lock_refuses(self):
+        import time
+        self.lock(time.time() + 600)
+        with self.assertRaisesRegex(pa.Refused, "whats-open is already running"):
+            pa.run_job({"verb": "run", "job": "whats-open"})
+        self.assertEqual([], self.started)
+
+    def test_a_stale_lock_runs(self):
+        import time
+        self.lock(time.time() - 60)
+        self.assertEqual("whats-open is running now", pa.run_job({"verb": "run", "job": "whats-open"}))
+        self.assertEqual(["com.garrick.whats-open"], self.started)
+
+    def test_a_lock_with_no_record_goes_by_its_age(self):
+        import time
+        lock = self.lock()
+        self.assertTrue(pa.lock_held("whats-open"))
+        old = time.time() - pa.LOCK_HOLD - 60
+        os.utime(lock, (old, old))
+        self.assertFalse(pa.lock_held("whats-open"))
+
+    def test_the_lock_is_where_job_py_takes_it(self):
+        sys.path.insert(0, str(REPO / "extras" / "jobs"))
+        try:
+            import job
+            self.jobs.mkdir()
+            self.assertTrue(job.take_lock(self.jobs / "whats-open.lock", 600))
+            self.assertTrue(pa.lock_held("whats-open"))
+            job.release(self.jobs / "whats-open.lock")
+            self.assertFalse(pa.lock_held("whats-open"))
+        finally:
+            sys.path.remove(str(REPO / "extras" / "jobs"))
+
+
+class TestSettings(ActionCase):
+    """Settings › Opening a thread, in one file every viewer reads."""
+
+    def path(self):
+        return self.root / "System" / "generated" / "status-settings.json"
+
+    def test_saved_whole(self):
+        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
+        self.assertEqual({"launchers": {"note": True, "finder": False, "cmux": True, "codex": False, "claude": True},
+                          "default": "claude"}, json.loads(self.path().read_text()))
+        self.act(verb="settings", launchers=[])
+        self.assertEqual("note", json.loads(self.path().read_text())["default"])
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())      # nothing to commit
+
+    def test_refused_names(self):
+        for req in ({"launchers": ["note", "terminal"]}, {"launchers": "note"}, {"launchers": ["cmux", "cmux"]},
+                    {"launchers": ["cmux"], "default": "codex"}, {"launchers": ["cmux"], "default": "vim"}, {"launchers": [1]}):
+            with self.assertRaises(pa.Refused, msg=req):
+                self.act(verb="settings", **req)
+        self.assertFalse(self.path().exists())
+
+    def test_the_launchers_are_the_pages(self):
+        spec = importlib.util.spec_from_file_location("garrick_status_for_settings", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        self.assertEqual(("note",) + tuple(k for k, _, _, _ in status.LAUNCHERS), pa.LAUNCHERS)
+
+
+class TestAudit(ActionCase):
+    """page-actions.log: one line per request, with only the fields a verb reads."""
+
+    def run_script(self, request):
+        return subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], input=request,
+                              capture_output=True, text=True)
+
+    def lines(self):
+        return (self.jobs / "page-actions.log").read_text().splitlines()
+
+    def test_one_line_each_done_or_refused(self):
+        self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
+        self.run_script(json.dumps({"verb": "todo-add", "zone": "Work", "text": "Book the room " + "x" * 200,
+                                    "password": "hunter2", "session": "abc"}))
+        self.run_script("not json")
+        lines = self.lines()
+        self.assertEqual(3, len(lines))
+        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September$")
+        self.assertIn('todo-add zone="Work" text="Book the room xxx', lines[1])
+        self.assertIn("…\"  ->  ok: Added to Inbox", lines[1])
+        self.assertLess(len(lines[1]), 320)
+        self.assertNotIn("hunter2", "\n".join(lines))
+        self.assertNotIn("abc", lines[1])
+        self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
+
+    def test_a_log_that_cannot_be_written_stops_nothing(self):
+        self.jobs.parent.mkdir(parents=True, exist_ok=True)
+        self.jobs.write_text("a file where the folder should be")
+        done = self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
+        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, json.loads(done.stdout))
 
 
 class TestScript(ActionCase):

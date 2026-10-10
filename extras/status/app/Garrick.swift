@@ -24,8 +24,12 @@
 //     those three in its own defaults, as it keeps the menu between launches;
 //   - instead of the icon, the same menu as a panel that slides out from the
 //     left or right edge of the screen, or down from under the notch, when the
-//     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as).
-// Nothing here changes a file in the workspace, as nothing on the page does.
+//     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
+//   - with the preview ask on, the panel's field and the box ⌘G opens answer a
+//     request in plain words through ask.py, beside status.py, and run what it
+//     proposes; off, the field opens the default assistant with the words.
+// Nothing here changes a file in the workspace, as nothing on the page does,
+// except through page_action.py (preview page-actions) and ask.py (preview ask).
 import AppKit
 import Carbon.HIToolbox
 import IOKit.pwr_mgt
@@ -62,6 +66,42 @@ let kAwakeWorking = "awakeWhileWorking", kAwakeDisplay = "awakeDisplay"
 enum Awake: Equatable { case off, on, until(Date), whileWorking }
 // agents_working.py, beside status.py: exit 0 when an assistant is mid-turn, 1 when none is, 2 when it cannot tell.
 let agentsCheck = builder.deletingLastPathComponent().appendingPathComponent("agents_working.py")
+// ask.py, beside status.py (preview ask): a warm assistant session that answers a request and acts on it.
+let asker = builder.deletingLastPathComponent().appendingPathComponent("ask.py")
+let flagsFile = workspace.appendingPathComponent("System/garrick-flags.json")
+// Read at each use, so switching the preview on or off needs no restart.
+func askOn() -> Bool {
+	guard let data = try? Data(contentsOf: flagsFile),
+	      let flags = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+	return flags["ask"] as? Bool == true
+}
+let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+
+// ask.py with its arguments; its answer, parsed, back on the main queue.
+func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
+	let p = Process()
+	p.executableURL = URL(fileURLWithPath: python)
+	p.arguments = [asker.path, "--workspace", workspace.path, "--json"] + args
+	p.currentDirectoryURL = workspace
+	let out = Pipe()
+	p.standardOutput = out
+	p.standardError = FileHandle.nullDevice
+	p.standardInput = FileHandle.nullDevice
+	do { try p.run() } catch { return done(["say": "Cannot run \(python)", "ok": false]) }
+	DispatchQueue.global().async {
+		let data = out.fileHandleForReading.readDataToEndOfFile()
+		p.waitUntilExit()
+		let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+		DispatchQueue.main.async { done(said ?? ["say": "No answer.", "ok": false]) }
+	}
+}
+
+// The box ⌘G opens (preview ask): it takes the keys without bringing the app
+// forward, as Spotlight does; Escape closes it.
+final class AskPanel: NSPanel {
+	override var canBecomeKey: Bool { true }
+	override func cancelOperation(_ sender: Any?) { close() }
+}
 func savedMenu() -> [String: Any]? {
 	defaults.data(forKey: kMenu).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
 }
@@ -187,7 +227,7 @@ func pngURL(_ image: NSImage, side: Int = 64) -> String? {
 	return rep.representation(using: .png, properties: [:]).map { "url(data:image/png;base64,\($0.base64EncodedString()))" }
 }
 
-final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 	var window: NSWindow!
 	var web: WKWebView!
 	var watcher: DispatchSourceFileSystemObject?
@@ -207,15 +247,22 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var held: [String: IOPMAssertionID] = [:]   // the sleep assertions this app holds, by type
 	var agentsBusy: Bool?                       // the last check: nil when it could not tell
 	var awakeTimer: Timer?
+	var askPanel: AskPanel?
+	var askField: NSTextField!
+	var askReply: NSTextField!
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		NSApp.mainMenu = menu()
 		let config = WKWebViewConfiguration()
+		// So the page, and Safari's Web Inspector, can tell the app's view from a browser's.
+		config.applicationNameForUserAgent = "GarrickApp"
 		config.userContentController.add(self, name: "garrick")
 		config.userContentController.addUserScript(appScript())
 		web = WKWebView(frame: .zero, configuration: config)
 		web.navigationDelegate = self
 		web.uiDelegate = self
+		// Safari › Develop › this Mac lists the page, for its console and its storage.
+		if #available(macOS 13.3, *) { web.isInspectable = true }
 		web.allowsMagnification = true
 
 		window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
@@ -898,10 +945,26 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.display = defaults.bool(forKey: kAwakeDisplay)
 		m.pickAwake = { [weak self] tag in self?.pickAwake(tag: tag) }
 		m.openApp = { [weak self] in self?.showWindow() }
-		// A question typed in the panel's field: the assistant opens at the
+		// A question typed in the panel's field. With the preview ask on, ask.py
+		// answers it in the panel and acts on it. Off, the assistant opens at the
 		// workspace root with it, as Process the Inbox opens with its phrase.
-		if let app = assistant() {
+		if askOn() {
+			m.askVia = "Garrick"
+			m.answersHere = true
+			m.ask = { [weak self, weak m] text in
+				guard let self, let m else { return }
+				if checking { return self.heard.append("panel:ask") }
+				m.answering = true
+				m.answer = ""
+				self.askGarrick(text) { say, ranAway in
+					m.answering = false
+					m.answer = say
+					if ranAway { m.after() }    // an app came forward with what was asked for
+				}
+			}
+		} else if let app = assistant() {
 			m.askVia = label(["k": app]).replacingOccurrences(of: "Open in ", with: "")
+			m.answersHere = false
 			m.ask = { [weak self] text in
 				guard let self else { return }
 				if checking { return self.heard.append("panel:ask") }
@@ -909,8 +972,118 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 		} else {
 			m.askVia = ""
+			m.answersHere = false
 			m.ask = nil
 		}
+	}
+
+	// MARK: ask (preview, ask)
+	// The request goes to ask.py, which keeps a warm assistant session, checks
+	// what it proposes and runs it through page_action.py. What comes back to
+	// open, a project or a thread, opens here, as its row's icons open it, in
+	// the app the request named or the default assistant. The reply is the
+	// session's sentence and what was done; ranAway says an app came forward.
+	func askGarrick(_ text: String, done: @escaping (String, Bool) -> Void) {
+		askCall(["ask", "--", text]) { [weak self] out in
+			guard let self else { return }
+			let say = out["say"] as? String ?? ""
+			let lines = out["done"] as? [String] ?? []
+			let ok = out["ok"] as? Bool ?? false
+			var opened = false
+			for item in out["launch"] as? [[String: Any]] ?? [] {
+				guard let folder = item["folder"] as? String else { continue }
+				let named = item["app"] as? String ?? ""
+				guard let app = named.isEmpty ? self.assistant() : named else {
+					self.toast("Switch on Claude, Codex or cmux in Settings to open threads from here.")
+					continue
+				}
+				self.launch(app, folder, phrase: item["phrase"] as? String ?? "")
+				opened = true
+			}
+			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
+			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok)
+		}
+	}
+
+	@objc func showAsk(_ sender: Any? = nil) {
+		guard askOn() else { return }
+		if askPanel == nil {
+			let p = AskPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 132),
+			                 styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+			                 backing: .buffered, defer: false)
+			p.titleVisibility = .hidden
+			p.titlebarAppearsTransparent = true
+			p.isMovableByWindowBackground = true
+			p.level = .floating
+			p.hidesOnDeactivate = false
+			p.isReleasedWhenClosed = false
+			p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+			askField = NSTextField()
+			askField.placeholderString = askHint
+			askField.font = .systemFont(ofSize: 20)
+			askField.isBordered = false
+			askField.focusRingType = .none
+			askField.drawsBackground = false
+			askField.target = self
+			askField.action = #selector(askSubmit(_:))
+			askReply = NSTextField(wrappingLabelWithString: "")
+			askReply.textColor = .secondaryLabelColor
+			askReply.font = .systemFont(ofSize: 13)
+			askReply.isSelectable = true
+			let stack = NSStackView(views: [askField, askReply])
+			stack.orientation = .vertical
+			stack.alignment = .leading
+			stack.spacing = 10
+			stack.edgeInsets = NSEdgeInsets(top: 30, left: 20, bottom: 16, right: 20)
+			stack.translatesAutoresizingMaskIntoConstraints = false
+			let content = NSView()
+			content.addSubview(stack)
+			p.contentView = content
+			NSLayoutConstraint.activate([
+				stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+				stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+				stack.topAnchor.constraint(equalTo: content.topAnchor),
+				askField.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+				askReply.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+			])
+			askPanel = p
+		}
+		guard let p = askPanel else { return }
+		if !p.isVisible, let screen = NSScreen.main?.visibleFrame {
+			p.setFrameOrigin(NSPoint(x: screen.midX - p.frame.width / 2, y: screen.maxY - screen.height / 4 - p.frame.height))
+		}
+		p.makeKeyAndOrderFront(nil)
+		p.makeFirstResponder(askField)
+		askCall(["warm"]) { _ in }      // the session starts while the request is typed
+	}
+
+	// An answer, a question back or a refusal stays in the box to be read or
+	// answered; when an app came forward with what was asked for, the box goes.
+	@objc func askSubmit(_ sender: NSTextField) {
+		let text = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty else { return }
+		sender.stringValue = ""
+		sender.placeholderString = text
+		askReply.stringValue = "…"
+		askGarrick(text) { [weak self] reply, ranAway in
+			guard let self else { return }
+			if ranAway {
+				self.askReply.stringValue = ""
+				self.askField.placeholderString = askHint
+				self.askPanel?.close()
+				return
+			}
+			self.askReply.stringValue = reply.isEmpty ? "No answer." : reply
+		}
+	}
+
+	// ⌘G is there only with the preview on.
+	func validateMenuItem(_ item: NSMenuItem) -> Bool {
+		if item.action == #selector(showAsk(_:)) {
+			item.isHidden = !askOn()
+			return !item.isHidden
+		}
+		return true
 	}
 
 	func panelRow(_ r: [String: Any]) -> PanelRow {
@@ -1069,8 +1242,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &hotKey) == noErr
 	}
 
+	// The panel opens with the cursor in its field, which asks with the preview
+	// ask on; without a panel, ask on opens the Ask box instead of the menu.
 	func hotKeyPressed() {
-		if let panel = edgePanel { panel.toggle() }
+		if let panel = edgePanel {
+			if askOn() && !panel.shown { askCall(["warm"]) { _ in } }
+			panel.toggle()
+		} else if askOn() { showAsk() }
 		else if let button = statusItem?.button { button.performClick(nil) } else { showWindow() }
 	}
 
@@ -1178,12 +1356,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			item("Quit Garrick", #selector(NSApplication.terminate(_:)), "q"),
 		])
 		sub("File", [
+			item("Ask Garrick…", #selector(showAsk(_:)), "g"),
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),
 			.separator(),
 			item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
 		])
+		// The standard actions, so ⌘V and the rest reach a text field: the page's
+		// own (adding a Todo line, the panel's filter) and the Ask box. AppKit
+		// sends each to whatever has the keyboard.
 		sub("Edit", [
+			item("Undo", Selector(("undo:")), "z"),
+			item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+			.separator(),
+			item("Cut", #selector(NSText.cut(_:)), "x"),
 			item("Copy", #selector(NSText.copy(_:)), "c"),
+			item("Paste", #selector(NSText.paste(_:)), "v"),
 			item("Select All", #selector(NSText.selectAll(_:)), "a"),
 		])
 		sub("View", [
@@ -1257,6 +1444,9 @@ final class PanelModel: ObservableObject {
 	var openApp: () -> Void = {}
 	var ask: ((String) -> Void)?
 	@Published var askVia = ""               // the assistant a question opens in, by name
+	@Published var answersHere = false       // preview ask: the panel answers, and stays
+	@Published var answering = false
+	@Published var answer = ""
 	var after: () -> Void = {}
 	// Close first, then act, so the app that opens comes forward over a panel already leaving.
 	func perform(_ f: @escaping () -> Void) { after(); f() }
@@ -1339,7 +1529,18 @@ struct PanelView: View {
 		let rows = model.zones.flatMap { shown($0.rows) }
 		if !query.isEmpty, let t = rows.flatMap({ $0.threads }).first(where: { $0.name.lowercased().contains(query) }) { return t.open }
 		if let open = rows.first?.open { return open }
-		return asking()
+		return nil
+	}
+
+	// Asking closes the panel when the assistant opens elsewhere; answered
+	// here (preview ask), it stays, with the field emptied for a follow-up.
+	func submitAsk(_ ask: @escaping () -> Void) {
+		if model.answersHere {
+			ask()
+			model.filter = ""
+		} else {
+			model.perform(ask)
+		}
 	}
 
 	func asking() -> (() -> Void)? {
@@ -1368,11 +1569,21 @@ struct PanelView: View {
 					.textFieldStyle(.plain)
 					.font(.system(size: 12))
 					.focused($typing)
-					.onSubmit { if let open = first() { model.perform(open) } }
+					.onSubmit {
+						if let open = first() { model.perform(open) } else if let ask = asking() { submitAsk(ask) }
+					}
 			}
 			.padding(.horizontal, 10)
 			.padding(.vertical, 6)
 			.background(Capsule().fill(Color.primary.opacity(0.08)))
+			if model.answering || !model.answer.isEmpty {
+				Text(model.answering ? "…" : model.answer)
+					.font(.system(size: 12))
+					.foregroundColor(.secondary)
+					.textSelection(.enabled)
+					.fixedSize(horizontal: false, vertical: true)
+					.padding(.horizontal, 8)
+			}
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
 					if let ask = asking() {
@@ -1380,7 +1591,8 @@ struct PanelView: View {
 							Image(systemName: "text.bubble").frame(width: 12)
 							VStack(alignment: .leading, spacing: 2) {
 								Text("Ask Garrick").font(.system(size: 13, weight: .medium))
-								Text("\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D} in \(model.askVia)")
+								Text(model.answersHere ? "\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D}: Garrick answers here"
+								     : "\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D} in \(model.askVia)")
 									.font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
 							}
 							Spacer()
@@ -1388,7 +1600,7 @@ struct PanelView: View {
 						.padding(.horizontal, 8).padding(.vertical, 5)
 						.background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.12)))
 						.contentShape(Rectangle())
-						.onTapGesture { model.perform(ask) }
+						.onTapGesture { submitAsk(ask) }
 						Divider().padding(.vertical, 4)
 					}
 					if let inbox = model.inbox, query.isEmpty {
@@ -1756,6 +1968,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		}
 		shown = false
 		model.filter = ""
+		model.answer = ""
 		NSAnimationContext.runAnimationGroup { c in
 			c.duration = 0.15
 			c.timingFunction = CAMediaTimingFunction(name: .easeIn)

@@ -450,6 +450,10 @@ class TestSharedLauncherSettings(StatusCase):
               json.dumps({"launchers": ["note", "claude", "nonsense"], "default": "claude"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
         self.assertEqual({"launchers": ["note", "claude"], "default": "claude"}, json.loads(found.group(1)))
+        write(self.root / "System" / "generated" / "status-settings.json",
+              json.dumps({"launchers": {"note": True, "finder": False, "cmux": False, "codex": False}, "default": "cmux"}))
+        found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
+        self.assertEqual({"launchers": ["note", "claude"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
         write(self.root / "System" / "generated" / "status-settings.json", json.dumps({"launchers": "all"}))
         self.assertNotIn('id="launch-settings"', self.page())
 

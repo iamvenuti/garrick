@@ -2200,8 +2200,10 @@ LAUNCH_KEYS = ("note",) + tuple(k for k, _, _, _ in LAUNCHERS)
 
 def shared_launchers(ws: Path) -> Optional[dict]:
     """The launcher settings saved for every viewer of the page, in
-    System/generated/status-settings.json: {"launchers": [the ways to open a
-    thread that cards offer], "default": what clicking a thread does}. The
+    System/generated/status-settings.json: {"launchers": the ways to open a
+    thread that cards offer, as {name: true or false} or a list of the names
+    switched on, "default": what clicking a thread does}. The page carries
+    them as a list. The
     app's Settings writes them, through page_action.py; inside the app they
     come before what a window remembers. None when there are none, or they do
     not read; an unknown key is dropped."""
@@ -2209,9 +2211,13 @@ def shared_launchers(ws: Path) -> Optional[dict]:
         data = json.loads(ws.joinpath(*SHARED_SETTINGS).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or not isinstance(data.get("launchers"), list):
+    on = data.get("launchers") if isinstance(data, dict) else None
+    if isinstance(on, dict):                  # {"note": true, "cmux": false, ...}: a key left out is on
+        chosen = [k for k in LAUNCH_KEYS if on.get(k, True) is True]
+    elif isinstance(on, list):                # the names of those switched on
+        chosen = [k for k in LAUNCH_KEYS if k in on]
+    else:
         return None
-    chosen = [k for k in LAUNCH_KEYS if k in data["launchers"]]
     default = data.get("default") if data.get("default") in LAUNCH_KEYS else "note"
     return {"launchers": chosen, "default": default}
 

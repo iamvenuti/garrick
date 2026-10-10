@@ -21,13 +21,16 @@
 //     dot when the Status tab has one, and Keep awake: for a time, until
 //     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
 //     opens the app at login and sets a hotkey for the menu; the app keeps
-//     those three in its own defaults, as it keeps the menu between launches;
+//     those three in its own defaults, as it keeps the menu between launches.
+//     A field at the top of the menu finds a project or thread, and asks;
 //   - instead of the icon, the same menu as a panel that slides out from the
 //     left or right edge of the screen, or down from under the notch, when the
 //     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
-//   - with the preview ask on, the panel's field and the box ⌘G opens answer a
-//     request in plain words through ask.py, beside status.py, and run what it
-//     proposes; off, the field opens the default assistant with the words.
+//     its projects start folded, and it remembers the ones you unfold;
+//   - with the preview ask on, the fields of the menu and the panel, and the
+//     box ⌘G opens from any app, answer a request in plain words through
+//     ask.py, beside status.py, and run what it proposes; off, a field opens
+//     the default assistant with the words.
 // Nothing here changes a file in the workspace, as nothing on the page does,
 // except through page_action.py (preview page-actions) and ask.py (preview ask).
 import AppKit
@@ -56,6 +59,8 @@ let checking = CommandLine.arguments.contains("--check")
 // settings, the menu as the page last gave it, and whether the window was open.
 let defaults = UserDefaults.standard
 let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
+// The panel's projects whose threads you unfolded, by row: every other one starts folded.
+let kPanelOpen = "panelUnfolded"
 // Where the menu shows: unset or "icon" in the menu bar, or a panel from an edge.
 let kStyle = "menuStyle"
 enum PanelEdge: String { case left, right, top }
@@ -76,6 +81,8 @@ func askOn() -> Bool {
 	return flags["ask"] as? Bool == true
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+// What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
+let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
 // (ASK_WAIT), so its own message comes first; past it, the request is let go.
 let askWait = 180.0
@@ -158,13 +165,15 @@ func liveColor(_ state: String) -> NSColor { state == "working" ? .systemBlue : 
 final class RowView: NSView {
 	let title: String
 	let live: String?
+	let indent: CGFloat              // a thread listed under its project, as the field finds it
 	let click: () -> Void
-	init(_ title: String, live: String? = nil, click: @escaping () -> Void) {
+	init(_ title: String, live: String? = nil, depth: Int = 0, click: @escaping () -> Void) {
 		self.title = title
 		self.live = live
+		self.indent = CGFloat(depth) * 14
 		self.click = click
 		let width = (title as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 0)]).width
-		super.init(frame: NSRect(x: 0, y: 0, width: max(200, ceil(width) + 60), height: 22))
+		super.init(frame: NSRect(x: 0, y: 0, width: max(200, ceil(width) + 60 + indent), height: 22))
 		autoresizingMask = [.width]
 		setAccessibilityElement(true)
 		setAccessibilityRole(.menuItem)
@@ -181,10 +190,10 @@ final class RowView: NSView {
 		let ink: NSColor = lit ? .selectedMenuItemTextColor : .labelColor
 		let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: ink]
 		let h = (title as NSString).size(withAttributes: attrs).height
-		(title as NSString).draw(at: NSPoint(x: 21, y: (bounds.height - h) / 2), withAttributes: attrs)
+		(title as NSString).draw(at: NSPoint(x: 21 + indent, y: (bounds.height - h) / 2), withAttributes: attrs)
 		if let live {                                  // a session is open in it (the cmux extra)
 			liveColor(live).setFill()
-			NSBezierPath(ovalIn: NSRect(x: 10, y: bounds.midY - 3, width: 6, height: 6)).fill()
+			NSBezierPath(ovalIn: NSRect(x: 10 + indent, y: bounds.midY - 3, width: 6, height: 6)).fill()
 		}
 		if enclosingMenuItem?.hasSubmenu == true {     // the chevron AppKit draws for a plain item
 			let x = bounds.maxX - 17, y = bounds.midY
@@ -199,6 +208,50 @@ final class RowView: NSView {
 	override func mouseUp(with event: NSEvent) {
 		enclosingMenuItem?.menu?.cancelTracking()
 		DispatchQueue.main.async(execute: click)
+	}
+}
+
+// The field at the top of the icon's menu, as the panel has one: typing finds
+// a project or thread, and Return opens the first found or, with none, asks.
+// It is a search field in the menu's own window, which passes it the keys
+// while the menu is open.
+final class MenuField: NSView, NSSearchFieldDelegate {
+	let field = NSSearchField()
+	var changed: (String) -> Void = { _ in }
+	var submit: (String) -> Void = { _ in }
+
+	init(_ placeholder: String) {
+		super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 32))
+		autoresizingMask = [.width]
+		field.frame = NSRect(x: 14, y: 5, width: 212, height: 22)
+		field.autoresizingMask = [.width]
+		field.placeholderString = placeholder
+		field.setAccessibilityLabel(placeholder)
+		field.delegate = self
+		addSubview(field)
+	}
+	required init?(coder: NSCoder) { nil }
+
+	func controlTextDidChange(_ note: Notification) { changed(field.stringValue) }
+
+	func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+		guard sel == #selector(NSResponder.insertNewline(_:)) else { return false }
+		submit(field.stringValue)
+		return true
+	}
+}
+
+// What a field finds among a zone's projects, the menu's and the panel's
+// alike: a project whose name holds the words keeps all its threads;
+// otherwise only its threads whose names do.
+func found(_ rows: [[String: Any]], _ query: String) -> [[String: Any]] {
+	let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+	guard !q.isEmpty else { return rows }
+	func hit(_ r: [String: Any]) -> Bool { (r["n"] as? String ?? "").lowercased().contains(q) }
+	return rows.compactMap { r in
+		if hit(r) { return r }
+		let t = (r["t"] as? [[String: Any]] ?? []).filter(hit)
+		return t.isEmpty ? nil : r.merging(["t": t]) { _, new in new }
 	}
 }
 
@@ -270,7 +323,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var resident: Bool { statusItem != nil || edgePanel != nil }
 	var menuState: [String: Any]?     // what the page last said the menu lists
 	var hotKey: EventHotKeyRef?
+	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
+	var askKey: EventHotKeyRef?       // ⌘G for the Ask box, from any app (preview ask)
 	var hotKeyHandler: EventHandlerRef?
+	var menuField: MenuField?         // the icon's menu's field, made anew each time it opens
 	var hourly: Timer?
 	var awake: Awake = .off
 	var held: [String: IOPMAssertionID] = [:]   // the sleep assertions this app holds, by type
@@ -313,7 +369,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		menuState = savedMenu()
 		present()
-		_ = setHotKey(defaults.dictionary(forKey: kHotkey))
+		_ = setHotKey(defaults.dictionary(forKey: kHotkey))   // and ⌘G, with the preview ask on
 		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
@@ -665,6 +721,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			defaults.removeObject(forKey: kMenu)
 		}
 		present()
+		syncAskKey()      // the page is loaded again whenever it is rebuilt, so the flag is read often
 	}
 
 	// The icon or the panel, whichever Settings picks, or neither.
@@ -699,12 +756,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let menu = NSMenu()
 			menu.delegate = self
 			item.menu = menu
-			item.button?.toolTip = "Garrick"
 			statusItem = item
 		}
 		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
+		let said = (trouble ? "Garrick: " + troubleSaid.lowercased() : "Garrick") + (held.isEmpty ? "" : ", keeping the Mac awake")
 		statusItem?.button?.image = icon(trouble: trouble, awake: !held.isEmpty)
-		statusItem?.button?.setAccessibilityLabel((trouble ? "Garrick: something failed" : "Garrick") + (held.isEmpty ? "" : ", keeping the Mac awake"))
+		statusItem?.button?.toolTip = said
+		statusItem?.button?.setAccessibilityLabel(said)
 	}
 
 	func removeStatusItem() {
@@ -763,6 +821,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		freshen()
 	}
 
+	// The field takes the keys as the menu opens, so typing finds at once. Its
+	// window exists only once the menu is on screen, during its tracking.
+	func menuWillOpen(_ menu: NSMenu) {
+		guard menu === statusItem?.menu, let box = menuField else { return }
+		RunLoop.main.perform(inModes: [.eventTracking, .default]) { box.window?.makeFirstResponder(box.field) }
+	}
+
 	// A view-backed row repaints only when told: the highlight moves here.
 	func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
 		menu.items.forEach { $0.view?.needsDisplay = true }
@@ -798,25 +863,46 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return out
 	}
 
-	// The menu: Process the Inbox, then the shown zone's projects. Hovering one
-	// opens its actions and its threads; hovering a thread opens its actions.
-	// Clicking a project or a thread itself runs its default.
+	// The menu: a field, Process the Inbox, then the shown zone's projects.
+	// Hovering one opens its actions and its threads; hovering a thread opens
+	// its actions. Clicking a project or a thread itself runs its default.
 	func fill(_ menu: NSMenu) {
 		menu.removeAllItems()
-		if let inbox = inboxItem() {
+		let box = MenuField(canAsk() ? "Find a thread, or ask Garrick" : "Find a project or thread")
+		box.changed = { [weak self, weak menu] text in if let self, let menu { self.fillRows(menu, text) } }
+		box.submit = { [weak self, weak menu] text in self?.enter(text, closing: menu) }
+		let field = NSMenuItem()
+		field.view = box
+		menu.addItem(field)
+		menuField = box
+		fillRows(menu, "")
+	}
+
+	// Everything under the field, again at each key typed in it. With words in
+	// it, Ask Garrick comes first and the inbox goes; a thread found lists under
+	// its project, as the panel lists it.
+	func fillRows(_ menu: NSMenu, _ typed: String) {
+		while menu.items.count > 1 { menu.removeItem(at: menu.items.count - 1) }
+		let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+		if !text.isEmpty, let ask = askItem(text) {
+			menu.addItem(ask)
+		} else if text.isEmpty, let inbox = inboxItem() {
 			menu.addItem(inbox)
-			menu.addItem(.separator())
 		}
+		menu.addItem(.separator())
 		for (n, zone) in shownZones().enumerated() {
 			if n > 0 { menu.addItem(.separator()) }
 			menu.addItem(header(zone["z"] as? String ?? ""))
-			let projects = zone["p"] as? [[String: Any]] ?? []
+			let projects = found(zone["p"] as? [[String: Any]] ?? [], text)
 			if projects.isEmpty {
-				let none = NSMenuItem(title: "No live projects", action: nil, keyEquivalent: "")
+				let none = NSMenuItem(title: text.isEmpty ? "No live projects" : "Nothing matches", action: nil, keyEquivalent: "")
 				none.isEnabled = false
 				menu.addItem(none)
 			}
-			projects.forEach { menu.addItem(row($0)) }
+			for p in projects {
+				menu.addItem(row(p))
+				if !text.isEmpty { (p["t"] as? [[String: Any]] ?? []).forEach { menu.addItem(row($0, depth: 1)) } }
+			}
 		}
 		menu.addItem(.separator())
 		menu.addItem(awakeItem())
@@ -838,11 +924,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// A project or a thread: a row that runs its default when clicked, with a
 	// submenu of its actions on one line and, for a project, its threads.
-	func row(_ r: [String: Any]) -> NSMenuItem {
+	func row(_ r: [String: Any], depth: Int = 0) -> NSMenuItem {
 		let acts = acts(r)
 		let fallback = acts.first(where: { $0["d"] as? Bool == true })
 		let item = NSMenuItem(title: r["n"] as? String ?? "", action: nil, keyEquivalent: "")
-		item.view = RowView(item.title, live: r["s"] as? String) { [weak self] in if let a = fallback { self?.run(a) } }
+		item.view = RowView(item.title, live: r["s"] as? String, depth: depth) { [weak self] in if let a = fallback { self?.run(a) } }
 		let sub = NSMenu()
 		sub.delegate = self
 		if !acts.isEmpty {
@@ -858,6 +944,63 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		item.submenu = sub
 		return item
+	}
+
+	// Return in the menu's field: the first thread found, or the first project,
+	// opens the default way, as the panel's Return does; with nothing found, it asks.
+	func enter(_ typed: String, closing menu: NSMenu?) {
+		let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty else { return }
+		let q = text.lowercased()
+		let rows = shownZones().flatMap { found($0["p"] as? [[String: Any]] ?? [], text) }
+		let thread = rows.flatMap { $0["t"] as? [[String: Any]] ?? [] }.first { ($0["n"] as? String ?? "").lowercased().contains(q) }
+		let open = (thread ?? rows.first).flatMap { r in acts(r).first { $0["d"] as? Bool == true } }
+		let go = { [weak self] in
+			guard let self else { return }
+			if let open { self.run(open) } else { self.askFrom(text) }
+		}
+		if checking { return go() }
+		menu?.cancelTracking()
+		DispatchQueue.main.async(execute: go)     // once the menu has gone, so what opens comes forward
+	}
+
+	// Whether a field can ask: Garrick itself with the preview ask on, else an assistant to open with the words.
+	func canAsk() -> Bool { askOn() || assistant() != nil }
+
+	// The Ask Garrick row, with the words typed: where they go, as the panel says it.
+	func askItem(_ text: String) -> NSMenuItem? {
+		let via: String
+		if askOn() { via = ": Garrick answers" }
+		else if let app = assistant() { via = " in " + label(["k": app]).replacingOccurrences(of: "Open in ", with: "") }
+		else { return nil }
+		let item = NSMenuItem(title: "Ask Garrick", action: #selector(askRow(_:)), keyEquivalent: "")
+		item.target = self
+		item.representedObject = text
+		let said = NSMutableAttributedString(string: "Ask Garrick", attributes: [.font: NSFont.menuFont(ofSize: 0)])
+		said.append(NSAttributedString(string: "  \u{201C}\(text)\u{201D}" + via,
+		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		item.attributedTitle = said
+		show(item, symbol("text.bubble"))
+		return item
+	}
+
+	@objc func askRow(_ sender: NSMenuItem) {
+		if let text = sender.representedObject as? String { askFrom(text) }
+	}
+
+	// A request from the menu's field. With the preview ask on, it goes to
+	// the Ask box, which sends it to ask.py as the panel's field does and shows
+	// the answer; off, the default assistant opens at the workspace root with
+	// it, as from the panel.
+	func askFrom(_ text: String) {
+		if checking { return heard.append("menu:ask") }
+		if askOn() {
+			showAsk()
+			askField.stringValue = text
+			askSubmit(askField)
+		} else if let app = assistant() {
+			launch(app, workspace.path, phrase: text)
+		}
 	}
 
 	func label(_ a: [String: Any]) -> String {
@@ -1148,7 +1291,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let acts = acts(r)
 		let fallback = acts.first(where: { $0["d"] as? Bool == true })
 		let name = r["n"] as? String ?? ""
-		return PanelRow(id: (r["f"] as? String ?? r["u"] as? String ?? "") + "\u{0}" + name, name: name,
+		// Its folder and name: what the panel remembers it unfolded by, so a line break, which a plist keeps.
+		return PanelRow(id: (r["f"] as? String ?? r["u"] as? String ?? "") + "\n" + name, name: name,
 		                acts: acts.enumerated().map { n, a in
 		                	PanelAct(id: n, icon: icon(a), label: label(a), isDefault: a["d"] as? Bool == true) { [weak self] in self?.run(a) }
 		                },
@@ -1274,9 +1418,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// A system-wide shortcut through Carbon's hot keys, which need no
 	// Accessibility permission. It opens the menu, or the window when the
-	// icon is off. False when the shortcut is someone else's.
+	// icon is off. False when the shortcut is someone else's. ⌘G follows it,
+	// since the two must not both claim ⌘G.
 	func setHotKey(_ spec: [String: Any]?) -> Bool {
 		if let old = hotKey { UnregisterEventHotKey(old); hotKey = nil }
+		if let ask = askKey { UnregisterEventHotKey(ask); askKey = nil }
+		keySpec = nil
+		defer { syncAskKey() }
 		guard let spec else { return true }
 		guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return false }
 		var mods: UInt32 = 0
@@ -1289,25 +1437,56 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			default: break
 			}
 		}
-		if hotKeyHandler == nil {
-			var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-			InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-				DispatchQueue.main.async { (NSApp.delegate as? StatusApp)?.hotKeyPressed() }
-				return noErr
-			}, 1, &pressed, nil, &hotKeyHandler)
-		}
+		listenForHotKeys()
 		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: 1)   // 'GRKS'
-		return RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &hotKey) == noErr
+		guard RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else { return false }
+		keySpec = spec
+		return true
 	}
 
-	// The panel opens with the cursor in its field, which asks with the preview
-	// ask on; without a panel, ask on opens the Ask box instead of the menu.
-	func hotKeyPressed() {
+	// One handler for both hot keys; the key's id says which was pressed.
+	func listenForHotKeys() {
+		guard hotKeyHandler == nil else { return }
+		var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+		InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+			var key = EventHotKeyID()
+			GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+			                  MemoryLayout<EventHotKeyID>.size, nil, &key)
+			let which = key.id
+			DispatchQueue.main.async { (NSApp.delegate as? StatusApp)?.hotKeyPressed(which) }
+			return noErr
+		}, 1, &pressed, nil, &hotKeyHandler)
+	}
+
+	// ⌘G opens the Ask box from any app while the preview ask is on, as File ›
+	// Ask Garrick… does with the window in front. The hotkey set in Settings
+	// comes first: when it is ⌘G itself, ⌘G keeps opening the menu or the
+	// panel, whose field asks too. A ⌘G another app already holds this way is
+	// left to it. Held globally, ⌘G no longer reaches other apps (Find Next),
+	// which is why it is the preview's and goes with it. Checked at launch and
+	// at every load of the page, so switching the preview needs no restart.
+	func syncAskKey() {
+		let mods = Set(keySpec?["mods"] as? [String] ?? [])
+		let wanted = askOn() && !checking && !(keySpec?["code"] as? String == "KeyG" && mods == ["cmd"])
+		if wanted == (askKey != nil) { return }
+		if let ask = askKey { UnregisterEventHotKey(ask); askKey = nil }
+		guard wanted else { return }
+		listenForHotKeys()
+		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: 2)
+		if RegisterEventHotKey(UInt32(kVK_ANSI_G), UInt32(cmdKey), id, GetApplicationEventTarget(), 0, &askKey) != noErr { askKey = nil }
+	}
+
+	// ⌘G opens the Ask box. The hotkey opens the panel with the cursor in its
+	// field, or the icon's menu with the cursor in its own: both find and ask.
+	func hotKeyPressed(_ which: UInt32) {
+		if which == 2 { return showAsk() }
 		if let panel = edgePanel {
 			if askOn() && !panel.shown { askCall(["warm"]) { _ in } }
 			panel.toggle()
-		} else if askOn() { showAsk() }
-		else if let button = statusItem?.button { button.performClick(nil) } else { showWindow() }
+		} else if let button = statusItem?.button {
+			if askOn() { askCall(["warm"]) { _ in } }
+			button.performClick(nil)
+		} else { showWindow() }
 	}
 
 	// MARK: links
@@ -1357,16 +1536,28 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					self.fill(m)
 					let rows = m.items.compactMap { $0.view as? RowView }
 					let threads = m.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.view is RowView }.count
-					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)")
+					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)"
+					      + (m.items.first?.view is MenuField ? ", under its field" : ", no field"))
 					if let inbox = m.items.first(where: { $0.action == #selector(self.processInbox(_:)) }) {
 						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "?")")
 					} else {
 						print("inbox: none")
 					}
+					// The field: a thread's name finds it and Return opens it; words that find nothing ask.
+					let first = self.shownZones().flatMap { $0["p"] as? [[String: Any]] ?? [] }
+						.flatMap { $0["t"] as? [[String: Any]] ?? [] }.first?["n"] as? String
+					if let first {
+						self.fillRows(m, first)
+						print("menu, finding \(first.count) letters: \(m.items.filter { $0.view is RowView }.count) rows"
+						      + (m.items.contains { $0.action == #selector(self.askRow(_:)) } ? ", Ask Garrick first" : ""))
+						self.enter(first, closing: nil)
+					}
+					self.enter("\u{2042} nothing has this name", closing: nil)
 					let panel = PanelModel()
 					self.fillPanel(panel)
 					let projects = panel.zones.flatMap { $0.rows }
-					print("panel: \(projects.count) projects, \(projects.reduce(0) { $0 + $1.threads.count }) threads")
+					print("panel: \(projects.count) projects, \(projects.reduce(0) { $0 + $1.threads.count }) threads, "
+					      + "\(projects.filter { panel.unfolded.contains($0.id) }.count) unfolded")
 					rows.first?.click()
 					projects.first?.open?()
 					panel.ask?("what's open")
@@ -1509,6 +1700,16 @@ final class PanelModel: ObservableObject {
 	var after: () -> Void = {}
 	// Close first, then act, so the app that opens comes forward over a panel already leaving.
 	func perform(_ f: @escaping () -> Void) { after(); f() }
+	// The projects whose threads show. A project starts folded; the ones you
+	// unfold are kept in the app's defaults, so the panel opens as you left it,
+	// after a restart too.
+	@Published var unfolded = Set(defaults.stringArray(forKey: kPanelOpen) ?? [])
+	var resized: () -> Void = {}
+	func fold(_ id: String) {
+		if unfolded.contains(id) { unfolded.remove(id) } else { unfolded.insert(id) }
+		defaults.set(unfolded.sorted(), forKey: kPanelOpen)
+		resized()
+	}
 }
 
 // One project or thread: its name runs the default, a chevron folds a
@@ -1571,7 +1772,6 @@ struct PanelLine: View {
 
 struct PanelView: View {
 	@ObservedObject var model: PanelModel
-	@State private var folded: Set<String> = []
 	@FocusState private var typing: Bool
 
 	var query: String { model.filter.trimmingCharacters(in: .whitespaces).lowercased() }
@@ -1619,12 +1819,12 @@ struct PanelView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 8) {
 			HStack(spacing: 8) {
+				// Trouble is the red dot on the mark, as in the menu bar; said in its tooltip and label.
 				Image(nsImage: model.mark).resizable().frame(width: 16, height: 16)
+					.help(model.trouble ? troubleSaid : "Garrick")
+					.accessibilityLabel(model.trouble ? "Garrick: " + troubleSaid.lowercased() : "Garrick")
 				Text("Garrick").font(.system(size: 13, weight: .semibold))
 				Spacer()
-				if model.trouble {
-					Text("Something failed").font(.system(size: 11)).foregroundColor(.red)
-				}
 			}
 			HStack(spacing: 6) {
 				Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
@@ -1696,10 +1896,9 @@ struct PanelView: View {
 								.font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 8)
 						}
 						ForEach(rows) { r in
-							let shut = query.isEmpty && folded.contains(r.id)
+							let shut = query.isEmpty && !model.unfolded.contains(r.id)     // a search shows every thread it finds
 							PanelLine(row: r, depth: 0, folded: r.threads.isEmpty ? nil : shut,
-							          toggle: { if folded.contains(r.id) { folded.remove(r.id) } else { folded.insert(r.id) } },
-							          perform: model.perform)
+							          toggle: { model.fold(r.id) }, perform: model.perform)
 							if !shut {
 								ForEach(r.threads) { t in
 									PanelLine(row: t, depth: 1, folded: nil, toggle: {}, perform: model.perform)
@@ -1871,6 +2070,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		panel.contentView = clip
 		panel.delegate = self
 		model.after = { [weak self] in self?.close(animated: true) }
+		model.resized = { [weak self] in self?.relayout() }
 		arm()
 	}
 
@@ -1882,9 +2082,12 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 	}
 
 	// As tall as what it lists, up to most of the screen: a guess from the
-	// rows, since a scrolling list has no height of its own.
+	// rows, since a scrolling list has no height of its own. Only an unfolded
+	// project's threads count.
 	func contentHeight() -> CGFloat {
-		let rows = model.zones.reduce(0) { $0 + max(1, $1.rows.count) + $1.rows.reduce(0) { $0 + $1.threads.count } }
+		let rows = model.zones.reduce(0) { n, z in
+			n + max(1, z.rows.count) + z.rows.reduce(0) { $0 + (model.unfolded.contains($1.id) ? $1.threads.count : 0) }
+		}
 		return 24 + 36 + (model.inbox == nil ? 0 : 52) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
 	}
 
@@ -1971,6 +2174,16 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 	}
 
 	func refresh() { fill(model) }
+
+	// A project folded or unfolded while open: the panel takes the height its list now needs.
+	func relayout() {
+		guard shown, let s = panel.screen ?? NSScreen.main else { return }
+		let (to, from, _) = frames(s)
+		shut = from
+		panel.setFrame(to, display: true)
+		host.frame = clip.bounds
+		panel.invalidateShadow()
+	}
 
 	func toggle() { if shown { close(animated: true) } else { open(byKey: true) } }
 

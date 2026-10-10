@@ -4,6 +4,21 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- The Mac app's menu bar menu has a field at its top, as the panel has: typing finds a project or thread, Return opens the first found, and with nothing found it asks, through the Ask box with the preview `ask` on or your assistant with it off.
+- With the preview `ask` on, ⌘G opens the Ask box from any app, not only with Garrick's window in front. A hotkey you set to ⌘G yourself keeps opening the menu or the panel.
+
+### Changed
+
+- The panel's projects start folded, and the panel remembers which ones you unfolded, after a restart too.
+- The panel shows trouble as the red dot on its mark, as the menu bar does, with a tooltip that says what it means, instead of the words *Something failed*.
+- The hotkey set in Settings opens the menu, with the cursor in its field, whatever the preview `ask`; it no longer opens the Ask box instead.
+
+### Fixed
+
+- Asking from the menu bar icon: its menu had no way to ask, and the Ask box opened only from the window or the hotkey. It now runs `ask.py` exactly as the panel does.
+
 ## [0.15.1] - 2026-10-10
 
 The status page builds in seconds again on a large workspace.

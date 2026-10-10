@@ -1478,6 +1478,47 @@ class TestApp(unittest.TestCase):
         self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
         self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 
+    def test_the_icon_menu_finds_and_asks(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn("final class MenuField: NSView, NSSearchFieldDelegate", swift)   # a field at the top of the menu
+        fill = swift[swift.index("	func fill(_ menu: NSMenu) {"):swift.index("	func fillRows(")]
+        self.assertLess(fill.index("menu.addItem(field)"), fill.index('fillRows(menu, "")'))   # first, above every row
+        self.assertIn("box.changed = { [weak self, weak menu] text in if let self, let menu { self.fillRows(menu, text) } }", fill)
+        self.assertIn('let projects = found(zone["p"] as? [[String: Any]] ?? [], text)', swift)   # it finds as the panel does
+        self.assertIn("box.window?.makeFirstResponder(box.field)", swift)             # typing goes to it as the menu opens
+        self.assertIn("if let open { self.run(open) } else { self.askFrom(text) }", swift)   # Return opens what it found, or asks
+        ask = swift[swift.index("	func askFrom(_ text: String) {"):]
+        ask = ask[:ask.index("\n	}\n")]
+        self.assertIn("askSubmit(askField)", ask)                                     # through the Ask box, to ask.py, as the panel asks
+        self.assertIn("self.askGarrick(text)", swift)                                 # the panel's field
+        self.assertIn("askGarrick(text) { [weak self] reply, ranAway in", swift)      # and the Ask box, the same call
+        self.assertIn("launch(app, workspace.path, phrase: text)", ask)               # with the preview off, the assistant opens with the words
+
+    def test_cmd_g_opens_ask_from_any_app(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn("RegisterEventHotKey(UInt32(kVK_ANSI_G), UInt32(cmdKey), id,", swift)   # a hot key of its own
+        self.assertIn("if which == 2 { return showAsk() }", swift)
+        self.assertIn("let wanted = askOn() && !checking && !(keySpec?[\"code\"] as? String == \"KeyG\" && mods == [\"cmd\"])", swift)   # Settings' own ⌘G comes first
+        self.assertIn("syncAskKey()      // the page is loaded again", swift)         # the flag read again at each load
+        self.assertIn('item("Ask Garrick…", #selector(showAsk(_:)), "g")', swift)     # and the File menu keeps it
+        self.assertNotIn("} else if askOn() { showAsk() }", swift)                     # the hotkey opens the menu, never the box instead
+
+    def test_the_panel_starts_folded_and_remembers(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertNotIn("@State private var folded", swift)                          # not kept in the view, which forgets
+        self.assertIn('let kPanelOpen = "panelUnfolded"', swift)
+        self.assertIn("@Published var unfolded = Set(defaults.stringArray(forKey: kPanelOpen) ?? [])", swift)
+        self.assertIn("defaults.set(unfolded.sorted(), forKey: kPanelOpen)", swift)
+        self.assertIn("let shut = query.isEmpty && !model.unfolded.contains(r.id)", swift)   # folded unless unfolded
+        self.assertIn("model.resized = { [weak self] in self?.relayout() }", swift)
+
+    def test_trouble_is_the_red_dot_not_words(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertNotIn('Text("Something failed")', swift)
+        self.assertIn('let troubleSaid = "Something on the Status tab failed"', swift)
+        self.assertIn('.help(model.trouble ? troubleSaid : "Garrick")', swift)        # the panel's mark says it on hover
+        self.assertIn("statusItem?.button?.toolTip = said", swift)                    # and the menu bar's
+
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):
         import subprocess

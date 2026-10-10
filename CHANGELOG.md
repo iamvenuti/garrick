@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-10
+
+A mail you forward from your own account is read by the people inside it: Outlook's unmarked forwards are understood, and your own addresses, listed under *Me*, carry mail without deciding whose it is.
+
 ### Fixed
 
 - A mail forwarded from Outlook is now read for the people inside it. Outlook opens a quoted message with its `From:`, `Sent:` and `To:` lines alone, with no *Forwarded message* line above them, and a plain-text copy loses even its rule; `intake` saw only whoever forwarded it, so their party was suggested and a wall between the people inside went unasked. Unmarked header blocks are read now, after a blank line or a rule, with bold labels (`**From:**`), `>` quoting, `;` between addresses and Outlook's `<a@x<mailto:a@x>>`.
@@ -328,7 +332,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/iamvenuti/garrick/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/iamvenuti/garrick/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/iamvenuti/garrick/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/iamvenuti/garrick/compare/v0.11.2...v0.12.0

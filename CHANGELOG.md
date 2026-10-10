@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-10-11
+
+Garrick can tell you when a newer release is out, if you switch that on, and an update now brings the status page, the jobs and desk along with the rest. The Mac app opens at the first try, its panel lines up, the Ask hotkey is yours to set, and a whole project can be parked.
+
 ### Added
 
 - A release notice, off until you switch it on with `{"release-notice": true}` in `System/garrick-settings.json`; the `setup` skill offers it once. Then the status page asks GitHub at most once a day, in the background, whether a newer Garrick is out, and *Needs attention* says "Garrick 0.16.0 is out; this workspace runs 0.15.2", with the command that updates and a link to the release notes. `check.py --version` adds the same line, read from the last answer and never asking itself. It is Garrick's first call out on its own: one GET to GitHub's latest-release address with a User-Agent naming Garrick and the release, and nothing about the workspace. A failed request shows nothing.

@@ -2662,7 +2662,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if flags_on["menu-bar"]:
         md = menu_data(T, names, link, cmux, trouble)
         if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
-            md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB)}
+            md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
+                            "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
         menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))

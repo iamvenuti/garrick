@@ -910,7 +910,8 @@ class TestPreviewFeatures(StatusCase):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         write(self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "call.txt", "A: hello\n")
         intake = self.menu(self.page(launchers=("claude",)))["intake"]
-        self.assertEqual({"n": "Process the Inbox", "w": "process the inbox", "f": str(self.root), "c": 2}, intake)   # the page's own count
+        self.assertEqual({"n": "Process the Inbox", "w": "process the inbox", "f": str(self.root), "c": 2,
+                          "b": [["Work", 1], ["Meetings", 1]]}, intake)   # the page's own count, and where they wait
         self.assertNotIn("intake", self.menu(self.page()))                    # nothing installed to open it in
 
     def test_the_menu_follows_the_graph_and_settings(self):

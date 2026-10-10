@@ -831,14 +831,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// first of those switched on when the default is the note or Finder) at the
 	// workspace root with "process the inbox", as a thread's row opens with
 	// "open X": Claude gets it typed in, Codex and cmux on the clipboard.
-	func inbox() -> (title: String, waiting: Int, act: [String: String])? {
+	func inbox() -> (title: String, waiting: Int, act: [String: String], where: String)? {
 		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
 		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
 		let on = menuState?["launchers"] as? [String] ?? []
 		let assistants = ["claude", "codex", "cmux"].filter(on.contains)
 		let picked = menuState?["def"] as? String ?? ""
 		guard let app = assistants.contains(picked) ? picked : assistants.first else { return nil }
-		return (row["n"] as? String ?? "Process the Inbox", row["c"] as? Int ?? 0, ["k": app, "f": folder, "w": phrase])
+		// Where they wait, as "Meetings 1 · Work 4": a page built before it says only how many.
+		let places = (row["b"] as? [[Any]] ?? []).compactMap { b -> String? in
+			guard b.count == 2, let name = b[0] as? String, let n = b[1] as? Int else { return nil }
+			return "\(name) \(n)"
+		}
+		return (row["n"] as? String ?? "Process the Inbox", row["c"] as? Int ?? 0, ["k": app, "f": folder, "w": phrase], places.joined(separator: " · "))
 	}
 
 	func inboxItem() -> NSMenuItem? {
@@ -870,8 +875,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.trouble = trouble
 		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
 		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
-		m.inbox = inbox().map { title, n, act in
-			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting") { [weak self] in
+		m.inbox = inbox().map { title, n, act, places in
+			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting", places: places) { [weak self] in
 				guard let self, let k = act["k"], let f = act["f"] else { return }
 				if checking { return self.heard.append("panel:inbox") }
 				self.launch(k, f, phrase: act["w"] ?? "")
@@ -1213,6 +1218,7 @@ struct PanelZone: Identifiable {
 struct PanelInbox {
 	let title: String
 	let note: String
+	let places: String
 	let run: () -> Void
 }
 
@@ -1341,10 +1347,17 @@ struct PanelView: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
 					if let inbox = model.inbox, query.isEmpty {
-						HStack(spacing: 6) {
+						HStack(alignment: .firstTextBaseline, spacing: 6) {
 							Image(systemName: "tray.and.arrow.down").frame(width: 12)
-							Text(inbox.title).font(.system(size: 13, weight: .medium))
-							Text(inbox.note).font(.system(size: 12)).foregroundColor(.secondary)
+							VStack(alignment: .leading, spacing: 2) {
+								HStack(spacing: 6) {
+									Text(inbox.title).font(.system(size: 13, weight: .medium))
+									Text(inbox.note).font(.system(size: 12)).foregroundColor(.secondary)
+								}
+								if !inbox.places.isEmpty {
+									Text(inbox.places).font(.system(size: 11)).foregroundColor(.secondary)
+								}
+							}
 							Spacer()
 						}
 						.padding(.horizontal, 8).padding(.vertical, 5)
@@ -1378,6 +1391,11 @@ struct PanelView: View {
 			}
 			Divider()
 			HStack(spacing: 12) {
+				// Beside the menu, not in its label: a macOS menu button draws only the label's text.
+				Image(systemName: model.awakeHeld ? "cup.and.saucer.fill" : "cup.and.saucer")
+					.font(.system(size: 12))
+					.foregroundColor(model.awakeHeld ? .orange : .secondary)
+					.padding(.trailing, -7)
 				Menu {
 					awake("Off", 0, model.awakeTag == 0)
 					awake("For 1 Hour", 1, false)
@@ -1415,7 +1433,7 @@ struct PanelView: View {
 // screen, with round corners on the side facing in. The top one is black,
 // like the notch; the side ones are the frosted material of a popover.
 final class EdgeShape: NSView {
-	static let ear: CGFloat = 12, corner: CGFloat = 22
+	static let ear: CGFloat = 16, corner: CGFloat = 32
 	let edge: PanelEdge
 	let effect: NSVisualEffectView?
 
@@ -1547,7 +1565,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 	// rows, since a scrolling list has no height of its own.
 	func contentHeight() -> CGFloat {
 		let rows = model.zones.reduce(0) { $0 + max(1, $1.rows.count) + $1.rows.reduce(0) { $0 + $1.threads.count } }
-		return 24 + 36 + (model.inbox == nil ? 0 : 38) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
+		return 24 + 36 + (model.inbox == nil ? 0 : 52) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
 	}
 
 	// Where it rests open on a screen, where it slides from, and the room its curves and the notch take.

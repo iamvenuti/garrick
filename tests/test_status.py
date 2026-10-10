@@ -252,7 +252,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(2, html.count("</script>"))          # the graph's data and the page's script, no more
+        self.assertEqual(3, html.count("</script>"))          # the graph's data, the state the page waits for, the page's script
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -557,7 +557,8 @@ class TestThreadCards(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "pu"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "pu", "r", "rd"}, set(card))
+        self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
         self.assertTrue(card["u"].startswith("file://") and card["u"].endswith("/Pricing/Pricing.md"))
@@ -708,7 +709,7 @@ class TestLaunchers(StatusCase):
 
     def test_only_the_app_opens_anything(self):
         self.assertIn("if(o.f&&host)chosen().forEach", status.PANEL_JS)
-        self.assertIn("localStorage.getItem('garrick-launchers')", status.PANEL_JS)   # the choice stays in this viewer
+        self.assertIn("local('garrick-launchers')", status.PANEL_JS)   # in a browser the choice stays in this viewer
         self.assertIn("var m={launch:", status.JS)
         self.assertIn("if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}", status.JS)   # an older app still opens cmux
 
@@ -797,10 +798,12 @@ class TestPreviewFeatures(StatusCase):
         card = html[html.index('id="todolist"'):]
         self.assertNotIn("&lt;action&gt;", card)                                  # the template's placeholder
         self.assertNotIn("Old one", card)                                         # ticked
-        order = [card.index(t) for t in ("Send the revised terms", "Book the room", "Numbers from Birch")]
-        self.assertEqual(sorted(order), order)                                    # overdue first, then by date
-        self.assertIn('class="chip late">Due', card)
+        order = [card.index(t) for t in ("Book the room", "Send the revised terms", "Numbers from Birch", "Check the clause")]
+        self.assertEqual(sorted(order), order)                                    # by section, then A-Z by thread
+        self.assertIn('<span class="tdate overdue">Due Mon 3 Jan</span>', card)
         self.assertIn("Chase", card)
+        for group in ("Inbox", "Waiting on", "In thread notes"):
+            self.assertIn('<span class="tname">%s</span>' % group, card)
         self.assertIn("Check the clause", card)                                  # a thread note's own action
         self.assertIn("in the thread note", card)
         self.assertNotIn("example.com", card)                                     # a source link is not followed
@@ -840,16 +843,19 @@ class TestPreviewFeatures(StatusCase):
         self.on()
         html = self.page()
         self.assertNotIn('data-act=', html.split("<script>")[0])
+        self.assertNotIn('class="tick"', html.split("<script>")[0])
         self.assertNotIn('"pa":', htmllib.unescape(html))
         write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": True, "page-actions": True}))
         html = self.page()
         self.assertRegex(html, r'Actions</b><span class="chip on">on</span>')
-        acts = [json.loads(htmllib.unescape(a)) for a in re.findall(r'data-act="([^"]*)"', html.split("<script>")[0])]
-        ticks = [a for a in acts if a["verb"] == "todo-done"]
-        self.assertTrue(ticks)
-        self.assertTrue(all(set(a) == {"verb", "zone", "file", "key"} and re.fullmatch(r"[0-9a-f]{16}", a["key"]) for a in ticks))
-        self.assertIn({"Work"}, [{a["zone"] for a in ticks}])
-        self.assertEqual({"todo-done", "todo-date"}, {a["verb"] for a in acts})
+        rows = re.findall(r'<div class="trow[^"]*" data-z="([^"]*)" data-f="([^"]*)" data-k="([^"]*)"', html)
+        self.assertTrue(rows)
+        self.assertTrue(all(z == "Work" and re.fullmatch(r"[0-9a-f]{16}", k) for z, _, k in rows))     # what a button sends back
+        self.assertEqual(len(rows), html.count('<button class="tick" type="button"'))
+        self.assertEqual(len(rows), html.count('<button class="tdate'))
+        self.assertIn("var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k}", status.TODO_JS)
+        for verb in ("'todo-done'", "'todo-undo'", "'todo-date'"):
+            self.assertIn(verb, status.TODO_JS)
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
         self.assertIn("if(o.pa&&host)return park(o)", status.PANEL_JS)                      # only the app parks
@@ -915,8 +921,9 @@ class TestPreviewFeatures(StatusCase):
         self.assertNotIn("intake", self.menu(self.page()))                    # nothing installed to open it in
 
     def test_the_menu_follows_the_graph_and_settings(self):
-        for key in ("'garrick-graph-place'", "'garrick-default'", "'garrick-launchers'"):
-            self.assertIn("g(%s)" % key, status.MENU_JS)
+        self.assertIn("g('garrick-graph-place')", status.MENU_JS)
+        self.assertIn("def:GarrickPrefs.def()", status.MENU_JS)                                # what Settings chose, shared or this window's
+        self.assertIn("var on=GarrickPrefs.launchers()", status.MENU_JS)
         self.assertIn("document.addEventListener('change',function(){setTimeout(sync,0)},true)", status.MENU_JS)
         self.assertIn("note:on.note!==false", status.MENU_JS)                                  # the note's link, unless switched off
         self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_SETTINGS_JS)     # the app's settings do not rebuild the page
@@ -1376,7 +1383,7 @@ class TestWhatThisMachineHas(StatusCase):
         pricing = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing"), pricing["f"])
         nodes = graph_data(html)["nodes"]
-        self.assertTrue(all(("f" in n) == bool(n["c"]) for n in nodes))       # projects and threads only
+        self.assertTrue(all(("f" in n) == bool(n["p"]) for n in nodes))       # every note in a project, nothing outside one
         hub = next(n for n in nodes if n["n"] == "Acme Review")
         self.assertEqual(str(self.root / "Zones" / "Work" / "Acme Review"), hub["f"])
 

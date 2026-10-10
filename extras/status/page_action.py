@@ -5,9 +5,11 @@
     echo '{"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "…"}' | \\
         python3 page_action.py --workspace ~/Garrick
 
-Garrick.app runs it when a button on the page asks; nothing else can,
-because a browser has no way to reach it. Seven verbs, each changing one thing
-and committing it in the zone's repository, as the skills would:
+Garrick.app, or the Obsidian plugin beside this file, runs it when a button
+on the page asks; nothing else can, because a browser has no way to reach it.
+The ask preview (ask.py) runs what it proposes through act(), the same check.
+Each verb changes one thing, and the ones that change a note commit it in the
+zone's repository, as the skills would:
 
     todo-done   tick a Todo line, with Obsidian Tasks' ✅ date
     todo-undo   reopen a line ticked from the page
@@ -19,13 +21,29 @@ and committing it in the zone's repository, as the skills would:
     park        a thread note's status to parked, with a dated entry
     wake        and back to active
     run         start a scheduled job now, through launchd, so it keeps its
-                own wrapper, lock and log; it changes no note itself
+                own wrapper, lock and log; it changes no note itself. A job
+                whose lock (job.py's) is held is already running, and refused
+    settings    which ways to open a thread the page offers, and which one
+                clicking a thread's name runs: {"launchers": ["note", "cmux"],
+                "default": "cmux"}, written to System/generated/status-settings.json,
+                so the app and Obsidian agree. It commits nothing
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
-ticking another line. Every path must be a live note inside a zone. When the
-zone's wall check refuses the commit, the file is put back as it was. The reply
-is one line of JSON: {"ok": true|false, "say": "…"}. Standard library only.
+ticking another line. A date changes a line's text, and so its key, and the
+page learns the new key only when it rebuilds; until then a second click on the
+same row still carries the old key, so the handler keeps, for an hour, which
+old key became which new one (todo-rekeys.json in the jobs folder) and follows
+it. Every path must be a live note inside a zone. When the zone's wall check
+refuses the commit, the file is put back as it was.
+
+Every request, done or refused, is one line in page-actions.log in the jobs
+folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
+on a Mac): the time, the verb, the fields it names and what came of it. Only
+the fields a verb reads are written, the text of a new line cut short, so
+nothing else a request carries reaches the log. The host rebuilds the page
+after every request. The reply is one line of JSON: {"ok": true|false,
+"say": "…"}. Standard library only.
 """
 
 from __future__ import annotations
@@ -34,20 +52,100 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run")
+VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
+# The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
+LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
+# What the audit log may name of a request, and how much of a new line's text.
+LOGGED = ("zone", "file", "key", "date", "target", "job", "launchers", "default")
+LOGGED_TEXT = 60
+LOGGED_SAY = 160
+REKEY_HOURS = 1
+# A lock with no record of its own, left by an older job.py, holds for the
+# default limit job.py gives it: twice the watchdog's 1500 s, the sign-in
+# retry's 300 s and its 600 s of slack.
+LOCK_HOLD = 2 * 1500 + 300 + 600
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
 
 
 class Refused(Exception):
     pass
+
+
+def jobs_dir() -> Path:
+    """The jobs folder, as agent.py's jobs_dir() finds it: logs, locks and
+    heartbeats, outside the workspace, so nothing here is committed."""
+    set_to = os.environ.get("GARRICK_JOBS_DIR")
+    if set_to:
+        return Path(set_to).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "garrick-jobs"
+    return Path.home() / ".local" / "state" / "garrick-jobs"
+
+
+def audit(req, ok: bool, say: str, via: str = "") -> None:
+    """One line in page-actions.log for every request: what it asked and what
+    came of it. A log that cannot be written never stops the action."""
+    req = req if isinstance(req, dict) else {}
+    parts = [str(req.get("verb", "?"))[:20]]
+    for k in LOGGED:
+        if k in req:
+            parts.append("%s=%s" % (k, json.dumps(req[k], ensure_ascii=False)[:120]))
+    text = req.get("text")
+    if isinstance(text, str):
+        parts.append("text=%s" % json.dumps(text[:LOGGED_TEXT] + ("…" if len(text) > LOGGED_TEXT else ""), ensure_ascii=False))
+    said = say.replace("\n", " ")
+    said = said[:LOGGED_SAY] + ("…" if len(said) > LOGGED_SAY else "")
+    line = "%s  %s  ->  %s: %s%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(parts), "ok" if ok else "refused",
+                                      said, "  (%s)" % via if via else "")
+    try:
+        folder = jobs_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / "page-actions.log").open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def rekeys(zone: str, rel: str, update=None) -> dict:
+    """Old key -> new key for the lines of one note re-dated in the last hour.
+    `update` is (old, new): a line re-dated again moves every key that led to
+    it on to the newest, and one dated back to where it started drops out."""
+    path = jobs_dir() / "todo-rekeys.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    cut = time.time() - REKEY_HOURS * 3600
+    data = {k: v for k, v in data.items() if isinstance(v, list) and len(v) == 2 and isinstance(v[1], (int, float)) and v[1] >= cut}
+    scope = "%s/%s|" % (zone, rel)
+    if update:
+        old, new = scope + update[0], update[1]
+        now = time.time()
+        data = {k: ([new, now] if k.startswith(scope) and v[0] == update[0] else v) for k, v in data.items()}
+        data[old] = [new, now]
+        data = {k: v for k, v in data.items() if k != scope + v[0]}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".todo-rekeys-", dir=str(path.parent))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, str(path))
+        except OSError:
+            pass
+    return {k[len(scope):]: v[0] for k, v in data.items() if k.startswith(scope)}
 
 
 def todo_lines():
@@ -96,29 +194,41 @@ def todo(ws: Path, req: dict) -> str:
     key = req.get("key")
     if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{16}", key):
         raise Refused("not a task key")
-    rel = str(note.relative_to(zone))
+    rel = note.relative_to(zone).as_posix()
+    when = None
+    if req["verb"] == "todo-date":
+        raw = req.get("date")
+        try:
+            when = None if raw == "-" else dt.date.fromisoformat(raw or "")
+        except (TypeError, ValueError):
+            raise Refused("not a date: %r" % raw)
     before = note.read_bytes()
     try:
-        if req["verb"] == "todo-done":
-            text = tl.done(str(zone), rel, key)
-            say, message = "Done: " + text, "%s: done, %s" % (zone.name, text)
-        elif req["verb"] == "todo-undo":
-            text = tl.undo(str(zone), rel, key)
-            say, message = "Reopened: " + text, "%s: reopened, %s" % (zone.name, text)
-        else:
-            raw = req.get("date")
-            try:
-                when = None if raw == "-" else dt.date.fromisoformat(raw or "")
-            except (TypeError, ValueError):
-                raise Refused("not a date: %r" % raw)
-            text, moved, _ = tl.set_date(str(zone), rel, key, when)
-            what = "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b")) if when else "no date"
-            say = "%s: %s%s" % (text, what, ", moved to " + moved if moved else "")
-            message = "%s: %s, %s" % (zone.name, what, text)
+        try:
+            said, message = todo_edit(tl, zone, rel, key, req["verb"], when)
+        except tl.NotFound:
+            newer = rekeys(zone.name, rel).get(key)      # a second click before the page rebuilt
+            if not newer:
+                raise
+            said, message = todo_edit(tl, zone, rel, newer, req["verb"], when)
     except tl.NotFound:
         raise Refused("that line has changed since the page was built; it rebuilds now, try again")
     commit(zone, note, before, message[:200])
-    return say
+    return said
+
+
+def todo_edit(tl, zone: Path, rel: str, key: str, verb: str, when):
+    """One edit to the line with this key: what to say, and the commit message."""
+    if verb == "todo-done":
+        text = tl.done(str(zone), rel, key)
+        return "Done: " + text, "%s: done, %s" % (zone.name, text)
+    if verb == "todo-undo":
+        text = tl.undo(str(zone), rel, key)
+        return "Reopened: " + text, "%s: reopened, %s" % (zone.name, text)
+    text, moved, new = tl.set_date(str(zone), rel, key, when)
+    rekeys(zone.name, rel, (key, new))
+    what = "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b")) if when else "no date"
+    return "%s: %s%s" % (text, what, ", moved to " + moved if moved else ""), "%s: %s, %s" % (zone.name, what, text)
 
 
 def todo_add(ws: Path, req: dict) -> str:
@@ -219,6 +329,24 @@ def kickstart(label: str) -> bool:
     return done.returncode == 0
 
 
+def lock_held(name: str, now: float = None) -> bool:
+    """Whether job.py's lock for this job stands: `<name>.lock`, a folder in
+    the jobs folder, whose `until` file says when it goes stale. A lock past
+    that belongs to a run that died, and job.py's next run takes it over."""
+    lock = jobs_dir() / ("%s.lock" % name)
+    if not lock.is_dir():
+        return False
+    now = time.time() if now is None else now
+    try:
+        until = float((lock / "until").read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        try:
+            until = lock.stat().st_mtime + LOCK_HOLD
+        except OSError:
+            return False
+    return now <= until
+
+
 def run_job(req: dict, folder: Path = None) -> str:
     name = req.get("job")
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
@@ -226,9 +354,40 @@ def run_job(req: dict, folder: Path = None) -> str:
     label = job_label(name, folder)
     if label is None:
         raise Refused("no scheduled job called %s" % name)
+    if lock_held(name):
+        raise Refused("%s is already running" % name)
     if not kickstart(label):
         raise Refused("launchd would not start %s; is it loaded?" % name)
     return "%s is running now" % name
+
+
+def save_settings(ws: Path, req: dict) -> str:
+    """Settings › Opening a thread, kept in one file so every viewer of the page
+    agrees: {"launchers": {"note": true, "cmux": false, …}, "default": "note"}.
+    Every known way is written, on or off; status.py reads the file when it
+    builds the page. A way it does not list is on, as on the page."""
+    on, default = req.get("launchers"), req.get("default", "note")
+    if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
+        raise Refused("not a list of ways to open a thread")
+    unknown = [k for k in on if k not in LAUNCHERS]
+    if unknown:
+        raise Refused("no way to open a thread called %s" % ", ".join(repr(k) for k in unknown))
+    if default not in LAUNCHERS:
+        raise Refused("no way to open a thread called %r" % (default,))
+    if default != "note" and default not in on:
+        raise Refused("the default must be one of the ways switched on")
+    path = ws / "System" / "generated" / "status-settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
+    fd, tmp = tempfile.mkstemp(prefix=".status-settings-", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=1) + "\n")
+        os.replace(tmp, str(path))
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return "Settings saved"
 
 
 def act(ws: Path, req, today=None) -> str:
@@ -236,6 +395,8 @@ def act(ws: Path, req, today=None) -> str:
         raise Refused("unknown action")
     if req["verb"] == "run":
         return run_job(req)
+    if req["verb"] == "settings":
+        return save_settings(ws, req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "todo-add":
@@ -248,6 +409,7 @@ def main(argv=None) -> int:
     ap.add_argument("--workspace", required=True)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
+    req = None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
             raise Refused("not a Garrick workspace")
@@ -258,6 +420,7 @@ def main(argv=None) -> int:
         out = {"ok": True, "say": act(ws, req)}
     except Refused as e:
         out = {"ok": False, "say": str(e)}
+    audit(req, out["ok"], out["say"])
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1
 

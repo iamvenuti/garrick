@@ -12,6 +12,9 @@
 
   Unload with `launchctl bootout gui/$(id -u)/garrick.whats-open`.
   PATH must include the folder your assistant's command is installed in.
+  To be told when it fails, add GARRICK_NOTIFY (1, for a macOS notification)
+  or GARRICK_NOTIFY_CMD (a command given a title and a message) to
+  EnvironmentVariables; see docs/extras/scheduled-jobs.md for the others.
   Whatever job.py cannot write to its own log, such as the error from a path
   left wrong, goes to whats-open.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.

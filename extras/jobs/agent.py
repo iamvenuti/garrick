@@ -8,8 +8,11 @@ environment variable picks the assistant:
     GARRICK_HARNESS=codex
 
     python3 agent.py run --tier sonnet --allow Read --allow Grep < prompt.txt
-    python3 agent.py login              exit 0 when the assistant can sign in from here
+    python3 agent.py run --tier haiku --prompt "Say hello." --timeout 600
+    python3 agent.py login              exit 1 only when the assistant is not signed in
     python3 agent.py requires gmail     exit 6 when the assistant has no such connector
+    python3 agent.py items 4            report how much this run did, for job.py's idle alarm
+    python3 agent.py items-from out.txt report the last `ITEMS <n>` line in a file, if any
     python3 agent.py ledger             what the last 24 hours of calls did and cost
 
 From Python: `code, text = agent.run("sonnet", prompt, allow=["Read"])`.
@@ -36,20 +39,26 @@ connectors you have configured.
 
 **What it spends.** Every call appends one line to `ledger.jsonl` in the jobs
 folder (~/Library/Logs/garrick-jobs/ on a Mac, or GARRICK_JOBS_DIR): when,
-which job, assistant, tier, turns, cost, seconds, exit code and any tool the
-assistant was refused. The ledger keeps the last 60 days. Before a call, the
+which job, assistant, tier, model, turns, cost, seconds, exit code and any
+tool the assistant was refused. The ledger keeps the last 60 days. Before a call, the
 ledger is read and the call is refused, with exit 8, when the last 24 hours
 already hold GARRICK_CAP_CALLS_DAY calls (48), the last hour
 GARRICK_CAP_CALLS_HOUR (12), or the last 24 hours GARRICK_CAP_COST_DAY
 dollars (20). Each Claude call is also stopped at GARRICK_MAX_CALL_USD
-dollars (5). Set a cap to 0 to remove it. The cost is Claude's own estimate at
-list prices, so on a subscription it measures use rather than a bill. Codex
-reports neither turns nor cost, so its lines carry none and only the call
-caps hold it.
+dollars (5), and then exits 8 as well. Set a cap to 0 to remove it. The cost
+is Claude's own estimate at list prices, so on a subscription it measures use
+rather than a bill. Codex reports neither turns nor cost, so its lines carry
+none and only the call caps hold it.
 
-Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached,
-nothing was called), 64 (usage, or Claude's deny profile is missing or not
-JSON, and nothing was called), 127 (the assistant is not installed).
+**How long it may take.** With `--timeout` (or `timeout=`), a call still going
+after that many seconds is stopped and exits 124, so a job can keep time for
+its own steps after the call. job.py's watchdog bounds the whole run either way.
+
+Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached and
+nothing was called, or the call passed GARRICK_MAX_CALL_USD and was stopped),
+64 (usage, or Claude's deny profile is missing or not JSON, and nothing was
+called), 124 (the call passed its --timeout), 127 (the assistant is not
+installed).
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -74,14 +83,17 @@ PROFILE = HERE / "headless-settings.json"
 HARNESSES = ("claude", "codex")
 TIERS = ("haiku", "sonnet", "opus")
 
+EXIT_LOGIN = 4
 EXIT_CONNECTOR = 6
 EXIT_CAP = 8
 EXIT_USAGE = 64
+EXIT_TIMEOUT = 124
 EXIT_MISSING = 127
 
 DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}
 DEFAULT_MAX_CALL_USD = 5.0
 JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
+ITEMS_LINE = re.compile(r"^ITEMS (\d+)\s*$", re.M)
 MAX_LOG_BYTES = 1024 * 1024
 LEDGER_DAYS = 60  # longer than every cap, a day at most, and the status page's fourteen days
 
@@ -229,6 +241,7 @@ def ledger_entry(now: float, job: str, tier: str, outcome: dict, seconds: float,
         "exit": code,
         "denied": outcome.get("denied", []),
         "subtype": outcome.get("subtype"),
+        "model": outcome.get("model"),
     }
     if refused:
         entry["refused"] = refused
@@ -249,17 +262,20 @@ def parse_claude_output(stdout: str) -> dict:
             continue
         if isinstance(data, dict) and ("result" in data or data.get("type") == "result"):
             denied = {d.get("tool_name") for d in data.get("permission_denials") or [] if isinstance(d, dict)}
+            usage = data.get("modelUsage")
             return {
                 "text": data.get("result") or "",
                 "turns": data.get("num_turns"),
                 "cost_usd": data.get("total_cost_usd"),
                 "denied": sorted(d for d in denied if d),
                 "subtype": data.get("subtype"),
+                # The models the call used, which the tier alone does not say.
+                "model": ("+".join(sorted(usage)) or None) if isinstance(usage, dict) else None,
                 "is_error": bool(data.get("is_error")),
                 "parsed": True,
             }
     return {"text": stdout, "turns": None, "cost_usd": None, "denied": [], "subtype": None,
-            "is_error": False, "parsed": False}
+            "model": None, "is_error": False, "parsed": False}
 
 
 def profile_problem(path: Path) -> Optional[str]:
@@ -327,9 +343,32 @@ def codex_command(tier: str, prompt: str, last_message: Path, allow: Iterable[st
     return cmd
 
 
+def call(cmd: List[str], cwd: Optional[Path], timeout: Optional[float], stdout=subprocess.PIPE) -> Tuple[int, str, str]:
+    """Run the assistant's command: its exit code, stdout and stderr. Past
+    `timeout` seconds it is asked to stop, then made to, and the code is 124.
+    The assistant stays in the job's process group, so job.py's watchdog
+    still reaches it."""
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=stdout,
+                            stderr=subprocess.PIPE if stdout is subprocess.PIPE else subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True)
+    try:
+        out, err = proc.communicate(timeout=timeout if timeout and timeout > 0 else None)
+        return proc.returncode, out or "", err or ""
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+        return EXIT_TIMEOUT, out or "", err or ""
+
+
 def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] = None,
-        job: Optional[str] = None) -> Tuple[int, str]:
-    """One headless turn. Returns the exit code and the assistant's final answer."""
+        job: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[int, str]:
+    """One headless turn. Returns the exit code and the assistant's final answer.
+    With `timeout`, a call still going after that many seconds is stopped and
+    returns 124 with whatever answer it had."""
     allow = list(allow)
     h = harness()
     if h not in HARNESSES:
@@ -362,14 +401,21 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
         cmd = claude_command(tier, prompt, list(allow), _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD),
                              profile)
         try:
-            proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            code, out, err = call(cmd, cwd, timeout)
         except FileNotFoundError:
             print("agent: claude is not installed, or not on PATH", file=sys.stderr)
             return EXIT_MISSING, ""
-        if proc.stderr:
-            sys.stderr.write(proc.stderr)
-        outcome = parse_claude_output(proc.stdout)
-        code = proc.returncode or (1 if outcome["is_error"] else 0)
+        if err:
+            sys.stderr.write(err)
+        outcome = parse_claude_output(out)
+        code = code or (1 if outcome["is_error"] else 0)
+        if outcome["subtype"] == "error_max_budget_usd":
+            # Stopped by its own budget: a cap, like a refusal, not a fault in the job.
+            print("agent: the call passed its budget of $%g (GARRICK_MAX_CALL_USD) and was stopped"
+                  % _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD), file=sys.stderr)
+            code = EXIT_CAP
+        if code == EXIT_TIMEOUT and timeout:
+            print("agent: the call was stopped after %gs (--timeout)" % timeout, file=sys.stderr)
     else:
         # Codex prints the whole run, prompt included. A job greps its answer for
         # sentinel lines the prompt also contains, so it gets the final message
@@ -382,14 +428,14 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
             last = Path(tmp) / "last.txt"
             try:
                 with transcript.open("a", encoding="utf-8") as log:
-                    proc = subprocess.run(codex_command(tier, prompt, last, allow), cwd=cwd, stdout=log,
-                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                    code, _, _ = call(codex_command(tier, prompt, last, allow), cwd, timeout, stdout=log)
             except FileNotFoundError:
                 print("agent: codex is not installed, or not on PATH", file=sys.stderr)
                 return EXIT_MISSING, ""
             text = last.read_text(encoding="utf-8", errors="replace") if last.exists() else ""
         outcome = {"text": text, "turns": None, "cost_usd": None, "denied": [], "subtype": None}
-        code = proc.returncode
+        if code == EXIT_TIMEOUT and timeout:
+            print("agent: the call was stopped after %gs (--timeout)" % timeout, file=sys.stderr)
     append_ledger(ledger, ledger_entry(start, job, tier, outcome, time.time() - start, code))
     return code, outcome["text"]
 
@@ -399,6 +445,16 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
 
 def login_ok(cwd: Optional[Path] = None) -> bool:
     """Whether the assistant can sign in from this run, without a model call.
+    Only a definite no is False: a check that did not answer in time is not
+    evidence of a lost sign-in."""
+    return login_state(cwd) is not False
+
+
+def login_state(cwd: Optional[Path] = None) -> Optional[bool]:
+    """True when signed in, False when the assistant says it is not or is not
+    installed, None when the check did not answer within 90 seconds. A Mac
+    that sleeps during the check runs out its time on waking, and treating
+    that as a lost sign-in would stop every assistant job that morning.
     Run from the workspace, never from `/`, where a scheduled job starts: an
     assistant started there can reach into ~/Desktop and set off a macOS
     permission prompt that nobody is there to answer."""
@@ -410,8 +466,10 @@ def login_ok(cwd: Optional[Path] = None) -> bool:
     try:
         proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=90,
                               stdin=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
         return False
+    except subprocess.TimeoutExpired:
+        return None
     out = (proc.stdout + proc.stderr).strip()
     if harness() == "claude":
         try:
@@ -466,6 +524,23 @@ def report_items(n: int) -> None:
         Path(target).write_text("%d\n" % n, encoding="utf-8")
 
 
+def items_from(text: str) -> Optional[int]:
+    """The number on the last `ITEMS <n>` line in an answer, or None. A prompt
+    asks the assistant to end with that line when the job's count is the
+    assistant's to make."""
+    found = ITEMS_LINE.findall(text or "")
+    return int(found[-1]) if found else None
+
+
+def report_items_from(text: str) -> Optional[int]:
+    """Report the count in an answer's `ITEMS <n>` line. No line, no report:
+    not zero."""
+    n = items_from(text)
+    if n is not None:
+        report_items(n)
+    return n
+
+
 # --------------------------------------------------------------------------- command line
 
 
@@ -493,31 +568,62 @@ def summary(entries: List[dict]) -> str:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="One unattended assistant turn, for a scheduled job.")
     sub = ap.add_subparsers(dest="command", required=True)
-    r = sub.add_parser("run", help="run one turn; the prompt comes from --prompt-file or stdin")
+    r = sub.add_parser("run", help="run one turn; the prompt comes from --prompt, --prompt-file or stdin")
     r.add_argument("--tier", required=True, choices=TIERS)
     r.add_argument("--allow", action="append", default=[], help="a tool the assistant may use (Claude only)")
-    r.add_argument("--prompt-file")
+    given = r.add_mutually_exclusive_group()
+    given.add_argument("--prompt", help="the prompt itself")
+    given.add_argument("--prompt-file")
     r.add_argument("--cwd")
-    sub.add_parser("login", help="exit 0 when the assistant can sign in")
+    r.add_argument("--timeout", type=float, help="seconds before the call is stopped, with exit 124")
+    sub.add_parser("login", help="exit 1 when the assistant is not signed in")
     q = sub.add_parser("requires", help="exit 6 when a connector is missing")
     q.add_argument("names", nargs="+")
+    i = sub.add_parser("items", help="report how much this run did, for the idle alarm")
+    i.add_argument("count", type=int)
+    f = sub.add_parser("items-from", help="report the last ITEMS <n> line of a file (- for stdin)")
+    f.add_argument("file")
     l = sub.add_parser("ledger", help="what recent calls did and cost")
     l.add_argument("--hours", type=float, default=24)
     args = ap.parse_args(argv)
 
     if args.command == "run":
-        prompt = Path(args.prompt_file).read_text(encoding="utf-8") if args.prompt_file else sys.stdin.read()
+        if args.prompt is not None:
+            prompt = args.prompt
+        elif args.prompt_file:
+            prompt = Path(args.prompt_file).read_text(encoding="utf-8")
+        else:
+            prompt = sys.stdin.read()
         if not prompt.strip():
             print("agent: empty prompt", file=sys.stderr)
             return EXIT_USAGE
-        code, text = run(args.tier, prompt, args.allow, Path(args.cwd) if args.cwd else None)
+        code, text = run(args.tier, prompt, args.allow, Path(args.cwd) if args.cwd else None,
+                         timeout=args.timeout)
         if text:
-            print(text)
+            print(text if text.endswith("\n") else text + "\n", end="")
         return code
     if args.command == "login":
-        return 0 if login_ok() else 1
+        state = login_state()
+        if state is None:
+            print("agent: %s did not answer the sign-in check in time" % harness(), file=sys.stderr)
+        return 1 if state is False else 0
     if args.command == "requires":
         return requires(args.names)
+    if args.command == "items":
+        if args.count < 0:
+            print("agent: a count is zero or more", file=sys.stderr)
+            return EXIT_USAGE
+        report_items(args.count)
+        return 0
+    if args.command == "items-from":
+        source = sys.stdin if args.file == "-" else None
+        try:
+            text = source.read() if source else Path(args.file).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print("agent: %s" % exc, file=sys.stderr)
+            return 0  # no count is no report, never a failed job
+        report_items_from(text)
+        return 0
     print(summary(read_ledger(ledger_path(), time.time(), args.hours)))
     return 0
 

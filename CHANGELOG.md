@@ -46,6 +46,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- A year standing as a word of its own is now part of a speakable name: "Identiverse 2027" is said "twenty twenty-seven", so a recurring event can carry its year. Any other digit is still refused, by the scaffold and by `check.py`, and `System/rules.md` says so.
 - The idle notice repeats every `GARRICK_IDLE_DAYS` days while a job stays idle, rather than on every run, and `GARRICK_IDLE_DAYS=0` turns the alarm off. `GARRICK_NOTIFY=1` follows the same throttle: a lasting failure no longer raises a notification on every run.
 - A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
 - `agent.py` refuses a Claude call, with exit 64 and nothing called, when its deny profile has lost an entry in `CORE_DENY`: sending, replying to and forwarding mail, binning mail and Drive files, making and deleting calendar events, sharing a Drive file, editing or commenting on a Notion page, and `curl`, `git push` and `rm`. A test holds the shipped profile to the same set.

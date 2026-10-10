@@ -216,14 +216,16 @@ def parse_frontmatter(path: PathLike) -> dict:
 
 _APOSTROPHES = "'’"
 _HYPHENS = "-‐‑"
+_YEAR_RE = re.compile(r"(19|20)\d\d")
 
 
 def is_speakable(name: str) -> Tuple[bool, str]:
     """Is `name` fit to be a zone, project or thread name said aloud?
 
-    Letters, spaces, hyphens, apostrophes and `&` only. No digits (dates and
-    codes), no underscores, no other punctuation. Not empty, and not starting
-    with `_`, which is reserved for templates.
+    Letters, spaces, hyphens, apostrophes and `&` only, and a year as a word
+    of its own ("Identiverse 2027" is said "twenty twenty-seven"). No other
+    digits (dates and codes), no underscores, no other punctuation. Not
+    empty, and not starting with `_`, which is reserved for templates.
     """
     if name is None or not name.strip():
         return False, "the name is empty"
@@ -233,11 +235,11 @@ def is_speakable(name: str) -> Tuple[bool, str]:
         return False, "it starts or ends with a space"
     if "  " in name:
         return False, "it has a double space"
-    for ch in name:
+    for ch in " ".join(w for w in name.split(" ") if not _YEAR_RE.fullmatch(w)):
         if ch.isalpha() or ch == " " or ch == "&" or ch in _APOSTROPHES or ch in _HYPHENS:
             continue
         if ch.isdigit():
-            return False, "it contains a digit; dates and codes cannot be said cleanly"
+            return False, "it contains a digit that is not a year; dates and codes cannot be said cleanly"
         if ch == "_":
             return False, "it contains an underscore"
         return False, "it contains '%s', which cannot be said" % ch

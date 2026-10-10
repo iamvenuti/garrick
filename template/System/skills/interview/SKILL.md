@@ -120,9 +120,9 @@ end of the record under `## Proposal`, then show it.
    and never leave out one they asked for.
 3. **People and aliases** heard during the interview.
 4. **Projects and first threads**, zone by zone: the project, its party, its
-   first thread. Every name must be sayable: no dates, codes or punctuation,
-   and no two siblings that sound alike. Offer a spoken version of any that
-   is not.
+   first thread. Every name must be sayable: no dates, codes or punctuation
+   (a year as a word of its own is fine), and no two siblings that sound
+   alike. Offer a spoken version of any that is not.
 5. **Open actions** for each zone's `Todo.md`, from question 4.
 6. **Ways in**: for each place files live today, the inbox it would feed.
    Advice only: nothing is connected or moved.

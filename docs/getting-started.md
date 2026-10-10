@@ -67,7 +67,7 @@ This creates `Zones/Work/Acme/`, its hub note, `Sources/`, `Deliverables/`, and 
 python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Supplier Audit"
 ```
 
-The script checks names before it creates anything: no digits or punctuation (they can't be said aloud), and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken.
+The script checks names before it creates anything: no digits but a year standing as a word, and no punctuation (they can't be said aloud), and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken.
 
 The script does not commit. Each zone is its own git repository, so commit there:
 

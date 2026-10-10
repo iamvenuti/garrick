@@ -58,7 +58,7 @@ Every thread has exactly one place that says where it stands: the `### Resume he
 
 ## Built to be spoken to
 
-Zone, project and thread names have to survive being said aloud and heard back: no digits, no codes, no punctuation that a transcript can mangle. Two siblings that sound alike get flagged before they're created. A table of aliases catches the names your dictation gets wrong and maps them back to what they mean. When you're listening rather than reading, answers come back in a few short sentences, no tables, no file paths, no numbers read out to three decimal places, and detail gets offered rather than dumped on you.
+Zone, project and thread names have to survive being said aloud and heard back: no codes, no digits but a year said as a word of its own, no punctuation that a transcript can mangle. Two siblings that sound alike get flagged before they're created. A table of aliases catches the names your dictation gets wrong and maps them back to what they mean. When you're listening rather than reading, answers come back in a few short sentences, no tables, no file paths, no numbers read out to three decimal places, and detail gets offered rather than dumped on you.
 
 ## You keep the decisions
 

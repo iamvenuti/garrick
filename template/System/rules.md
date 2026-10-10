@@ -55,7 +55,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 Much of this workspace is driven by speaking and listening. Every name, request and reply has to survive that.
 
-- **Names are speakable.** Zones, projects and threads get names a person can say: no dates, codes or punctuation. Siblings must not sound alike.
+- **Names are speakable.** Zones, projects and threads get names a person can say: no dates, codes or punctuation, though a year standing as a word of its own is fine (Summit 2027). Siblings must not sound alike.
 - **Say the shortest name that is unique.** A thread name alone, if only one thread has it. Otherwise project and thread ("Acme, pricing"). The zone only when two projects share a name.
 - **When a name matches more than one thing**, ask in one line, naming the candidates. Never guess.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.

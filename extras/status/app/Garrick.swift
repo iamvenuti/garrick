@@ -1574,7 +1574,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		switch edge {
 		case .left, .right:
 			let h = min(contentHeight() + 2 * e, v.height - 16)
-			let y = max(v.minY + 8, min(v.midY - h / 2, v.maxY - 8 - h))
+			let y = max(v.minY + 8, v.maxY - 8 - h)   // hung from the top, over the third of the edge that opens it
 			let x = edge == .left ? f.minX : f.maxX - width
 			let r = NSRect(x: x, y: y, width: width, height: h)
 			let from = NSRect(x: edge == .left ? f.minX : f.maxX - 1, y: y, width: 1, height: h)
@@ -1595,15 +1595,17 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 	}
 
 	// The pointer at the panel's edge: an outer edge of the screen, not one
-	// that leads to another display, and for the top, only across the notch
-	// (or the middle of the menu bar on a screen without one), where the menu bar has no items.
+	// that leads to another display. On a side, only its top third, which
+	// leaves the rest of the edge to other apps that live there; for the
+	// top, only across the notch (or the middle of the menu bar on a screen
+	// without one), where the menu bar has no items.
 	func atEdge(_ p: NSPoint) -> Bool {
 		guard let s = NSScreen.screens.first(where: { NSMouseInRect(p, $0.frame, false) }) else { return false }
 		let f = s.frame
 		func outer(_ q: NSPoint) -> Bool { !NSScreen.screens.contains { NSMouseInRect(q, $0.frame, false) } }
 		switch edge {
-		case .left: return p.x <= f.minX + 1 && p.y < s.visibleFrame.maxY && outer(NSPoint(x: f.minX - 2, y: p.y))
-		case .right: return p.x >= f.maxX - 2 && p.y < s.visibleFrame.maxY && outer(NSPoint(x: f.maxX + 2, y: p.y))
+		case .left: return p.x <= f.minX + 1 && topThird(p, s) && outer(NSPoint(x: f.minX - 2, y: p.y))
+		case .right: return p.x >= f.maxX - 2 && topThird(p, s) && outer(NSPoint(x: f.maxX + 2, y: p.y))
 		case .top:
 			guard p.y >= f.maxY - 2, outer(NSPoint(x: p.x, y: f.maxY + 2)) else { return false }
 			let n = notch(s) ?? NSRect(x: f.midX - 100, y: f.maxY, width: 200, height: 0)
@@ -1623,6 +1625,11 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 			self.close(animated: true)
 			return nil
 		}) { monitors.append(m) }
+	}
+
+	func topThird(_ p: NSPoint, _ s: NSScreen) -> Bool {
+		let v = s.visibleFrame
+		return p.y < v.maxY && p.y >= v.maxY - v.height / 3
 	}
 
 	// Resting at the edge for a quarter of a second opens it, so passing by does not.

@@ -1447,6 +1447,7 @@ class TestApp(unittest.TestCase):
         self.assertIn("addGlobalMonitorForEvents(matching: [.mouseMoved", swift)   # the pointer, which needs no permission
         self.assertNotIn("addGlobalMonitorForEvents(matching: [.keyDown", swift)   # keys from other apps would
         self.assertIn("asyncAfter(deadline: .now() + 0.25", swift)              # resting at the edge, not passing by
+        self.assertIn("p.y >= v.maxY - v.height / 3", swift)                   # a side opens from its top third only
         self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
         self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 

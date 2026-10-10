@@ -16,7 +16,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
 | File in `extras/jobs/` | What it does |
 |---|---|
 | `agent.py` | Runs one assistant turn. Every job calls it instead of naming `claude` or `codex` |
-| `job.py` | Wraps one scheduled run: log, heartbeat, lock, watchdog, sign-in check, idle alarm |
+| `job.py` | Wraps one scheduled run: log, heartbeat, lock, watchdog, sign-in check, idle alarm, notices |
 | `headless-settings.json` | The deny list every unattended Claude call loads |
 | `whats_open.py` | The example job: a "what's open" brief per zone, written outside the workspace |
 | `launchd/garrick.whats-open.plist` | The example job on a schedule, every morning at 06:30 |
@@ -40,7 +40,7 @@ The example reads one zone per assistant call, so no single turn ever holds two 
 With nobody watching, a job gets the least it needs, and Claude is denied the ways out of the machine that the profile names.
 
 - **An allow list per call.** A job names the tools it needs: `--allow Read`, `--allow Grep`. Claude refuses the rest: with nobody to ask, a tool that needs permission runs only when the list names it or your own settings allow it, as below. A job that must write files names the tools for it: `--allow Edit`, `--allow Write`. The runner sets the permission mode to `default` on every call, so a default mode in your own settings, such as accepting edits, does not reach a job.
-- **A deny list on every Claude call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; fetching web pages and searching the web; shell commands that start with `curl`, `ssh`, `git push`, `rm` and a few others; and edits by Claude's file tools under `System/`, inside `.git/`, to the assistants' own settings or to your launchd jobs. A deny beats an allow, so a tool on the list is refused even when a job lists it by mistake or your own settings allow it. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
+- **A deny list on every Claude call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; fetching web pages and searching the web; shell commands that start with `curl`, `ssh`, `git push`, `rm` and a few others; publishing a Claude document or starting another agent session; the browser and computer-use servers; and edits by Claude's file tools under `System/`, inside `.git/`, to the assistants' own settings or to your launchd jobs. A deny beats an allow, so a tool on the list is refused even when a job lists it by mistake or your own settings allow it. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
 - **The shell rules are best-effort.** Each matches a command by how it starts, so `git -C . push` or `/bin/rm` gets past it, and the edit rules do not cover a shell command that writes a file. A job allowed `Bash` can do whatever a command can: allow it only to a job that needs it.
 - **Only user and project settings.** Each call loads `--setting-sources user,project`. Allow rules you saved for your own sessions in a project's `.claude/settings.local.json` would otherwise apply to the job too. Tested with Claude Code 2.1.287: a job allowed only `Read`, started in a folder whose local settings allowed `python3`, ran `python3`; with `user,project` it was refused. Loading `user` alone goes too far: the job no longer reads the workspace's `AGENTS.md`. Allow rules in `~/.claude/settings.json` and in the workspace's `.claude/settings.json` do reach a job; only the deny list overrides them.
 
@@ -55,9 +55,9 @@ Every call adds one line to `~/Library/Logs/garrick-jobs/ledger.jsonl`, beside t
 | `GARRICK_CAP_CALLS_DAY` | 48 | calls in the last 24 hours |
 | `GARRICK_CAP_CALLS_HOUR` | 12 | calls in the last hour |
 | `GARRICK_CAP_COST_DAY` | 20 | dollars in the last 24 hours |
-| `GARRICK_MAX_CALL_USD` | 5 | dollars for one Claude call, after which Claude stops |
+| `GARRICK_MAX_CALL_USD` | 5 | dollars for one Claude call, after which Claude stops and the call exits 8 |
 
-Set one to 0 to remove it. The cost is Claude Code's own estimate at list prices, so on a subscription it measures how much you use rather than what you pay. Codex reports neither turns nor cost; its lines leave them empty, and only the call limits hold it.
+Set one to 0 to remove it. The ledger line also names the model the call used, which the tier alone does not say. The cost is Claude Code's own estimate at list prices, so on a subscription it measures how much you use rather than what you pay. Codex reports neither turns nor cost; its lines leave them empty, and only the call limits hold it.
 
 ### Write your own job
 
@@ -74,10 +74,24 @@ if code != 0 or "SWEEP COMPLETE" not in answer:
 agent.report_items(handled)    # how much it did, for the idle alarm
 ```
 
+A job written in the shell does the same through `agent.py` on the command line:
+
+```sh
+jobs=/Users/<you>/Garrick/System/jobs
+out="$(mktemp)"
+python3 "$jobs/agent.py" requires gmail || exit $?
+python3 "$jobs/agent.py" run --tier sonnet --allow Read --allow Grep \
+  --prompt-file sweep-prompt.md --timeout 900 > "$out" || exit $?
+grep -qx 'SWEEP COMPLETE' "$out" || exit 3
+python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEMS <n>
+```
+
+`--prompt` takes the prompt itself instead of a file, and with neither it is read from standard input. `--timeout` stops the call, not the job, with exit 124, so a job keeps time for whatever it does after the call; the wrapper's own limit still holds the whole run. `agent.py items <n>` reports a count the script made itself, and `items-from` reports the number from the last line in a file that reads `ITEMS <n>` and nothing else. A file with no such line reports nothing, which is not the same as zero.
+
 - **Tiers, not model names**: `haiku`, `sonnet` or `opus`. Codex maps each through `GARRICK_CODEX_MODEL_<TIER>`.
 - **Name it in letters, digits, hyphens and underscores**, as in `whats-open`. Its log, heartbeat and lock files are named after it, and `agent` is taken by the lock that all assistant jobs share.
 - **End the prompt with a closing line to print**, and check for it. A run that stopped early must not look like a run that found nothing.
-- **Report how much it handled.** A job that runs cleanly for a week and does nothing gets flagged in its log and heartbeat.
+- **Report how much it handled.** A job that runs cleanly for a week and does nothing gets flagged in its log and heartbeat, and with a notifier set, you are told.
 - **One zone per call** when the job reads zone material. The [walls](../principles.md) still apply to anything it writes.
 - **Write outside the zones**, or into an inbox for `intake` to sort. A job decides nothing a session would have asked you about.
 
@@ -88,15 +102,81 @@ agent.report_items(handled)    # how much it did, for the idle alarm
 | 3 | The answer came back without its closing line; nothing was written |
 | 4 | The assistant could not sign in, twice, five minutes apart; the job did not run |
 | 6 | A connector the job needs is missing |
-| 8 | A spend limit was reached; nothing was called |
+| 8 | A spend limit was reached and nothing was called, or one call passed `GARRICK_MAX_CALL_USD` and was stopped |
 | 64 | The command was wrong, or Claude's deny profile is missing or not JSON; nothing was called |
 | 75 | The previous run still holds the lock, or another assistant job held the shared one for this run's whole time limit; this one was skipped |
-| 124 | The watchdog stopped a run that went past its time limit, 25 minutes by default |
+| 124 | The watchdog stopped a run that went past its time limit, 25 minutes by default, or a call passed its `--timeout` |
+| 127 | The job's command could not be started, or the assistant is not installed |
+
+A job may add codes of its own, such as 5 for a sweep that reached some of its sources and not all. List them in `GARRICK_QUIET_EXITS` if they are not news (see below).
+
+### Being told
+
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is up to you, and it can be both:
+
+- `GARRICK_NOTIFY=1` raises a macOS notification.
+- `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message. Its environment also holds `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle` or `message`), `GARRICK_JOB` and `GARRICK_EXIT`. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
+
+A notifier for a chat app or a mail relay is a few lines. This one appends to a file instead, which is enough to see the shape:
+
+```sh
+#!/bin/sh
+# notify.sh <title> <message>
+printf '%s  %s: %s (%s, exit %s)\n' "$(date '+%F %T')" "$1" "$2" "$GARRICK_JOB" "$GARRICK_EXIT" \
+  >> "$HOME/Library/Logs/garrick-jobs/notices.txt"
+```
+
+In the job's plist, set `GARRICK_NOTIFY_CMD` to `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command sends it.
+
+When a notice goes:
+
+- **A failure** notifies on its first run, and again whenever the exit code changes. While the same failure lasts it repeats at most once an hour, or every `GARRICK_ALERT_REPEAT` seconds. The notice says why in words: could not sign in to the assistant, twice; needs a connector the assistant does not have; reached a spending cap; timed out after so many seconds; or exited with a code after so many seconds. The same words go in the log.
+- **A recovery** always notifies: a job that was failing and works again says so, once.
+- **An idle job**, one that has reported doing nothing for `GARRICK_IDLE_DAYS` days, notifies, and again every `GARRICK_IDLE_DAYS` days while it stays idle. Set it to 0 to turn the alarm off.
+- **A quiet exit** never notifies. `GARRICK_QUIET_EXITS` lists the codes, such as `5` or `3, 5`. A quiet exit is still logged, and the heartbeat marks it `quiet`. It counts as a working run: its count feeds the idle alarm, and it ends a failure with a recovery notice.
+- **A skipped run** (75) never notifies.
+
+A job can send a line of its own, such as a morning digest, through the same notifier: `python3 System/jobs/job.py notify "Digest" "Three open, one due today."`. That line is not throttled.
+
+### Other settings
+
+Every setting is an environment variable, set in the job's plist under `EnvironmentVariables`. A value that is not a number keeps the default, with a line in the log saying so.
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `GARRICK_HARNESS` | `claude` | `claude` or `codex` |
+| `GARRICK_JOB_TIMEOUT` | 1500 | seconds before the watchdog stops a run; `--timeout` sets it for one job |
+| `GARRICK_LOGIN_RETRY_AFTER` | 300 | seconds between the two sign-in checks |
+| `GARRICK_IDLE_DAYS` | 7 | days of nothing before a job is idle, and between idle notices; 0 for no alarm |
+| `GARRICK_ALERT_REPEAT` | 3600 | seconds between notices while the same failure lasts |
+| `GARRICK_QUIET_EXITS` | none | exit codes that never notify, separated by commas or spaces |
+| `GARRICK_NOTIFY` | off | 1 for a macOS notification |
+| `GARRICK_NOTIFY_CMD` | none | a command given the title and the message |
+| `GARRICK_ENV_FILE` | none | a file of `KEY=value` lines read into the run first |
+| `GARRICK_JOBS_DIR` | `~/Library/Logs/garrick-jobs` | where logs, heartbeats, locks and the ledger go |
+| `GARRICK_WORKSPACE` | your home folder | where the command runs when there is no `--cwd` |
+
+`GARRICK_ENV_FILE` is for a setting you would rather not write into a plist, such as a sign-in token on a Mac nobody logs in to. Lines read as a shell reads them, `export` and quotes allowed. The log names the settings it read, never their values, and warns when other users of the Mac can read the file: `chmod 600` it. On a Mac you sign in to, leave it out: Claude's own sign-in carries the claude.ai connectors, and a token does not.
+
+### What the status page reads
+
+Everything a job leaves is in the jobs folder, named after the job. `python3 System/jobs/job.py status` prints it all as JSON, or for the jobs you name.
+
+| File | What it holds |
+|---|---|
+| `<job>.heartbeat.json` | The last run: `job`, `started`, `finished`, `finished_ts`, `exit`, `seconds`, `ok` (exit 0 or quiet), `quiet`, `reason` (the words for a failure, or empty), `items`, `idle_days`, `idle`, `agent` (whether it ran with `--agent`), `failing_since` |
+| `<job>.lock/` | Present while a run holds it. Its `until` file reads `<until> <pid> <started>`, in seconds since 1970. A lock past its `until`, or whose process has gone, is held by nobody |
+| `<job>.alert.json` | Present while the job is failing: `exit`, `since` (the first failed run) and `alerted` (the last notice) |
+| `<job>.idle-alert` | When the last idle notice went |
+| `<job>.log` | One line a run, `===== <finished>  <job>  exit <code>  (<seconds>s) =====`, with `  quiet` before the closing `=====` when the exit was quiet, or `skipped` in place of the exit |
+| `agent.lock/` | The lock all assistant jobs share, written the same way |
+
+`job.py status` gives each job `running`, `lock` (its `pid`, `started` and `until`), `heartbeat`, `failing` (`exit`, `since`, `notified`), `idle_notified` and `log`, and the shared lock as `assistant_lock`.
 
 ### Limits
 
 - The suite tests the runner, the wrapper, the caps and the example against fake assistants. The deny profile, the settings sources and the ledger's numbers were checked by hand against Claude Code 2.1.287. The permission mode was checked against Claude Code 2.1.288: a job allowed only `Read` and asked to edit a file was refused (the ledger lists `Edit` as denied) and the file was unchanged; a job allowed `WebFetch` was not given the tool, because the profile denies it. The read-only Codex command was checked against Codex 0.160.0, in a scratch folder: a shell command writing a file failed with "operation not permitted", and the run had no web search, browser, app or connector tools. The same request under the write sandbox and the user's configuration wrote the file and had all of them. Codex has not been run end to end through `job.py`.
-- The sign-in check asks the assistant whether it is signed in (`claude auth status`, `codex login status`), with no model call. A scheduled job's access to the login keychain can fail now and then; the check, and its one retry five minutes later, exist for that.
+- The sign-in check asks the assistant whether it is signed in (`claude auth status`, `codex login status`), with no model call. A scheduled job's access to the login keychain can fail now and then; the check, and its one retry five minutes later, exist for that. Only a definite no stops the job: a check that does not answer within 90 seconds, as when the Mac sleeps in the middle of it, lets the job run, with a line in the log.
 - A laptop that is asleep runs nothing. launchd runs a missed calendar job when the Mac wakes, and several overdue assistant jobs then take turns rather than fail each other's sign-in.
 
 ## See them on one page

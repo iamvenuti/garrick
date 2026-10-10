@@ -223,7 +223,7 @@ def is_speakable(name: str) -> Tuple[bool, str]:
     """Is `name` fit to be a zone, project or thread name said aloud?
 
     Letters, spaces, hyphens, apostrophes and `&` only, and a year as a word
-    of its own ("Identiverse 2027" is said "twenty twenty-seven"). No other
+    of its own ("Harbour Summit 2027" is said "twenty twenty-seven"). No other
     digits (dates and codes), no underscores, no other punctuation. Not
     empty, and not starting with `_`, which is reserved for templates.
     """

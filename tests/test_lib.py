@@ -61,7 +61,7 @@ class TestFrontmatter(unittest.TestCase):
 class TestSpeakable(unittest.TestCase):
     def test_good_names(self):
         for name in ("Work", "Acme Review", "Birch & Co", "O'Neill Pricing", "Go-to-market", "Café Opening",
-                     "Identiverse 2027", "Summit 2026 Booth"):
+                     "Harbour Summit 2027", "Summit 2026 Booth"):
             self.assertEqual((True, ""), lib.is_speakable(name), name)
 
     def test_bad_names(self):

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-10
+
+The status page, its Mac app and its actions do much more: the full Todo list, scheduled jobs that say when they are running, idle or quietly fine, a cost chart, an Obsidian tab with working buttons, one cmux tab per thread through the new `desk`, and an *Ask* preview that acts on what you type. Scheduled jobs tell you through a command of yours, `check.py` reads far more of the rules, and a year may stand in a name.
+
 ### Added
 
 - Scheduled jobs tell you where you choose: `GARRICK_NOTIFY_CMD` runs a command of yours with a title and a message, beside or instead of the macOS notification of `GARRICK_NOTIFY=1`. See [Being told](docs/extras/scheduled-jobs.md#being-told).
@@ -46,7 +50,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
-- A year standing as a word of its own is now part of a speakable name: "Identiverse 2027" is said "twenty twenty-seven", so a recurring event can carry its year. Any other digit is still refused, by the scaffold and by `check.py`, and `System/rules.md` says so.
+- A year standing as a word of its own is now part of a speakable name: "Harbour Summit 2027" is said "twenty twenty-seven", so a recurring event can carry its year. Any other digit is still refused, by the scaffold and by `check.py`, and `System/rules.md` says so.
 - The idle notice repeats every `GARRICK_IDLE_DAYS` days while a job stays idle, rather than on every run, and `GARRICK_IDLE_DAYS=0` turns the alarm off. `GARRICK_NOTIFY=1` follows the same throttle: a lasting failure no longer raises a notification on every run.
 - A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
 - `agent.py` refuses a Claude call, with exit 64 and nothing called, when its deny profile has lost an entry in `CORE_DENY`: sending, replying to and forwarding mail, binning mail and Drive files, making and deleting calendar events, sharing a Drive file, editing or commenting on a Notion page, and `curl`, `git push` and `rm`. A test holds the shipped profile to the same set.
@@ -71,24 +75,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 - A scheduled job stopped mid-run, by `launchctl bootout`, a plist loaded again or a shutdown, now stops its command too, lets go of its locks and leaves a heartbeat saying it was stopped, with exit 143. Before, the command ran on with no watchdog and the next run started beside it. A command left running by a `job.py` killed outright still holds the job's lock and the shared assistant lock, and is stopped by the first fire after its time is up.
 - A run caught by a closed lid no longer loses its lock when the Mac wakes past the lock's time: a lock stands while its `job.py` lives, so the overdue fire is skipped instead of running a second copy. A process number reused by another process no longer holds a lock.
 - `job.py --timeout 0`, or less, is refused with exit 64 instead of timing out every run; `GARRICK_JOB_TIMEOUT=0` keeps the default, with a line in the log.
-- Settings in `GARRICK_ENV_FILE`, such as `GARRICK_JOB_TIMEOUT`, `GARRICK_QUIET_EXITS` and `GARRICK_JOBS_DIR`, now take effect: the file is read before them, not after.
 - A job's command killed by a signal exits 128 plus its number, as a shell reports it (137 for SIGKILL), and the reason names the signal. It exited 241 or the like before.
 - A job's command that exits 4 or 124 itself reads "exited 4", not "could not sign in" or "timed out": those words now come only from `job.py`'s own sign-in check and watchdog.
 - The zone guard follows links: a file reached through a link in the project to a folder in another zone is asked about, as that zone.
 - The zone guard ignores case on a disk that does, as a Mac's does: `/users/...` or `zones/work/...` no longer slips past it, and the session's own project in another case is no longer asked about.
-- desk checks each tab again the moment it sends a wrap. A tab that started a turn after the shutdown's first check, or stopped on a permission question, gets nothing typed into it, where before the wrap's Enter could answer the question. "Close for the day" wraps the rest, then stops with cmux running and names the tab; `close --wrap` leaves it open.
-- "Start the day" types a resume command only into a tab it brought back itself, and only when a shell alone holds the tab. Before, it could type into a tab running an editor or a password prompt, resume with cmux already running, or give one session's folder to another tab of the same name. Its record of the last quit is used once, and ignored when cmux has started a session since.
-- `desk close` no longer takes a part of a tab's name shorter than four letters, such as "it", or one two tabs share: it asks which tab.
-- Text desk types into a tab is kept to one line, so a newline in a prompt or a folder's name cannot send it early.
-- A Claude Code session whose turn ends with only a `stop_hook_summary` record, as a run with no terminal writes, no longer reads as working for ever; a turn a session starts itself, on a task's notice, reads as working until it ends.
 - Two status page actions at once, from two quick clicks or a click and Ask, could lose one of them: the second read the note before the first was committed, or found git busy and put back a version without the first. Each now waits for the zone's lock. A commit the wall check refuses no longer overwrites an edit you made in Obsidian meanwhile, and the rekey map keeps every update.
 - Switching the preview `page-actions` off now stops the buttons at once. Before, a page built while it was on went on acting until it was rebuilt. Ask's park, wake and add need the flag too.
 - A wall check that hangs, or a commit waiting for a signing passphrase, no longer leaves a status page action hanging with the note edited and nothing committed: git is stopped after 60 seconds and the note put back.
 - A fault in `page_action.py` other than a refusal, such as a file it cannot read, now answers in JSON and is logged, instead of a traceback the app shows as "That did not work."
-- Ask refused every request for up to three hours after a Claude session spent its budget. The session is now stopped on any error, and the next request starts a new one.
-- Ask could start two servers at once, leaving one with its session running; a client that closed mid-answer stopped the server; and a server that never answered left the panel at "…". One server per workspace now holds a lock, a closed client costs only its answer, and the request and the app each stop waiting and say so.
 - *Run now* judged a job's lock by its time alone, so after the Mac slept it could start a job that was still running. It now asks `job.py`, where the jobs extra sits beside the page, and a live run holds its lock.
-- The Ask panel closed when an app it should have opened was missing, and opened apps switched off under *Opening a thread* in Settings. It now stays open unless something opened, and refuses an app switched off.
 
 ## [0.14.0] - 2026-10-10
 

@@ -1986,8 +1986,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         e = {"n": name, "w": say, "u": link(note)}
         if folders:
             e["f"] = str(note.parent)
-        if desk is not None:
-            e["s"] = session_in(desk, note.parent)
+        live = session_in(desk, note.parent)
+        if live:
+            e["s"] = live
         return e
 
     zones = []

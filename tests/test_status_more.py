@@ -363,7 +363,7 @@ class TestSessions(StatusCase):
         menu = json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1))
         work = {p["n"]: p for z in menu["zones"] if z["z"] == "Work" for p in z["p"]}
         self.assertEqual(("working", "working"), (work["Acme Review"]["s"], work["Acme Review"]["t"][0]["s"]))
-        self.assertEqual(("idle", None), (work["Birch Entry"]["s"], work["Birch Entry"]["t"][0]["s"]))
+        self.assertEqual(("idle", None), (work["Birch Entry"]["s"], work["Birch Entry"]["t"][0].get("s")))
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(3, len(state["live"]))          # Pricing's folder, and the two projects' folders above a session
         flags(self.root, **{"menu-bar": True})

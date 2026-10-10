@@ -988,6 +988,52 @@ class StopAndLockTest(FakeAssistants):
                                               for m in LOGLINE.finditer((self.jobs / "sweep.log").read_text())])
         self.assertFalse((self.jobs / "sweep.alert.json").exists())     # a stop is no failure to notify
 
+    def brief_run(self, name, *flags, ignore_hup=False):
+        """job.py running a command that says it has started, then ends well
+        after two seconds; with `ignore_hup`, started as `nohup` starts it."""
+        started = self.tmp / ("%s.started" % name)
+        script = ("import os, time; open(%r, 'w').write(str(os.getsid(0))); time.sleep(2)" % str(started))
+        argv = [sys.executable, str(JOBS / "job.py"), name] + list(flags) + ["--cwd", str(self.tmp), "--", sys.executable, "-c", script]
+        hup = (lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN)) if ignore_hup else None
+        proc = subprocess.Popen(argv, env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=hup)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc, started
+
+    def wait_for(self, path, within=30):
+        deadline = time.time() + within
+        while not path.exists() or not path.read_text():
+            self.assertLess(time.time(), deadline, "%s never came" % path.name)
+            time.sleep(0.05)
+
+    def test_a_run_under_nohup_outlives_a_hangup(self):
+        # A session hook starts a job with nohup; the hook's end sends SIGHUP, which nohup ignores and so must job.py.
+        proc, started = self.brief_run("sweep", ignore_hup=True)
+        self.wait_for(started)
+        proc.send_signal(signal.SIGHUP)
+        self.assertEqual(0, proc.wait(timeout=30))
+        beat = json.loads((self.jobs / "sweep.heartbeat.json").read_text())
+        self.assertEqual((0, True, None), (beat["exit"], beat["ok"], beat["reason"]))
+        self.assertEqual([("sweep", "0")], [(m.group(2), m.group(3)) for m in LOGLINE.finditer((self.jobs / "sweep.log").read_text())])
+
+    def test_a_hangup_still_stops_a_run_that_heeds_it(self):
+        proc, started = self.brief_run("sweep")
+        self.wait_for(started)
+        proc.send_signal(signal.SIGHUP)
+        self.assertEqual(129, proc.wait(timeout=30))
+        self.assertIn("was stopped by SIGHUP", json.loads((self.jobs / "sweep.heartbeat.json").read_text())["reason"])
+
+    def test_detach_runs_on_in_a_session_of_its_own(self):
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "sweep", "--detach", "--cwd", str(self.tmp), "--",
+                            sys.executable, "-c", "import os; open('session', 'w').write(str(os.getsid(0)))"],
+                           env=dict(os.environ), capture_output=True, text=True, timeout=30)
+        self.assertEqual((0, ""), (r.returncode, r.stderr))                    # back at once, nothing said
+        beat = self.jobs / "sweep.heartbeat.json"
+        self.wait_for(beat)
+        self.assertEqual(0, json.loads(beat.read_text())["exit"])
+        self.assertNotEqual(os.getsid(0), int((self.tmp / "session").read_text()))   # not the starter's session
+        self.assertNotIn("--detach", (self.jobs / "sweep.log").read_text())
+        self.assertEqual(64, self.job("bad name!", "--detach", "--", "true").returncode)   # a mistake is said before it goes
+
     def test_a_command_left_behind_by_a_killed_job_py_still_holds_the_lock(self):
         proc, command, child = self.start_sleeper("sweep", "--agent")
         proc.kill()                                                    # no handler runs for SIGKILL

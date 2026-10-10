@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Added
 
 - The Mac app's menu bar menu has a field at its top, as the panel has: typing finds a project or thread, Return opens the first found, and with nothing found it asks, through the Ask box with the preview `ask` on or your assistant with it off.
+- `job.py --detach` starts the run in a session of its own and returns at once, for a hook that starts a job and should neither wait for it nor take it down when it ends.
 - With the preview `ask` on, ⌘G opens the Ask box from any app, not only with Garrick's window in front. A hotkey you set to ⌘G yourself keeps opening the menu or the panel.
 
 ### Changed
@@ -19,6 +20,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Fixed
 
 - The status page's *Scheduled jobs* card lists a job whose plist runs `job.py` but which has not run yet, with its schedule and *not run yet*, in a neutral row. It listed only jobs with a heartbeat, so a new job was invisible until its first run.
+- `job.py` leaves alone a stop signal that was ignored when it started. Under `nohup`, as a session hook starts a job, the end of the hook sent SIGHUP and stopped the run; it now runs on and writes its own end line and heartbeat.
 - Asking from the menu bar icon: its menu had no way to ask, and the Ask box opened only from the window or the hotkey. It now runs `ask.py` exactly as the panel does.
 
 ## [0.15.1] - 2026-10-10

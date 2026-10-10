@@ -32,7 +32,12 @@ everything a run needs when nobody is watching it:
    process is itself asked to stop (SIGTERM from `launchctl bootout` or a
    shutdown, SIGHUP, SIGINT), it stops the command's process group first,
    lets go of its locks, and leaves a heartbeat saying so, with exit 128
-   plus the signal's number, as a shell reports it: 143 for SIGTERM.
+   plus the signal's number, as a shell reports it: 143 for SIGTERM. A
+   signal already ignored when job.py starts stays ignored, so a run started
+   under `nohup`, as a session hook starts one, outlives the hook. A hook
+   whose end stops its whole process group stops the run with it; started
+   with `--detach`, job.py runs in a session of its own and the hook goes
+   on at once.
 5. **With `--agent`**, one assistant job at a time across all jobs: headless
    sessions started in the same minute, as happens when a laptop wakes with
    several jobs overdue, can fail each other's sign-in. A run that waits its
@@ -172,6 +177,7 @@ class Stopped(Exception):
 
 _handling = False
 _deferred: List[int] = []
+_caught: Tuple[int, ...] = ()      # the stop signals this run handles: those not ignored when it started
 
 
 def _stop(signum, frame):
@@ -188,7 +194,7 @@ def catch_signals() -> None:
     let go of its locks. A stop that came while they were held is raised now."""
     if not _handling:
         return
-    for sig in STOP_SIGNALS:
+    for sig in _caught:
         signal.signal(sig, _stop)
     if _deferred:
         raise Stopped(_deferred.pop(0))
@@ -201,24 +207,29 @@ def hold_signals() -> None:
     SIG_IGN, so the child does not inherit a deaf ear."""
     if not _handling:
         return
-    for sig in STOP_SIGNALS:
+    for sig in _caught:
         signal.signal(sig, _defer)
 
 
 def start_handling() -> Optional[dict]:
     """Catch the stop signals for the length of a run; the handlers there
-    were before, for stop_handling. None where signals cannot be caught, off
-    the main thread."""
-    global _handling
+    were before, for stop_handling. A signal ignored when the run starts is
+    left ignored: `nohup` ignores SIGHUP so that the end of a terminal, or
+    of the session hook that started the run, is no stop, and a shell ignores
+    SIGINT for what it starts in the background. None where signals cannot
+    be caught, off the main thread."""
+    global _handling, _caught
     try:
         previous = {sig: signal.getsignal(sig) for sig in STOP_SIGNALS}
-        for sig in STOP_SIGNALS:
+        caught = tuple(sig for sig in STOP_SIGNALS if previous[sig] != signal.SIG_IGN)
+        for sig in caught:
             signal.signal(sig, _stop)
     except ValueError:
         return None
+    _caught = caught
     _handling = True
     del _deferred[:]
-    return previous
+    return {sig: previous[sig] for sig in caught}
 
 
 def stop_handling(previous: Optional[dict]) -> None:
@@ -848,7 +859,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   file=sys.stderr)
         return 0
     if "--" not in argv:
-        print("usage: job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] -- <command> [args...]\n"
+        print("usage: job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] [--detach] -- <command> [args...]\n"
               "       job.py status [<name>...]\n"
               "       job.py notify <title> <message>\n"
               "       job.py check-scripts <script or plist>...", file=sys.stderr)
@@ -859,6 +870,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--agent", action="store_true", help="the job calls an assistant")
     ap.add_argument("--cwd")
     ap.add_argument("--timeout", type=float, help="seconds before the watchdog stops the run (1500)")
+    ap.add_argument("--detach", action="store_true",
+                    help="run in a session of its own and return at once, as a session hook wants")
     args = ap.parse_args(argv[:split])
     cmd = argv[split + 1:]
     if not cmd:
@@ -872,6 +885,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("job.py: --timeout is %g; give the seconds a run may take, above zero" % args.timeout,
               file=sys.stderr)
         return agent.EXIT_USAGE
+    if args.detach:
+        return detach([a for a in argv[:split] if a != "--detach"] + argv[split:])
     # The env file first: every setting below may come from it.
     env_lines = load_env_file()
     warnings: List[str] = []
@@ -1004,6 +1019,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             release(agent_lock)
         release(lock)
         stop_handling(previous)
+
+
+def detach(argv: List[str]) -> int:
+    """The same run, started again in a session and process group of its own,
+    with nothing on its terminal: what started it, a session hook say, can
+    end and take its whole process group with it, and the run goes on. Its
+    log and heartbeat say how it went. 0 once it has started."""
+    try:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve())] + argv, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        print("job.py: could not start the run on its own: %s" % exc, file=sys.stderr)
+        return EXIT_START
+    return 0
 
 
 def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool) -> int:

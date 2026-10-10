@@ -14,6 +14,7 @@ import json
 import os
 import plistlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -687,12 +688,30 @@ class NoticeTest(FakeAssistants):
 
     def test_reasons_in_words(self):
         with mock.patch.dict(os.environ, {"GARRICK_HARNESS": "codex"}):
-            self.assertEqual("could not sign in to codex, twice", job.describe(4, 3, 1500))
+            self.assertEqual("could not sign in to codex, twice", job.describe(4, 3, 1500, "login"))
             self.assertEqual("needs a connector codex does not have; see the log", job.describe(6, 3, 1500))
         self.assertIn("spending cap", job.describe(8, 3, 1500))
-        self.assertEqual("timed out and was stopped after 1500s", job.describe(124, 1500, 1500))
-        self.assertIn("could not start", job.describe(127, 0, 1500))
+        self.assertEqual("timed out and was stopped after 1500s", job.describe(124, 1500, 1500, "timeout"))
+        self.assertIn("could not start", job.describe(127, 0, 1500, "start"))
         self.assertEqual("exited 2 after 41s", job.describe(2, 41.4, 1500))
+        self.assertEqual("was stopped by SIGKILL after 3s (exit 137)", job.describe(137, 3, 1500, "signal"))
+
+    def test_a_commands_own_exit_is_not_the_wrappers(self):
+        # A job that exits 4 or 124 itself did not fail job.py's sign-in check or meet its watchdog.
+        for code in (4, 124, 127):
+            self.assertEqual(code, self.job("sweep%d" % code, code).returncode)
+            self.assertRegex(self.beat("sweep%d" % code)["reason"], r"^exited %d after \d+s$" % code)
+            self.assertIn("sweep%d exited %d after" % (code, code), self.notices()[-1]["message"])
+
+    def test_a_command_killed_by_a_signal_exits_as_a_shell_says(self):
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "sweep", "--",
+                            sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"],
+                           env=dict(os.environ), capture_output=True, text=True)
+        self.assertEqual(137, r.returncode)
+        beat = self.beat("sweep")
+        self.assertEqual(137, beat["exit"])
+        self.assertIn("was stopped by SIGKILL", beat["reason"])
+        self.assertIn("exit 137  (", (self.jobs / "sweep.log").read_text())
 
     def test_a_timeout_says_so(self):
         r = subprocess.run([sys.executable, str(JOBS / "job.py"), "slow", "--timeout", "1", "--",
@@ -821,7 +840,7 @@ class JobExtrasTest(FakeAssistants):
         self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(3)")
         lock = self.jobs / "sweep.lock"
         lock.mkdir()
-        (lock / "until").write_text("%d %d %d\n" % (time.time() + 600, os.getpid(), time.time() - 30))
+        (lock / "until").write_text("%d %d %d\n" % (time.time() + 600, os.getpid(), time.time()))
         r = self.job("status")
         self.assertEqual(0, r.returncode, r.stderr)
         got = json.loads(r.stdout)
@@ -875,6 +894,186 @@ class JobExtrasTest(FakeAssistants):
         self.assertEqual(0, code)
         self.assertTrue(out.exists())
         self.assertIn("did not answer the sign-in check", (self.jobs / "tidy.log").read_text())
+
+
+# A command that starts a process of its own, says both pids in a file, and waits.
+SLEEPER = r'''
+import os, subprocess, sys, time
+kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+with open(sys.argv[1] + ".tmp", "w") as f:
+    f.write("%d %d" % (os.getpid(), kid.pid))
+os.rename(sys.argv[1] + ".tmp", sys.argv[1])
+time.sleep(120)
+'''
+
+
+def gone(pid, within=10.0):
+    """Whether `pid` has gone, waiting up to `within` seconds for it to."""
+    deadline = time.time() + within
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+class StopAndLockTest(FakeAssistants):
+    """job.py stopped mid-run, killed outright, or caught by a sleeping Mac."""
+
+    def job(self, *args, env=None):
+        return subprocess.run([sys.executable, str(JOBS / "job.py")] + list(args),
+                              env=dict(os.environ, **(env or {})), capture_output=True, text=True)
+
+    def start_sleeper(self, name, *flags):
+        """job.py running SLEEPER, and the pids of its command and the command's own child."""
+        script = self.tmp / "sleeper.py"
+        script.write_text(SLEEPER, encoding="utf-8")
+        pids = self.tmp / ("%s.pids" % name)
+        proc = subprocess.Popen([sys.executable, str(JOBS / "job.py"), name] + list(flags)
+                                + ["--cwd", str(self.tmp), "--", sys.executable, str(script), str(pids)],
+                                env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        deadline = time.time() + 30
+        while not pids.exists():
+            self.assertLess(time.time(), deadline, "the command never started")
+            time.sleep(0.1)
+        command, child = (int(w) for w in pids.read_text().split())
+        self.addCleanup(self.kill_group, command)
+        self.addCleanup(self.kill_pid, child)
+        return proc, command, child
+
+    @staticmethod
+    def kill_group(group):
+        try:
+            os.killpg(group, 9)
+        except OSError:
+            pass
+
+    @staticmethod
+    def kill_pid(pid):
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+    def live_process(self, new_group=False):
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                                start_new_session=new_group)
+        self.addCleanup(lambda: (proc.kill(), proc.wait()))
+        return proc
+
+    def dead_pid(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        return proc.pid
+
+    def test_a_stopped_run_stops_its_command_and_lets_go(self):
+        # launchctl bootout sends SIGTERM to job.py alone: the command, in a session of its own, must go too.
+        proc, command, child = self.start_sleeper("sweep", "--agent")
+        self.assertTrue((self.jobs / "agent.lock").exists())
+        proc.send_signal(signal.SIGTERM)
+        self.assertEqual(143, proc.wait(timeout=30))
+        self.assertTrue(gone(command), "the command outlived job.py")
+        self.assertTrue(gone(child), "the command's own child outlived job.py")
+        self.assertFalse((self.jobs / "sweep.lock").exists())
+        self.assertFalse((self.jobs / "agent.lock").exists())
+        beat = json.loads((self.jobs / "sweep.heartbeat.json").read_text())
+        self.assertEqual((143, False), (beat["exit"], beat["ok"]))
+        self.assertIn("was stopped by SIGTERM", beat["reason"])
+        self.assertEqual([("sweep", "143")], [(m.group(2), m.group(3))
+                                              for m in LOGLINE.finditer((self.jobs / "sweep.log").read_text())])
+        self.assertFalse((self.jobs / "sweep.alert.json").exists())     # a stop is no failure to notify
+
+    def test_a_command_left_behind_by_a_killed_job_py_still_holds_the_lock(self):
+        proc, command, child = self.start_sleeper("sweep", "--agent")
+        proc.kill()                                                    # no handler runs for SIGKILL
+        proc.wait(timeout=30)
+        self.assertFalse(gone(command, within=0.5))                    # the command runs on, with no watchdog
+        r = self.job("sweep", "--", sys.executable, "-c", "print('second copy')")
+        self.assertEqual(75, r.returncode)
+        log = (self.jobs / "sweep.log").read_text()
+        self.assertNotIn("second copy", log)
+        self.assertIn("skipped: the previous run's command, process group %d, is still going" % command, log)
+        # The shared lock stands as well: no second assistant beside the one still running.
+        r = self.job("brief", "--agent", "--timeout", "1", "--cwd", str(self.tmp), "--",
+                     sys.executable, "-c", "print('second assistant')")
+        self.assertEqual(75, r.returncode)
+        self.assertTrue(json.loads(self.job("status", "sweep").stdout)["jobs"][0]["running"])
+        self.kill_group(command)
+        self.kill_pid(child)
+        self.assertTrue(gone(command))
+        self.assertEqual(0, self.job("sweep", "--", sys.executable, "-c", "pass").returncode)
+
+    def test_a_command_left_behind_past_its_time_is_stopped(self):
+        left = self.live_process(new_group=True)
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        now = time.time()
+        (lock / "until").write_text("%d %d %d %d %d\n" % (now - 60, self.dead_pid(), now - 3600, left.pid, now))
+        r = self.job("tidy", "--", sys.executable, "-c", "print('ran')")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIsNotNone(left.poll())
+        log = (self.jobs / "tidy.log").read_text()
+        self.assertIn("stopped process group %d" % left.pid, log)
+        self.assertIn("ran", log)
+
+    def test_a_lock_outlives_its_time_while_its_holder_lives(self):
+        # The Mac slept through the run: the clock says the lock is old, but the run that holds it is still going.
+        holder = self.live_process()
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        (lock / "until").write_text("%d %d %d\n" % (time.time() - 3600, holder.pid, time.time()))
+        r = self.job("tidy", "--", sys.executable, "-c", "print('ran')")
+        self.assertEqual(75, r.returncode)
+        self.assertNotIn("ran", (self.jobs / "tidy.log").read_text())
+        self.assertIsNotNone(job.lock_state(lock))
+
+    def test_a_pid_now_used_by_another_process_holds_nothing(self):
+        later = self.live_process()                                     # started after the lock's record says
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        (lock / "until").write_text("%d %d %d\n" % (time.time() + 3600, later.pid, time.time() - 3600))
+        self.assertIsNone(job.lock_state(lock))
+        self.assertEqual(0, self.job("tidy", "--", sys.executable, "-c", "pass").returncode)
+        self.assertIsNone(later.poll())                                 # and is left alone
+
+    def test_a_timeout_of_zero_or_less(self):
+        for given in ("0", "-5", "nan"):
+            r = self.job("tidy", "--timeout", given, "--", sys.executable, "-c", "print('ran')")
+            self.assertEqual(agent.EXIT_USAGE, r.returncode, given)
+            self.assertIn("--timeout", r.stderr)
+        self.assertFalse((self.jobs / "tidy.log").exists())
+        r = self.job("tidy", "--", sys.executable, "-c", "print('ran')", env={"GARRICK_JOB_TIMEOUT": "0"})
+        self.assertEqual(0, r.returncode, r.stderr)
+        log = (self.jobs / "tidy.log").read_text()
+        self.assertIn("job: GARRICK_JOB_TIMEOUT is '0', not a number of seconds above zero; using 1500", log)
+        self.assertIn("ran", log)
+
+    def test_the_env_file_can_hold_every_setting(self):
+        elsewhere = self.tmp / "other-jobs"
+        envfile = self.tmp / "jobs.env"
+        envfile.write_text("GARRICK_JOBS_DIR=%s\nGARRICK_QUIET_EXITS=5\nGARRICK_JOB_TIMEOUT=1\n" % elsewhere)
+        envfile.chmod(0o600)
+        r = self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(5)",
+                     env={"GARRICK_ENV_FILE": str(envfile)})
+        self.assertEqual(5, r.returncode)
+        beat = json.loads((elsewhere / "tidy.heartbeat.json").read_text())
+        self.assertTrue(beat["quiet"])
+        self.assertIn("job: read GARRICK_JOBS_DIR, GARRICK_JOB_TIMEOUT, GARRICK_QUIET_EXITS from",
+                      (elsewhere / "tidy.log").read_text())
+        self.assertFalse((self.jobs / "tidy.log").exists())
+        started = time.time()
+        r = self.job("slow", "--", sys.executable, "-c", "import time; time.sleep(30)",
+                     env={"GARRICK_ENV_FILE": str(envfile)})
+        self.assertEqual(124, r.returncode)
+        self.assertLess(time.time() - started, 20)
 
 
 class WhatsOpenTest(FakeAssistants):

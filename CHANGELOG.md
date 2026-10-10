@@ -65,6 +65,12 @@ What changed in each release. Dates are when the release was tagged. The format 
 - *Run now* said a job was running when its last run still held the lock, and the new run only skipped. It now says the job is already running.
 - `check.py` no longer reads a git repository of its own inside a project, such as code checked out beside the notes about it, as the zone's files: its templates are not an unfinished install and its wording crosses no wall.
 - A placeholder quoted as code in a note (`` `{{ZONE}}` ``, or in a fenced block) is no longer reported as unfilled.
+- A scheduled job stopped mid-run, by `launchctl bootout`, a plist loaded again or a shutdown, now stops its command too, lets go of its locks and leaves a heartbeat saying it was stopped, with exit 143. Before, the command ran on with no watchdog and the next run started beside it. A command left running by a `job.py` killed outright still holds the job's lock and the shared assistant lock, and is stopped by the first fire after its time is up.
+- A run caught by a closed lid no longer loses its lock when the Mac wakes past the lock's time: a lock stands while its `job.py` lives, so the overdue fire is skipped instead of running a second copy. A process number reused by another process no longer holds a lock.
+- `job.py --timeout 0`, or less, is refused with exit 64 instead of timing out every run; `GARRICK_JOB_TIMEOUT=0` keeps the default, with a line in the log.
+- Settings in `GARRICK_ENV_FILE`, such as `GARRICK_JOB_TIMEOUT`, `GARRICK_QUIET_EXITS` and `GARRICK_JOBS_DIR`, now take effect: the file is read before them, not after.
+- A job's command killed by a signal exits 128 plus its number, as a shell reports it (137 for SIGKILL), and the reason names the signal. It exited 241 or the like before.
+- A job's command that exits 4 or 124 itself reads "exited 4", not "could not sign in" or "timed out": those words now come only from `job.py`'s own sign-in check and watchdog.
 
 ## [0.14.0] - 2026-10-10
 

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-10
+
+The Mac app's menu bar menu finds and asks as the panel does, ⌘G asks from any app, the panel opens folded and remembers, and a job that has not run yet still shows on the page.
+
 ### Added
 
 - The Mac app's menu bar menu has a field at its top, as the panel has: typing finds a project or thread, Return opens the first found, and with nothing found it asks, through the Ask box with the preview `ask` on or your assistant with it off.

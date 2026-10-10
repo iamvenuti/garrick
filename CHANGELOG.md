@@ -81,6 +81,13 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `desk close` no longer takes a part of a tab's name shorter than four letters, such as "it", or one two tabs share: it asks which tab.
 - Text desk types into a tab is kept to one line, so a newline in a prompt or a folder's name cannot send it early.
 - A Claude Code session whose turn ends with only a `stop_hook_summary` record, as a run with no terminal writes, no longer reads as working for ever; a turn a session starts itself, on a task's notice, reads as working until it ends.
+- Two status page actions at once, from two quick clicks or a click and Ask, could lose one of them: the second read the note before the first was committed, or found git busy and put back a version without the first. Each now waits for the zone's lock. A commit the wall check refuses no longer overwrites an edit you made in Obsidian meanwhile, and the rekey map keeps every update.
+- Switching the preview `page-actions` off now stops the buttons at once. Before, a page built while it was on went on acting until it was rebuilt. Ask's park, wake and add need the flag too.
+- A wall check that hangs, or a commit waiting for a signing passphrase, no longer leaves a status page action hanging with the note edited and nothing committed: git is stopped after 60 seconds and the note put back.
+- A fault in `page_action.py` other than a refusal, such as a file it cannot read, now answers in JSON and is logged, instead of a traceback the app shows as "That did not work."
+- Ask refused every request for up to three hours after a Claude session spent its budget. The session is now stopped on any error, and the next request starts a new one.
+- Ask could start two servers at once, leaving one with its session running; a client that closed mid-answer stopped the server; and a server that never answered left the panel at "…". One server per workspace now holds a lock, a closed client costs only its answer, and the request and the app each stop waiting and say so.
+- The Ask panel closed when an app it should have opened was missing, and opened apps switched off under *Opening a thread* in Settings. It now stays open unless something opened, and refuses an app switched off.
 
 ## [0.14.0] - 2026-10-10
 

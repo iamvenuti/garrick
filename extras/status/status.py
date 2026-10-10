@@ -1620,12 +1620,13 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     lists in GARRICK_QUIET_EXITS, is fine; a failure is said in the
     heartbeat's own `reason` when it has one. An idle job (the heartbeat's
     `idle`; from an older job.py, `idle_days` past the plist's
-    GARRICK_IDLE_DAYS, 7) is a warning. A job whose lock is held is running now."""
-    if not folder.is_dir():
-        return []
+    GARRICK_IDLE_DAYS, 7) is a warning. A job whose lock is held is running now.
+    A job whose plist runs job.py but which has no heartbeat yet, never run or
+    not since its plist was added, gets a row too: neutral, "not run yet",
+    with the schedule its plist gives."""
     sched = launchd_jobs() if sched is None else sched
     out = []
-    for beat in sorted(folder.glob("*.heartbeat.json")):
+    for beat in sorted(folder.glob("*.heartbeat.json")) if folder.is_dir() else []:
         try:
             hb = json.loads(beat.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1665,7 +1666,14 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
                     "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log"),
                     "quiet": tuple(sorted(quiet)), "running": lock_held(folder / (name + ".lock"), now),
                     "idle": state == "warning" and status.startswith("idle")})
-    return out
+    beaten = {j["name"] for j in out}
+    for name, plist in sched.items():
+        if name not in beaten:
+            out.append({"name": name, "when": None, "seconds": None, "state": "none", "status": "not run yet",
+                        "schedule": plist["schedule"], "runs": history(folder, name, now), "log": folder / (name + ".log"),
+                        "quiet": quiet_exits(plist.get("env", {})), "running": lock_held(folder / (name + ".lock"), now),
+                        "idle": False})
+    return sorted(out, key=lambda j: j["name"].casefold())
 
 
 CAP_VARS = (("calls_day", "GARRICK_CAP_CALLS_DAY"), ("calls_hour", "GARRICK_CAP_CALLS_HOUR"), ("cost_day", "GARRICK_CAP_COST_DAY"))
@@ -3078,7 +3086,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     folder = folder or jobs_dir(agent)
     link = Links(ws, vault, vaults)
     T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
-    sched = launchd_jobs() if folder.is_dir() else {}     # the plists matter only to the jobs extra
+    sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
 
@@ -3348,10 +3356,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now, j["quiet"]))
             last = age(j["when"], now) if j["when"] else "never"
             said = "running now" if j["running"] else j["status"]      # its lock is held: a run is under way
+            # a job not run yet is neither fine nor wrong: a hollow mark, and out of "Only what needs attention"
             rows.append('<div class="row" data-ok="%d">%s<div class="name"><a href="%s">%s</a><small>%s</small></div><div class="strip">%s</div>'
-                        '<div class="ink2 num" data-tip="took %ss">%s</div><span class="status%s" data-tip="%s">%s%s</span></div>'
-                        % (j["state"] == "good", ICON[j["state"]], E(link(j["log"])), E(j["name"]), E(j["schedule"]), strip,
-                           E(str(j["seconds"])), E(last), " running" if j["running"] else "",
+                        '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>'
+                        % (j["state"] in ("good", "none"), ICON[j["state"]], E(link(j["log"])), E(j["name"]), E(j["schedule"]), strip,
+                           ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
                            E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
                                ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                                % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))

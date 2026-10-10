@@ -18,6 +18,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- The status page's *Scheduled jobs* card lists a job whose plist runs `job.py` but which has not run yet, with its schedule and *not run yet*, in a neutral row. It listed only jobs with a heartbeat, so a new job was invisible until its first run.
 - Asking from the menu bar icon: its menu had no way to ask, and the Ask box opened only from the window or the hotkey. It now runs `ask.py` exactly as the panel does.
 
 ## [0.15.1] - 2026-10-10

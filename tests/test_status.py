@@ -92,6 +92,10 @@ class StatusCase(unittest.TestCase):
         self.jobs = base / "jobs"
         self.jobs.mkdir()
         self.now = dt.datetime.now()
+        # This machine's own LaunchAgents stay out: a test that wants plists writes them here.
+        agents = mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents")
+        agents.start()
+        self.addCleanup(agents.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1038,6 +1042,26 @@ class TestJobs(StatusCase):
         self.assertEqual(("monthly day 1, 09:00", dt.timedelta(days=32)), (got["monthly"]["schedule"], got["monthly"]["late"]))
         self.assertEqual(("weekly Mon 07:00, Thu 07:00", dt.timedelta(days=8)), (got["weekly"]["schedule"], got["weekly"]["late"]))
         self.assertEqual(("daily 23:30", dt.timedelta(days=2)), (got["daily"]["schedule"], got["daily"]["late"]))
+
+    def test_a_job_not_run_yet_has_a_neutral_row(self):
+        self.heartbeat(0)
+        with self.plists(brief={"StartCalendarInterval": {"Hour": 7}}, sweep={"StartCalendarInterval": {"Hour": 6, "Minute": 30}}):
+            html = self.page()
+            J = status.jobs(self.jobs, self.now)
+        sweep = next(j for j in J if j["name"] == "sweep")
+        self.assertEqual(("none", "not run yet", "daily 06:30", None), (sweep["state"], sweep["status"], sweep["schedule"], sweep["when"]))
+        self.assertEqual(["brief", "sweep"], [j["name"] for j in J])                     # beside the jobs that ran, by name
+        row = next(r for r in html[html.index('id="jobs"'):].split('<div class="row" ')[1:] if ">sweep</a>" in r)
+        self.assertTrue(row.startswith('data-ok="1">' + status.ICON["none"]))         # hollow, and not something that needs attention
+        self.assertIn("<small>daily 06:30</small>", row)
+        self.assertIn("not run yet", row)
+        self.assertNotIn("sweep: not run yet", html)                                      # no line in Needs attention
+        self.assertNotIn('title="something failed"', html)                               # and no red dot on the Status tab
+
+    def test_a_job_not_run_yet_shows_without_a_jobs_folder(self):
+        with self.plists(sweep={"StartInterval": 900}):
+            J = status.jobs(self.jobs.parent / "no-such-folder", self.now)
+        self.assertEqual([("sweep", "not run yet", "every 15 min")], [(j["name"], j["status"], j["schedule"]) for j in J])
 
     def test_a_monthly_job_is_not_late_after_a_week(self):
         (self.jobs / "brief.heartbeat.json").write_text(json.dumps(

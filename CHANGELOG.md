@@ -4,9 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-10
+
+The status page's Mac app can keep its menu in a panel that slides out from a screen edge or down from under the notch, and the panel's field asks Garrick as well as finding a thread.
+
 ### Added
 
-- *Shows as* in the status page app's Settings › Menu bar (preview `menu-bar`): the menu as a panel that slides out from the left or right edge of the screen, or down from under the notch, instead of an icon in the menu bar. It opens when the pointer rests at its edge, or with the hotkey, which also puts the cursor in a filter for the threads. It holds what the menu holds, with each project's threads open under it. See [As a panel](docs/extras/status-page.md#as-a-panel).
+- *Shows as* in the status page app's Settings › Menu bar (preview `menu-bar`): the menu as a panel that slides out from the left or right edge of the screen, or down from under the notch, instead of an icon in the menu bar. The panel is fused to its edge, as the notch is to the top of the screen, and as tall as what it lists. It opens when the pointer rests on the top third of a side edge or on the notch, or with the hotkey. It holds what the menu holds, with each project's threads open under it. See [As a panel](docs/extras/status-page.md#as-a-panel).
+- The panel's field finds a project or thread as you type, and offers what you typed as *Ask Garrick*: a click, or Return when nothing matches, opens your default assistant at the workspace root with your words. The panel answers nothing itself and calls no model.
+- *Process the Inbox* names where items wait, such as "Work 4 · Meetings 1", in the panel; the page sends each inbox's count with the total.
+
+### Changed
+
+- Settings › Menu bar describes a menu kept at hand outside the window, an icon or a panel: *Show in the menu bar* is now *Show the menu*, and the hotkey opens either.
 
 ## [0.12.1] - 2026-10-09
 
@@ -310,7 +320,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/iamvenuti/garrick/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/iamvenuti/garrick/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/iamvenuti/garrick/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/iamvenuti/garrick/compare/v0.11.1...v0.11.2

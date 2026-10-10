@@ -1636,6 +1636,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "warning", "idle %d days" % idle
         elif code in quiet and code not in OK_EXITS:
             state, status = "good", "ok, exit %d is quiet" % code
+        elif hb.get("no_call") is True:
+            state, status = "good", "ok, called no assistant"   # fine when there was nothing to do
         else:
             state, status = "good", "ok"
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
@@ -1696,9 +1698,16 @@ def call_budget(agent, sched: Dict[str, dict]) -> float:
 
 def deny_list(agent) -> Optional[set]:
     """The tools a headless call may never use: the deny list in the jobs
-    extra's headless-settings.json, beside agent.py. None when it is missing
-    or does not read, which agent.py refuses to run without."""
+    extra's headless-settings.json, beside agent.py. None when it is missing,
+    does not read or has lost one of the entries every profile must hold
+    (agent.py's own test), which agent.py refuses to run without."""
     profile = getattr(agent, "PROFILE", None)
+    problem = getattr(agent, "profile_problem", None)
+    try:
+        if problem is not None and problem(Path(profile)):
+            return None
+    except Exception:
+        return None
     try:
         data = json.loads(Path(profile).read_text(encoding="utf-8"))
         deny = data["permissions"]["deny"]
@@ -3071,7 +3080,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         for job, n in over.items():
             attn.append(("critical", "A call by %s stopped at its per-call budget%s" % (job, "" if n == 1 else ", %d times in 24 hours" % n), "#calls"))
         if L["deny"] is None:
-            attn.append(("critical", "The deny list for scheduled calls, headless-settings.json, is missing or does not read", "#calls"))
+            attn.append(("critical", "The deny list for scheduled calls, headless-settings.json, is missing, does not read or has lost a core entry", "#calls"))
         for job, d in sorted(L["by"].items()):
             hit = sorted(t for t in d["denied"] if denied_by_list(t, L["deny"]))
             if hit:

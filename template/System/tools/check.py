@@ -131,6 +131,7 @@ EAR_GROUP = {
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
+CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 WIKILINK_RE = re.compile(r"!?\[\[([^\[\]\n]+?)\]\]")
 URI_RE = re.compile(r"obsidian://[^\s)\]>\"'`]+")
 MDLINK_RE = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
@@ -179,10 +180,20 @@ def rel(ws: Workspace, path: Path) -> str:
         return str(path)
 
 
+def nested_repo(folder: Path) -> bool:
+    """A git repository of its own inside a project, such as code checked out
+    beside the notes about it. The workspace's own repositories are its root,
+    its zones and its wikis; anything below them with a `.git` is somebody
+    else's files, not the zone's."""
+    if not (folder / ".git").exists():
+        return False
+    return not (folder.parent.name in ("Zones", "Wikis") or folder.name == "Wikis")
+
+
 def walk_files(top: Path) -> Iterable[Path]:
-    """Every file under `top`, skipping `.git` folders."""
+    """Every file under `top`, skipping `.git` folders and nested repositories."""
     for dirpath, dirnames, filenames in os.walk(top):
-        dirnames[:] = sorted(d for d in dirnames if d != ".git")
+        dirnames[:] = sorted(d for d in dirnames if d != ".git" and not nested_repo(Path(dirpath) / d))
         for name in sorted(filenames):
             yield Path(dirpath) / name
 
@@ -590,6 +601,8 @@ def check_placeholders(ws: Workspace) -> List[Finding]:
         found = PLACEHOLDER_RE.findall(rel(ws, path))
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix == "":
             text = read_text(path)
+            if text and path.suffix.lower() in (".md", ".markdown"):
+                text = CODE_RE.sub("", text)     # a note may quote a placeholder as code
             if text:
                 found += PLACEHOLDER_RE.findall(text)
         if found:

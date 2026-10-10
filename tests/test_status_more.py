@@ -187,6 +187,12 @@ class TestJobsMore(StatusCase):
             self.assertNotIn("brief: exit 5", attention(self.page()))
         self.assertEqual((2, 5), status.quiet_exits({"GARRICK_QUIET_EXITS": "2 5,x"}))
 
+    def test_a_run_that_called_no_assistant_is_said_not_raised(self):
+        self.beat(no_call=True)
+        html = self.page()
+        self.assertIn("ok, called no assistant", html)
+        self.assertNotIn("brief", attention(html))
+
     def test_a_quiet_line_in_the_log_is_a_good_day(self):
         self.beat()
         t = self.now.timestamp() - 2 * 86400
@@ -265,17 +271,22 @@ class TestSpend(StatusCase):
         self.ledger({"job": "brief", "cost_usd": 0.1, "denied": ["WebFetch", "Write"]},
                     {"job": "digest", "cost_usd": 0.1, "denied": ["mcp__mail__send"]})
         profile = self.jobs.parent / "headless-settings.json"
-        profile.write_text(json.dumps({"permissions": {"deny": ["WebFetch", "mcp__mail", "Bash(curl:*)"]}}))
         agent = status.load_agent(self.root)
+        core = list(getattr(agent, "CORE_DENY", ()))
+        profile.write_text(json.dumps({"permissions": {"deny": core + ["WebFetch", "mcp__mail", "Bash(curl:*)"]}}))
         with self.plists(), mock.patch.object(agent, "PROFILE", profile):
             html = self.page()
         block = attention(html)
         self.assertIn("brief tried a tool the deny list forbids: WebFetch<", block)     # Write was only not allowed
         self.assertIn("digest tried a tool the deny list forbids: mcp__mail__send", block)
         self.assertIn('title="Not allowed for this job"', self.calls(html))
+        if core:                                     # a profile that lost a core entry is no profile
+            profile.write_text(json.dumps({"permissions": {"deny": core[1:] + ["WebFetch"]}}))
+            with self.plists(), mock.patch.object(agent, "PROFILE", profile):
+                self.assertIn("headless-settings.json, is missing, does not read or has lost a core entry", attention(self.page()))
         profile.unlink()
         with self.plists(), mock.patch.object(agent, "PROFILE", profile):
-            self.assertIn("headless-settings.json, is missing or does not read", attention(self.page()))
+            self.assertIn("headless-settings.json, is missing, does not read or has lost a core entry", attention(self.page()))
 
 
 class TestVaultGraph(StatusCase):

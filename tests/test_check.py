@@ -139,6 +139,18 @@ class TestPlaceholders(CheckCase):
         write(self.acme / "Sources" / "draft.md", "<your name here>\n")
         self.assertClean("placeholders")
 
+    def test_a_placeholder_quoted_as_code_is_not_unfilled(self):
+        write(self.acme / "Notes" / "templates.md", "The installer fills `{{ZONE}}`.\n\n```\nzone: {{ZONE}}\n```\n")
+        self.assertClean("placeholders")
+
+    def test_a_nested_repository_is_not_the_zones(self):
+        code = self.acme / "Code"
+        write(code / "README.md", "# {{PROJECT}}\n")
+        (code / ".git").mkdir()
+        self.assertClean("placeholders")
+        (code / ".git").rmdir()
+        self.assertFinds("placeholders", "error", "{{PROJECT}}")
+
 
 class TestContext(CheckCase):
     def test_pass(self):

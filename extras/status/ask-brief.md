@@ -27,9 +27,10 @@ The actions, each an object:
 - add "app": "claude" | "codex" | "cmux" | "finder" to an open to use that
   instead; "finder" shows the folder
 - {"verb": "park", "zone": Z, "project": P, "thread": T}
-  set a thread aside; {"verb": "wake", ...} brings it back. A project with no
-  threads is parked as a whole, with no "thread". A project that has threads
-  is never parked as a whole: ask which thread
+  set a thread aside; {"verb": "wake", ...} brings it back. With no "thread",
+  the whole project is parked or woken, and every thread in it with it. Do
+  that only when the request names the project; when it names a thread, or
+  could mean either, park the thread or ask which
 - {"verb": "todo-add", "zone": Z, "text": "...", "project": P (optional),
   "thread": T (optional), "date": "YYYY-MM-DD" (optional)}
   add a line to that zone's Todo list

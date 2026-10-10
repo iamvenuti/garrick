@@ -335,6 +335,13 @@ stay exactly where they are.
 6. **Keep the memory pointer**, if there is one. A parked thread is not
    finished.
 
+**When X is a whole project** ("park Acme", where Acme has threads), park the
+project: the same steps on its hub note, with the dated entry under its
+`## State of play` if it has one, and the commit "Acme: parked". Leave its
+thread notes alone: every thread in it counts as parked while the hub says so,
+and waking the project brings back exactly what was live before. If X could be
+the project or one of its threads, ask which.
+
 Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
 
 Written: the same, then the note's path and the commit hash.

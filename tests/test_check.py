@@ -312,6 +312,16 @@ class TestResume(CheckCase):
         self.assertClean("resume")
         self.assertClean("threads")
 
+    def test_a_parked_projects_threads_are_not_checked(self):
+        # Parked as a whole from the status page, the hub says parked and its
+        # threads, whatever their own status, are parked with it.
+        hub = self.acme / "Acme Review.md"
+        self.resume("`Deliverables/gone.md`")
+        self.assertFinds("resume", "warning", "is not there")
+        hub.write_text(hub.read_text().replace("status: active", "status: parked"))
+        self.assertClean("resume")
+        self.assertClean("projects")
+
     def test_only_the_resume_block(self):
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text() + "\n---\n\n**2 March 2026.** Drafted `Deliverables/old draft.md`, since replaced.\n")

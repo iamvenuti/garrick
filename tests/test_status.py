@@ -159,7 +159,7 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertNotIn("Decisions.", html)
 
     def test_mail_pages_have_a_kind_of_their_own(self):
@@ -576,7 +576,7 @@ class TestThreadCards(StatusCase):
         # The graph panel and the thread card draw their actions from Panel.acts
         # and their heading from Panel.head; neither builds a button of its own.
         self.assertEqual(1, status.PANEL_JS.count("function acts("))
-        for label in (">Open</a>", ">Open project</a>", "Copy “", "'open '", "'wake '", "'park '"):
+        for label in (">Open</a>", 'title="Open the project&#39;s note"', "<span>'+esc(o.p||'Project')+'</span></a>", "Copy “", "'open '", "'wake '", "'park '"):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
             self.assertIn("Panel.head(o)+Panel.acts(o)", js)
@@ -862,7 +862,7 @@ class TestPreviewFeatures(StatusCase):
             self.assertIn(verb, status.TODO_JS)
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
-        self.assertIn("if(o.pa&&host)return park(o)", status.PANEL_JS)                      # only the app parks
+        self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
         self.assertIn("'<div class=\"phead\"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
@@ -1549,14 +1549,44 @@ class TestApp(unittest.TestCase):
         self.assertIn("askGarrick(text) { [weak self] reply, ranAway in", swift)      # and the Ask box, the same call
         self.assertIn("launch(app, workspace.path, phrase: text)", ask)               # with the preview off, the assistant opens with the words
 
-    def test_cmd_g_opens_ask_from_any_app(self):
+    def test_the_ask_hotkey_is_a_setting(self):
         swift = (self.APP / "Garrick.swift").read_text()
-        self.assertIn("RegisterEventHotKey(UInt32(kVK_ANSI_G), UInt32(cmdKey), id,", swift)   # a hot key of its own
+        self.assertIn('let kAskHotkey = "askHotkey"', swift)
+        self.assertIn('let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]', swift)
+        self.assertIn("if let set = defaults.dictionary(forKey: kAskHotkey) { return set[\"code\"] == nil ? nil : set }", swift)  # set, or none
+        self.assertIn("return sameKey(defaults.dictionary(forKey: kHotkey), askDefault) ? nil : askDefault", swift)   # ⌘G gives way to the menu's
+        self.assertIn("let wanted = askOn() && !checking && !recording ? askSpec() : nil", swift)   # with the preview, not while recording
+        self.assertIn("if register(wanted, 2, &askKey) == noErr", swift)
         self.assertIn("if which == 2 { return showAsk() }", swift)
-        self.assertIn("let wanted = askOn() && !checking && !(keySpec?[\"code\"] as? String == \"KeyG\" && mods == [\"cmd\"])", swift)   # Settings' own ⌘G comes first
-        self.assertIn("syncAskKey()      // the page is loaded again", swift)         # the flag read again at each load
-        self.assertIn('item("Ask Garrick…", #selector(showAsk(_:)), "g")', swift)     # and the File menu keeps it
+        self.assertIn("askMenuItem?.keyEquivalent = key", swift)                      # File › Ask Garrick… shows what is set
+        self.assertIn('let ask = item("Ask Garrick…", #selector(showAsk(_:)), "g")', swift)
+        self.assertIn('if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }', swift)
+        self.assertIn('"askhotkey": askSpec()?["label"] as? String ?? ""', swift)
         self.assertNotIn("} else if askOn() { showAsk() }", swift)                     # the hotkey opens the menu, never the box instead
+
+    def test_a_launch_you_make_shows_the_window(self):
+        # Left with its window closed, the app starts out of sight only when
+        # macOS opens it at login; opened from the Finder, the Dock or
+        # Spotlight it shows the window, so one launch is always seen.
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn("if !startHidden || !launchedAtLogin() { showWindow() }", swift)
+        self.assertIn("event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)", swift)
+        self.assertIn("if !hasVisibleWindows { showWindow() }", swift)          # and a second one, while it runs
+        self.assertIn('print("saved menu: "', swift)                              # --check says what a launch shows first
+
+    def test_a_field_records_a_key_this_app_holds(self):
+        # Carbon's hot keys are taken before any window sees the key, so while
+        # a field in Settings records, the app lets go of both; one key never
+        # serves both, and macOS's own refusals are said as such.
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn('if let on = request["recording"] as? Bool, on != recording {', swift)
+        self.assertIn("if !recording && !checking, let spec = defaults.dictionary(forKey: kHotkey)", swift)
+        self.assertIn("recording = false     // a page loaded again has no field with the keys", swift)
+        self.assertIn("if recording { recording = false; applyHotKeys() }", swift)      # nor a closed window
+        self.assertIn("if sameKey(spec, other) {", swift)
+        self.assertIn("if status == OSStatus(eventHotKeyExistsErr) {", swift)
+        self.assertIn("macOS does not let an app take", swift)
+        self.assertIn("RegisterEventHotKey(", swift)
 
     def test_the_panel_starts_folded_and_remembers(self):
         swift = (self.APP / "Garrick.swift").read_text()

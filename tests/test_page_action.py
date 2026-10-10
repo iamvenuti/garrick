@@ -228,6 +228,35 @@ class TestPark(ActionCase):
         self.assertIn("\nstatus: parked\n", (self.work / "Acme Review" / "Acme Review.md").read_text())
         self.assertEqual([], [f.message for f in check.run_checks(self.root) if f.severity == "error"])
 
+    def test_a_project_by_its_name(self):
+        import check
+        hub = self.work / "Acme Review" / "Acme Review.md"
+        self.assertEqual("Acme Review is parked", self.act(verb="park", zone="Work", project="Acme Review"))
+        text = hub.read_text()
+        self.assertIn("\nstatus: parked\n", text)
+        self.assertIn("\nupdated: 2026-10-05\n", text)
+        self.assertIn("\nstatus: active\n", self.thread.read_text())             # its threads keep their own status
+        self.assertEqual(("Acme Review: parked", ""), self.last_commit())
+        self.assertEqual([], [f.message for f in check.run_checks(self.root) if f.severity == "error"])
+        self.assertEqual("Acme Review is awake again", self.act(verb="wake", zone="Work", project="Acme Review"))
+        self.assertIn("\nstatus: active\n", hub.read_text())
+        self.assertEqual("Acme Review: woken", self.last_commit()[0])
+        self.assertEqual("Acme Review, Pricing is parked",                          # with a thread, the thread
+                         self.act(verb="park", zone="Work", project="Acme Review", thread="Pricing"))
+
+    def test_a_hub_with_a_state_of_play_gets_the_dated_entry(self):
+        hub = self.work / "Acme Review" / "Acme Review.md"
+        write(hub, hub.read_text() + "\n## State of play\n\n**1 March 2026.** Started.\n")
+        git(self.work, "commit", "-qam", "state of play")
+        self.act(verb="park", zone="Work", project="Acme Review")
+        self.assertIn("## State of play\n\n**5 October 2026.** Parked.\n\n**1 March 2026.** Started.", hub.read_text())
+
+    def test_a_project_name_that_is_no_project(self):
+        for name in ("Nope", "../Personal", "Threads", ".git", ""):
+            with self.assertRaises(pa.Refused, msg=name):
+                self.act(verb="park", zone="Work", project=name)
+        self.assertEqual("start", self.last_commit()[0])
+
     def test_only_threads(self):
         for rel in ("Todo.md", "Acme Review/Acme Review.md", "Acme Review/Sources/x.md"):
             with self.assertRaises(pa.Refused, msg=rel):

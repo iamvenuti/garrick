@@ -10,12 +10,22 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `System/tools/release.py`: `latest` says whether a newer Garrick is out, and `update` downloads the newest release, or the one `--tag` names, into a temporary folder outside the workspace and runs its update from there, a report first and the changes with `--apply`. It refuses a release older than the workspace runs.
 - The update keeps the extras a workspace has copied in up to date with the rest: the status page in `System/status`, the scheduled jobs in `System/jobs`, and desk in `System/cmux` with its skill in `System/skills/desk`. Their files are fingerprinted in the version stamp, replaced where you have not changed them and given a `.new` where you have, and `--only` picks among them as among the core's.
 - After the files, the update does what an extra needs next, listed in the report first: it rebuilds Garrick.app with the flags it was built with, refreshes the Obsidian plugin in every vault inside the workspace that has it, and points a `desk` link to another copy at the workspace's. It names a zone guard or Garrick band run from a copy that differs from the newer Garrick's.
+- Settings › Menu bar › *Ask hotkey*: the key that opens the Ask box from any app (preview `ask`), recorded like the menu's *Hotkey*, ⌘G until you set another, and clearable. *File › Ask Garrick…* shows it. One key never serves both fields; a *Hotkey* of ⌘G takes it from an *Ask hotkey* you never set.
+- *Park* and *Wake* for a whole project, on its card in the threads list and in the graph's panel: the hub says `status: parked`, with a dated entry under its `## State of play` if it has one, and every thread in it is parked with it until the project wakes. `page_action.py` takes `{"verb": "park", "zone", "project"}`, Ask proposes it when you name a project, and the threads skill parks a project the same way.
 
 ### Changed
 
 - desk installs into the workspace, as `System/cmux/`, beside the status page, so the page's tab buttons find it and the update keeps it current; the `desk` command links to that copy.
 - `release-hashes.json` records the extras' files too, where a workspace keeps them, so a file copied in by hand from any release counts as Garrick's.
 - The `update` skill runs `release.py update` and names the release it reported when it applies; a Garrick you downloaded yourself still works as before.
+- A thread card's *Open project* is now the project's name with a note's icon, and says in its tooltip that it opens the project's note.
+
+### Fixed
+
+- The Mac app's panel put a session's dot before a name, so names with a session open no longer lined up with the rest. The dot now follows the name.
+- In the threads list, a project with no thread notes, which has no chevron, started its name a chevron's width to the left of the others. Every project's name now starts in one column.
+- The Mac app's hotkey fields could not record a key the app itself held, ⌘G above all with the preview `ask` on: the app's own shortcut took the key before the field saw it. The app now lets go of its shortcuts while a field records. A shortcut with only ⌥ or ⌥⇧, which macOS 15 and later never pass to an app, is refused in the field with that reason, and one macOS will not register is said as such instead of *Another app already uses that shortcut*.
+- Opening the Mac app showed nothing when its window had been closed with the menu in the menu bar or a panel: only a second launch brought the window. Now a launch you make shows the window, and only a launch at login starts with it out of sight.
 
 ## [0.15.2] - 2026-10-10
 

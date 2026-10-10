@@ -351,6 +351,16 @@ class TestAnonymous(CheckCase):
         write(self.d / "260302 - Template.md", "Compared with Cedar Labs.\n")
         self.assertFinds("anonymous", "warning")
 
+    def test_a_damaged_office_file_is_read_as_empty(self):
+        path = self.d / "260302 - Term sheet.docx"
+        with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("word/document.xml", "<w:t>Agreed with Theo Marsh</w:t>" * 50)
+        data = bytearray(path.read_bytes())
+        start = data.index(b"word/document.xml") + len(b"word/document.xml")
+        data[start:start + 40] = b"\xff" * 40                  # the compressed stream, broken
+        path.write_bytes(bytes(data))
+        self.assertClean("anonymous")
+
     def test_not_anonymous(self):
         hub = self.acme / "Acme Review.md"
         hub.write_text(hub.read_text().replace("anonymous: true\n", ""))
@@ -498,6 +508,21 @@ class TestRawAccepted(CheckCase):
     def test_unknown_commit(self):
         settings(self.root, {"raw-accepted": {"Wikis/Meetings/raw/260310-acme-kickoff.txt": "0123abc"}})
         self.assertFinds("raw", "warning", "git does not know")
+
+
+    def test_an_accepted_change_must_name_a_commit(self):
+        settings(self.root, {"raw-accepted": {"Wikis/Meetings/raw/260310-acme-kickoff.txt": "--output=/tmp/x"}})
+        self.assertFinds("settings", "warning", "not a commit")
+        self.assertFinds("raw", "error", "edited")                 # left out, so the edit still counts
+
+
+class TestOneCheckStops(CheckCase):
+    def test_the_others_still_run(self):
+        def broken(ws):
+            raise ValueError("a file it could not read")
+        with mock.patch.object(check, "ALL_CHECKS", [broken] + list(check.ALL_CHECKS)):
+            found = check.run_checks(self.root)
+        self.assertTrue(any(f.severity == "error" and "the check stopped: ValueError" in f.message for f in found))
 
 
 class TestShipped(CheckCase):

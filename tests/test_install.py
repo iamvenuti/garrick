@@ -710,7 +710,7 @@ class ScaffoldTest(unittest.TestCase):
     def test_refusals(self):
         self.assertIn("files wait", self.refuse("project", "--zone", "Work", "--name", "inbox", "--party", "birch",
                                                 "--thread", "Entry"))
-        self.assertIn("digit", self.refuse("project", "--zone", "Work", "--name", "Q Three 2026",
+        self.assertIn("digit", self.refuse("project", "--zone", "Work", "--name", "Q3 Review",
                                            "--party", "birch", "--thread", "Entry"))
         self.assertIn("sounds too much like Acme",
                       self.refuse("project", "--zone", "Work", "--name", "Akme", "--party", "birch", "--thread", "Entry"))

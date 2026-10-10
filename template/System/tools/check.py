@@ -132,6 +132,7 @@ EAR_GROUP = {
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
+COMMIT_RE = re.compile(r"[0-9a-fA-F]{7,40}")
 CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 WIKILINK_RE = re.compile(r"!?\[\[([^\[\]\n]+?)\]\]")
 URI_RE = re.compile(r"obsidian://[^\s)\]>\"'`]+")
@@ -445,6 +446,9 @@ def check_settings(ws: Workspace) -> List[Finding]:
             if not isinstance(value, str) or not value.strip():
                 out.append(Finding(WARNING, "settings", r, "`%s` gives %s no value" % (key, name),
                                    "A line in the check settings has no value"))
+            elif key == "raw-accepted" and not COMMIT_RE.fullmatch(value.strip()):
+                out.append(Finding(WARNING, "settings", r, "`raw-accepted` gives %s `%s`, which is not a commit; it is left out" % (name, value.strip()),
+                                   "An accepted raw change does not name a commit"))
     return out
 
 
@@ -1331,7 +1335,7 @@ def office_text(path: Path) -> str:
             return "\n".join(z.read(n).decode("utf-8", errors="replace") for n in z.namelist()
                              if n.endswith(".xml") and not n.startswith("docProps/")  # who saved it, not what it says
                              and z.getinfo(n).file_size <= MAX_SCAN_BYTES)
-    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError):
+    except Exception:     # a damaged file: zlib, EOF and zip errors alike
         return ""
 
 
@@ -2846,7 +2850,8 @@ def check_raw(ws: Workspace) -> List[Finding]:
     """A raw record is never changed after its first commit, unless the check
     settings accept that change (`raw-accepted`): then only a later one counts."""
     out = []
-    accepted = {k: v.strip() for k, v in ws.settings.get("raw-accepted", {}).items() if isinstance(v, str) and v.strip()}
+    accepted = {k: v.strip() for k, v in ws.settings.get("raw-accepted", {}).items()
+                if isinstance(v, str) and COMMIT_RE.fullmatch(v.strip())}     # a commit, never an option for git
     wikis = ws.root / "Wikis"
     if not wikis.is_dir():
         return out
@@ -2994,7 +2999,12 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
         findings = check_walls_staged(ws, Path(staged))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
-            findings.extend(check(ws))
+            try:
+                findings.extend(check(ws))
+            except Exception as e:      # one check that trips over a file must not stop the others
+                name = check.__name__.replace("check_", "", 1)
+                findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                        "A check stopped before it finished"))
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings

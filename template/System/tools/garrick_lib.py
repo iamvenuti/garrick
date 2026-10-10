@@ -45,6 +45,7 @@ from typing import Dict, List, Optional, Tuple, Union
 PathLike = Union[str, "os.PathLike[str]"]
 
 __all__ = [
+    "is_own_address",
     "parse_frontmatter",
     "parse_frontmatter_text",
     "is_speakable",
@@ -405,18 +406,23 @@ def load_context(root: PathLike) -> dict:
           "people":  [{"name", "party", "role"}, ...],
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
+          "me":      [your own addresses, lower case],
         }
 
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}}
+    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": []}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ctx
     sections = _sections(text)
+
+    for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
+        if addr.lower() not in ctx["me"]:
+            ctx["me"].append(addr.lower())
 
     for row in _table(sections.get("parties", [])):
         tag = strip_tag(_col(row, "tag"))
@@ -937,6 +943,13 @@ def is_webmail(domain: str) -> bool:
     return d in WEBMAIL_DOMAINS or d.startswith(_WEBMAIL_FAMILIES)
 
 
+def is_own_address(ctx: dict, addr: str) -> bool:
+    """True when `addr` is one of the addresses in the Me section of
+    `System/context.md`, plus tags ignored (`you+acme@x` is `you@x`)."""
+    local, _, domain = (addr or "").strip().lower().rpartition("@")
+    return bool(domain) and "%s@%s" % (local.split("+", 1)[0], domain) in ctx.get("me", [])
+
+
 def parties_for_domain(context: dict, domain: str) -> List[str]:
     """The party tags whose Domains cell covers `domain`: the domain itself, or
     one it is a subdomain of. Webmail matches nothing."""
@@ -1028,16 +1041,21 @@ def mail_date(value: str) -> Optional[str]:
 
 
 def _addresses(values: List[str]) -> List[Tuple[str, str]]:
-    """(name, address) pairs, address lower-cased; entries without an @ dropped."""
+    """(name, address) pairs, address lower-cased; entries without an @ dropped.
+    Outlook's `;` between addresses and its `<a@x<mailto:a@x>>` are read too."""
     out = []
-    for name, addr in getaddresses([v for v in values if v]):
+    values = [re.sub(r"<mailto:[^>]*>", "", v).replace(";", ",") for v in values if v]
+    for name, addr in getaddresses(values):
         addr = addr.strip().lower()
         if "@" in addr and (name, addr) not in out:
             out.append((name.strip().replace('"', ""), addr))
     return out
 
 
-_HEADER_LINE_RE = re.compile(r"^\s*>?\s*(from|to|cc|bcc|date|sent|subject|reply-to|delivered-to)\s*:\s*(.*)$", re.I)
+_HEADER_LINE_RE = re.compile(
+    r"^\s*(?:>\s*)*\**\s*(from|to|cc|bcc|date|sent|subject|reply-to|delivered-to)\s*\**\s*:\s*\**\s*(.*?)\s*$", re.I)
+# A separator some mail programs draw above a quoted message, with no words in it.
+_RULE_RE = re.compile(r"^\s*(?:_{5,}|-{5,}|={5,})\s*$")
 _FORWARD_RE = re.compile(r"(?im)^\s*(?:-{2,}\s*(?:forwarded message|original message)\s*-{2,}|begin forwarded message:)\s*$")
 
 
@@ -1066,10 +1084,34 @@ def _header_block(lines: List[str]) -> Tuple[Dict[str, List[str]], int]:
 
 
 def _forwarded(body: str) -> List[Tuple[str, str]]:
-    """Addresses in the header block of a message forwarded inline."""
+    """Addresses in the header block of every message forwarded or quoted inline.
+
+    A block counts after a marker line (`---------- Forwarded message
+    ----------`, `-----Original Message-----`, `Begin forwarded message:`), and
+    also without one: Outlook opens a quoted message with its headers alone,
+    and a plain-text copy loses even the rule drawn above them. Such a block is
+    a `From:` line at the start of the body or after a blank line or a rule,
+    with a `Sent:` or `Date:` line and a `To:` or `Subject:` line in the same
+    block. Bold labels (`**From:**`) and `>` quoting are read the same."""
     out: List[Tuple[str, str]] = []
+    lines = body.splitlines()
+    starts = set()
     for m in _FORWARD_RE.finditer(body):
-        headers, _ = _header_block(body[m.end():].lstrip("\n").splitlines()[:30])
+        after = body[:m.end()].count("\n") + 1
+        while after < len(lines) and not lines[after].strip():
+            after += 1
+        starts.add(after)
+    for i, line in enumerate(lines):
+        m = _HEADER_LINE_RE.match(line)
+        if not m or m.group(1).lower() != "from":
+            continue
+        if i and lines[i - 1].strip() and not _RULE_RE.match(lines[i - 1]) and not _FORWARD_RE.match(lines[i - 1]):
+            continue
+        headers, _ = _header_block(lines[i:i + 30])
+        if "from" in headers and ("sent" in headers or "date" in headers) and ("to" in headers or "subject" in headers):
+            starts.add(i)
+    for start in sorted(starts):
+        headers, _ = _header_block(lines[start:start + 30])
         for key in ("from", "to", "cc"):
             out += [a for a in _addresses(headers.get(key, [])) if a not in out]
     return out

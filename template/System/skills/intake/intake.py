@@ -45,6 +45,7 @@ from garrick_lib import (  # noqa: E402
     INBOX,
     MEDIA_EXTS,
     is_domain,
+    is_own_address,
     is_webmail,
     landing,
     load_context,
@@ -174,15 +175,24 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
 
     Domains are matched against the Domains column of Parties. A plus tag
     (`you+acme@...`) that is a party's tag is a strong hint, on any domain.
-    Personal webmail never names a party by itself. The hint says to ask when
+    Personal webmail never names a party by itself. Addresses inside a message
+    forwarded or quoted inline count like the rest. The hint says to ask when
     nothing matches, when a domain belongs to two parties, when two parties on
     the mail are walled from each other, or when a party belongs to another
     zone. It never picks one side of a wall, and never says where the mail goes.
+
+    The user's own addresses (the Me section of context.md) carry mail; they
+    do not say whose it is. Their plus tags still count, but their domains
+    never raise a question. The party an own address points to (an employer,
+    say) is added only when no wall stands between it and the parties the
+    other addresses found, or when they found none, and is listed under
+    `own` either way. It is never added to a mail in another zone's inbox. So
+    a mail forwarded from a work account is read by what was forwarded.
     """
     addresses = []
     for key in ("from", "to", "cc", "delivered", "forwarded"):
         addresses += [addr for _, addr in mail.get(key, [])]
-    plus, webmail, unknown = [], [], []
+    plus, webmail, unknown, own_tags = [], [], [], []
     by_domain: Dict[str, List[str]] = {}
     for addr in addresses:
         local, _, domain = addr.rpartition("@")
@@ -190,6 +200,10 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
             tag = strip_tag(local.split("+", 1)[1])
             if tag in ctx["parties"] and tag not in plus:
                 plus.append(tag)
+        if is_own_address(ctx, addr):
+            if not is_webmail(domain):
+                own_tags += [t for t in parties_for_domain(ctx, domain) if t not in own_tags]
+            continue
         if is_webmail(domain):
             if domain not in webmail:
                 webmail.append(domain)
@@ -207,25 +221,32 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
             ask.append("%s is listed for %s." % (domain, " and ".join(_name(ctx, t) for t in tags)))
         else:
             parties.add(tags[0])
-    parties_list = sorted(parties)
-    if not parties_list and not any(len(t) > 1 for t in by_domain.values()):
-        if webmail and not unknown:
+    if not parties and not any(len(t) > 1 for t in by_domain.values()):
+        if webmail and not unknown and not own_tags:
             ask.append("It is from personal webmail (%s), which never names a party." % ", ".join(webmail))
         elif unknown:
             ask.append("No party has the domain %s." % ", ".join(unknown))
-        else:
+        elif not own_tags:
             ask.append("There is no address on it to go by.")
-    for i, a in enumerate(parties_list):
-        for b in parties_list[i + 1:]:
+    found = sorted(parties)
+    own_added = [t for t in own_tags if t not in parties and not any(walled(ctx, t, p) for p in found)
+                 and (not zone or (ctx["parties"][t].get("zone") or zone).strip() == zone)]
+    parties |= set(own_added)
+    parties_list = sorted(parties)
+    if not parties_list and not ask:
+        ask.append("Only your own addresses are on it, and they do not say whose it is.")
+    for i, a in enumerate(found):
+        for b in found[i + 1:]:
             if walled(ctx, a, b):
                 ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
     for tag in parties_list:
         pzone = (ctx["parties"][tag].get("zone") or "").strip()
         if zone and pzone and pzone != zone:
             ask.append("%s is a %s party, but this mail is in the %s inbox." % (_name(ctx, tag), pzone, zone))
-    sender_domains = [addr.rpartition("@")[2] for _, addr in mail.get("from", [])]
+    senders = [addr for _, addr in mail.get("from", []) if not is_own_address(ctx, addr)]
+    sender_domains = [addr.rpartition("@")[2] for addr in senders]
     return {"parties": parties_list, "ask": ask, "plus": sorted(plus), "domains": by_domain,
-            "unknown": unknown, "webmail": webmail,
+            "unknown": unknown, "webmail": webmail, "own": {"tags": own_tags, "added": own_added},
             "sender_webmail": bool(sender_domains) and all(is_webmail(d) for d in sender_domains)}
 
 

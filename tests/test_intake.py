@@ -167,6 +167,30 @@ class TestParse(unittest.TestCase):
         m = lib.parse_mail_bytes(eml(sender="Jo <jo@gmail.com>", to="jo+acme@gmail.com", plain=body), ".eml")
         self.assertIn(("Dana Whitlock", "dana.whitlock@acmecorp.example"), m["forwarded"])
 
+    def test_outlook_forward_without_a_marker_line(self):
+        body = ("FYI, see below.\n\n"
+                "From: Dana Whitlock <dana.whitlock@acmecorp.example>\n"
+                "Sent: Thursday, October 8, 2026 16:12\n"
+                "To: Theo Birch <theo@birchco.example>; Owen Pike <owen.pike@acmecorp.example<mailto:owen.pike@acmecorp.example>>\n"
+                "Cc: Iris Bell <iris.bell@birchco.example>\n"
+                "Subject: RE: Pallets\n\nThe forecast.\n")
+        m = lib.parse_mail_bytes(eml(sender="Jo <jo@joexample.example>", to="jo+work@gmail.com", plain=body), ".eml")
+        found = [a for _, a in m["forwarded"]]
+        for addr in ("dana.whitlock@acmecorp.example", "theo@birchco.example",
+                     "owen.pike@acmecorp.example", "iris.bell@birchco.example"):
+            self.assertIn(addr, found)
+
+    def test_bold_labels_and_a_rule_above_them(self):
+        body = ("See below.\n________________________________\n"
+                "**From:** Dana Whitlock <dana.whitlock@acmecorp.example>\n**Date:** Monday\n"
+                "**To:** Jo <jo@joexample.example>\n\nThe forecast.\n")
+        m = lib.parse_mail_bytes(body.encode(), ".txt")
+        self.assertIn(("Dana Whitlock", "dana.whitlock@acmecorp.example"), m["forwarded"])
+
+    def test_a_from_inside_a_sentence_is_not_a_forward(self):
+        body = "Note that From: dana.whitlock@acmecorp.example the order came\nSent: late\nTo: nobody@birchco.example\n"
+        self.assertEqual([], lib.parse_mail_bytes(eml(plain=body), ".eml")["forwarded"])
+
     def test_dates_as_mail_programs_write_them(self):
         self.assertEqual("2026-09-28", lib.mail_date("Mon, 28 Sep 2026 09:12:00 +0200"))
         self.assertEqual("2026-09-28", lib.mail_date("Monday, September 28, 2026 9:12 AM"))
@@ -233,6 +257,64 @@ class TestPropose(MailCase):
         self.assertEqual(["acme", "birch"], p["parties"])
         self.assertEqual(1, len(p["ask"]))
         self.assertIn("wall", p["ask"][0])
+
+    def own(self):
+        """Jo works for Cobalt, walled from Birch, and forwards from there."""
+        ctx = dict(self.ctx, parties={t: dict(e) for t, e in self.ctx["parties"].items()},
+                   walls=set(self.ctx["walls"]) | {frozenset(("cobalt", "birch"))},
+                   me=["jo@cobalt.example", "jo@gmail.com"])
+        ctx["parties"]["cobalt"] = {"party": "Cobalt Ltd", "what": "Employer", "zone": "Work",
+                                    "domains": ["cobalt.example"]}
+        return ctx
+
+    def forward(self, ctx, *inside, zone="Work", sender="jo@cobalt.example"):
+        m = lib.parse_mail_bytes(b"", ".txt")
+        m["from"], m["to"] = [("", sender)], [("", "jo+work@gmail.com")]
+        m["forwarded"] = [("", a) for a in inside]
+        return intake.suggest(ctx, zone, m)
+
+    def test_own_address_carries_the_mail_and_the_forward_names_the_party(self):
+        p = self.forward(self.own(), "dana.whitlock@acmecorp.example")
+        self.assertEqual(["acme", "cobalt"], p["parties"])
+        self.assertEqual([], p["ask"])
+        self.assertEqual(["cobalt"], p["own"]["added"])
+
+    def test_own_party_left_off_across_a_wall_without_a_question(self):
+        p = self.forward(self.own(), "theo@birchco.example")
+        self.assertEqual(["birch"], p["parties"])
+        self.assertEqual([], p["ask"])
+        self.assertEqual(["cobalt"], p["own"]["tags"])
+        self.assertEqual([], p["own"]["added"])
+
+    def test_two_walled_parties_in_the_forward_still_ask(self):
+        p = self.forward(self.own(), "dana.whitlock@acmecorp.example", "theo@birchco.example")
+        self.assertEqual(["acme", "birch"], p["parties"])
+        self.assertIn("wall", " ".join(p["ask"]))
+
+    def test_own_addresses_alone_keep_their_party(self):
+        p = self.forward(self.own())
+        self.assertEqual(["cobalt"], p["parties"])
+        self.assertEqual([], p["ask"])
+
+    def test_unknown_forward_still_asks(self):
+        p = self.forward(self.own(), "pat@fernway.example")
+        self.assertIn("fernway.example", " ".join(p["ask"]))
+        self.assertEqual(["fernway.example"], p["unknown"])
+
+    def test_own_party_never_crosses_into_another_zone(self):
+        p = self.forward(self.own(), zone="Personal")
+        self.assertEqual([], p["parties"])
+        self.assertIn("own addresses", " ".join(p["ask"]))
+
+    def test_me_section_lists_own_addresses(self):
+        ctx_file = self.root / "System" / "context.md"
+        text = ctx_file.read_text().replace("Jo Example. Independent advisor.",
+                                            "Jo Example. Independent advisor. My addresses: jo@cobalt.example, Jo@Gmail.com.")
+        ctx_file.write_text(text)
+        ctx = lib.load_context(self.root)
+        self.assertEqual(["jo@cobalt.example", "jo@gmail.com"], ctx["me"])
+        self.assertTrue(lib.is_own_address(ctx, "jo+acme@gmail.com"))
+        self.assertFalse(lib.is_own_address(ctx, "dana@cobalt.example"))
 
     def test_party_from_another_zone_asks(self):
         p = self.propose("dana.whitlock@acmecorp.example", zone="Personal")

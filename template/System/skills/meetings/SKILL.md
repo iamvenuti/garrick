@@ -233,7 +233,12 @@ skill once this page exists. One mail at a time.
 2. **Parties: domains first, then ask.** The suggestion comes from the
    Domains column of Parties, plus any plus-address tag such as
    `you+acme@...`, which counts as a strong hint. Personal webmail never
-   names a party by itself. The suggestion is a hint: you confirm it.
+   names a party by itself, and neither do the user's own addresses, listed
+   under Me in `System/context.md`: a mail they forwarded is read by the
+   addresses inside the forward, Outlook's unmarked header blocks included.
+   An own address's party (an employer) is added only where no wall stands
+   against the others, and `suggested.own` shows it. The suggestion is a
+   hint: you confirm it.
    - `ask` empty: use the suggested parties. Add a party only when the text
      plainly shows it (a Cobalt mail about Acme's renewal is `acme, cobalt`).
      A party the text suggests that is walled from a suggested one is never

@@ -8,6 +8,8 @@ The rows below are examples. Replace them with your own.
 
 <Your name>. <What you do, and for whom, in a sentence or two.>
 
+My addresses: <you@work.example>, <you@personal.example>. Mail you forward from them is read by who is inside it, not by you.
+
 ## Zones
 
 | Zone | Holds |

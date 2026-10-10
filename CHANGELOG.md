@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- A mail forwarded from Outlook is now read for the people inside it. Outlook opens a quoted message with its `From:`, `Sent:` and `To:` lines alone, with no *Forwarded message* line above them, and a plain-text copy loses even its rule; `intake` saw only whoever forwarded it, so their party was suggested and a wall between the people inside went unasked. Unmarked header blocks are read now, after a blank line or a rule, with bold labels (`**From:**`), `>` quoting, `;` between addresses and Outlook's `<a@x<mailto:a@x>>`.
+
+### Added
+
+- Your own addresses, written under *Me* in `System/context.md` (`My addresses: …`). They carry mail and no longer decide whose it is: a mail you forward from your work account is read by the people in it. Your own address's party, an employer say, is still added when no wall stands between it and them, or when nobody else is on the mail, and never in another zone's inbox. `intake.py parse` shows it under `suggested.own`.
+
 ## [0.13.0] - 2026-10-10
 
 The status page's Mac app can keep its menu in a panel that slides out from a screen edge or down from under the notch, and the panel's field asks Garrick as well as finding a thread.

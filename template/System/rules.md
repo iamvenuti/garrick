@@ -36,7 +36,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
   - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;
   - something to read (a newsletter, an article, a report) is filed in Knowledge, with no parties. If it comes from a party's domain, ask before treating it as published;
   - material for a project (a client's document, a contract, a data file) goes into that project's `Sources/`. If it came by mail, the mail is filed in Meetings as a conversation too, and only the attachment goes to the project.
-- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone. When the addresses do not settle it, or put both sides of a wall on one mail, ask.
+- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put both sides of a wall on one mail, ask.
 - **Check the wall before anything goes into a project.** The project's party must not be walled from the parties the material came from. If it is, stop, and say only that a wall held something back.
 - **Unsure of the kind, the zone, a party or the project: ask**, in one short line. Never guess across a wall.
 - **Code moves, parses and lists; it never chooses where a thing goes.**

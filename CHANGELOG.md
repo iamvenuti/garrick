@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-10
+
+The status page builds in seconds again on a large workspace.
+
+### Changed
+
+- The status page runs `check.py --quick` as it builds, leaving out the comparison of wording with the meetings, so a build after a button takes seconds rather than most of a minute on a large workspace. The commit hook still compares wording, and a full `check.py` on a schedule covers the rest.
+
 ## [0.15.0] - 2026-10-10
 
 The status page, its Mac app and its actions do much more: the full Todo list, scheduled jobs that say when they are running, idle or quietly fine, a cost chart, an Obsidian tab with working buttons, one cmux tab per thread through the new `desk`, and an *Ask* preview that acts on what you type. Scheduled jobs tell you through a command of yours, `check.py` reads far more of the rules, and a year may stand in a name.

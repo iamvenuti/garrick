@@ -1076,11 +1076,19 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
 
 
 def check(ws: Path) -> Optional[dict]:
+    """check.py's findings, run as the page is built. With `--quick`, where the
+    workspace's check.py has it: every check but the comparison of wording
+    with the meetings, which on a large workspace is most of a full run's
+    time, and which the commit hook and a scheduled full check still make."""
     tool = ws / "System" / "tools" / "check.py"
     if not tool.is_file():
         return None
     try:
-        proc = subprocess.run([sys.executable, str(tool), "--root", str(ws), "--json"],
+        quick = ["--quick"] if "--quick" in tool.read_text(encoding="utf-8") else []
+    except OSError:
+        quick = []
+    try:
+        proc = subprocess.run([sys.executable, str(tool), "--root", str(ws), "--json"] + quick,
                               capture_output=True, text=True, timeout=300)
         data = json.loads(proc.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -3310,7 +3318,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             lis = "".join('<li>%s<span>%s: %s</span></li>' % (ICON["critical" if f.get("severity") == "error" else "warning"], E(f.get("path", "")), E(f.get("message", ""))) for f in fs)
             body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
                      % (" open" if errs else "", CHEV, E(C["titles"].get(name, name)), counts, lis))
-    checks_card = card("checks", "Checks", "check.py, run as the page was built", body)
+    checks_card = card("checks", "Checks", "check.py --quick, run as the page was built", body)
 
     # ---- open actions and inboxes
     tb = ""

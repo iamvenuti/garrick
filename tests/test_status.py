@@ -968,6 +968,24 @@ class TestPanels(StatusCase):
         self.assertIn('id="checks"', html)
         self.assertNotIn("did not run", html)
 
+    def test_the_page_runs_the_quick_check(self):
+        tools = self.root / "System" / "tools"
+        shutil.copytree(REPO / "template" / "System" / "tools", tools, dirs_exist_ok=True)
+        seen = []
+        real = status.subprocess.run
+        def spy(cmd, *a, **k):
+            if any(str(c).endswith("check.py") for c in cmd):
+                seen.append(list(cmd))
+            return real(cmd, *a, **k)
+        with mock.patch.object(status.subprocess, "run", spy):
+            self.page()
+        self.assertTrue(seen and "--quick" in seen[0])
+        (tools / "check.py").write_text("print('{}')\n")                 # an older check.py, without --quick
+        seen.clear()
+        with mock.patch.object(status.subprocess, "run", spy):
+            self.page()
+        self.assertTrue(seen and "--quick" not in seen[0])
+
 
 class TestJobs(StatusCase):
     def heartbeat(self, code=0):

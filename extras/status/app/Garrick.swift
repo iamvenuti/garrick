@@ -530,7 +530,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				toast(whereItIs())
 			} else {
 				takeAway()
-				toast(on ? "Rebuilding the page for the menu." : "Taken out of the menu bar.")
+				toast(on ? "Rebuilding the page for the menu." : "The menu is off. The window stays.")
 				if on { freshen(force: true) }
 			}
 		}

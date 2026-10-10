@@ -1408,13 +1408,13 @@ def menu_settings() -> str:
     only: the icon or a panel at a screen edge, opening at login, and the
     shortcut that opens either. The app keeps them all, so they hold when
     the window is closed."""
-    return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">An icon in the menu bar lists the live '
-            'projects of the zone the graph shows, with their threads. Click one to open it as a thread&#39;s name would, or point at it '
-            'for the other apps above. Close the window and the icon stays.</p>'
-            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show in the menu bar'
-            '<small>A red dot on it when something on the Status tab failed</small></span></label></div>'
+    return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">A menu of the live '
+            'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
+            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.</p>'
+            '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show the menu'
+            '<small>Marked in red when something on the Status tab failed</small></span></label></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-style"><span>Shows as'
-            '<small>A panel opens when the pointer rests at its edge, or on the notch</small></span></label>'
+            '<small>A panel opens when the pointer rests on the top third of its edge, or on the notch</small></span></label>'
             '<select id="menu-style" class="menu-style"><option value="icon">Menu bar icon</option><option value="left">Panel from the left</option>'
             '<option value="right">Panel from the right</option><option value="top">Panel from the top</option></select></div>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'

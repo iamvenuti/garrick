@@ -126,7 +126,7 @@ It compiles `Garrick.swift` with the Xcode command line tools, which a Mac that 
 
 With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app only, with four settings that the app keeps itself:
 
-- **Show in the menu bar** puts Garrick's mark in the menu bar, drawn in the menu bar's own colours. Closing the window then leaves the app there, without a Dock icon, and *Open Garrick* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark means the same as the red dot on the *Status* tab: something failed.
+- **Show the menu** keeps Garrick's menu at hand outside the window: by default as Garrick's mark in the menu bar, drawn in the menu bar's own colours, or as a panel (see *Shows as*). Closing the window then leaves the app there, without a Dock icon, and *Open Garrick* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark, or *Something failed* in the panel, means the same as the red dot on the *Status* tab: something failed.
 - **Shows as** picks where the menu lives: *Menu bar icon*, or a panel that slides out from the left or right edge of the screen, or down from the top. See [As a panel](#as-a-panel).
 - **Open at login** starts the app when you log in, as a login item. It opens the way you left it: in the menu bar alone if its window was closed. It needs macOS 13 or later; macOS may ask you to allow it under *Login Items* in System Settings.
 - **Hotkey** opens the menu, or the panel, from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.

@@ -121,7 +121,7 @@ Tests the workspace against every rule a machine can check:
 
 - a `CLAUDE.md` in or above the workspace, which stops Claude Code reading `AGENTS.md`;
 - a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder (warnings);
-- installer placeholders left unfilled;
+- installer placeholders left unfilled (files git ignores are skipped);
 - a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);
 - a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning);

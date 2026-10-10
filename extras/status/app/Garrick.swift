@@ -1433,7 +1433,7 @@ struct PanelView: View {
 // screen, with round corners on the side facing in. The top one is black,
 // like the notch; the side ones are the frosted material of a popover.
 final class EdgeShape: NSView {
-	static let ear: CGFloat = 16, corner: CGFloat = 32
+	static let ear: CGFloat = 16, corner: CGFloat = 22
 	let edge: PanelEdge
 	let effect: NSVisualEffectView?
 

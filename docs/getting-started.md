@@ -34,7 +34,7 @@ System/
   rules.md              how the assistant behaves (the only copy)
   context.md            who you are and who you deal with, filled in from your answers
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, probe.py, and garrick_lib.py, which they share
+  tools/                scaffold.py, check.py, probe.py, release.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it

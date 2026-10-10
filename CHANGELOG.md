@@ -4,6 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- A release notice, off until you switch it on with `{"release-notice": true}` in `System/garrick-settings.json`; the `setup` skill offers it once. Then the status page asks GitHub at most once a day, in the background, whether a newer Garrick is out, and *Needs attention* says "Garrick 0.16.0 is out; this workspace runs 0.15.2", with the command that updates and a link to the release notes. `check.py --version` adds the same line, read from the last answer and never asking itself. It is Garrick's first call out on its own: one GET to GitHub's latest-release address with a User-Agent naming Garrick and the release, and nothing about the workspace. A failed request shows nothing.
+- `System/tools/release.py`: `latest` says whether a newer Garrick is out, and `update` downloads the newest release, or the one `--tag` names, into a temporary folder outside the workspace and runs its update from there, a report first and the changes with `--apply`. It refuses a release older than the workspace runs.
+- The update keeps the extras a workspace has copied in up to date with the rest: the status page in `System/status`, the scheduled jobs in `System/jobs`, and desk in `System/cmux` with its skill in `System/skills/desk`. Their files are fingerprinted in the version stamp, replaced where you have not changed them and given a `.new` where you have, and `--only` picks among them as among the core's.
+- After the files, the update does what an extra needs next, listed in the report first: it rebuilds Garrick.app with the flags it was built with, refreshes the Obsidian plugin in every vault inside the workspace that has it, and points a `desk` link to another copy at the workspace's. It names a zone guard or Garrick band run from a copy that differs from the newer Garrick's.
+
+### Changed
+
+- desk installs into the workspace, as `System/cmux/`, beside the status page, so the page's tab buttons find it and the update keeps it current; the `desk` command links to that copy.
+- `release-hashes.json` records the extras' files too, where a workspace keeps them, so a file copied in by hand from any release counts as Garrick's.
+- The `update` skill runs `release.py update` and names the release it reported when it applies; a Garrick you downloaded yourself still works as before.
+
 ## [0.15.2] - 2026-10-10
 
 The Mac app's menu bar menu finds and asks as the panel does, ⌘G asks from any app, the panel opens folded and remembers, and a job that has not run yet still shows on the page.

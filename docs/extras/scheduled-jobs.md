@@ -23,7 +23,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
 
 ### Set it up
 
-1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and the deny profile keeps Claude's file tools from editing them.
+1. **Copy `extras/jobs/` into your workspace as `System/jobs/`**, and commit it in the workspace root's repository. The jobs then travel with the workspace, and the deny profile keeps Claude's file tools from editing them. [Updating Garrick](../updating.md#extras) updates `System/jobs/` with the rest; a `headless-settings.json` you added connectors to gets the newer one beside it as `.new`, to merge. Your plists in `~/Library/LaunchAgents/` are yours, and the update leaves them alone.
 2. **Run the example once by hand**, from the workspace:
    ```sh
    python3 System/jobs/job.py whats-open --agent --cwd ~/Garrick -- \

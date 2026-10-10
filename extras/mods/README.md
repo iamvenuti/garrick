@@ -56,7 +56,7 @@ To load it in every session, add it to the `env` block of `~/.claude/settings.js
 }
 ```
 
-Point it at the folder of the Garrick download you keep. When you update Garrick, the next session loads the new copy. To stop loading it, remove the line.
+Point it at the folder of the Garrick download you keep. When you replace that download with a newer one, the next session loads the new copy. The update command does not change it, since it lives outside your workspace, but its report names the band when the copy your settings point at differs from the newer Garrick's. To stop loading it, remove the line.
 
 ## Check it
 

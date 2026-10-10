@@ -58,6 +58,11 @@ mode* in the `threads` skill describes.
      opened me in?" A yes means the zone guard in `extras/hooks/` of the
      Garrick download: say how, from its README, never change the settings
      for them.
+   - Unless `System/garrick-settings.json` already says: "Tell me when a new
+     Garrick is out? It asks GitHub once a day and sends nothing about your
+     workspace." Ask it once. A yes or a no is written as the `update`
+     skill's *Tell me when a new Garrick is out* says, `true` or `false`,
+     so the question is not asked again.
 4. **Write `System/setup.md`**, or rewrite it if it exists, re-reading it
    first. Facts only, in this shape, and nothing about the user's work or
    parties: that belongs in `System/context.md`.
@@ -71,6 +76,7 @@ mode* in the `threads` skill describes.
    - **Installed**: <what the probe found that Garrick can use: cmux, Obsidian, gh, the other assistant>.
    - **Not installed**: <what Garrick would use but is absent>. Never suggest a step that needs one of these; name the extra that adds it if it would help.
    - **Notes in Obsidian**: <yes, the workspace is a vault | no>.
+   - **Told of a new Garrick**: <yes, once a day | no>.
    ```
    Commit it alone in the workspace's own repository:
    `git add -- System/setup.md && git commit -m "Setup: how I work here"`.
@@ -128,3 +134,5 @@ than nothing: it looks like an answer.
 - Never change a git setting, a resume point or any other file without the
   yes this skill asks for.
 - Never send anything off the machine. The probe and this skill only look.
+  Switching on the release notice is the user's yes to one request a day
+  to GitHub, made later by the status page, never by this skill.

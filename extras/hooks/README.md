@@ -25,7 +25,7 @@ It covers the file-editing tools: Edit, Write, MultiEdit and NotebookEdit in Cla
 
 ## Load it
 
-It needs `python3`. Point both assistants at `extras/hooks/zone_guard.py` in the Garrick download you keep. When you update Garrick, the next session uses the new copy.
+It needs `python3`. Point both assistants at `extras/hooks/zone_guard.py` in the Garrick download you keep. When you replace that download with a newer one, the next session uses the new copy. The update command does not change it, since it lives outside your workspace, but its report names the guard when the copy your settings point at differs from the newer Garrick's.
 
 **Claude Code**: add both events to the `hooks` block of `~/.claude/settings.json`, keeping any hooks already there:
 

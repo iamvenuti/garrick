@@ -39,7 +39,7 @@ The cog beside the page's name opens *Settings*. In the Mac app, *Settings…* i
 
 Each one opens in your browser, and nothing is sent until you submit it there yourself. If you have no GitHub account, *Copy a report* copies an outline with your version in it. Fill it in and send it to whoever set Garrick up for you. Use invented names (Acme, Birch) in anything you report, never a real client's. A way to get past the wall check goes in a private report, not an issue: the dialog links to it.
 
-The page never checks for a newer Garrick. It would have to ask GitHub every time it rebuilt, and the page loads nothing from the network. To see whether there is one, compare *All releases* with your version.
+The page itself loads nothing from the network. To be told when a newer Garrick is out, switch on the release notice in `System/garrick-settings.json`, `{"release-notice": true}`: then a build asks GitHub at most once a day, through `System/tools/release.py` in a process of its own, never waiting for it, and *Needs attention* says "Garrick 0.16.0 is out; this workspace runs 0.15.2" from the next build on, with the command that updates and a link to that release's notes. It sends one request and nothing about your workspace; [Updating Garrick](../updating.md#being-told-a-newer-garrick-is-out) says exactly what. A request that fails shows nothing. Off, the page never asks: compare *All releases* with your version.
 
 ## Preview features
 
@@ -96,7 +96,7 @@ The graph's panel offers the same actions under the same labels, the app buttons
 
 ## Set it up
 
-1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. The previews' scripts (`page_action.py`, `ask.py` and `ask-brief.md`) go with it, and `obsidian/` holds the [Obsidian plugin](#in-obsidian). A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing.
+1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. The previews' scripts (`page_action.py`, `ask.py` and `ask-brief.md`) go with it, and `obsidian/` holds the [Obsidian plugin](#in-obsidian). A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing. From then on, [updating Garrick](../updating.md#extras) updates `System/status/` with the rest.
 2. **Build it and open it:**
    ```sh
    python3 System/status/status.py --workspace ~/Garrick --open
@@ -128,7 +128,7 @@ Build it once, from the workspace:
 System/status/app/make-app.sh
 ```
 
-It compiles `Garrick.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. `--dest` puts it elsewhere. It will not replace another app of the same name, and it replaces a build from before 0.10.0, when the app was called *Garrick's Status*, keeping its settings. Drag it to the Dock to keep it there. To test it, `~/Applications/Garrick.app/Contents/MacOS/Garrick --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
+It compiles `Garrick.swift` with the Xcode command line tools, which a Mac that runs `git` and `python3` already has, and puts the app in `~/Applications`, signed for this Mac only. It downloads nothing. The app reads the workspace's place, the `python3` that built it and any flags you give after `--` (`make-app.sh -- --no-graph`) from its own settings, so build it again after moving the workspace or changing those. [Updating Garrick](../updating.md#extras) builds it again when the app's code changes, with the flags it keeps. `--dest` puts it elsewhere. It will not replace another app of the same name, and it replaces a build from before 0.10.0, when the app was called *Garrick's Status*, keeping its settings. Drag it to the Dock to keep it there. To test it, `~/Applications/Garrick.app/Contents/MacOS/Garrick --check` loads the page without a window, presses one card's buttons without acting on them, prints what it found and quits.
 
 ### In the menu bar
 
@@ -163,7 +163,7 @@ Three edges can collide with macOS. On the left, Stage Manager shows its strip o
 
 Seeing where the pointer is needs no permission in macOS; only reading keys typed in other apps would, and the panel never does.
 
-The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. Rebuild the app with `make-app.sh` after updating Garrick to get the icon; the flag alone does not add it to an app built before.
+The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. An app built before needs a rebuild to get the icon; the flag alone does not add it. An update that changes the app's code rebuilds it for you, with the flags it was built with.
 
 ### Ask
 
@@ -194,7 +194,7 @@ To try it from a terminal: `python3 System/status/ask.py --workspace ~/Garrick a
 
 `extras/status/obsidian/` is an Obsidian plugin that shows the page in an Obsidian tab, with the buttons the Mac app gives it. Desktop Obsidian only.
 
-1. Copy the folder into a vault inside your workspace, as `.obsidian/plugins/garrick-status/`: `main.js` and `manifest.json`. The vault can be the workspace root, a zone or a wiki.
+1. Copy the folder into a vault inside your workspace, as `.obsidian/plugins/garrick-status/`: `main.js` and `manifest.json`. The vault can be the workspace root, a zone or a wiki. An update copies in a newer plugin for you, in every such vault, unless you changed the copy there.
 2. In Obsidian, *Settings › Community plugins*, switch on *Garrick*.
 3. Click Garrick's mark in the ribbon, or run *Garrick: Open* from the command palette.
 

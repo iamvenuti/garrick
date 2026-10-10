@@ -19,19 +19,23 @@ These phrases are in `System/rules.md`, under Voice. Without the extra, "close X
 
 ## Set it up
 
-You need cmux and `python3`. desk runs from the Garrick download you keep, like the other extras, so when you update Garrick, desk updates with it.
+You need cmux and `python3`. desk lives in your workspace, like the status page, so [updating Garrick](../updating.md#extras) updates it with the rest.
 
-1. Copy the skill into your workspace, so your assistants find it:
+1. Copy the command and its library into your workspace as `System/cmux/`, and the skill into `System/skills/`, so your assistants find it. Then commit both in the workspace root's repository:
 
    ```sh
+   mkdir -p ~/Garrick/System/cmux
+   cp /path/to/garrick/extras/cmux/*.py /path/to/garrick/extras/cmux/desk.example.json ~/Garrick/System/cmux/
    cp -R /path/to/garrick/extras/cmux/desk ~/Garrick/System/skills/
    ```
 
 2. Put the command on your PATH, so the skill can run it by name:
 
    ```sh
-   ln -s /path/to/garrick/extras/cmux/desk.py ~/.local/bin/desk
+   ln -s ~/Garrick/System/cmux/desk.py ~/.local/bin/desk
    ```
+
+   A `desk` linked to a Garrick download instead, as these steps once said, still works. The next update points it at the workspace's copy, and says so before it does.
 
 3. Optionally, copy `extras/cmux/desk.example.json` to `System/desk.json` in your workspace and change what you need. Every setting is optional:
 
@@ -50,7 +54,7 @@ Run `desk status` to check it can see cmux.
 
 ## From the status page
 
-With the extra beside `extras/status` in the download, the [status page](status-page.md)'s buttons can open and close a thread's tab, and start up or shut down cmux, through `extras/status/page_action.py`. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
+With the extra in `System/cmux/`, beside the status page in `System/status/`, the [status page](status-page.md)'s buttons can open and close a thread's tab, and start up or shut down cmux, through `System/status/page_action.py`. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
 
 ## The socket password
 
@@ -86,7 +90,7 @@ Whatever came back, "open [thread]" rebuilds the context from the thread's resum
 
 ## Take it out
 
-Delete `System/skills/desk`, the `desk` link and `System/desk.json`, and switch the socket back as above. Nothing else in the workspace refers to them.
+Delete `System/cmux`, `System/skills/desk`, the `desk` link and `System/desk.json`, and switch the socket back as above. Nothing else in the workspace refers to them.
 
 ## What you lose without it
 

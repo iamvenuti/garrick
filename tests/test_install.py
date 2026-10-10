@@ -68,8 +68,10 @@ class Sandbox:
         self.work = base / "work"
         self.work.mkdir()
         gitconfig = base / "gitconfig"
+        # Newer git runs its housekeeping after a commit in a process of its own,
+        # which can still be writing in .git when the folder is cleaned up.
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
-                             "[commit]\n\tgpgsign = false\n")
+                             "[commit]\n\tgpgsign = false\n[maintenance]\n\tautoDetach = false\n")
         self.env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_GLOBAL=str(gitconfig),
                         GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
 

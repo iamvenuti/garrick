@@ -10,11 +10,11 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/System/rules.md` | How an assistant behaves in an installed workspace. The only copy |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
 | `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
-| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py` |
+| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `release.py`, the one tool that reaches the network, only when asked or switched on |
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
-| `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace |
+| `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace; `System/tools/release.py update` downloads a release and runs it. Updates the extras a workspace has copied in, too |
 | `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. After tagging a release, run `python3 update.py --release-hashes` and commit the result; a test fails until you do |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |

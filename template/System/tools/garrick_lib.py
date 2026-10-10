@@ -862,6 +862,128 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
 
 
+# The workspace's settings: choices that stay, unlike the preview flags in
+# System/garrick-flags.json, which a release drops. One so far:
+# {"release-notice": true} lets the status page ask GitHub, at most once a day,
+# whether a newer Garrick is out. Off unless the file says true: it is the only
+# call Garrick makes on its own. "release-repository" names another repository
+# to ask, for a fork, as owner/name.
+SETTINGS = ("System", "garrick-settings.json")
+RELEASE_NOTICE = "release-notice"
+RELEASE_REPOSITORY = "iamvenuti/garrick"
+# What the last question to GitHub found, written by System/tools/release.py.
+# In the folder for files a tool rebuilds, so it is never committed.
+RELEASE_CACHE = ("System", "generated", "garrick-release.json")
+RELEASE_EVERY = datetime.timedelta(days=1)
+# The release notes the installer copies in, and every update replaces: the
+# newest release named there is the release the workspace runs.
+CHANGELOG_COPY = ("System", "garrick-changelog.md")
+UPDATE_COMMAND = "python3 System/tools/release.py update"
+_REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$")
+
+
+def read_settings(root: PathLike) -> dict:
+    """System/garrick-settings.json, or {} when it is missing or does not read."""
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*SETTINGS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def release_notice_on(root: PathLike) -> bool:
+    return read_settings(root).get(RELEASE_NOTICE) is True
+
+
+def release_repository(root: PathLike) -> str:
+    """The repository to ask about releases: the setting, when it reads as
+    owner/name, else the one Garrick comes from."""
+    named = read_settings(root).get("release-repository")
+    return named if isinstance(named, str) and _REPO_NAME.match(named) else RELEASE_REPOSITORY
+
+
+def release_key(tag: object) -> Optional[tuple]:
+    """Sort key for a release, "v0.16.0" or "0.16.0": a pre-release sorts
+    before its release. None for anything that is not a version."""
+    m = re.match(r"^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?$", str(tag or "").strip())
+    if not m:
+        return None
+    pre = m.group(2)
+    parts = tuple((0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.findall(r"\d+|\D+", pre or ""))
+    return tuple(int(x) for x in m.group(1).split(".")), pre is None, parts
+
+
+def workspace_release(root: PathLike) -> str:
+    """The release the workspace runs, such as "0.15.2": the newest release in
+    its copy of the release notes, or "" when it has none."""
+    try:
+        text = Path(root).joinpath(*CHANGELOG_COPY).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        m = re.match(r"^## \[([^\]]+)\]", line)
+        if m and m.group(1).lower() != "unreleased" and release_key(m.group(1)):
+            return m.group(1).lstrip("v")
+    return ""
+
+
+def read_release_cache(root: PathLike) -> dict:
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*RELEASE_CACHE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def release_asked_lately(root: PathLike, now: Optional[datetime.datetime] = None) -> bool:
+    """Whether GitHub was asked about this repository's releases in the last day."""
+    cache = read_release_cache(root)
+    if cache.get("repository") != release_repository(root):
+        return False
+    try:
+        asked = datetime.datetime.fromisoformat(str(cache.get("asked")))
+    except ValueError:
+        return False
+    return datetime.timedelta(0) <= (now or datetime.datetime.now()) - asked < RELEASE_EVERY
+
+
+def release_due(root: PathLike, now: Optional[datetime.datetime] = None) -> bool:
+    """Whether the release notice should ask GitHub again: switched on, and
+    not asked in the last day."""
+    return release_notice_on(root) and not release_asked_lately(root, now)
+
+
+def newer_release(root: PathLike) -> Optional[dict]:
+    """The release the last question to GitHub found, when it is newer than
+    the one the workspace runs: {"version", "tag", "url", "current"}. Reads
+    the cache only; never asks."""
+    cache = read_release_cache(root)
+    tag = str(cache.get("latest") or "")
+    if not release_key(tag) or cache.get("repository") != release_repository(root):
+        return None
+    current = workspace_release(root)
+    if current and release_key(current) >= release_key(tag):
+        return None
+    url = str(cache.get("url") or "")
+    if not url.startswith("https://"):
+        url = "https://github.com/%s/releases" % cache["repository"]
+    return {"version": tag.lstrip("v"), "tag": tag, "url": url, "current": current}
+
+
+def say_newer_release(root: PathLike) -> str:
+    """"Garrick 0.16.0 is out; this workspace runs 0.15.2. To update: …", or
+    "" when the last answer from GitHub holds nothing newer. Offline: it reads
+    the cache."""
+    new = newer_release(root)
+    if not new:
+        return ""
+    runs = ("this workspace runs %s" % new["current"]) if new["current"] else \
+        "this workspace does not record which release it runs"
+    return "Garrick %s is out; %s. To update: %s" % (new["version"], runs, UPDATE_COMMAND)
+
+
 class GitError(RuntimeError):
     """A git command that failed, with git's own reason."""
 

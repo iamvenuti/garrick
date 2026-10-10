@@ -17,7 +17,10 @@ or hidden, and Reset view puts the page back.
 already keep, and writes nothing but itself. It runs no server, loads nothing
 from the network and carries no third-party script. Delete it and nothing is
 lost: every fact on it lives in a file you own. Each panel says where its
-numbers come from and how old they are.
+numbers come from and how old they are. The one call out is the release
+notice, off until System/garrick-settings.json switches it on: then a build
+starts System/tools/release.py, at most once a day and without waiting for it,
+and Needs attention names a newer Garrick once GitHub has said there is one.
 
 **It lives in `System/generated/status.html`**, the folder for pages a tool
 rebuilds. The page is the one place that shows every zone at once, so that
@@ -255,6 +258,40 @@ def installed_version(ws: Path) -> str:
         return " ".join(s for s in said if s) or UNKNOWN
     except Exception:
         return UNKNOWN
+
+
+def release_notice(ws: Path) -> Optional[Tuple[str, str]]:
+    """With the release notice switched on, the newer Garrick the last question
+    to GitHub found, as (line, link to its release notes); else None. Reads
+    the answer kept in System/generated/, through the workspace's own
+    garrick_lib, and never asks: release_ask() does, in the background."""
+    lib = workspace_lib(ws)
+    on, newer, say = (getattr(lib, n, None) for n in ("release_notice_on", "newer_release", "say_newer_release"))
+    if not (callable(on) and callable(newer) and callable(say)):
+        return None
+    try:
+        found = newer(ws) if on(ws) else None
+        return (say(ws), found["url"]) if found else None
+    except Exception:
+        return None
+
+
+def release_ask(ws: Path) -> bool:
+    """Start System/tools/release.py in a process of its own to ask GitHub for
+    the newest release, when the release notice is switched on and has not
+    asked in the last day. The build never waits for it: the next build shows
+    the answer. Returns whether it started one."""
+    lib, tool = workspace_lib(ws), ws / "System" / "tools" / "release.py"
+    due = getattr(lib, "release_due", None)
+    try:
+        if not (callable(due) and tool.is_file() and due(ws)):
+            return False
+        subprocess.Popen([sys.executable, str(tool), "--root", str(ws), "latest", "--background"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         cwd=str(ws), start_new_session=True)
+        return True
+    except Exception:                         # the page is built either way
+        return False
 
 
 def _value(raw: str):
@@ -2165,8 +2202,9 @@ def about_garrick(version: str, notes: str = "") -> str:
     Each is a link to Garrick's GitHub page, opened in the browser, where
     nothing is sent until you submit it yourself; the bug form arrives with the
     version filled in. For someone with no GitHub account, a report to copy and
-    send to whoever set Garrick up. Nothing here checks for updates: the page
-    never calls out."""
+    send to whoever set Garrick up. The page never calls out: a newer release
+    is asked for at build, only with the release notice switched on, by
+    System/tools/release.py (release_ask)."""
     report = ("Garrick bug report\n\nWhich Garrick: %s\n\nWhat happened:\n\nHow to make it happen again:\n\n"
               "Assistant and its version:\n\nUse invented names (Acme, Birch), never a real client's." % version)
     links = [
@@ -3128,6 +3166,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     for r in R:
         if r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES:
             attn.append(("warning", "%s: %s, the oldest changed %s" % (r["name"], say_files(r["dirty"]), age(r["since"], now)), "#repos"))
+    notice = release_notice(ws)
+    if notice:
+        attn.append(("warning", notice[0], notice[1]))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
@@ -3186,7 +3227,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     attn_card = ""
     if attn:
         attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join('<a href="%s">%s<span>%s</span></a>' % (h, ICON[k], E(t)) for k, t, h in attn),
+                                                       '<div class="attn">%s</div>' % "".join('<a href="%s"%s>%s<span>%s</span></a>' % (
+                                                           E(h), ' target="_blank" rel="noopener"' if h.startswith("https://") else "", ICON[k], E(t))
+                                                           for k, t, h in attn),
                                                        fixed=True)
 
     # ---- threads, one column per zone: a row per project, its threads folding
@@ -3558,6 +3601,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                          vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
                          launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
     os.replace(tmp, out)
+    release_ask(ws)
     print(out)
     if args.open:
         opener = "open" if sys.platform == "darwin" else "xdg-open"

@@ -4,7 +4,8 @@
     python3 System/tools/check.py [--root PATH] [--ear] [--json] [--quick]
     python3 System/tools/check.py --staged --walls-only      (the pre-commit hook)
     python3 System/tools/check.py --install-hooks
-    python3 System/tools/check.py --version                  (which Garrick, for a bug report)
+    python3 System/tools/check.py --version                  (which Garrick, for a bug report, and whether a
+                                                              newer one is out, as GitHub last said; never asks)
 
 Plain text by default: findings grouped by check, one line each, then a
 count. `--ear` gives at most three short sentences for reading aloud.
@@ -61,6 +62,7 @@ from garrick_lib import (  # noqa: E402
     parse_mail_bytes,
     read_version,
     say_changes,
+    say_newer_release,
     say_version,
     sounds_alike,
     strip_recipients,
@@ -3143,6 +3145,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.version:
         stamp = read_version(root)
         print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))
+        newer = say_newer_release(root)        # what GitHub last said, kept on disk; the check never asks
+        if newer:
+            print(newer)
         return 0
     findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and not (args.json or args.ear):

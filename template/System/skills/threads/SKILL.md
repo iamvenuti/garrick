@@ -61,6 +61,10 @@ yet, and keeps the spaces in a name.
 
 A zone's own `AGENTS.md` adds to this skill and wins where it says so.
 
+Where the `desk` skill is installed (the cmux extra), "open X", "close X" and
+"close for the day" go to it first: it opens, wraps or closes each thread in
+its own tab, and the session in that tab runs this skill.
+
 ## Resolving a name
 
 Every command that names a thread resolves the name first. Names arrive by

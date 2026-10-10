@@ -2,6 +2,7 @@
 """The status page for a Garrick workspace. An optional extra.
 
     python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
+                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
@@ -42,8 +43,11 @@ does; `--no-cmux` leaves cmux out. A zone with no Todo.md gets no Open
 actions, and a workspace with none gets no card for them.
 
 Preview features (FLAGS) stay off until System/garrick-flags.json switches
-them on: the Todo list, and the buttons that act, which page_action.py beside
-this file carries out for the Mac app.
+them on: the Todo tab, and the buttons that act, which page_action.py beside
+this file carries out for the Mac app. With the cmux extra beside this folder
+(../cmux/cmuxlib.py), the page shows which projects and threads have a
+session open, and its buttons can drive the desk. `--settle` lets a burst of
+build requests make one page; `--also` and `--moved` reach effort.py.
 
 Copy this folder into your workspace as `System/status/`, next to
 `System/jobs/` if you have it, and run it by hand or on a schedule through
@@ -64,6 +68,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -76,7 +81,8 @@ DAYS = 14
 EXIT = {0: "ok", 3: "answer incomplete", 4: "could not sign in", 6: "missing connector", 8: "spending cap",
         64: "bad arguments", 75: "skipped, still running", 124: "timed out", 127: "command not found"}
 OK_EXITS = (0, 75)
-LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)|skipped)")
+# job.py's end-of-run line; a quiet exit ends with "  quiet" before the rule.
+LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)(  quiet)?|skipped)")
 TODO_ITEM = re.compile(r"^\s*-\s\[ \]\s")
 # Where Garrick lives, for Settings › About Garrick. The page loads nothing from
 # it: each link opens in your browser, and a report goes only when you submit
@@ -125,6 +131,64 @@ def load_agent(ws: Path):
             except Exception:
                 return None
     return None
+
+
+# The cmux extra's library, beside this folder as System/cmux/ is beside
+# System/status/. With it, the page shows which projects and threads have a
+# session open, and in the app offers Open and Close session, Start up and
+# Shut down, which the desk carries out. Without it, none of that is drawn.
+CMUXLIB = Path(__file__).resolve().parent.parent / "cmux" / "cmuxlib.py"
+
+
+def cmux_extra(lib: Optional[Path] = None):
+    """The cmux extra's library, loaded; None when it is not here or does not load."""
+    lib = lib or CMUXLIB
+    if not lib.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("garrick_cmuxlib", str(lib))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return False
+
+
+def sessions(ws: Path, lib: Optional[Path] = None) -> Optional[Dict[str, str]]:
+    """Resolved folder -> "idle" or "working", for every session the cmux
+    extra knows is open; None when the extra is not installed. A library that
+    fails to load or answer counts as installed with nothing open."""
+    mod = cmux_extra(lib)
+    if mod is None:
+        return None
+    try:
+        found = mod.sessions_by_folder(ws)
+    except Exception:
+        return {}
+    return {os.path.realpath(str(k)): v for k, v in (found or {}).items() if v in ("idle", "working")}
+
+
+def desk_ready(lib: Optional[Path] = None) -> bool:
+    """Whether the desk can act here: the cmux extra is installed and finds
+    cmux (its installed(); a library without that check is taken at its word)."""
+    mod = cmux_extra(lib)
+    if not mod:
+        return False
+    try:
+        check = getattr(mod, "installed", None)
+        return bool(check()) if callable(check) else True
+    except Exception:
+        return False
+
+
+def session_in(open_: Optional[Dict[str, str]], folder: Path) -> Optional[str]:
+    """The state of the sessions open in a folder or below it: working when
+    any is, idle when all are, None when there are none."""
+    if not open_:
+        return None
+    root = os.path.realpath(str(folder))
+    found = [v for k, v in open_.items() if k == root or k.startswith(root + os.sep)]
+    return ("working" if "working" in found else "idle") if found else None
 
 
 def jobs_dir(agent) -> Path:
@@ -278,11 +342,46 @@ def as_date(value) -> Optional[dt.date]:
 
 DONE = {"done", "closed", "archived", "complete", "completed"}
 PARKED = {"parked", "dormant", "paused", "on-hold"}
+RESUME = re.compile(r"^#{1,6}\s+Resume here\b", re.I)
+MONTH = {m.lower(): i + 1 for i, m in enumerate(("January February March April May June July August September "
+                                                  "October November December").split())}
+SPOKEN_DATE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})\b")
+
+
+def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
+    """Whether a thread note has its `### Resume here` block, as the threads
+    skill writes it, and the date the block gives itself: the first date on
+    its "Where it stands" line, or anywhere in the block before its table.
+    Nothing else of the block is read, and nothing of it reaches the page."""
+    try:
+        lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False, None
+    for i, line in enumerate(lines):
+        if not RESUME.match(line):
+            continue
+        for text in lines[i + 1:i + 12]:
+            if text.startswith(("#", "|", "---")):
+                break
+            iso = re.search(r"\b(\d{4}-\d\d-\d\d)\b", text)
+            if iso and as_date(iso.group(1)):
+                return True, as_date(iso.group(1))
+            for day, month, year in SPOKEN_DATE.findall(text):
+                number = MONTH.get(month.lower()) or next((n for m, n in MONTH.items() if m[:3] == month.lower()[:3]), None)
+                try:
+                    if number:
+                        return True, dt.date(int(year), number, int(day))
+                except ValueError:
+                    continue
+        return True, None
+    return False, None
 
 
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
-    note was last updated. Frontmatter only, like "what's open". A project
+    note was last updated, read from frontmatter like "what's open"; and
+    whether the note has a Resume here block, with that block's own date
+    (resume_point). A project
     with no thread note is its own single thread, read from its hub, as in a
     workspace laid out before Garrick gave every project a Threads/ folder."""
     out = {}
@@ -304,10 +403,12 @@ def threads(ws: Path) -> Dict[str, dict]:
                     done += 1
                     continue
                 state = "parked" if state in PARKED else state
+                has_block, resumed = resume_point(note)
                 row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
                        "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": as_date(fm.get("updated")), "status": state}
+                       "updated": as_date(fm.get("updated")), "status": state,
+                       "resume": has_block, "resumed": resumed}
                 (parked if state == "parked" else rows).append(row)
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
@@ -374,41 +475,97 @@ def todo_lines():
     return _TL
 
 
-def todo_list(ws: Path, link: "Links", today: dt.date) -> List[Tuple[str, List[dict]]]:
-    """Preview: every open action in each zone, overdue first, then by date,
-    then by section. Read from the notes, never written."""
+def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
+    """Preview: each zone's open actions, read from the notes, never written.
+    Per zone: the lines of Todo.md grouped under its `## ` headings in their
+    order, then the lines that sit in thread notes ("In thread notes"), then
+    what was ticked today, with counts of the open, the overdue and the
+    undated. An empty section is left out, but an empty Inbox is said."""
     tl = todo_lines()
-    order = {name: i for i, name in enumerate(tl.SECTIONS)}
     out = []
     for zone in visible_dirs(ws / "Zones"):
-        rows = []
-        for t in tl.tasks(str(zone)):
-            if "<action>" in t["text"] or not t["text"]:
-                continue                                  # a template's placeholder
+        todo_md = zone / "Todo.md"
+        notes = {}
+        for n in tl.notes(str(zone)):
+            rel = Path(n).relative_to(zone).with_suffix("").as_posix()
+            notes.setdefault(rel.lower(), Path(n))
+            notes.setdefault(Path(n).stem.lower(), Path(n))
+
+        def row(t, done=False):
             field = t["scheduled"] if t["waiting"] else t["due"]
             try:
                 when = dt.date.fromisoformat(field) if field else None
             except ValueError:
                 when = None
-            late = bool(when and (when <= today if t["waiting"] else when < today))
-            note = zone / t["file"]
-            rows.append(dict(t, when=when, late=late, link=link(note), zone=zone.name,
-                             sort=(not late, when or dt.date.max, order.get(t["section"] or "", len(order)), t["text"].casefold())))
-        if rows or (zone / "Todo.md").is_file():          # an empty list still takes a new line
-            out.append((zone.name, sorted(rows, key=lambda r: r["sort"])))
+            late = bool(when and (when <= today if t["waiting"] else when < today)) and not done
+            if t["file"] != "Todo.md":
+                thread, note = Path(t["file"]).stem, zone / t["file"]
+            elif t["target"]:
+                thread, note = t["thread"], notes.get(t["target"].lower()) or notes.get(t["target"].rsplit("/", 1)[-1].lower())
+            else:
+                thread, note = None, None
+            return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread,
+                        link=link(note) if note else "", zone=zone.name,
+                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), re.sub(r"[*_`]", "", t["text"]))).casefold())
+
+        rows = [row(t) for t in tl.tasks(str(zone)) if t["text"] and "<action>" not in t["text"]]
+        if not rows and not todo_md.is_file():
+            continue
+        order: List[str] = []
+        if todo_md.is_file():
+            order = [l[3:].strip() for l in todo_md.read_text(encoding="utf-8", errors="replace").splitlines() if l.startswith("## ")]
+        groups = []
+        for name in order:
+            if name in (g for g, _ in groups):
+                continue
+            items = [r for r in rows if r["file"] == "Todo.md" and r["section"] == name]
+            if items or name == "Inbox":
+                groups.append((name, sorted(items, key=lambda r: r["alpha"])))
+        loose = [r for r in rows if r["file"] == "Todo.md" and r["section"] not in order]
+        if loose:
+            groups.append(("Not under a heading", sorted(loose, key=lambda r: r["alpha"])))
+        elsewhere = [r for r in rows if r["file"] != "Todo.md"]
+        if elsewhere:
+            groups.append(("In thread notes", sorted(elsewhere, key=lambda r: (r["file"].lower(), r["alpha"]))))
+        done = [row(t, done=True) for t in tl.done_on(str(zone), today) if t["text"] and "<action>" not in t["text"]]
+        out.append({"zone": zone.name, "file": todo_md if todo_md.is_file() else None, "groups": groups,
+                    "done": sorted(done, key=lambda r: r["alpha"]), "open": len(rows),
+                    "late": sum(1 for r in rows if r["late"]), "undated": sum(1 for r in rows if r["when"] is None)})
     return out
 
 
-def todo_buttons(zone: str, r: dict) -> str:
-    """Tick and a menu of dates, for Garrick.app. Each button carries the
-    request page_action.py reads; the date is worked out at the click, so a page
-    built yesterday still means today."""
-    def req(verb, **more):
-        return E(json.dumps(dict({"verb": verb, "zone": zone, "file": r["file"], "key": r["key"]}, **more)))
-    picks = "".join('<button class="act" type="button" data-act="%s" data-rel="%s" data-say="Dating it…">%s</button>'
-                    % (req("todo-date"), rel, label) for rel, label in (("0", "Today"), ("1", "Tomorrow"), ("7", "In a week"), ("-", "No date")))
-    return ('<button class="tick" type="button" data-act="%s" data-say="Ticking it…" aria-label="Mark done: %s"></button>'
-            '<details class="tdate"><summary>Date</summary><div>%s</div></details>' % (req("todo-done"), E(r["text"][:80]), picks))
+def todo_row(r: dict, today: dt.date, actions: bool) -> str:
+    """One action. The row carries what a button sends back (its zone, file,
+    the line's key) and what the filters and sorts read (late, undated, the
+    date, the A-Z key); the buttons themselves are drawn only with actions."""
+    when = r["when"]
+    if when is None:
+        chip, cls = ("waiting" if r["waiting"] else "") if not actions else ("＋ chase date" if r["waiting"] else "＋ date"), "none"
+    else:
+        rel = "today" if when == today else "tomorrow" if (when - today).days == 1 else \
+            "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b"))
+        chip = "%s %s" % ("Chase" if r["waiting"] else "Due", rel)
+        cls = "overdue" if r["late"] else "today" if when == today else ""
+    name = r["label"] or ("thread?" if r["unsure"] else "")
+    thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(name)) if r["link"] and name
+           else '<span class="thr%s">%s</span>' % (" unsure" if r["unsure"] and not r["label"] else "", E(name)) if name else "")
+    meta = []
+    if r["priority"] in ("🔺", "⏫"):
+        meta.append('<span class="prio">%s priority</span>' % ("highest" if r["priority"] == "🔺" else "high"))
+    if r["also"]:
+        meta.append("<span>also in %d more</span>" % len(r["also"]))
+    if r["file"] != "Todo.md":
+        meta.append("<span>in the thread note</span>")
+    tick = ('<button class="tick" type="button" aria-label="%s: %s"></button>' % ("Reopen" if r["done"] else "Mark done", E(r["text"][:80]))
+            if actions else "")
+    date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
+            else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
+    return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
+            '%s<div class="tmain"><div class="ttext">%s%s</div>%s</div>%s</div>'
+            % (" done" if r["done"] else "", " late" if r["late"] else "", " undated" if when is None else "",
+               E(r["zone"]), E(r["file"]), E(r["key"]), E(r["section"] or ""), 1 if r["waiting"] else 0, E(r["field"]),
+               E(r["alpha"]), tick, thr, md_inline(r["text"]),
+               '<div class="tmeta">%s</div>' % "".join(meta) if meta else "", date))
 
 
 def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
@@ -426,28 +583,47 @@ def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
     return out
 
 
-def todo_list_card(lists: List[Tuple[str, List[dict]]], today: dt.date, actions: bool = False,
-                   projects: Optional[Dict[str, List[dict]]] = None) -> str:
-    def chip(r):
-        if r["when"] is None:
-            return '<span class="chip">waiting</span>' if r["waiting"] else ""
-        rel = "today" if r["when"] == today else "tomorrow" if (r["when"] - today).days == 1 else \
-            "%s %d %s" % (r["when"].strftime("%a"), r["when"].day, r["when"].strftime("%b"))
-        return '<span class="chip%s">%s %s</span>' % (" late" if r["late"] else "", "Chase" if r["waiting"] else "Due", rel)
-    cols = ""
-    for zone, rows in lists:
-        items = "".join(
-            '<div class="titem%s">%s<div class="ttext">%s%s</div><div class="tmeta">%s%s</div></div>'
-            % (" late" if r["late"] else "", '<div class="tacts">%s</div>' % todo_buttons(zone, r) if actions else "",
-               '<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["thread"] or Path(r["file"]).stem)) if (r["thread"] or r["file"] != "Todo.md") else "",
-               md_inline(r["text"]), chip(r), '<span class="muted">%s</span>' % E(r["section"] or "in the thread note"))
-            for r in rows)
+def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
+                   projects: Optional[Dict[str, List[dict]]] = None, link: Optional["Links"] = None) -> str:
+    """The Todo tab: one zone at a time, picked above the list; All, Overdue
+    and No date to filter; A–Z or by due date to sort. In the app with
+    actions on, a box ticks a line (or reopens one ticked today), its date
+    opens a menu of dates, and ＋ Add writes a new one."""
+    panes = ""
+    for z in lists:
+        body = ""
+        for name, rows in z["groups"]:
+            slug = re.sub(r"[^a-z0-9]+", "-", ("%s-%s" % (z["zone"], name)).lower()).strip("-")
+            items = "".join(todo_row(r, today, actions) for r in rows) or '<p class="tempty">Inbox clear.</p>'
+            body += ('<details class="tgroup" id="tg-%s" open><summary>%s<span class="tname">%s</span><span class="n">%d</span></summary>'
+                     '<div class="trows">%s</div></details>' % (slug, CHEV, E(name), len(rows), items))
+        if z["done"]:
+            slug = re.sub(r"[^a-z0-9]+", "-", z["zone"].lower()).strip("-")
+            body += ('<details class="tgroup donegroup" id="tg-%s-done-today" open><summary>%s<span class="tname">Done today</span>'
+                     '<span class="n">%d</span>%s</summary><div class="trows">%s</div></details>'
+                     % (slug, CHEV, len(z["done"]), '<span class="hint tacts">Tick a box again to reopen it</span>' if actions else "",
+                        "".join(todo_row(r, today, actions) for r in z["done"])))
         add = ('<button type="button" class="act primary tadd-open" data-zone="%s" title="Add an action to %s/Todo.md">＋ Add</button>'
-               % (E(zone), E(zone))) if actions else ""
-        cols += '<div class="tzone"><h4>%s <span class="muted">%d</span>%s</h4>%s</div>' % (E(zone), len(rows), add, items)
-    dialog = add_dialog("".join(add_tree(z, (projects or {}).get(z, [])) for z, _ in lists)) if actions else ""
-    return ('<div id="todolist" class="todotab"><p class="hint">Every open action in the zones, overdue first, read from the notes. '
-            'A preview feature.</p><div class="tzones">%s</div>%s</div>' % (cols, dialog))
+               % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
+        opener = ('<a class="act" href="%s" title="Open %s/Todo.md">Open Todo.md</a>' % (E(link(z["file"])), E(z["zone"]))
+                  if link and z["file"] else "")
+        summ = ('<b>%d</b> open · <span class="%s"><b>%d</b> overdue or due a chase</span> · <b>%d</b> without a date'
+                % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
+        panes += '<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s%s</span></div>%s</div>' % (
+            E(z["zone"]), summ, add, opener, body)
+    zones = "".join('<button type="button" data-tz="%s">%s<span class="n">%d</span></button>' % (E(z["zone"]), E(z["zone"]), z["open"])
+                    for z in lists)
+    bar = ('<div class="tbar"><div class="seg zseg" role="group" aria-label="Zone"%s>%s</div>'
+           '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
+           '<button type="button" data-tf="late">Overdue</button><button type="button" data-tf="nodate">No date</button></div>'
+           '<div class="seg sseg" role="group" aria-label="Sort"><button type="button" data-ts="alpha" title="By thread, then by the action">A–Z</button>'
+           '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div>'
+           '<span class="hint">%s</span></div>'
+           % (" hidden" if len(lists) < 2 else "", zones,
+              "Tick to close. Click a date to set it; a dated Inbox line moves to This week, Soon or Waiting on." if actions
+              else "Read from the notes. A preview feature."))
+    dialog = add_dialog("".join(add_tree(z["zone"], (projects or {}).get(z["zone"], [])) for z in lists)) if actions else ""
+    return '<div id="todolist" class="todotab%s">%s%s%s</div>' % ("" if actions else " ro", bar, panes, dialog)
 
 
 _EF = None
@@ -685,6 +861,154 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 """
 
 
+# The Todo tab (preview, todo-list): one zone at a time, a filter, a sort,
+# and with page-actions in the app, the tick, the date menu and the pending
+# row of a line being added. Shared with any page that carries the tab.
+TODO_CSS = r"""
+.todotab .tbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:14px}
+.todotab .tbar .seg button{flex:none;padding:5px 12px;font-size:12.5px;display:inline-flex;gap:6px;align-items:center;line-height:1.2}
+.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}.todotab .tbar .hint{flex:1;min-width:220px}
+.tsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--ink2);font-size:12.5px;margin:0 2px 12px}
+.tsum b{color:var(--ink);font-variant-numeric:tabular-nums}.tsum .bad,.tsum .bad b{color:var(--critical)}
+.tsum-acts{margin-left:auto;display:flex;gap:6px}.tsum .tadd-open{font-size:12px;padding:6px 12px}
+.tgroup{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);margin-bottom:12px}
+.tgroup>summary{display:flex;align-items:center;gap:8px;padding:11px 16px;font-weight:640;font-size:14px}
+.tgroup>summary .n{color:var(--muted);font-weight:500;font-size:12px;font-variant-numeric:tabular-nums}
+.tgroup>summary .hint{margin-left:auto;font-weight:400}
+.trows{padding:0 8px 6px}
+.trow{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:start;padding:8px;border-top:1px solid var(--grid);border-radius:8px}
+.ro .trow,.nohost .trow{grid-template-columns:minmax(0,1fr) auto}.nohost .trow .tick{display:none}
+.trow:first-child{border-top:0}.trow:hover{background:var(--wash)}
+.trow.pending{opacity:.6;pointer-events:none}.trow.pending .tmeta span{font-style:italic}
+.trow.done .tick{background:var(--good);border-color:var(--good)}
+.trow.done .tick::after{content:"";width:9px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg)}
+.trow.done .ttext{text-decoration:line-through;color:var(--muted)}.trow.done .thr{color:var(--muted)}
+.ttext{font-size:13.5px;line-height:1.45;overflow-wrap:anywhere}
+.ttext code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--wash);padding:0 3px;border-radius:4px}
+.thr{display:inline-block;font-size:12px;font-weight:620;color:var(--accent);margin-right:7px;white-space:nowrap}.thr.unsure{color:var(--muted);font-weight:500}
+.tmeta{display:flex;flex-wrap:wrap;gap:3px 12px;margin-top:3px;font-size:11.5px;color:var(--muted)}
+.tmeta .prio{color:var(--critical)}.tmeta .moved{color:var(--accent);font-weight:560}
+.tdate{border:1px solid var(--line);background:var(--raise);border-radius:7px;font:inherit;font-size:12px;padding:3px 9px;color:var(--ink2);white-space:nowrap;font-variant-numeric:tabular-nums}
+button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:var(--ink)}
+.tdate.none{color:var(--muted);border-style:dashed;background:none}.tdate:empty{visibility:hidden}
+.ro .tdate.none:not(:empty){border-style:solid}.nohost button.tdate{pointer-events:none}.nohost button.tdate.none{visibility:hidden}
+.tdate.overdue{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.tdate.today{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.trow.done .tdate{visibility:hidden}
+.tempty{color:var(--muted);font-size:12.5px;margin:2px 8px 10px}
+.todotab[data-tf="late"] .trow:not(.late),.todotab[data-tf="nodate"] .trow:not(.undated){display:none}
+.todotab[data-tf="late"] .tempty,.todotab[data-tf="nodate"] .tempty,.tgroup.empty{display:none}
+.dmenu{position:fixed;z-index:11;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.16);padding:6px;width:236px}
+.dmenu .dh{font-size:11px;color:var(--muted);padding:4px 8px 2px;text-transform:uppercase;letter-spacing:.05em}
+.dmenu button{display:flex;justify-content:space-between;align-items:baseline;width:100%;border:0;background:none;font:inherit;font-size:13px;color:var(--ink2);padding:6px 8px;border-radius:6px;cursor:pointer;text-align:left}
+.dmenu button:hover,.dmenu button:focus-visible{background:var(--wash);color:var(--ink);outline:none}
+.dmenu button small{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.dmenu .pick{display:flex;gap:6px;padding:7px 4px 3px;border-top:1px solid var(--grid);margin-top:4px}
+.dmenu input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--raise);color:var(--ink)}
+.dmenu .pick button{width:auto;flex:none;border:1px solid var(--line);background:var(--raise);font-size:12px;font-weight:560;padding:3px 10px}
+.dmenu .clear{color:var(--critical)}
+@media (max-width:820px){.trow{grid-template-columns:22px minmax(0,1fr)}.trow .tdate{grid-column:2;justify-self:start}}
+"""
+
+TODO_JS = r"""
+(function(){
+var todo=document.getElementById('todolist');if(!todo)return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+var panes=[].slice.call(todo.querySelectorAll('.tz'));
+function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},2600)}
+/* the zone asked for last, else Work when there is one, as the graph does, else the first */
+function has(z){return panes.some(function(p){return p.dataset.zone===z})}
+function zone(z){if(!has(z))z=has('Work')?'Work':panes[0]&&panes[0].dataset.zone;
+panes.forEach(function(p){p.hidden=p.dataset.zone!==z});todo.querySelectorAll('[data-tz]').forEach(function(b){b.classList.toggle('on',b.dataset.tz===z)});
+st.set('garrick-todo-zone',z);empties()}
+window.TodoZone=zone;
+todo.querySelectorAll('[data-tz]').forEach(function(b){b.onclick=function(){zone(b.dataset.tz)}});
+function filt(f){todo.dataset.tf=f;todo.querySelectorAll('[data-tf]').forEach(function(b){b.classList.toggle('on',b.dataset.tf===f)});st.set('garrick-todo-filter',f);empties()}
+todo.querySelectorAll('[data-tf]').forEach(function(b){b.onclick=function(){filt(b.dataset.tf)}});
+function empties(){var f=todo.dataset.tf||'all',want=f==='late'?'.trow.late':f==='nodate'?'.trow.undated':null;
+todo.querySelectorAll('.tgroup').forEach(function(g){g.classList.toggle('empty',!!want&&!g.querySelector(want))})}
+/* A-Z by thread, then the action; Due date puts dated lines first, soonest first, then the rest A-Z */
+function sort(s){todo.dataset.ts=s;todo.querySelectorAll('[data-ts]').forEach(function(b){b.classList.toggle('on',b.dataset.ts===s)});st.set('garrick-todo-sort',s);
+todo.querySelectorAll('.trows').forEach(function(box){var rows=[].slice.call(box.children).filter(function(r){return r.classList.contains('trow')});
+rows.sort(function(a,b){if(s==='date'){var x=a.dataset.d||'',y=b.dataset.d||'';if(x!==y){if(!x)return 1;if(!y)return -1;return x<y?-1:1}}
+return a.dataset.a<b.dataset.a?-1:a.dataset.a>b.dataset.a?1:0});rows.forEach(function(r){box.appendChild(r)})})}
+todo.querySelectorAll('[data-ts]').forEach(function(b){b.onclick=function(){sort(b.dataset.ts)}});
+sort(st.get('garrick-todo-sort')==='date'?'date':'alpha');zone(st.get('garrick-todo-zone'));
+var f0=st.get('garrick-todo-filter');filt(f0==='late'||f0==='nodate'?f0:'all');
+/* a zone's "Open the list" on the Overview opens the tab on that zone */
+document.addEventListener('click',function(e){var g=e.target.closest&&e.target.closest('[data-tz-go]');if(g)zone(g.dataset.tzGo)},true);
+/* what a button sends: Garrick's request, page_action.py's to carry out */
+function send(verb,r,more){var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k};for(var k in more||{})q[k]=more[k];host.postMessage({act:q})}
+todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
+var d=!r.classList.contains('done');r.classList.toggle('done',d);b.setAttribute('aria-label',(d?'Reopen':'Mark done')+b.getAttribute('aria-label').replace(/^[^:]*/,''));
+send(d?'todo-done':'todo-undo',r);say(d?'Ticking it…':'Reopening it…')});
+/* the date menu: the date is worked out at the click, so a page built yesterday still means today */
+var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
+function at(n){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return d}
+function next(w){var d=at(0),k=(w-d.getDay()+7)%7||7;return at(k)}
+function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function lab(d){return d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function open(r,b){mrow=r;var w=r.dataset.w==='1',o=[['Today',at(0)],['Tomorrow',at(1)],[at(0).getDay()===5?'Next Friday':'Friday',next(5)],['Next Monday',next(1)],
+['In a week',at(7)],['In two weeks',at(14)]].filter(function(x,i,a){return a.findIndex(function(y){return iso(y[1])===iso(x[1])})===i});
+menu.innerHTML='<div class="dh">'+(w?'Chase on':'Due')+'</div>'+o.map(function(x){return'<button type="button" role="menuitem" data-v="'+iso(x[1])+'"><span>'+x[0]+'</span><small>'+esc(lab(x[1]))+'</small></button>'}).join('')
++'<div class="pick"><input type="date" aria-label="Another date" value="'+esc(r.dataset.d||'')+'"><button type="button" class="set">Set</button></div>'
++(r.dataset.d?'<button type="button" class="clear" role="menuitem" data-v="-">Clear the date</button>':'');
+menu.hidden=false;var q=b.getBoundingClientRect(),mw=menu.offsetWidth,mh=menu.offsetHeight,y=q.bottom+4;if(y+mh>window.innerHeight-8)y=q.top-mh-4;
+menu.style.left=Math.max(8,Math.min(q.right-mw,window.innerWidth-mw-8))+'px';menu.style.top=Math.max(8,y)+'px';var f=menu.querySelector('button');if(f)f.focus()}
+function shut(){menu.hidden=true;mrow=null}
+todo.addEventListener('click',function(e){var b=e.target.closest('button.tdate');if(!b||!host)return;e.stopPropagation();var r=b.closest('.trow');if(mrow===r&&!menu.hidden)shut();else open(r,b)});
+menu.addEventListener('click',function(e){var b=e.target.closest('button');if(!b||!mrow)return;var v=b.classList.contains('set')?menu.querySelector('input').value:b.dataset.v;if(!v)return;apply(mrow,v);shut()});
+menu.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.tagName==='INPUT'){e.preventDefault();menu.querySelector('.set').click()}});
+document.addEventListener('click',function(e){if(!menu.hidden&&!menu.contains(e.target))shut()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')shut()});window.addEventListener('scroll',function(){if(!menu.hidden)shut()},{passive:true});
+/* the row says the new date at once, and waits for the rebuild: the line's key changes with its date */
+function apply(r,v){send('todo-date',r,{date:v});say('Dating it…');r.classList.add('pending');
+var b=r.querySelector('.tdate'),w=r.dataset.w==='1';r.dataset.d=v==='-'?'':v;r.classList.remove('late','undated');b.className='tdate';
+if(v==='-'){b.textContent=w?'＋ chase date':'＋ date';b.classList.add('none');r.classList.add('undated');return}
+var d=new Date(v+'T12:00:00'),n=Math.round((d-at(0))/864e5);
+b.textContent=(w?'Chase ':'Due ')+(n===0?'today':n===1?'tomorrow':lab(d));
+if(n<0||(w&&n===0)){b.classList.add('overdue');r.classList.add('late')}else if(n===0)b.classList.add('today');
+if(r.dataset.sec==='Inbox'&&r.dataset.f==='Todo.md'){var m=r.querySelector('.tmeta');if(!m){m=document.createElement('div');m.className='tmeta';r.querySelector('.tmain').appendChild(m)}
+var s=m.querySelector('.moved');if(!s){s=document.createElement('span');s.className='moved';m.appendChild(s)}s.textContent='→ moves to '+(w?'Waiting on':n<=7?'This week':'Soon')}}
+/* a line being added shows at once, greyed, in the section it is going to; the rebuild replaces it with the real row */
+window.TodoPending=function(z,target,date,text){var pane=panes.filter(function(p){return p.dataset.zone===z})[0];if(!pane)return;
+var w=/(^|\s)#waiting/.test(text),sec='Inbox',chip=w?'＋ chase date':'＋ date';
+if(date!=='-'){var d=new Date(date+'T12:00:00'),n=Math.round((d-at(0))/864e5);sec=w?'Waiting on':n<=7?'This week':'Soon';chip=(w?'Chase ':'Due ')+(n===0?'today':n===1?'tomorrow':lab(d))}
+function named(x){var t=x.querySelector('summary .tname');return t?t.textContent:''}
+var groups=[].slice.call(pane.querySelectorAll('details.tgroup')),g=groups.filter(function(x){return named(x)===sec})[0];
+var note=g?'adding…':'adding to '+sec+'…';if(!g)g=groups.filter(function(x){return named(x)==='Inbox'})[0];if(!g)return;
+g.open=true;var rows=g.querySelector('.trows'),empty=rows.querySelector('.tempty');if(empty)empty.remove();
+var name=target!=='-'?target.split('/').pop():'',r=document.createElement('div');r.className='trow pending';
+r.innerHTML='<span class="tick" aria-hidden="true"></span><div class="tmain"><div class="ttext">'+(name?'<span class="thr">'+esc(name)+'</span>':'')+esc(text)
++'</div><div class="tmeta"><span>'+note+'</span></div></div><span class="tdate'+(date==='-'?' none':'')+'">'+esc(chip)+'</span>';
+rows.insertBefore(r,rows.firstChild);var c=g.querySelector('summary .n');if(c)c.textContent=String((+c.textContent||0)+1);r.scrollIntoView({block:'nearest'})};
+})();
+"""
+
+# After a button whose effect lands later than the rebuild that follows it
+# (a session opened or closed through the desk, a thread parked or woken),
+# the page keeps asking for a rebuild, every two seconds for up to thirty,
+# until #state-data shows what was asked for. In a browser it reloads. The
+# scroll position survives each reload.
+RELOAD_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+function keep(){try{sessionStorage.setItem('garrick-scroll',String(window.scrollY))}catch(e){}}
+window.addEventListener('pagehide',keep);window.addEventListener('beforeunload',keep);
+try{var y=+sessionStorage.getItem('garrick-scroll');sessionStorage.removeItem('garrick-scroll');if(y)setTimeout(function(){window.scrollTo(0,y)},0)}catch(e){}
+window.GarrickExpect=function(x){try{localStorage.setItem('garrick-expect',JSON.stringify({x:x,until:Date.now()+30000}))}catch(e){}};
+var w=null;try{w=JSON.parse(localStorage.getItem('garrick-expect')||'null')}catch(e){}if(!w||typeof w.x!=='string')return;
+var S={parked:[],live:[]};try{S=JSON.parse(document.getElementById('state-data').textContent)}catch(e){}
+var i=w.x.indexOf(':'),want=w.x.slice(0,i),key=w.x.slice(i+1),now;
+if(want==='parked'||want==='active')now=(S.parked||[]).indexOf(key)>=0?'parked':'active';
+/* live: or none: with no folder (Start up, Shut down) asks about every folder */
+else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?'live':'none';
+if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
+setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.reload()},2000)})();
+"""
+
+
 # Preview, menu-bar. Inside Garrick.app the page hands the app what
 # its menu bar icon lists: the build's own rows (#menu-data, absent with the
 # flag off, which takes the icon away), with the zone the graph shows and the
@@ -696,8 +1020,8 @@ MENU_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
 var el=document.getElementById('menu-data'),data=null;try{data=el?JSON.parse(el.textContent):null}catch(e){}
-function sync(){var on={};try{on=JSON.parse(g('garrick-launchers')||'{}')}catch(e){}
-host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:g('garrick-default')||'note',note:on.note!==false,
+function sync(){var on=GarrickPrefs.launchers();
+host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:GarrickPrefs.def(),note:on.note!==false,
 launchers:(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}})}
 sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
 })();
@@ -788,9 +1112,25 @@ def repos(ws: Path) -> List[dict]:
         changes = changed_files(porcelain or "")
         ct = (git("log", "-1", "--format=%ct") or "").strip()
         out.append({"name": name, "folder": folder, "dirty": len(changes), "changes": changes,
-                    "unread": porcelain is None,
+                    "unread": porcelain is None, "since": oldest_change(folder, changes),
                     "last": dt.datetime.fromtimestamp(int(ct)) if ct.isdigit() else None})
     return out
+
+
+def oldest_change(folder: Path, changes) -> Optional[dt.datetime]:
+    """When the longest-waiting uncommitted change was made: the oldest
+    modification time among the changed files still on disk. A deleted file
+    has none and is passed over."""
+    times = []
+    for path, _ in changes:
+        try:
+            times.append((folder / path).stat().st_mtime)
+        except OSError:
+            continue
+    return dt.datetime.fromtimestamp(min(times)) if times else None
+
+
+STALE_CHANGES = dt.timedelta(hours=24)   # uncommitted for longer than this is raised
 
 
 # How `git status --porcelain` marks a file, as the Repositories card says it.
@@ -894,23 +1234,126 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
 
 
-def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False) -> dict:
+OTHER = next(c for k, _, c in KINDS if k == "note")    # a note no colour group of its vault takes: "other notes"
+
+
+def vault_of(ws: Path, folder: Path) -> Optional[Path]:
+    """The Obsidian vault a folder's notes belong to: the nearest folder at or
+    above it, up to the workspace root, that holds a .obsidian folder."""
+    for f in (folder, *folder.parents):
+        if (f / ".obsidian").is_dir():
+            return f
+        if f == ws or f == f.parent:
+            return None
+    return None
+
+
+def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, str]], List[object]]:
+    """A vault's own graph settings: the colour groups of .obsidian/graph.json
+    as (terms, colour, label), each an OR of terms, and the ignore filters of
+    .obsidian/app.json (userIgnoreFilters), a path prefix or a /regex/ each.
+    Whatever is missing or does not read is empty."""
+    groups: List[Tuple[List[str], str, str]] = []
+    ignore: List[object] = []
+    if vault is None:
+        return groups, ignore
+    try:
+        data = json.loads((vault / ".obsidian" / "graph.json").read_text(encoding="utf-8"))
+        for cg in data.get("colorGroups") or []:
+            terms = [t.strip() for t in re.split(r"\s+OR\s+", str(cg.get("query") or "")) if t.strip()]
+            rgb = (cg.get("color") or {}).get("rgb")
+            if terms and isinstance(rgb, int):
+                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms)))
+    except (OSError, ValueError, AttributeError, TypeError):
+        groups = []
+    try:
+        data = json.loads((vault / ".obsidian" / "app.json").read_text(encoding="utf-8"))
+        for f in data.get("userIgnoreFilters") or []:
+            if not isinstance(f, str) or not f:
+                continue
+            try:
+                ignore.append(re.compile(f[1:-1]) if len(f) > 2 and f.startswith("/") and f.endswith("/") else f)
+            except re.error:
+                continue
+    except (OSError, ValueError, AttributeError, TypeError):
+        ignore = []
+    return groups, ignore
+
+
+def group_label(terms: List[str]) -> str:
+    """A colour group as the legend says it: `[type:project] OR file:Brief`
+    reads "Project, Brief"."""
+    said = []
+    for t in terms:
+        m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", t)
+        word = (m.group(2) or m.group(1)) if m else re.sub(r"^(?:file|path|tag):", "", t)
+        said.append(word.strip().strip("\"'"))
+    text = ", ".join(w for w in said if w)
+    return text[:1].upper() + text[1:]
+
+
+def group_match(term: str, fm: dict, rel: str) -> bool:
+    """Whether a note answers one term of a colour group's query, in the forms
+    Garrick reads: [key], [key:value], file:, path: and tag:. Any other term
+    never matches: the page reads no note's text to test it."""
+    m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", term)
+    if m:
+        key, want = m.group(1), m.group(2)
+        if key not in fm:
+            return False
+        have = fm[key] if isinstance(fm[key], list) else [fm[key]]
+        return want is None or any(as_text(v).strip("\"' ").lower() == want.strip().strip("\"'").lower() for v in have)
+    m = re.fullmatch(r"(file|path|tag):(.+)", term)
+    if not m:
+        return False
+    kind, want = m.group(1), m.group(2).strip().strip("\"'").lower()
+    if kind == "file":
+        base = rel.rsplit("/", 1)[-1].lower()
+        return want in (base, base[:-3] if base.endswith(".md") else base)
+    if kind == "path":
+        return want in rel.lower()
+    want = want.lstrip("#")
+    return any(t.lower() == want or t.lower().startswith(want + "/") for t in tags(fm.get("tags")))
+
+
+def ignored(rel: str, filters: List[object]) -> bool:
+    return any(f.search(rel) if hasattr(f, "search") else rel.startswith(f) for f in filters)
+
+
+def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False,
+          desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
     Instructions (AGENTS.md) are not notes, and each zone's Todo.md has the
     Open actions card, so neither is drawn. A parked thread, with the notes in
     its folder, and a project with no live thread left, with everything in it,
-    are marked `s` and drawn only when the page is asked to show them."""
+    are marked `s` and drawn only when the page is asked to show them.
+
+    A place inside an Obsidian vault with colour groups of its own
+    (.obsidian/graph.json) is coloured by them, `g` naming the group, and a
+    note no group takes is grey; the vault's ignore filters (.obsidian/app.json)
+    leave notes out, as Obsidian's graph does. Elsewhere each kind keeps its
+    colour. Every note in a project carries the folder an app opens it in
+    (`f`), its thread's or else its project's, where an app can open one."""
     places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
     names = short_names(T)
     held = {(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
     awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
     asleep = {(zone, project) for zone, project, _ in held} - awake
+    groups: List[list] = []                           # [colour, label], every vault's in turn
+    vaults: Dict[Path, Tuple[int, list, list]] = {}   # vault -> (its first group's index, groups, filters)
+    vault_at: Dict[Path, Optional[Path]] = {}         # place's root -> its vault
     notes = []
     for place, root in places:
         in_zone = root.parent.name == "Zones"
+        vault = vault_at[root] = vault_of(ws, root)
+        if vault is not None and vault not in vaults:
+            gs, filters = obsidian_graph(vault)
+            vaults[vault] = (len(groups), gs, filters)
+            groups += [[colour, label] for _, colour, label in gs]
+        filters = vaults[vault][2] if vault is not None else []
         for folder, dirs, files in os.walk(root):
             dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone))
             for f in sorted(files):
@@ -918,6 +1361,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                     continue
                 if folder == str(root) and (f in ("index.md", "log.md") and root.name == "wiki"
                                             or f == "Todo.md" and root.parent.name == "Zones"):
+                    continue
+                if filters and ignored((Path(folder) / f).relative_to(vault).as_posix(), filters):
                     continue
                 notes.append((place, root, Path(folder) / f))
     rel = {path: path.relative_to(ws).with_suffix("").as_posix() for _, _, path in notes}
@@ -949,8 +1394,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         folder_thread = parts[2] if in_zone and len(parts) > 3 and parts[1] == "Threads" else ""
         parked = (place, project) in asleep or (place, project, folder_thread) in held
         say = names.get((place, project, thread), "") if thread else ""
-        if kind == "project" and project.casefold() not in threads_said \
-                and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1:
+        project_said = project if project and project.casefold() not in threads_said \
+            and sum(1 for _, p in projects if p.casefold() == project.casefold()) == 1 else ""
+        if kind == "project" and project_said:
             say = project        # "open Acme Review": the threads skill resolves a project name too
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
         # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
@@ -959,8 +1405,24 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if kind in ("project", "thread") else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
-        if cmux and kind in ("project", "thread"):
-            nodes[-1]["f"] = str(path.parent)       # where Open in cmux starts a session
+        vault = vault_at[root]
+        if vault is not None and vaults[vault][1]:
+            first, gs, _ = vaults[vault]
+            rel_v = path.relative_to(vault).as_posix()
+            nodes[-1]["g"] = next((first + i for i, (terms, _, _) in enumerate(gs) if any(group_match(t, fm, rel_v) for t in terms)), -1)
+        if in_zone and project:
+            home = root / project / "Threads" / folder_thread if folder_thread else root / project
+            if cmux:
+                nodes[-1]["f"] = str(home)          # where the apps a card offers open it
+                if not say:                          # what they resume there
+                    lw = names.get((place, project, folder_thread), "") if folder_thread else project_said
+                    if lw:
+                        nodes[-1]["lw"] = lw
+            if drive:
+                nodes[-1]["dk"] = [place, project, folder_thread]     # what the desk opens and closes
+            live = session_in(desk, home) if kind in ("project", "thread") else None
+            if live:
+                nodes[-1]["live"] = live
         if actions and kind == "thread" and in_zone and folder_thread:
             nodes[-1]["pa"] = [place, path.relative_to(root).as_posix()]   # what Park and Wake act on
     by_base: Dict[str, Path] = {}
@@ -983,9 +1445,11 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             if hit is not None and hit != path:
                 a, b = index[path], index[hit]
                 edges.add((min(a, b), max(a, b)))
-    used = sorted({n["k"] for n in nodes})
-    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS],
-            "kinds": [[i, KINDS[i][1]] for i in used], "mode": "all" if len(nodes) <= 150 else "core"}
+    used = sorted({n["k"] for n in nodes if "g" not in n}
+                  | ({kinds.index("note")} if any(n.get("g") == -1 for n in nodes) else set()))
+    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS], "other": OTHER,
+            "kinds": [[i, KINDS[i][1]] for i in used], "groups": groups,
+            "mode": "all" if len(nodes) <= 150 else "core"}
 
 
 def launch_agents() -> Path:
@@ -1067,7 +1531,8 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
     return out
 
 
-def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime, int]]:
+def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime, int, bool]]:
+    """(when, exit, quiet) for each run the job's logs record in the last DAYS days."""
     since = now - dt.timedelta(days=DAYS)
     runs = []
     for path in (folder / (name + ".log.1"), folder / (name + ".log")):
@@ -1079,11 +1544,62 @@ def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime
                 continue
             when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
             if when >= since:
-                runs.append((when, int(m.group(3)) if m.group(3) else 75))
+                runs.append((when, int(m.group(3)) if m.group(3) else 75, bool(m.group(5))))
     return runs
 
 
+def quiet_exits(env: dict) -> Tuple[int, ...]:
+    """Exit codes a job's plist marks as quiet in GARRICK_QUIET_EXITS, comma
+    or space separated: the job did its work and held something back, and
+    job.py raises no alarm for it. Anything not a number is passed over."""
+    raw = str((env or {}).get("GARRICK_QUIET_EXITS") or "")
+    return tuple(int(w) for w in re.split(r"[\s,]+", raw) if re.fullmatch(r"-?\d+", w))
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True                           # there, but another user's
+    return True
+
+
+def lock_held(lock: Path, now: dt.datetime) -> bool:
+    """Whether a run holds the job's lock now. job.py writes, in `until`,
+    "<until> <pid> [<started>]": the lock is held until that time while its
+    process lives. One without that record counts for three hours."""
+    if not lock.is_dir():
+        return False
+    try:
+        words = (lock / "until").read_text(encoding="utf-8").split()
+        if now.timestamp() >= float(words[0]):
+            return False
+        return pid_alive(int(words[1])) if len(words) > 1 and words[1].isdigit() else True
+    except (OSError, ValueError, IndexError):
+        try:
+            return now.timestamp() - lock.stat().st_mtime < 3 * 3600
+        except OSError:
+            return False
+
+
+def idle_limit(env: dict) -> float:
+    """The days of idling a job's plist allows (GARRICK_IDLE_DAYS), or job.py's 7."""
+    try:
+        value = float((env or {}).get("GARRICK_IDLE_DAYS", 7))
+    except (TypeError, ValueError):
+        return 7.0
+    return value if value >= 0 else 7.0
+
+
 def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> List[dict]:
+    """One row per heartbeat in the jobs folder. A run whose exit job.py
+    calls fine (the heartbeat's `ok` or `quiet`), or whose code the plist
+    lists in GARRICK_QUIET_EXITS, is fine; a failure is said in the
+    heartbeat's own `reason` when it has one. An idle job (the heartbeat's
+    `idle`; from an older job.py, `idle_days` past the plist's
+    GARRICK_IDLE_DAYS, 7) is a warning. A job whose lock is held is running now."""
     if not folder.is_dir():
         return []
     sched = launchd_jobs() if sched is None else sched
@@ -1093,6 +1609,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             hb = json.loads(beat.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if not isinstance(hb, dict):
+            continue
         name = hb.get("job") or beat.name[:-len(".heartbeat.json")]
         when = None
         try:
@@ -1100,17 +1618,30 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
         except ValueError:
             pass
         code = int(hb.get("exit", -1)) if str(hb.get("exit", "")).lstrip("-").isdigit() else -1
+        env = sched[name].get("env", {}) if name in sched else {}
+        # job.py says itself whether the exit was fine (`ok`, `quiet`); an older
+        # heartbeat leaves it to the codes and the plist's GARRICK_QUIET_EXITS.
+        quiet = set(quiet_exits(env)) | ({code} if hb.get("quiet") is True or (hb.get("ok") is True and code not in OK_EXITS) else set())
         words, limit = (sched[name]["schedule"], sched[name]["late"]) if name in sched else ("schedule not found", None)
+        try:
+            idle = int(hb.get("idle_days") or 0)
+        except (TypeError, ValueError):
+            idle = 0
         if when and limit and now - when > limit:
             state, status = "critical", "late: last ran %s" % age(when, now)
-        elif code not in OK_EXITS:
-            state, status = "critical", "exit %d: %s" % (code, EXIT.get(code, "failed"))
-        elif hb.get("idle_days"):
-            state, status = "warning", "idle %s days" % hb["idle_days"]
+        elif code not in OK_EXITS and code not in quiet:
+            reason = hb.get("reason") if isinstance(hb.get("reason"), str) and hb.get("reason") else EXIT.get(code, "failed")
+            state, status = "critical", "exit %d: %s" % (code, reason)
+        elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
+            state, status = "warning", "idle %d days" % idle
+        elif code in quiet and code not in OK_EXITS:
+            state, status = "good", "ok, exit %d is quiet" % code
         else:
             state, status = "good", "ok"
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
-                    "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log")})
+                    "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log"),
+                    "quiet": tuple(sorted(quiet)), "running": lock_held(folder / (name + ".lock"), now),
+                    "idle": state == "warning" and status.startswith("idle")})
     return out
 
 
@@ -1147,18 +1678,57 @@ def caps_in_use(agent, sched: Dict[str, dict]) -> Tuple[Dict[str, float], str]:
     return agent.caps(), "Caps are agent.py's defaults; a job that sets GARRICK_CAP_* runs under its own."
 
 
+def call_budget(agent, sched: Dict[str, dict]) -> float:
+    """What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD
+    in the plists of the jobs that call the assistant, the lowest where they
+    differ, or agent.py's default. 0 means no budget."""
+    default = float(getattr(agent, "DEFAULT_MAX_CALL_USD", 5.0))
+    calling = [j for j in sched.values() if j.get("agent")]
+    envs = [j.get("env") or {} for j in calling] or [os.environ]
+    found = []
+    for env in envs:
+        try:
+            found.append(float(env.get("GARRICK_MAX_CALL_USD", default)))
+        except (TypeError, ValueError):
+            found.append(default)
+    return min([b for b in found if b > 0] or [0.0])
+
+
+def deny_list(agent) -> Optional[set]:
+    """The tools a headless call may never use: the deny list in the jobs
+    extra's headless-settings.json, beside agent.py. None when it is missing
+    or does not read, which agent.py refuses to run without."""
+    profile = getattr(agent, "PROFILE", None)
+    try:
+        data = json.loads(Path(profile).read_text(encoding="utf-8"))
+        deny = data["permissions"]["deny"]
+    except (TypeError, OSError, ValueError, KeyError):
+        return None
+    return {str(t) for t in deny} if isinstance(deny, list) else None
+
+
+def denied_by_list(tool: str, deny: Optional[set]) -> bool:
+    """A refused tool the deny list names: by its name, or by its server for
+    a connector's tool (`mcp__server` covers `mcp__server__tool`). A tool
+    refused only because no allow rule named it is not on the list."""
+    if not deny:
+        return False
+    return tool in deny or any("(" not in d and tool.startswith(d + "__") for d in deny)
+
+
 def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> Optional[dict]:
     path = folder / "ledger.jsonl"
     if agent is None or not path.is_file():
         return None
     entries = agent.read_ledger(path, now.timestamp(), DAYS * 24)
-    caps, caps_from = caps_in_use(agent, launchd_jobs() if sched is None else sched)
+    sched = launchd_jobs() if sched is None else sched
+    caps, caps_from = caps_in_use(agent, sched)
     calls = [e for e in entries if not e.get("refused")]
     day = [e for e in calls if now.timestamp() - e["ts"] < 86400]
     hour = [e for e in calls if now.timestamp() - e["ts"] < 3600]
     by = {}
     for e in entries:
-        j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set()})
+        j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
         if e.get("refused"):
             j["refused"] += 1
             continue
@@ -1166,9 +1736,22 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
         j["cost"] += float(e.get("cost_usd") or 0)
         j["failed"] += 1 if e.get("exit") else 0
         j["denied"] |= set(e.get("denied") or [])
+        if isinstance(e.get("turns"), (int, float)):
+            j["turns"].append(e["turns"])
+    per_day: Dict[dt.date, list] = {}
+    for e in calls:
+        d = dt.datetime.fromtimestamp(e["ts"]).date()
+        c = per_day.setdefault(d, [0, 0.0])
+        c[0] += 1
+        c[1] += float(e.get("cost_usd") or 0)
+    days = [(now.date() - dt.timedelta(days=i)) for i in range(DAYS - 1, -1, -1)]
     return {"caps": caps, "caps_from": caps_from, "day": len(day), "hour": len(hour),
             "cost_day": sum(float(e.get("cost_usd") or 0) for e in day),
-            "by": by, "refused_today": [e for e in entries if e.get("refused") and now.timestamp() - e["ts"] < 86400]}
+            "by": by, "refused_today": [e for e in entries if e.get("refused") and now.timestamp() - e["ts"] < 86400],
+            "per_day": [(d,) + tuple(per_day.get(d, (0, 0.0))) for d in days],
+            "began": dt.datetime.fromtimestamp(entries[0]["ts"]) if entries else None,
+            "over_budget": [e for e in day if e.get("subtype") == "error_max_budget_usd"],
+            "budget": call_budget(agent, sched), "deny": deny_list(agent)}
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -1301,25 +1884,31 @@ class Links:
         return path.resolve().as_uri()
 
 
-def day_cells(runs: List[Tuple[dt.datetime, int]], now: dt.datetime) -> List[Tuple[str, str]]:
+def day_cells(runs: List[Tuple[dt.datetime, int]], now: dt.datetime, quiet: Tuple[int, ...] = ()) -> List[Tuple[str, str]]:
     """One cell per day, oldest first, coloured by how the day ended: red when
-    its last run failed or most runs did, amber when it failed and recovered."""
+    its last run failed or most runs did, amber when it failed and recovered.
+    A run that exited with one of the job's quiet codes counts as fine."""
+    fine = set(OK_EXITS) | set(quiet)
+
+    def ok(r):
+        return r[1] in fine or (len(r) > 2 and bool(r[2]))
     out = []
     for i in range(DAYS - 1, -1, -1):
         day = (now - dt.timedelta(days=i)).date()
-        rs = sorted(r for r in runs if r[0].date() == day)
-        bad = [r for r in rs if r[1] not in OK_EXITS]
+        rs = sorted((r for r in runs if r[0].date() == day), key=lambda r: r[0])
+        bad = [r for r in rs if not ok(r)]
         if not rs:
             out.append(("none", "%s · no run" % day.strftime("%a %d %b")))
             continue
-        ended_bad = rs[-1][1] not in OK_EXITS
+        ended_bad = not ok(rs[-1])
         state = "critical" if ended_bad or len(bad) * 2 > len(rs) else "warning" if bad else "good"
         tip = "%s · %d run%s" % (day.strftime("%a %d %b"), len(rs), "" if len(rs) == 1 else "s")
         if bad:
             codes = sorted({r[1] for r in bad})
             tip += " · %d failed (exit %s)%s" % (len(bad), ", ".join(map(str, codes)), "" if ended_bad else " · recovered")
         else:
-            tip += " · all ok"
+            held = sorted({r[1] for r in rs if ok(r) and r[1] not in OK_EXITS})
+            tip += " · all ok" + (" (exit %s is quiet)" % ", ".join(map(str, held)) if held else "")
         out.append((state, tip))
     return out
 
@@ -1350,29 +1939,42 @@ def short_names(T: Dict[str, dict]) -> Dict[Tuple[str, str, str], str]:
 
 
 def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", days: Optional[int], cmux: bool = False,
-                actions: bool = False) -> str:
+                actions: bool = False, desk: Optional[Dict[str, str]] = None, today: Optional[dt.date] = None,
+                drive: bool = False) -> str:
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
-    the note was updated, whether it is parked, the name to say, and links.
-    Where an app to open it in is installed (`cmux`, for any of LAUNCHERS),
-    also the thread's folder."""
+    the note was updated, whether it is parked, the name to say, and links;
+    whether the note has a Resume here block (`r`) and how old that block's
+    date is (`rd`). Where an app to open it in is installed (`cmux`, for any
+    of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
+    sessions open), the session's state, and with `drive` (the extra, cmux
+    and page-actions) what the desk opens and closes."""
     card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
-            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else ""}
+            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else "", "r": 1 if r.get("resume") else 0,
+            "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
     if cmux:
         card["f"] = str(r["note"].parent)
     if actions:
         card["pa"] = [r["zone"], r["rel"]]
+    if drive:
+        card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
+    live = session_in(desk, r["note"].parent)
+    if live:
+        card["live"] = live
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
 
 
-def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool) -> dict:
+def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
+              desk: Optional[Dict[str, str]] = None) -> dict:
     """What the app's menu bar icon lists (preview, menu-bar): per zone, its
     live projects by name, each with its live threads by name, and whether
     the Status tab carries its red dot. A project or thread gives its name,
     the name to say, its note's link and, where an app can open it, its
     folder: the app offers the same actions its card does. A project with no
-    thread notes is its own thread. The app keeps the zone the graph shows;
+    thread notes is its own thread. With the cmux extra, each row also says
+    whether a session is open in it (`s`: "idle", "working" or None; a
+    project counts its threads'). The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -1384,6 +1986,8 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         e = {"n": name, "w": say, "u": link(note)}
         if folders:
             e["f"] = str(note.parent)
+        if desk is not None:
+            e["s"] = session_in(desk, note.parent)
         return e
 
     zones = []
@@ -1592,6 +2196,34 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
                VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
+SHARED_SETTINGS = ("System", "generated", "status-settings.json")
+LAUNCH_KEYS = ("note",) + tuple(k for k, _, _, _ in LAUNCHERS)
+
+
+def shared_launchers(ws: Path) -> Optional[dict]:
+    """The launcher settings saved for every viewer of the page, in
+    System/generated/status-settings.json: {"launchers": the ways to open a
+    thread that cards offer, as {name: true or false} or a list of the names
+    switched on, "default": what clicking a thread does}. The page carries
+    them as a list. The
+    app's Settings writes them, through page_action.py; inside the app they
+    come before what a window remembers. None when there are none, or they do
+    not read; an unknown key is dropped."""
+    try:
+        data = json.loads(ws.joinpath(*SHARED_SETTINGS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    on = data.get("launchers") if isinstance(data, dict) else None
+    if isinstance(on, dict):                  # {"note": true, "cmux": false, ...}: a key left out is on
+        chosen = [k for k in LAUNCH_KEYS if on.get(k, True) is True]
+    elif isinstance(on, list):                # the names of those switched on
+        chosen = [k for k in LAUNCH_KEYS if k in on]
+    else:
+        return None
+    default = data.get("default") if data.get("default") in LAUNCH_KEYS else "note"
+    return {"launchers": chosen, "default": default}
+
+
 def script_json(data) -> str:
     """JSON safe inside a <script> element: with <, > and & written as escapes,
     no title can close the element or open a comment in it."""
@@ -1711,6 +2343,24 @@ def meter(value: float, cap: float, label: str, right: str) -> str:
             % (E(label), E(right), kind, pct))
 
 
+def cost_chart(L: dict) -> str:
+    """The assistant's cost per day, one column per day of the last DAYS,
+    against the costliest day; hover a column for its calls. Until three
+    days have calls, a line says since when the ledger has been recording."""
+    days = L["per_day"]
+    if sum(1 for _, n, _ in days if n) < 3:
+        since = "since %s" % L["began"].strftime("%d %b").lstrip("0") if L.get("began") else "from the first call"
+        return ('<p class="hint" style="margin-top:14px">Recording %s. The cost per day shows once three days have calls.</p>' % E(since))
+    top = max(c for _, _, c in days) or 1.0
+    last = max(i for i, (_, n, _) in enumerate(days) if n)
+    cols = "".join('<div data-tip="%s"><b style="height:%.1f%%"></b>%s</div>'
+                   % (E("%s · %d call%s · $%.2f" % (d.strftime("%a %d %b"), n, "" if n == 1 else "s", c)), c / top * 100,
+                      '<em>$%.2f</em>' % c if i == last else "") for i, (d, n, c) in enumerate(days))
+    ticks = "".join("<span>%s</span>" % d.strftime("%d") for d, _, _ in days)
+    return ('<div class="ink2" style="font-size:12px;margin:14px 0 0">Cost per day, last %d days</div>'
+            '<div class="cols" role="img" aria-label="Cost per day, last %d days">%s</div><div class="ticks">%s</div>' % (DAYS, DAYS, cols, ticks))
+
+
 # --------------------------------------------------------------------------- the page
 
 CSS = r"""
@@ -1802,16 +2452,9 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
 .tabs button:hover{color:var(--ink)}.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
 .tabs .n{font-size:11.5px;color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
-.todotab>.hint{margin:0 0 14px}.todotab{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
-.tzones{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}.tzone h4{margin:0 0 6px;font-size:13px}
-.titem{padding:7px 0;border-top:1px solid var(--line)}.titem .ttext{font-size:13px}.titem .thr{margin-right:6px;font-weight:600;color:var(--ink);text-decoration:none}
-.titem .tmeta{display:flex;gap:8px;align-items:center;margin-top:2px;font-size:11.5px}.chip.late{color:var(--critical);border-color:var(--critical)}
-.titem{display:grid;grid-template-columns:auto 1fr;column-gap:10px}.titem>.ttext,.titem>.tmeta{grid-column:2}.titem>.tacts{grid-row:1/3;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:1px}
-.titem:not(:has(.tacts)){display:block}.nohost .tacts{display:none}.nohost .titem{display:block}
-.tzone h4{display:flex;align-items:center;gap:6px}.tzone h4 .tadd-open{margin-left:auto;font-size:11.5px}.nohost .tadd-open{display:none}
-.tick{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--base);background:none;cursor:pointer;padding:0}.tick:hover{border-color:var(--good);background:var(--wash)}
-.tdate{position:relative;font-size:10.5px}.tdate summary{list-style:none;cursor:pointer;color:var(--muted)}.tdate summary::-webkit-details-marker{display:none}
-.tdate>div{position:absolute;z-index:5;left:0;top:16px;display:flex;flex-direction:column;gap:3px;padding:6px;background:var(--raise);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
+.nohost .tacts{display:none}.nohost .tadd-open{display:none}
+.tick{width:18px;height:18px;margin-top:1px;border-radius:5px;border:1.5px solid var(--base);background:var(--raise);cursor:pointer;padding:0;display:grid;place-items:center}
+.tick:hover{border-color:var(--accent)}
 .flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
 .flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
@@ -1859,6 +2502,20 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
 .gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
+.live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
+@keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
+@media (prefers-reduced-motion:reduce){.live.working{animation:none}}
+.thread .t a+.live{margin-left:0}.tline .live{margin:0 7px 1px 1px}
+.thread .t>a{display:inline-block;max-width:calc(100% - 16px);vertical-align:bottom}
+.chip.nores{color:var(--muted);border-style:dashed}.phead .pbtns{display:flex;gap:6px;flex:none}
+.status.running{color:var(--accent)}
+.cols{display:flex;align-items:flex-end;gap:2px;height:96px;border-bottom:1px solid var(--base);padding-top:16px}
+.cols div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;position:relative}
+.cols b{display:block;width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0;min-height:0}
+.cols em{position:absolute;top:-16px;font-style:normal;font-size:11px;color:var(--ink2)}
+.ticks{display:flex;gap:2px;font-size:10px;color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
+.desk-acts{display:flex;gap:6px;margin-left:6px}.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
@@ -1943,39 +2600,68 @@ dialog.settings .setver{margin:0;font-size:13px;color:var(--ink2)}dialog.setting
 # (`f`, there only where cmux is installed) also gets Open in cmux: a cmux tab
 # in that folder, with the phrase that resumes it on the clipboard.
 PANEL_JS = r"""
+/* Which apps a card offers and what clicking a thread's name does. In the
+   app, the settings saved for every viewer (#launch-settings, written by
+   page_action.py from what Settings sends) come first; a browser keeps its own. */
+var GarrickPrefs=(function(){
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','finder','cmux','codex','claude'];
+var el=document.getElementById('launch-settings'),shared=null;if(host&&el){try{shared=JSON.parse(el.textContent)}catch(e){}}
+if(shared&&!Array.isArray(shared.launchers))shared=null;
+function local(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function launchers(){if(shared){var o={};KEYS.forEach(function(k){o[k]=shared.launchers.indexOf(k)>=0});return o}
+try{return JSON.parse(local('garrick-launchers')||'{}')||{}}catch(e){return{}}}
+function def(){return(shared?shared['default']:local('garrick-default'))||'note'}
+function set(on,d){if(shared)shared={launchers:KEYS.filter(function(k){return on[k]!==false}),'default':d||'note'};
+try{localStorage.setItem('garrick-launchers',JSON.stringify(on));localStorage.setItem('garrick-default',d||'note')}catch(e){}}
+function request(){var on=launchers();return{verb:'settings',launchers:KEYS.filter(function(k){return on[k]!==false}),'default':def()}}
+return{launchers:launchers,def:def,set:set,request:request}})();
 var Panel=(function(){
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function copy(p){return'<button class="act" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'">Copy “'+esc(p)+'”</button>'}
 var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
-function prefs(){try{return JSON.parse(localStorage.getItem('garrick-launchers')||'{}')}catch(e){return{}}}
+function prefs(){return GarrickPrefs.launchers()}
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
-function launch(k,o){var p=o.w?'open '+o.w:'',say=k==='finder'?'Showed '+o.n+' in Finder.':k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
+function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
+function launch(k,o){var p=phrase(o),say=k==='finder'?'Showed '+o.n+' in Finder.':k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
 :(p?'Opened '+LABEL[k]+' in '+o.n+'. Paste “'+p+'” to your assistant.':'Opened '+LABEL[k]+' in '+o.n+'.');
 var l=k==='finder'?'Reveal in Finder':'Open in '+LABEL[k];
+if(k==='cmux'&&o.dk)return'<button class="act" type="button" data-k="cmux"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
++(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+l+'</button>';
 return'<button class="act" type="button" data-launch="'+k+'" data-k="'+k+'"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+l+'</button>'}
+/* the cmux extra's desk: open a session for the thread, or close the project's */
+function deskReq(o,v){var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.thread=o.dk[2];return q}
+function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 /* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
-function dmark(k,o){var d=null;try{d=localStorage.getItem('garrick-default')}catch(x){}if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
+function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
 if(o.w)a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
 function park(o){var v=o.s?'wake':'park';return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
-+'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
-/* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else */
-function flip(o){if(!o.w||o.h)return'';if(o.pa&&host)return park(o);var p=(o.s?'wake ':'park ')+o.w;
++'" data-expect="'+esc((o.s?'active:':'parked:')+o.pa[0]+'/'+o.pa[1])+'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
+function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
++' data-say="Closing the session…">Close session</button>':''}
+/* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else;
+   with a session open, Close session sits beside it */
+function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
+function pflip(o){if(!o.w||o.h)return'';if(o.pa&&host)return park(o);var p=(o.s?'wake ':'park ')+o.w;
 return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(o.s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
-function head(o){var s=state(o);return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
+/* the thread's resume point: the date its Resume here block gives, or that it has none */
+function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
+function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
+function head(o){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
-+(s?'<div class="ink2" style="margin-top:4px">'+esc(s)+'</div>':'')}
++line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)}
 /* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a');if(!a||!host)return;
-var d=null;try{d=localStorage.getItem('garrick-default')}catch(x){}if(!d||d==='note'||chosen().indexOf(d)<0)return;
+var d=GarrickPrefs.def();if(!d||d==='note'||chosen().indexOf(d)<0)return;
 var row=a.closest('.thread'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
-e.preventDefault();e.stopPropagation();host.postMessage({launch:d,folder:o.f,phrase:o.w?'open '+o.w:''})},true);
+e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
+host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
 return{esc:esc,acts:acts,head:head}})();
 """
 
@@ -2000,10 +2686,13 @@ if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.write
 var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
-/* An action (preview, page-actions): the app runs page_action.py, then rebuilds the page. */
+/* An action (preview, page-actions; the desk's): the app runs page_action.py, then rebuilds the page.
+   One with data-confirm asks for a second click within four seconds; one with data-expect
+   keeps the page rebuilding until what it asked for shows (RELOAD_JS). */
 var x=t.closest('button[data-act]');if(x){if(!host)return;var r;try{r=JSON.parse(x.dataset.act)}catch(err){return}
-if(x.dataset.rel!==undefined){if(x.dataset.rel==='-')r.date='-';else{var d=new Date();d.setDate(d.getDate()+(+x.dataset.rel));
-r.date=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}var m=x.closest('details');if(m)m.open=false}
+if(x.dataset.confirm&&!x.classList.contains('armed')){var was=x.textContent;x.classList.add('armed');x.textContent=x.dataset.confirm;
+setTimeout(function(){x.classList.remove('armed');x.textContent=was},4000);return}
+x.classList.remove('armed');if(x.dataset.expect&&window.GarrickExpect)GarrickExpect(x.dataset.expect);
 host.postMessage({act:r});say(x.dataset.say);return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
@@ -2012,7 +2701,8 @@ var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){sa
 /* The Todo list's + button (page-actions, in the app): Garrick's dialog opens on
    that zone, and the app runs page_action.py with the request, then rebuilds. */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.tadd-open[data-zone]');if(a&&window.TaddOpen)TaddOpen(a.dataset.zone)});
-window.TaddSend=function(z,target,date,text){if(host)host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}})};
+window.TaddSend=function(z,target,date,text){if(!host)return;host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}});
+if(window.TodoPending)TodoPending(z,target,date,text)};
 /* A project's threads fold under its row on the Threads card; the fold is remembered. */
 document.querySelectorAll('.pchev').forEach(function(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
 function set(o){box.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}set(st.get('garrick-fold-'+b.dataset.sub)==='1');
@@ -2034,23 +2724,24 @@ StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.clo
    (⌘,) calls StatusSettings.open(). */
 var sd=document.getElementById('settings');
 function sdShut(){sd.close()}
-var sdChanged=false;sd.addEventListener('change',function(){sdChanged=true});
-/* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once */
-sd.addEventListener('close',function(){document.body.appendChild(toast);if(sdChanged&&host){sdChanged=false;host.postMessage({rebuild:true})}});
+var sdChanged=false,lpChanged=false;sd.addEventListener('change',function(){sdChanged=true});
+/* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once; a change
+   to the apps is saved for every viewer first, through page_action.py, which rebuilds the page after it */
+sd.addEventListener('close',function(){document.body.appendChild(toast);if(sdChanged&&host){sdChanged=false;
+if(lpChanged){lpChanged=false;host.postMessage({act:GarrickPrefs.request()})}else host.postMessage({rebuild:true})}});
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal()}};
 document.getElementById('open-settings').onclick=window.StatusSettings.open;
 document.getElementById('close-settings').onclick=sdShut;
-var lk='garrick-launchers';function lprefs(){try{return JSON.parse(localStorage.getItem(lk)||'{}')}catch(e){return{}}}
-var dk='garrick-default';function dpref(){try{return localStorage.getItem(dk)||'note'}catch(e){return'note'}}
+function lprefs(){return GarrickPrefs.launchers()}
+function dpref(){return GarrickPrefs.def()}
 function radios(){sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){var c=sd.querySelector('input[data-launcher="'+r.value+'"]');
 r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref()});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
-sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.onchange=function(){try{localStorage.setItem(dk,r.value)}catch(e){}
+sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.onchange=function(){GarrickPrefs.set(lprefs(),r.value);lpChanged=true;
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
-c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;try{localStorage.setItem(lk,JSON.stringify(p))}catch(e){}
-if(!c.checked&&dpref()===c.dataset.launcher){try{localStorage.setItem(dk,'note')}catch(e){}}radios();
+c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
 say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.')}});radios();
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
@@ -2177,7 +2868,9 @@ function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)&&(zsel==='*'||n.z===zsel)}
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
-var drawn={};V.forEach(function(n){drawn[n.k]=1});document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
+var drawn={},dg={};V.forEach(function(n){if(n.g>=0)dg[n.g]=1;else drawn[n.g===-1?OTHERK:n.k]=1});
+document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
+document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
 document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)});
 var zs=document.querySelector('.gzsel');if(zs)zs.value=zsel;
 var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
@@ -2225,7 +2918,9 @@ x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
 if(now){scale=k;px=x;py=y;return false}var going=Math.abs(k-scale)>scale*.001||Math.abs(x-px)>.2||Math.abs(y-py)>.2;
 scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08;return going}
 function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
-function fill(n){return G.colors[n.k]||C['--muted']}
+/* a note in a vault with colour groups of its own takes its group's colour, or grey; elsewhere its kind's */
+var OTHERK=G.colors.indexOf(G.other);
+function fill(n){return n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:n.g===-1?G.other:G.colors[n.k]||C['--muted']}
 function ring(n){return n.d==null||n.s?null:n.d>45?C['--critical']:n.d>14?C['--warning']:null}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
 var f=sel||hover,near={};if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
@@ -2294,7 +2989,7 @@ var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=
 var esc=Panel.esc;
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
-var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,pa:n.pa,pu:hub&&hub!==n?hub.u:''};
+var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pu:hub&&hub!==n?hub.u:''};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
@@ -2332,11 +3027,13 @@ if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].
 
 def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
           show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
-          cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None) -> str:
+          cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
+          also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None) -> str:
     """The page. `vaults` and `launchers` say what this machine has (main()
     asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
-    given."""
+    given. `also` and `moved` reach effort.py: folders the workspace used to
+    live in, and folders renamed or moved since, old path to new."""
     now = now or dt.datetime.now()
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
@@ -2346,6 +3043,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
     sched = launchd_jobs() if folder.is_dir() else {}     # the plists matter only to the jobs extra
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
+    S = sessions(ws)                                       # None without the cmux extra
 
     # ---- what needs attention, worst first
     attn = []
@@ -2363,11 +3061,28 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             stopped[job] = stopped.get(job, 0) + 1
         for job, n in stopped.items():
             attn.append(("critical", "The spending cap stopped %s%s" % (job, "" if n == 1 else " %d times in 24 hours" % n), "#calls"))
+        over: Dict[str, int] = {}
+        for e in L["over_budget"]:
+            over[str(e.get("job") or "a job")] = over.get(str(e.get("job") or "a job"), 0) + 1
+        for job, n in over.items():
+            attn.append(("critical", "A call by %s stopped at its per-call budget%s" % (job, "" if n == 1 else ", %d times in 24 hours" % n), "#calls"))
+        if L["deny"] is None:
+            attn.append(("critical", "The deny list for scheduled calls, headless-settings.json, is missing or does not read", "#calls"))
+        for job, d in sorted(L["by"].items()):
+            hit = sorted(t for t in d["denied"] if denied_by_list(t, L["deny"]))
+            if hit:
+                attn.append(("critical", "%s tried a tool the deny list forbids: %s" % (job, ", ".join(hit)), "#calls"))
     waiting = sum(n for _, _, n in IB)
     if waiting:
         attn.append(("warning", "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s"), "#inboxes"))
     if C and C.get("warnings"):
         attn.append(("warning", "The check found %d warning%s" % (C["warnings"], "" if C["warnings"] == 1 else "s"), "#checks"))
+    for j in J:
+        if j["idle"]:
+            attn.append(("warning", "%s: %s" % (j["name"], j["status"]), "#jobs"))
+    for r in R:
+        if r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES:
+            attn.append(("warning", "%s: %s, the oldest changed %s" % (r["name"], say_files(r["dirty"]), age(r["since"], now)), "#repos"))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
@@ -2386,11 +3101,18 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
     # move between the work and the machinery, the cards are open on the page,
     # and the Status tab's own figures say whether anything needs attention.
+    # With the cmux extra, cmux, and page-actions on, the desk's buttons: Open
+    # in cmux and Close session on cards, Start up and Shut down here, in the app only.
+    DK = S is not None and acting and desk_ready()
+    desk_acts = ('<span class="desk-acts apponly"><button class="act" type="button" data-act="%s" data-expect="live:" data-say="Starting up…">Start up</button>'
+                 '<button class="act stop" type="button" data-act="%s" data-expect="none:" data-confirm="Click again to shut down" '
+                 'data-say="Shutting down: each session wraps, then cmux quits…">Shut down</button></span>'
+                 % (E(json.dumps({"verb": "startup"})), E(json.dumps({"verb": "shutdown"})))) if DK else ""
     controls = ('<div class="bacts"><button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
-                'which Garrick this is, release notes, the view, hidden cards, and how to report a bug">%s</button>%s</div>'
-                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG))
+                'which Garrick this is, release notes, the view, hidden cards, and how to report a bug">%s</button>%s%s</div>'
+                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG, desk_acts))
 
     # ---- hero and tiles
     if attn:
@@ -2409,7 +3131,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if L:
         cap = L["caps"]["calls_day"]
         tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
-                    "$%.2f at list price" % L["cost_day"], "calls")
+                    "$%.2f at list price · %s" % (L["cost_day"], "$%g max per call" % L["budget"] if L["budget"] else "no per-call budget"),
+                    "calls")
     top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
         '<a class="tile go" href="#%s"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></a>' % (h, E(a), b, E(c))
         for a, b, c, h in tiles))
@@ -2428,7 +3151,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     store = folder / effort().STORE
     if flags_on["effort"]:
         try:
-            EV = Effort(effort().ledger(ws, store, now=now), now.date())
+            EV = Effort(effort().ledger(ws, store, also=[Path(a).expanduser() for a in also], now=now, moved=moved or None), now.date())
         except Exception:                     # a transcript format this reader does not know: no Time and Cost
             EV = None
     said = {t.casefold() for t in (r["thread"] for z in T.values() for r in z["rows"] + z["parked"])}
@@ -2440,18 +3163,24 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     def fresh_of(days):
         return "good" if days is not None and days <= 14 else "warning" if days is not None and days <= 45 else "critical"
 
+    def live_dot(state, what):
+        return ('<span class="live %s" title="%s"></span>' % (state, E("A session is open in %s, %s" % (what, state)))) if state else ""
+
     def row_html(r, sub=False, figures=None, parked=False, place=0):
         days = (now.date() - r["updated"]).days if r["updated"] else None
         k = fresh_of(days)
         chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
+        if not parked and not r.get("resume"):              # the threads skill resumes from that block
+            chips += '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>'
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
-        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s><div class="t"><a href="%s">%s</a>%s</div>%s'
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s><div class="t"><a href="%s">%s</a>%s%s</div>%s'
                 '<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
-                % (" sub" if sub else "", 1 if parked else k == "good", E(thread_card(r, names, link, days, cmux, acting)),
+                % (" sub" if sub else "", 1 if parked else k == "good",
+                   E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "",
-                   E(link(r["note"])), E(r["thread"]),
+                   E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
                    ("<small>%s</small>" % under if under else (chips and "<small>%s</small>" % chips)),
                    bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "")), k
 
@@ -2465,6 +3194,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              "u": link(hub) if hub else link(items[0]["note"]), "pu": ""}
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
+        if DK:
+            c["dk"] = [zone, project, ""]
+        live = session_in(S, (hub or items[0]["note"]).parent)
+        if live:
+            c["live"] = live
         return json.dumps(c, separators=(",", ":"), ensure_ascii=False)
 
     def units(zone, rs, parked=False):
@@ -2502,11 +3236,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             hub_link = link(items[0]["hub"]) if items[0]["hub"] else link(items[0]["note"])
             bar = '<span class="mu"></span>' if parked else \
                 '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
+            bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
-                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a> <span class="muted subn">%d thread%s</span></div>'
+                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
                     % (1 if parked else k == "good", E(project_card(zone, project, items, newest)), sid, n, "" if n == 1 else "s", CHEV,
-                       E(hub_link), E(project), n, "" if n == 1 else "s", bar,
+                       E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
+                       n, "" if n == 1 else "s", " · %d without a resume block" % bare if bare else "", bar,
                        "%dd" % newest if newest is not None else "—", EV.cells(total) if EV else ""))
             out.append('<div class="tunit" data-a="%d"%s>%s<div class="subthreads tsort" id="%s" hidden>%s</div></div>'
                        % (i, EV.attrs(total) if EV else "", head, sid, "".join(subs)))
@@ -2554,8 +3290,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     tb = ""
     for z, t in TD.items():
         scale = max(list(t["counts"].values()) + [1]) * 1.08
-        tb += ('<div class="zt"><b><a href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>'
-               '<a class="act" href="%s" title="Open %s/Todo.md">Open</a></div>' % (E(link(t["file"])), E(z), age(t["when"], now), E(link(t["file"])), E(z)))
+        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open the list</a>' % (E(z), E(z))
+                  if lists else '<a class="act" href="%s" title="Open %s/Todo.md">Open</a>' % (E(link(t["file"])), E(z)))
+        tb += ('<div class="zt"><b><a href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>%s</div>'
+               % (E(link(t["file"])), E(z), age(t["when"], now), opener))
         if not t["counts"]:
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
@@ -2570,14 +3308,17 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if J:
         rows = []
         for j in J:
-            strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now))
+            strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now, j["quiet"]))
             last = age(j["when"], now) if j["when"] else "never"
+            said = "running now" if j["running"] else j["status"]      # its lock is held: a run is under way
             rows.append('<div class="row" data-ok="%d">%s<div class="name"><a href="%s">%s</a><small>%s</small></div><div class="strip">%s</div>'
-                        '<div class="ink2 num" data-tip="took %ss">%s</div><span class="status">%s%s</span></div>'
+                        '<div class="ink2 num" data-tip="took %ss">%s</div><span class="status%s" data-tip="%s">%s%s</span></div>'
                         % (j["state"] == "good", ICON[j["state"]], E(link(j["log"])), E(j["name"]), E(j["schedule"]), strip,
-                           E(str(j["seconds"])), E(last), ICON[j["state"]], E(j["status"]) + (
+                           E(str(j["seconds"])), E(last), " running" if j["running"] else "",
+                           E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
                                ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
-                               % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"])) if acting and j["name"] in sched else "")))
+                               % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
+                               if acting and j["name"] in sched and not j["running"] else "")))
         legend = ('<div class="legend"><span><i class="good"></i>Every run ok</span><span><i class="warning"></i>Some failed, then recovered</span>'
                   '<span><i class="critical"></i>Ended the day failed, or most runs failed</span><span><i></i>No run</span><span>· One cell per day, last %d days</span></div>' % DAYS)
         jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
@@ -2589,22 +3330,37 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]))
              + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"))
              + '<p class="hint">%s</p>' % E(L["caps_from"]))
-        trs = "".join('<tr><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td>%s</td><td class="r">%d</td><td class="r">%d</td></tr>'
-                      % (E(job), d["calls"], d["cost"], E(", ".join(sorted(d["denied"]))) or '<span class="muted">none</span>', d["failed"], d["refused"])
-                      for job, d in sorted(L["by"].items()))
-        table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th><th>Refused tools</th>'
+        m += '<p class="hint">%s</p>' % E("Each Claude call stops at $%g." % L["budget"] if L["budget"] else
+                                          "No per-call budget: GARRICK_MAX_CALL_USD is 0.")
+
+        def refused(tools):
+            """A refused tool the deny list names is red; one no allow rule named is amber."""
+            return "".join('<span class="chip" title="%s">%s%s</span> ' % (
+                "On the deny list" if denied_by_list(t, L["deny"]) else "Not allowed for this job",
+                ICON["critical" if denied_by_list(t, L["deny"]) else "warning"].replace("<svg ", '<svg width="12" height="12" '), E(t))
+                for t in sorted(tools)) or '<span class="muted">none</span>'
+        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td><td>%s</td>'
+                      '<td class="r">%d</td><td class="r">%d</td></tr>'
+                      % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], d["cost"],
+                         "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", refused(d["denied"]), d["failed"], d["refused"])
+                      for job, d in sorted(L["by"].items(), key=lambda kv: (-kv[1]["cost"], kv[0])))
+        table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
+                 '<th class="r" title="Turns per call, on average">Turns</th><th>Refused tools</th>'
                  '<th class="r">Failed</th><th class="r">Capped</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
         calls_card = card("calls", "Assistant calls", "ledger.jsonl, last %d days, list-price cost" % DAYS,
-                          '<div class="meters">%s</div><div style="margin-top:14px">%s</div>' % (m, table))
+                          '<div class="meters">%s</div>%s<div style="margin-top:14px">%s</div>' % (m, cost_chart(L), table))
 
     # ---- repositories and wikis
+    def waiting_long(r):
+        return bool(r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES)
     rr = "".join('<div class="item" data-ok="%d" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
-        0 if r.get("unread") else 1,
+        0 if r.get("unread") or waiting_long(r) else 1,
         E("git status failed or took over 30 seconds, so its changes are not known" if r.get("unread") else
-          "; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"])) if x)),
-        ICON["warning" if r.get("unread") else "good" if not r["dirty"] else "none"], E(r["name"]),
+          "; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"]),
+                                "the oldest change made " + age(r["since"], now) if r["dirty"] and r.get("since") else "") if x)),
+        ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
         "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
-    repos_card = card("repos", "Repositories", "a ring means files changed since the last commit",
+    repos_card = card("repos", "Repositories", "a ring means files changed since the last commit; amber, for over a day",
                       ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
                       if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
@@ -2619,9 +3375,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # ---- the graph
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now, cmux, acting)
+        GR = graph(ws, T, link, now, cmux, acting, S, DK)
         core = sum(1 for n in GR["nodes"] if n["c"])
         legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label[:1].upper() + label[1:]))) for i, label in GR["kinds"])
+        legend += "".join('<span data-g="%d"><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
+                          for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>15–45 days old</span>'
                   '<span><i class="ring" style="border-color:var(--critical)"></i>Over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
@@ -2637,7 +3395,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data))
 
-    todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T)) if lists else ""
+    todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link) if lists else ""
     # Three tabs: Overview for where the work stands, Todo for the list, Status
     # for the machinery behind it. Cards can be moved between Overview and
     # Status from their headers, and Reset view puts them back. The figures at
@@ -2652,28 +3410,55 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
                          % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
-    late = sum(r["late"] for _, rows in lists for r in rows)
+    late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
             '<button type="button" role="tab" data-tab="status">Status%s</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
-               % (sum(len(r) for _, r in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
+               % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     menu = ""
     if flags_on["menu-bar"]:
-        md = menu_data(T, names, link, cmux, trouble)
+        md = menu_data(T, names, link, cmux, trouble, S)
         if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
             md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                             "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
         menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
+    # What RELOAD_JS compares a button's expectation with: the parked threads
+    # and, with the cmux extra, the folders a session is open in.
+    folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
+    state = {"parked": sorted("%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]),
+             "live": sorted(str(f) for f in folders if session_in(S, f))}
+    menu += '<script type="application/json" id="state-data">%s</script>' % script_json(state)
+    shared = shared_launchers(ws)
+    if shared is not None:
+        menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
-                PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + MENU_JS + MENU_SETTINGS_JS, GRAPH_JS if show_graph else ""))
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
+                RELOAD_JS + PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_JS + MENU_SETTINGS_JS, GRAPH_JS if show_graph else ""))
+
+
+def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:
+    """Whether this build should go ahead after a burst of requests: each
+    writes its own mark, waits, and builds only if no later one has written
+    since. Ten sessions starting at once need one build, not ten. A mark
+    that cannot be written or read lets the build go ahead."""
+    me = "%d %.6f" % (os.getpid(), time.time())
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(me, encoding="utf-8")
+    except OSError:
+        return True
+    sleep(seconds)
+    try:
+        return marker.read_text(encoding="utf-8").strip() == me
+    except OSError:
+        return True
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -2686,6 +3471,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--no-cmux", action="store_true", help="leave Open in cmux out, even where cmux is installed")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
     ap.add_argument("--no-graph", action="store_true", help="leave the graph out: the page then reads nothing but frontmatter")
+    ap.add_argument("--settle", type=float, metavar="SECONDS", help="wait this long, and build only if no other build "
+                    "was asked for meanwhile: a burst of requests makes one page")
+    ap.add_argument("--also", action="append", default=[], metavar="FOLDER",
+                    help="for effort: a folder the workspace used to live in, read as the workspace (repeatable)")
+    ap.add_argument("--moved", action="append", default=[], metavar="OLD=NEW",
+                    help="for effort: a folder renamed or moved, its old path and its path in the workspace now (repeatable)")
     args = ap.parse_args(argv)
     ws = find_workspace(args.workspace)
     generated = ws / "System" / "generated"
@@ -2703,12 +3494,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         if probe is not None and probe.returncode == 1:
             print("status: the workspace's .gitignore does not name System/generated/; add that line so the page "
                   "is never committed.", file=sys.stderr)
+    if args.settle and args.settle > 0 and not settle(out.with_name(out.name + ".settle"), args.settle):
+        return 0                              # a later request builds it
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
     vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
     flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
+    moved = {}
+    for m in args.moved:
+        if "=" not in m:
+            print("status: --moved %r is not OLD=NEW; left out." % m, file=sys.stderr)
+            continue
+        old, new = m.split("=", 1)
+        moved[old] = new
+    flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
     tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
-                         vaults=vaults, flags=flags,
+                         vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
                          launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
     os.replace(tmp, out)
     print(out)

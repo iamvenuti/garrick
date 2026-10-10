@@ -22,6 +22,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `page-actions.log` in the jobs folder: one line for every request the page's buttons make, done or refused, naming only the fields its verb reads.
 - A `settings` request to `page_action.py`, which saves *Opening a thread* to `System/generated/status-settings.json`, so every viewer of the page can share it.
 - Edit › Cut, Paste, Undo and Redo in the status app, so ⌘V works in the Todo list's *Add* field and the panel's field. Safari's Web Inspector can open the app's page.
+- The status page's Todo tab (preview `todo-list`) is the full list: one zone at a time, grouped under `Todo.md`'s headings, then *In thread notes* and *Done today*; *All*, *Overdue* and *No date* filters; *A–Z* or *Due date* sorting; counts of the open, overdue and undated. With `page-actions` in the app, a ticked line reopens, the date menu offers Friday, Next Monday and In two weeks as well as any date, and a line being added shows greyed until the rebuild.
+- Thread rows say *no resume block* when a live thread's note has no `### Resume here` block, and a thread's card gives the date the block gives itself.
+- The page shows a scheduled job as *running now* while its lock is held; raises an idle job (`idle` in its heartbeat, or `GARRICK_IDLE_DAYS`) and a repository with a change left uncommitted for over a day under *Needs attention*; and treats quiet exits (`ok` or `quiet` in the heartbeat, `GARRICK_QUIET_EXITS` in the plist, `quiet` on the log line) as fine, saying a failure's own `reason`.
+- *Assistant calls* gains a fourteen-day cost chart, average turns per call, the per-call budget (`GARRICK_MAX_CALL_USD`), and refused tools checked against the deny list in `headless-settings.json`: a forbidden tool, a missing deny list or a call stopped at its budget goes under *Needs attention*.
+- The graph takes a zone's or wiki's colours and excluded files from its own Obsidian vault (`.obsidian/graph.json`, `.obsidian/app.json`) when it has them. Every note in a project offers the apps its card does.
+- With the cmux extra installed, a dot on rows, cards and menu rows says a session is open (green waiting, blue working). With cmux and `page-actions` too, *Open in cmux* goes through the desk, cards offer *Close session*, and the top row *Start up* and *Shut down*.
+- `status.py --settle SECONDS` builds only after a burst of requests has stopped. After *Park*, *Wake*, *Open in cmux* or *Close session*, the page asks for rebuilds until it shows the change.
+- `status.py --also FOLDER` and `--moved OLD=NEW`, passed to `effort.py`.
+- Launcher settings saved for every viewer, in `System/generated/status-settings.json`: inside the app the page prefers them, and closing Settings after a change sends them to `page_action.py` to save.
 
 ### Changed
 

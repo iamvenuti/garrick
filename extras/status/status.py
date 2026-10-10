@@ -2632,7 +2632,9 @@ dialog.settings .setver{margin:0;font-size:13px;color:var(--ink2)}dialog.setting
 # Inside Garrick.app (extras/status/app/), which answers to
 # window.webkit.messageHandlers.garrick, a project or thread with a folder
 # (`f`, there only where cmux is installed) also gets Open in cmux: a cmux tab
-# in that folder, with the phrase that resumes it on the clipboard.
+# in that folder, with the phrase that resumes it on the clipboard. There, and
+# in the Obsidian plugin, which gives the page the same bridge, the apps take
+# the place of Copy "open X"; a browser, which can only copy, keeps it.
 PANEL_JS = r"""
 /* Which apps a card offers and what clicking a thread's name does. In the
    app, the settings saved for every viewer (#launch-settings, written by
@@ -2671,7 +2673,8 @@ function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
-if(o.w)a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
+/* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
+if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
 function park(o){var v=o.s?'wake':'park';return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
 +'" data-expect="'+esc((o.s?'active:':'parked:')+o.pa[0]+'/'+o.pa[1])+'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
 function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')

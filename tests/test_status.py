@@ -1417,6 +1417,37 @@ class TestWhatThisMachineHas(StatusCase):
         self.assertIn('id="rebuild"', brand)                      # an icon beside the cog: rebuilds in the app, copies elsewhere
         self.assertIn('data-copy="', brand)
 
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_copy_open_x_only_where_nothing_opens_it(self):
+        # PANEL_JS run in Node, as a browser and as a host with the bridge (the
+        # app, or Obsidian's tab), on a card with a folder and one without.
+        harness = r"""
+        const vm = require("vm");
+        const [js, hosted, launchers, card] = JSON.parse(process.argv[1]);
+        const store = {};
+        const ctx = { JSON, String, Array, localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = v; } },
+                      document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers } } } };
+        ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
+        vm.createContext(ctx);
+        vm.runInContext(js + ";this.out=Panel.acts(" + JSON.stringify(card) + ")", ctx);
+        process.stdout.write(ctx.out);
+        """
+        import subprocess
+
+        def acts(hosted, launchers, card):
+            done = subprocess.run(["node", "-e", harness, json.dumps([status.PANEL_JS, hosted, launchers, card])],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return done.stdout
+
+        card = {"n": "Pricing", "w": "Pricing", "u": "obsidian://open?file=Pricing", "f": "/ws/Zones/Work/Acme Review/Threads/Pricing"}
+        self.assertIn("Copy “open Pricing”", acts(False, "finder,cmux", card))         # a browser can only copy
+        hosted = acts(True, "finder,cmux", card)
+        self.assertIn('data-launch="finder"', hosted)                                   # the app offers its launchers
+        self.assertNotIn("Copy “open Pricing”", hosted)                                 # and no phrase to copy beside them
+        self.assertIn("Copy “open Pricing”", acts(True, "", card))                      # no app offered: copying is all there is
+        self.assertIn("Copy “open Pricing”", acts(True, "finder,cmux", dict(card, f=None)))   # nor a folder to open
+
     def test_main_asks_the_machine_and_honours_the_switches(self):
         out = Path(self._tmp.name).resolve() / "page.html"
         with mock.patch.object(status, "launchers_installed", return_value=("cmux",)), \

@@ -14,6 +14,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 - The panel's projects start folded, and the panel remembers which ones you unfolded, after a restart too.
 - The panel shows trouble as the red dot on its mark, as the menu bar does, with a tooltip that says what it means, instead of the words *Something failed*.
 - The hotkey set in Settings opens the menu, with the cursor in its field, whatever the preview `ask`; it no longer opens the Ask box instead.
+- Project and thread cards in the Mac app and in Obsidian no longer show *Copy "open X"* beside the buttons that open them. A browser, where copying is the only action, keeps it, and so does a card no app is offered for.
 
 ### Fixed
 

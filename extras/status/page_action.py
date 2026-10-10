@@ -464,13 +464,44 @@ def kickstart(label: str) -> bool:
     return done.returncode == 0
 
 
+JOB_PY = Path(__file__).resolve().parent.parent / "jobs" / "job.py"
+_JOB = None
+
+
+def job_py():
+    """job.py from the scheduled jobs extra, beside this folder (System/jobs/
+    in a workspace, extras/jobs/ in Garrick's source), loaded once; None when
+    it is not there or does not load."""
+    global _JOB
+    if _JOB is None:
+        _JOB = False
+        if JOB_PY.is_file():
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_job", str(JOB_PY))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _JOB = mod
+            except Exception:
+                pass
+    return _JOB or None
+
+
 def lock_held(name: str, now: float = None) -> bool:
     """Whether job.py's lock for this job stands: `<name>.lock`, a folder in
-    the jobs folder, whose `until` file says when it goes stale. A lock past
-    that belongs to a run that died, and job.py's next run takes it over."""
+    the jobs folder. job.py's own lock_state() decides, where it is beside
+    this folder: a job.py still alive holds its lock whatever the clock says,
+    as after a Mac's sleep. Without it, or given `now`, the lock's `until`
+    file decides: a lock past it belongs to a run that died, and job.py's
+    next run takes it over."""
     lock = jobs_dir() / ("%s.lock" % name)
     if not lock.is_dir():
         return False
+    job = job_py() if now is None else None
+    if job is not None and callable(getattr(job, "lock_state", None)):
+        try:
+            return job.lock_state(lock) is not None
+        except Exception:
+            pass                    # its rule failed; the clock's still holds
     now = time.time() if now is None else now
     try:
         until = float((lock / "until").read_text(encoding="utf-8").split()[0])

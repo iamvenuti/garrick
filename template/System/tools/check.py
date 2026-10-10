@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import html
 import json
 import os
 import re
@@ -35,7 +36,7 @@ import sys
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
@@ -167,6 +168,8 @@ class Workspace:
     quick: bool = False  # --quick: leave out the comparison of wording
     zone_notes: Optional[List[Tuple[Path, str]]] = None  # every live note in the zones, read on first use
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
+    ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
+    shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +193,21 @@ def nested_repo(folder: Path) -> bool:
     return not (folder.parent.name in ("Zones", "Wikis") or folder.name == "Wikis")
 
 
-def walk_files(top: Path) -> Iterable[Path]:
-    """Every file under `top`, skipping `.git` folders and nested repositories."""
+# Folders no one writes in: git's own, installed packages, caches and build
+# output. Skipped by name wherever the check walks, before git is asked.
+SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "__pycache__", "dist"})
+
+
+def walk_files(top: Path, skip: Optional[set] = None) -> Iterable[Path]:
+    """Every file under `top`, skipping SKIP_DIRS, nested repositories, and
+    the files and folders in `skip` (see ignored)."""
     for dirpath, dirnames, filenames in os.walk(top):
-        dirnames[:] = sorted(d for d in dirnames if d != ".git" and not nested_repo(Path(dirpath) / d))
+        here = Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not nested_repo(here / d)
+                             and not (skip and here / d in skip))
         for name in sorted(filenames):
-            yield Path(dirpath) / name
+            if not (skip and here / name in skip):
+                yield here / name
 
 
 def read_text(path: Path) -> Optional[str]:
@@ -592,8 +604,11 @@ def check_instructions(ws: Workspace) -> List[Finding]:
 
 
 def check_placeholders(ws: Workspace) -> List[Finding]:
+    """Installer placeholders left unfilled, in a file's name or its text.
+    Files git ignores are not the install's: a package's own templates may
+    hold the same marks."""
     out = []
-    for path in walk_files(ws.root):
+    for path in walk_files(ws.root, ignored(ws)):
         if is_template_path(ws, path) or is_generated(ws, path):
             continue
         if rel(ws, path) == "/".join(VERSION_STAMP):
@@ -1750,7 +1765,7 @@ def check_people(ws: Workspace) -> List[Finding]:
             continue
         if common is None:
             common = quote_index(ws).common
-        heard = meeting_wording(ws, body_of(text), common)
+        heard = meeting_wording(ws, body_of(text), common, page)
         if heard:
             more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
             out.append(Finding(WARNING, "people", r,
@@ -1796,6 +1811,10 @@ chase hunter art max page ray bob sky april autumn
 
 VTT_TIMING_RE = re.compile(r"(?m)^\s*(?:WEBVTT.*|\d+|[\d:.]+\s*-->.*)\s*$")
 VTT_TAG_RE = re.compile(r"<[^>\n]*>")
+# What a browser never shows: comments, styles and scripts; then the tags,
+# with their names and attributes.
+HTML_HIDDEN_RE = re.compile(r"<!--.*?-->|<(script|style)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+HTML_TAG_RE = re.compile(r"</?[A-Za-z!?][^>]*>")
 
 
 # The blocks of combining marks: what NFKD splits off a letter as its accent.
@@ -1810,12 +1829,21 @@ def words(text: str) -> List[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
+def html_text(text: str) -> str:
+    """An HTML page as a reader sees it: no comments, styles or scripts, no
+    tags or attributes, and entities read as the characters they stand for.
+    Two pages built from one slide template share their code, not wording."""
+    return html.unescape(HTML_TAG_RE.sub(" ", HTML_HIDDEN_RE.sub(" ", text)))
+
+
 def transcript_text(path: Path, text: str) -> str:
-    """A raw record as the words that were said or written: a transcript
-    without its timings and voice tags, so a sentence split across two cues
-    still reads as one run of words; a saved mail as its subject and text,
-    decoded from however the message was encoded."""
-    if path.suffix.lower() == ".vtt":
+    """A file as the words that were said or written: a transcript without
+    its timings and voice tags, so a sentence split across two cues still
+    reads as one run of words; a saved mail as its subject and text, decoded
+    from however the message was encoded; an HTML page as its visible text."""
+    if path.suffix.lower() in (".html", ".htm"):
+        text = html_text(text)
+    elif path.suffix.lower() == ".vtt":
         text = VTT_TAG_RE.sub(" ", VTT_TIMING_RE.sub(" ", text))
     elif path.suffix.lower() == ".eml":
         try:
@@ -1881,21 +1909,35 @@ HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
 WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
 
 
-def without_link_targets(text: str) -> str:
+MDLINK_LABEL_RE = re.compile(r"\[([^\[\]\n]*)\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+
+
+def without_link_targets(text: str, shared: Optional[Callable[[str], bool]] = None) -> str:
     """`text` as a reader sees it: a wikilink reduced to its alias, a Markdown
     link to its text, an address to nothing. Where a link points is not
     wording; the link check reads it, and two notes that point at the same
-    page share no words by doing so."""
-    text = WIKILINK_RE.sub(lambda m: " %s " % (m.group(1).split("|", 1)[1] if "|" in m.group(1) else ""), text)
+    page share no words by doing so. With `shared`, which says whether a
+    link's target is a shared file, a link to one loses its text too: it is
+    the title of a page every side reads, so two notes that list the same
+    Knowledge pages share no words by doing so either."""
+    def wikilink(m) -> str:
+        target, bar, alias = m.group(1).partition("|")
+        if not bar or (shared and shared(target.rstrip("\\").split("#", 1)[0].strip())):
+            return " "
+        return " %s " % alias
+
+    text = WIKILINK_RE.sub(wikilink, text)
+    if shared:
+        text = MDLINK_LABEL_RE.sub(lambda m: " " if shared(m.group(2)) else m.group(0), text)
     return WEB_RE.sub(" ", MDLINK_RE.sub("] ", text))
 
 
-def runs(text: str) -> set:
-    """Every shingle of `text`, links reduced to the words a reader sees, and
-    no run crossing a Markdown heading: the headings of a note are its
-    template's structure ("State of play", "Resume here"), and the words
-    either side of one were not written as one sentence."""
-    text = without_link_targets(text)
+def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
+    """Every shingle of `text`, links reduced to the words a reader sees (see
+    without_link_targets), and no run crossing a Markdown heading: the
+    headings of a note are its template's structure ("State of play", "Resume
+    here"), and the words either side of one were not written as one sentence."""
+    text = without_link_targets(text, shared)
     out: set = set()
     last = 0
     for m in HEADING_RE.finditer(text):
@@ -1944,6 +1986,22 @@ def shared_files(ws: Workspace) -> List[Path]:
     return [p for p in out if p.is_file()]
 
 
+def shared_link(ws: Workspace, source: Path) -> Callable[[str], bool]:
+    """For a file at `source`: does a link it holds lead to a shared file?"""
+    if ws.shared_links is None:
+        ws.shared_links = PathIndex(ws, shared_files(ws))
+    index = ws.shared_links
+
+    def test(target: str) -> bool:
+        if target.startswith("obsidian://"):
+            return any(resolve(ws, source, t, index) for _, t in extract_links(target))
+        target = unquote(target).split("#", 1)[0]
+        if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+            return False  # an address, not a file here
+        return bool(resolve(ws, source, target, index))
+    return test
+
+
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
     """The raw transcripts behind a meeting page: the one its `raw` field names,
     else any file in raw/ with the page's slug. The inbox is not yet filed. In
@@ -1967,8 +2025,8 @@ def quote_index(ws: Workspace) -> QuoteIndex:
         return ws.quote_index
     owners: Dict[int, set] = {}
 
-    def add(text: str, owner: Path) -> None:
-        for h in runs(text):
+    def add(text: str, owner: Path, source: Path) -> None:
+        for h in runs(text, shared_link(ws, source)):
             owners.setdefault(h, set()).add(owner)
 
     # In staged mode a file can hold one text on disk and another in git (see
@@ -1985,10 +2043,10 @@ def quote_index(ws: Workspace) -> QuoteIndex:
     # unfinished page may be used anywhere until it has its zone and parties.
     for page, fm in ws.meetings.items():
         for text in texts(page):
-            add(body_of(text), page)
+            add(body_of(text), page, page)
         for r in meeting_raws(ws, page, fm):
             for text in texts(r):
-                add(transcript_text(r, text), page)
+                add(transcript_text(r, text), page, r)
     # Every project's own text files, under the party each is written for: a
     # client's brief or data file, and the notes made from them, are that
     # party's material as much as its meetings are. Template folders are not.
@@ -1997,7 +2055,7 @@ def quote_index(ws: Workspace) -> QuoteIndex:
     for project, pfm in ws.projects:
         ptags = party_tags(ws, project / (project.name + ".md"), pfm)
         thread_tags: Dict[str, set] = {}
-        files = list(walk_files(project))
+        files = list(walk_files(project, ignored(ws)))
         files += sorted(p for p in view if project in p.parents and not p.exists())  # deleted, but still in git
         for path in files:
             if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
@@ -2015,7 +2073,7 @@ def quote_index(ws: Workspace) -> QuoteIndex:
             tags[path] = frozenset(ftags)
             projects[path] = project
             for text in found:
-                add(body_of(text), path)
+                add(body_of(transcript_text(path, text)), path, path)
     common: set = set()
     beyond: set = set()
     # Wording also found in a shared file is common wording, not a leak. No
@@ -2025,9 +2083,10 @@ def quote_index(ws: Workspace) -> QuoteIndex:
     knowledge = ws.root / "Wikis" / "Knowledge"
     for path in shared_files(ws):
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
-            found = {h for h in runs(transcript_text(path, read_text(path) or "")) if h in owners}
+            link = shared_link(ws, path)
+            found = {h for h in runs(transcript_text(path, read_text(path) or ""), link) if h in owners}
             if path in view:
-                found &= runs(transcript_text(path, view[path]))
+                found &= runs(transcript_text(path, view[path]), link)
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
@@ -2035,12 +2094,13 @@ def quote_index(ws: Workspace) -> QuoteIndex:
     return ws.quote_index
 
 
-def meeting_wording(ws: Workspace, text: str, exempt: set) -> List[Path]:
+def meeting_wording(ws: Workspace, text: str, exempt: set, source: Path) -> List[Path]:
     """The finished meeting pages whose page or raw record shares a run of
-    SHINGLE words with `text`, leaving out the runs in `exempt`."""
+    SHINGLE words with `text`, the text of the file at `source`, leaving out
+    the runs in `exempt`."""
     index = quote_index(ws)
     found = set()
-    for h in runs(text):
+    for h in runs(text, shared_link(ws, source)):
         if h in exempt:
             continue
         found.update(o for o in index.owners.get(h, ()) if o in ws.meetings and finished(ws.meetings[o]))
@@ -2221,7 +2281,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     lifted: Dict[Path, int] = {}
     unfinished: Dict[Path, int] = {}
     copied: Dict[Path, set] = {}  # another project -> its files the wording came from
-    for h in runs(text):
+    for h in runs(transcript_text(path, text), shared_link(ws, path)):
         owners = index.owners.get(h)
         if not owners or h in index.common:
             continue
@@ -2403,7 +2463,7 @@ def all_sources_findings(ws: Workspace) -> List[Finding]:
         out: List[Finding] = []
         for project, pfm in ws.projects:
             ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
-            for path in walk_files(project / "Sources"):
+            for path in walk_files(project / "Sources", ignored(ws)):
                 try:
                     if not _in_sources(project, path) or path.stat().st_size > MAX_SOURCE_BYTES:
                         continue
@@ -2422,11 +2482,13 @@ def check_sources(ws: Workspace) -> List[Finding]:
 
 def check_walls(ws: Workspace) -> List[Finding]:
     """No project file links to, names, or quotes a party or meeting on the far
-    side of a wall from the project's party, or came from a mail that is."""
+    side of a wall from the project's party, or came from a mail that is.
+    Files git ignores are left out: they never reach the history the commit
+    hook guards, and an installed package's files are not the project's."""
     out = []
     for project, pfm in ws.projects:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
-        for path in walk_files(project):
+        for path in walk_files(project, ignored(ws)):
             if path.suffix.lower() not in TEXT_SUFFIXES:
                 continue
             text = read_text(path)
@@ -2490,13 +2552,8 @@ def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
     that file as git holds it. So git's version counts too: for the repository
     being committed, its index, which is what the commit will hold; for every
     other, its last commit."""
-    tops = set()
-    for folder in list(ws.zones) + [ws.root / "Wikis" / "Meetings", ws.root / "Wikis" / "Knowledge", ws.root]:
-        top = _repo_top(ws, folder) if folder.is_dir() else None
-        if top is not None:
-            tops.add(top)
     out: Dict[Path, str] = {}
-    for top in sorted(tops):
+    for top in workspace_repos(ws):
         if top == committing:
             names, spec = _git(["diff", "--name-only", "--no-renames", "-z"], top), ":%s"
         elif _git(["rev-parse", "--verify", "-q", "HEAD"], top) is not None:
@@ -2626,6 +2683,43 @@ def _repo_top(ws: Workspace, folder: Path) -> Optional[Path]:
     return top_path if top_path == root or root in top_path.parents else None
 
 
+def workspace_repos(ws: Workspace) -> List[Path]:
+    """The tops of the workspace's own repositories: its zones', its wikis' and
+    its root's, resolved."""
+    tops = set()
+    for folder in list(ws.zones) + [ws.root / "Wikis" / "Meetings", ws.root / "Wikis" / "Knowledge", ws.root]:
+        top = _repo_top(ws, folder) if folder.is_dir() else None
+        if top is not None:
+            tops.add(top)
+    return sorted(tops)
+
+
+def ignored(ws: Workspace) -> set:
+    """Every file and folder the workspace's own repositories ignore, listed
+    once: what git would never commit, such as an installed package's README
+    or a build's output, which the commit hook therefore never sees. A
+    repository's list counts only for its own files: the root ignores the
+    zones and the wikis whole, because each is a repository of its own, and
+    that never hides them. The inboxes are ignored by design, and the inbox
+    checks read them directly, never through this."""
+    if ws.ignored is None:
+        ws.ignored = set()
+        wikis = ws.root / "Wikis"
+        areas = list(ws.zones) + [wikis] + visible_dirs(wikis)
+        for repo in [ws.root, wikis] + visible_dirs(wikis) + list(ws.zones):
+            if not (repo / ".git").exists():
+                continue
+            # Named outright, so a `.git` that is not a repository fails here
+            # rather than lending the folder the ignores of one above it.
+            listing = _git(["--git-dir=" + str(repo / ".git"), "--work-tree=" + str(repo), "ls-files", "-z", "--others",
+                            "--ignored", "--exclude-standard", "--directory"], repo) or ""
+            for name in listing.split("\0"):
+                path = repo / name.rstrip("/")
+                if name and not any(a == path or path in a.parents for a in areas):
+                    ws.ignored.add(path)
+    return ws.ignored
+
+
 def check_inbox(ws: Workspace) -> List[Finding]:
     """Mail and files in a zone's Inbox, and transcripts in the Meetings inbox,
     are waiting to be filed. They never enter any history, a recording comes
@@ -2729,7 +2823,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
             continue
         if beyond is None:
             beyond = quote_index(ws).common_beyond_knowledge
-        heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond)
+        heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond, path)
         if heard:
             more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
             out.append(Finding(WARNING, "knowledge", rel(ws, path),

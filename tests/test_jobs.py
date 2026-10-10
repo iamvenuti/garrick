@@ -222,6 +222,15 @@ class ProfileTest(unittest.TestCase):
                      "WebFetch", "WebSearch"):
             self.assertIn(tool, deny, tool)
 
+    def test_profile_keeps_the_core_set(self):
+        # The entries agent.py refuses to run without: an edit that drops one stops every Claude job.
+        deny = json.loads((JOBS / "headless-settings.json").read_text())["permissions"]["deny"]
+        self.assertEqual([], [t for t in agent.CORE_DENY if t not in deny])
+        self.assertIsNone(agent.profile_problem(JOBS / "headless-settings.json"))
+        for core in ("mcp__claude_ai_Gmail__send_message", "mcp__claude_ai_Google_Drive__share_file",
+                     "Bash(git push:*)", "Bash(rm:*)"):
+            self.assertIn(core, agent.CORE_DENY)
+
     def test_claude_command(self):
         cmd = agent.claude_command("sonnet", "Do the sweep.", ["Read", "Grep"], 5)
         self.assertEqual(["claude", "-p", "Do the sweep.", "--model", "sonnet"], cmd[:5])
@@ -329,6 +338,23 @@ class RunTest(FakeAssistants):
         self.assertIn("deny profile", sys.stderr.getvalue())
         os.environ["GARRICK_HARNESS"] = "codex"                          # Codex loads no profile
         with mock.patch.object(agent, "PROFILE", self.tmp / "nowhere" / "headless-settings.json"):
+            self.assertEqual(0, agent.run("sonnet", "Sweep.")[0])
+
+    def test_a_profile_that_lost_a_core_entry_no_call(self):
+        trimmed = self.tmp / "headless-settings.json"
+        deny = [t for t in agent.CORE_DENY if t != "mcp__claude_ai_Gmail__forward"] + ["WebFetch"]
+        trimmed.write_text(json.dumps({"permissions": {"deny": deny}}))
+        with mock.patch.object(agent, "PROFILE", trimmed):
+            self.assertEqual((agent.EXIT_USAGE, ""), agent.run("sonnet", "Sweep.", allow=["Read"]))
+        self.assertIn("no longer denies mcp__claude_ai_Gmail__forward", sys.stderr.getvalue())
+        for broken in ({"permissions": {}}, {"permissions": {"deny": "WebFetch"}}, ["WebFetch"]):
+            trimmed.write_text(json.dumps(broken))
+            with mock.patch.object(agent, "PROFILE", trimmed):
+                self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "Sweep.")[0], broken)
+        self.assertEqual([], self.calls())
+        self.assertEqual([], self.ledger())
+        trimmed.write_text(json.dumps({"permissions": {"deny": list(agent.CORE_DENY)}}))
+        with mock.patch.object(agent, "PROFILE", trimmed):              # the core set alone is enough
             self.assertEqual(0, agent.run("sonnet", "Sweep.")[0])
 
     def test_a_job_name_is_one_plain_word(self):
@@ -733,10 +759,63 @@ class JobExtrasTest(FakeAssistants):
         self.assertEqual(0, r.returncode, r.stderr)
         beat = json.loads((self.jobs / "tidy.heartbeat.json").read_text())
         self.assertEqual({"agent", "exit", "failing_since", "finished", "finished_ts", "idle", "idle_days", "items",
-                          "job", "ok", "quiet", "reason", "seconds", "started"}, set(beat))
+                          "job", "no_call", "ok", "quiet", "reason", "seconds", "started"}, set(beat))
         self.assertEqual((True, 0, True, False, None), (beat["agent"], beat["exit"], beat["ok"], beat["quiet"],
                                                         beat["reason"]))
         self.assertLessEqual(beat["started"], beat["finished"])
+
+    def test_an_agent_job_that_recorded_no_call_says_so(self):
+        r = self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", "pass")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue(json.loads((self.jobs / "tidy.heartbeat.json").read_text())["no_call"])
+        self.assertIn("tidy exited 0 and recorded no assistant call", (self.jobs / "tidy.log").read_text())
+        # Through agent.py, the ledger gains a line under the job's name and nothing is said.
+        r = self.job("sweep", "--agent", "--cwd", str(self.tmp), "--", sys.executable, str(JOBS / "agent.py"),
+                     "run", "--tier", "haiku", "--prompt", "Say hello.")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(["sweep"], [e["job"] for e in self.ledger()])
+        self.assertFalse(json.loads((self.jobs / "sweep.heartbeat.json").read_text())["no_call"])
+        self.assertNotIn("no assistant call", (self.jobs / "sweep.log").read_text())
+        # A line another job wrote during the run does not count for this one.
+        other = ("import sys; sys.path.insert(0, %r); import agent; agent.run('haiku', 'Hi.', job='other')"
+                 % str(JOBS))
+        self.job("brief", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", other)
+        self.assertEqual(["sweep", "other"], [e["job"] for e in self.ledger()])
+        self.assertTrue(json.loads((self.jobs / "brief.heartbeat.json").read_text())["no_call"])
+        # A job without --agent, and one that failed, are not asked.
+        self.job("plain", "--", sys.executable, "-c", "pass")
+        self.assertFalse(json.loads((self.jobs / "plain.heartbeat.json").read_text())["no_call"])
+        self.job("broke", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", "import sys; sys.exit(3)")
+        self.assertFalse(json.loads((self.jobs / "broke.heartbeat.json").read_text())["no_call"])
+
+    def test_check_scripts_finds_a_direct_call(self):
+        direct = self.tmp / "sweep.sh"
+        direct.write_text('#!/bin/sh\n# claude -p in a comment is fine\nout="$(claude -p "$(cat p.md)")"\n')
+        listed = self.tmp / "brief.py"
+        listed.write_text('import subprocess\nsubprocess.run(["codex", "exec", prompt])\n')
+        clean = self.tmp / "tidy.sh"
+        clean.write_text('#!/bin/sh\npython3 agent.py run --tier haiku --prompt-file p.md  # not claude -p\n'
+                         'claude mcp list\n')
+        r = self.job("check-scripts", str(direct), str(listed), str(clean), str(JOBS / "agent.py"))
+        self.assertEqual(1, r.returncode, r.stderr)
+        self.assertEqual(["%s:3: runs claude directly; call agent.py run instead" % direct,
+                          "%s:2: runs codex directly; call agent.py run instead" % listed], r.stdout.splitlines())
+        r = self.job("check-scripts", str(clean), *(str(JOBS / n) for n in ("agent.py", "job.py", "whats_open.py")))
+        self.assertEqual(0, r.returncode, r.stdout)
+        self.assertIn("4 files checked", r.stdout)
+        # A plist is read for the scripts it runs, and for a command line that is itself the call.
+        plist = self.tmp / "garrick.sweep.plist"
+        plist.write_bytes(plistlib.dumps({"ProgramArguments": ["/usr/bin/python3", str(JOBS / "job.py"), "sweep",
+                                                              "--agent", "--", "/bin/sh", str(direct)]}))
+        bare = self.tmp / "garrick.bare.plist"
+        bare.write_bytes(plistlib.dumps({"ProgramArguments": ["/usr/local/bin/claude", "-p", "Sweep."]}))
+        r = self.job("check-scripts", str(plist), str(bare), str(self.tmp / "missing.sh"))
+        self.assertEqual(1, r.returncode)
+        self.assertIn("%s:3: runs claude directly" % direct, r.stdout)
+        self.assertIn("%s: runs an assistant itself" % bare, r.stdout)
+        self.assertIn("missing.sh: could not be read", r.stdout)       # unread is not clean
+        self.assertEqual(agent.EXIT_USAGE, self.job("check-scripts").returncode)
+        self.assertEqual(0, self.job("check-scripts", str(JOBS / "launchd" / "garrick.whats-open.plist")).returncode)
 
     def test_status_says_which_jobs_are_running(self):
         self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(3)")

@@ -605,6 +605,209 @@ class TestCommandLine(Case):
         self.assertIn("Updated on 6 October 2026 from", r.stdout)
 
 
+class ExtrasCase(Case):
+    """A workspace with extras copied in, as their pages say. PATH, the app
+    folders and the assistants' settings are the test's own, so nothing on
+    this machine is read or changed."""
+
+    def setUp(self):
+        super().setUp()
+        for patch in (mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
+                      mock.patch.object(update, "app_folders", lambda: [self.base / "Applications"]),
+                      mock.patch.object(update, "on_mac", lambda: False)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def install_extra(self, *names):
+        for path, (data, mode) in update.extras_shipped(names).items():
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            os.chmod(target, mode)
+        self.commit(self.root, "extras by hand")
+
+    def built_app(self, workspace=None, args=("--no-graph",)):
+        app = self.base / "Applications" / "Garrick.app" / "Contents"
+        app.mkdir(parents=True)
+        import plistlib
+        with (app / "Info.plist").open("wb") as f:
+            plistlib.dump({"CFBundleIdentifier": "local.garrick.status", "GarrickWorkspace": str(workspace or self.root),
+                           "GarrickStatusArgs": list(args)}, f)
+
+
+class TestExtras(ExtrasCase):
+    def test_a_workspace_without_extras_has_none_to_update(self):
+        p = self.plan()
+        self.assertEqual([], p["extras"])
+        self.assertFalse([x for x in p["files"] if x.startswith(("System/status/", "System/jobs/", "System/cmux/"))])
+
+    def test_installed_extras_are_found_and_recorded(self):
+        self.install_extra("status", "jobs")
+        p = self.plan()
+        self.assertEqual(["status", "jobs"], p["extras"])
+        self.assertEqual({k: [] for k in update.KINDS}, p["actions"])
+        self.assertIn("System/status/status.py", p["current"])
+        self.assertIn("Extras updated with the rest: the status page (System/status); the scheduled jobs (System/jobs).",
+                      update.report(p))
+        update.apply(self.root, p)
+        self.assertEqual(sha((self.root / "System/status/status.py").read_bytes()),
+                         self.stamp()["files"]["System/status/status.py"])
+
+    def test_an_unchanged_extra_file_is_replaced_and_a_changed_one_gets_a_new(self):
+        self.install_extra("status")
+        same, mine = "System/status/effort.py", "System/jobs/job.py"
+        self.install_extra("jobs")
+        new_same, new_mine = (self.root / same).read_bytes(), (self.root / mine).read_bytes()
+        self.as_if_older(same, "# an older effort\n")
+        self.as_if_older(mine, "# an older job\n", "# an older job\n# my own line\n")
+        p = self.plan()
+        self.assertEqual([same], p["actions"]["replace"])
+        self.assertEqual([mine], p["actions"]["merge"])
+        result = self.apply()
+        self.assertEqual(new_same, (self.root / same).read_bytes())
+        self.assertEqual("# an older job\n# my own line\n", (self.root / mine).read_text())
+        self.assertEqual(new_mine, (self.root / (mine + ".new")).read_bytes())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+        self.assertTrue(result["stamped"])
+        self.assertEqual(sha(new_same), self.stamp()["files"][same])
+
+    def test_a_file_an_installed_extra_lacks_is_added_and_only_is_honoured(self):
+        self.install_extra("status")
+        (self.root / "System/status/ask.py").unlink()
+        self.commit(self.root, "no ask")
+        self.as_if_older("System/status/effort.py", "# an older effort\n")
+        p = self.plan()
+        self.assertEqual(["System/status/ask.py"], p["actions"]["add"])
+        result = self.apply(only=["System/status/ask.py"])
+        self.assertEqual(["System/status/ask.py"], result["done"]["add"])
+        self.assertTrue((self.root / "System/status/ask.py").is_file())
+        self.assertEqual("# an older effort\n", (self.root / "System/status/effort.py").read_text())
+
+    def test_desks_skill_alone_counts_as_the_cmux_extra(self):
+        skill = self.root / "System/skills/desk/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_bytes((REPO / "extras/cmux/desk/SKILL.md").read_bytes())
+        self.commit(self.root, "desk skill")
+        p = self.plan()
+        self.assertEqual(["cmux"], p["extras"])
+        self.assertIn("System/cmux/desk.py", p["actions"]["add"])
+        self.assertNotIn("System/cmux/desk/SKILL.md", p["files"])
+
+    def test_a_file_as_an_older_release_shipped_it_is_replaced_without_a_record(self):
+        self.install_extra("status")
+        path = "System/status/todo_lines.py"
+        (self.root / path).write_text("# as 0.15.0 shipped it\n")
+        self.commit(self.root, "older by hand")
+        with mock.patch.object(update, "known_hashes", lambda zones=(): {path: [sha("# as 0.15.0 shipped it\n")]}):
+            self.assertEqual([path], self.plan()["actions"]["replace"])
+        self.assertEqual([path], self.plan()["actions"]["merge"])      # unknown bytes: yours
+
+    def test_release_hashes_know_where_an_extra_goes(self):
+        self.assertEqual("System/status/app/make-app.sh", update.extra_place("extras/status/app/make-app.sh"))
+        self.assertEqual("System/skills/desk/SKILL.md", update.extra_place("extras/cmux/desk/SKILL.md"))
+        self.assertEqual("System/cmux/desk.py", update.extra_place("extras/cmux/desk.py"))
+        self.assertIsNone(update.extra_place("extras/hooks/zone_guard.py"))
+        self.assertIsNone(update.extra_place("extras/fetch/imap_fetch.py"))
+
+
+class TestWhatExtrasNeedNext(ExtrasCase):
+    def older_app(self):
+        self.install_extra("status")
+        self.as_if_older("System/status/app/make-app.sh", "#!/bin/bash\n# older\n")
+
+    def test_the_app_is_rebuilt_with_the_flags_stored_in_it(self):
+        self.older_app()
+        self.built_app(args=("--no-graph", "--obsidian", "Acme Vault"))
+        with mock.patch.object(update, "on_mac", lambda: True), \
+                mock.patch.object(update, "make_app", return_value=(0, "/Applications/Garrick.app")) as make:
+            p = self.plan()
+            self.assertIn("Rebuild Garrick.app in %s, with the flags it was built with: --no-graph --obsidian Acme Vault."
+                          % (self.base / "Applications"), self.report_of(p))
+            self.assertFalse(make.called)                       # the report changes nothing
+            result = update.apply(self.root, p)
+        make.assert_called_once_with(["/bin/bash", str(self.root / "System/status/app/make-app.sh"), "--workspace",
+                                      str(self.root), "--dest", str(self.base / "Applications"), "--",
+                                      "--no-graph", "--obsidian", "Acme Vault"])
+        self.assertIn("Rebuilt Garrick.app: /Applications/Garrick.app.", result["then"])
+
+    def report_of(self, p):
+        p["then"] = [what for what, _ in update.next_steps(self.root, p)]
+        return update.report(p)
+
+    def test_no_rebuild_off_a_mac_for_another_workspace_or_with_the_app_unchanged(self):
+        self.older_app()
+        self.built_app()
+        with mock.patch.object(update, "make_app") as make:
+            self.apply()                                        # not a Mac
+        self.assertFalse(make.called)
+        self.as_if_older("System/status/app/make-app.sh", "#!/bin/bash\n# older again\n")
+        shutil.rmtree(self.base / "Applications")
+        self.built_app(workspace=self.base / "elsewhere")
+        with mock.patch.object(update, "on_mac", lambda: True), mock.patch.object(update, "make_app") as make:
+            self.apply()
+        self.assertFalse(make.called)
+        shutil.rmtree(self.base / "Applications")
+        self.built_app()
+        self.as_if_older("System/status/effort.py", "# an older effort\n")
+        with mock.patch.object(update, "on_mac", lambda: True), mock.patch.object(update, "make_app") as make:
+            self.apply()
+        self.assertFalse(make.called)
+
+    def test_the_obsidian_plugin_is_refreshed_where_it_is_as_garrick_wrote_it(self):
+        self.install_extra("status")
+        main = "System/status/obsidian/main.js"
+        new_main = (self.root / main).read_bytes()
+        manifest = (self.root / "System/status/obsidian/manifest.json").read_bytes()
+        self.as_if_older(main, "// the older plugin\n")
+        wikis = self.root / "Wikis" / ".obsidian" / "plugins" / "garrick-status"
+        wikis.mkdir(parents=True)
+        (wikis / "main.js").write_text("// the older plugin\n")
+        (wikis / "manifest.json").write_bytes(manifest)
+        self.commit(self.root / "Wikis", "plugin")
+        top = self.root / ".obsidian" / "plugins" / "garrick-status"
+        top.mkdir(parents=True)
+        (top / "main.js").write_text("// my own plugin\n")
+        (top / "manifest.json").write_bytes(manifest)
+        self.commit(self.root, "plugin")
+        report = self.report_of(self.plan())
+        self.assertIn("Refresh the Obsidian plugin in Wikis: main.js.", report)
+        self.assertIn("The Obsidian plugin in the workspace's top has main.js unlike any Garrick's", report)
+        result = self.apply()
+        self.assertEqual(new_main, (wikis / "main.js").read_bytes())
+        self.assertEqual("// my own plugin\n", (top / "main.js").read_text())
+        self.assertEqual("", self.git(self.root / "Wikis", "status", "--porcelain"))
+        self.assertEqual("Garrick: refresh the Obsidian plugin", self.git(self.root / "Wikis", "log", "-1", "--format=%s"))
+        self.assertIn("Refreshed the Obsidian plugin in %s." % wikis, result["then"])
+        self.assertTrue(any("switch Garrick off and on" in line for line in result["then"]))
+
+    def test_a_desk_link_to_another_copy_is_pointed_at_the_workspaces(self):
+        self.install_extra("cmux")
+        old = self.base / "old-garrick" / "extras" / "cmux" / "desk.py"
+        old.parent.mkdir(parents=True)
+        old.write_text("# an older desk\n")
+        bin_ = self.base / "home" / ".local" / "bin"
+        bin_.mkdir(parents=True)
+        (bin_ / "desk").symlink_to(old)
+        self.assertIn("Point the desk command, %s, at the workspace's System/cmux/desk.py, in place of %s."
+                      % (bin_ / "desk", old), self.report_of(self.plan()))
+        self.apply()
+        self.assertEqual(self.root / "System/cmux/desk.py", Path(os.readlink(str(bin_ / "desk"))))
+        self.assertEqual([], [w for w, _ in update.next_steps(self.root, self.plan())])     # done: nothing left
+
+    def test_a_zone_guard_run_from_an_older_copy_is_named(self):
+        guard = self.base / "kept" / "zone_guard.py"
+        guard.parent.mkdir(parents=True)
+        guard.write_text("# an older guard\n")
+        settings = self.base / "home" / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Edit", "hooks": [
+            {"type": "command", "command": "python3 %s" % guard}]}]}}))
+        self.assertIn("The zone guard runs from %s, which differs from this Garrick's" % guard,
+                      self.report_of(self.plan()))
+        guard.write_bytes((REPO / "extras/hooks/zone_guard.py").read_bytes())
+        self.assertNotIn("zone guard", self.report_of(self.plan()))
+
+
 def has_tag(tag):
     r = subprocess.run(["git", "-C", str(REPO), "rev-parse", "-q", "--verify", "refs/tags/" + tag],
                        capture_output=True, text=True)

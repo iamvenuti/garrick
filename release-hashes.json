@@ -32,6 +32,15 @@
    "f0772e326ba6786677e6b9d7c8027238837d80668ee9755396ac69fd807d68b1",
    "cecbeb790dc78388228629d32215f0f214b3274979f2a7d735278f0eb31e5c92"
   ],
+  "System/cmux/cmuxlib.py": [
+   "c9f1b3651bab366dcec3e9ab8d4b688f461ca90bf272960f203b7c47e20be12b"
+  ],
+  "System/cmux/desk.example.json": [
+   "4f424d80a4be7d054fc6dea0f49e701fab8e836ca41a4d123f117d09ff050b06"
+  ],
+  "System/cmux/desk.py": [
+   "9afd3d7462bf0b7eb4a7b52faa261e82487167b747fe87e64e5a81d72b057875"
+  ],
   "System/garrick-changelog.md": [
    "1117432f7acd61322f97575a28a65563c2efc552365dc49b80828edecc025542",
    "2d33955393b8317d97f8feea6833baf34c0cb2d5628fedb3ee4f30d600e5390f",
@@ -59,6 +68,26 @@
    "fabb98ade2735352957bf14d7c1cf3acb702352a30a826e4f9dec5a375770f5e",
    "31a724f888afdb04204515b9b3d1d9b4b8518f4278b42779ccf1d3a00a514838"
   ],
+  "System/jobs/agent.py": [
+   "daa36e5d296f62c69a3f2e9bedfed3c51879950c2b777537e668b31f613a545b",
+   "54151105f41ee79a54547ddbd2be590c2ef2152f4ecd44f7a1074ff44bf7e149"
+  ],
+  "System/jobs/headless-settings.json": [
+   "ac1649ad2484bf12194b0c4fa9bd6923e4c006664da95555554f4153167601f6",
+   "07741e5d81ba259e55dde3bd7fbc5baee54da1d445c97bb12b60760fb06c991e"
+  ],
+  "System/jobs/job.py": [
+   "e4eb1f2f498cf81b6531e16c45a3092c016f5cbd80e0d2f8e61be21516cce964",
+   "619804cfb7cf2c55954f7491c0067e26c86062be4c5573b3e0fde3bcab79db3b",
+   "f960c489314c11aafe9b741f211344081d18157266690c3c44e48dd0acab866f"
+  ],
+  "System/jobs/launchd/garrick.whats-open.plist": [
+   "464438670ab076e80ea104e90c467011aaa659aa5df536d17e84d4dfb24fdae4",
+   "de56729b8ab3385c7e758b24a855fc26c0e650b11b899e1bd8629b6869d81a19"
+  ],
+  "System/jobs/whats_open.py": [
+   "cdd40c24f39dd107690118b607f6a9f78f07405eefc94963c838a97ef50a9165"
+  ],
   "System/rules.md": [
    "045d6d76404b9a352161fb4b9dc93fc896e03ff206de01765d491a3eedefa35b",
    "04a5bbe5538e420fae52a5502b151c3a4f5696a299466beb557fe7794a177585",
@@ -69,6 +98,9 @@
   ],
   "System/skills/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  ],
+  "System/skills/desk/SKILL.md": [
+   "9d8a80fdddca03b4f02556aa887730cba09bba5f8a4beecbfd25c9500f397911"
   ],
   "System/skills/intake/SKILL.md": [
    "9ffca653ebcb3dbb1d4caef93364e066b5dd4ea3ad952cf190c0076cac6b0f48",
@@ -115,6 +147,75 @@
   "System/skills/update/SKILL.md": [
    "1317adddf3b50dba53acfb409b0b73ef968c57e862daf0ebcc9b98e2b22e6f93",
    "c6c9654485ae4e305ed43762bdd8aa6cafb3aa1552e1eeccdb1633e7a067c95e"
+  ],
+  "System/status/agents_working.py": [
+   "90621bdf4a8ced4bcfeda6daaa9fe3532fa0656d9841f1bc74e47a3435a5351e"
+  ],
+  "System/status/app/Garrick.swift": [
+   "c011cfa263a95a5d9b42cf162d053f9f0006c3bce908c254530541511acd5a7a",
+   "ec3ba8c8aed6c281847a8fba3c4cae10a73eb82681ef031c03c8416feeb8ed3c",
+   "34873218fbe6b37db6364cf327fbe9c8232062dd891808792e877c85c3af574a",
+   "a1b75f40210d09ec524639066846c29c1d7f9f2d8f98fca68a05d878f27d54d8",
+   "f48703eb9903b82964fe985b58ae10f1b602adfc1927b5dd7b388dcd5cf7e2ae",
+   "6017321f24872edbbe5c811d97f3cf073f91d2c4276cfbac8697a423f2ade99f"
+  ],
+  "System/status/app/GarrickStatus.swift": [
+   "d3784d2d7528d6b56d09c0a1b2b82400921bf1240a2101ea093903dafc09a934",
+   "5640566c836902d408b04370d79b21a57e10f456467db1dfc54f8d042c491e18",
+   "77f72290912de182e33cfe553fa24f773935c66d6e8a05aa9c589fa069c2cf26",
+   "bfbfcdfa8459da4c70ea1d61ea0f63cb87b3dcb0ebfcab8eba969ac6fd5154b5",
+   "b2dcbdbf90ed4d1d0ebd0d9936888f65c53d7909e674889d73bf71dea479324f"
+  ],
+  "System/status/app/make-app.sh": [
+   "a7255b1564a00ecb62fed3316e2cb8713a0720466858e7956c3500dad361b658",
+   "889ed15e19c6eb075a03483780bb6d1ee93002fb2ecb49c1474100c704080c6c",
+   "2396e0c7206cd9433ebc47b733a8d2622c15f96f073efd7d161eb58244946336"
+  ],
+  "System/status/ask-brief.md": [
+   "3eed5cc6e026b716c1fb84364758d7cbec4efa574896b229330a1ab508ed6f7f"
+  ],
+  "System/status/ask.py": [
+   "435df657187ff4f18b2019abcf418cf1de8974e50aa0a35d966dc2d5d523824a"
+  ],
+  "System/status/effort.py": [
+   "04d6305220dc789485af6071bd06d207f0f668025b320670352f6d24f0b0f216"
+  ],
+  "System/status/garrick.status.plist": [
+   "e05418bd51121f3d665f19aebf2ed0744c0424d9e0f9c59501f2c18c55a1cd90"
+  ],
+  "System/status/obsidian/main.js": [
+   "778f405c4fe81d96c81e5119456931d66ec729ac8afcf6fe5147dd121a134017"
+  ],
+  "System/status/obsidian/manifest.json": [
+   "edc0dad49b9ee8102d378a544e1c6d30cc171a86c8db40ff0a6aeb2e5d6f5f77"
+  ],
+  "System/status/page_action.py": [
+   "b8ac81caa5db2c8916098a166cc86bd008838d593e50d206451addc2baa5b940",
+   "ce463cacd06e55124b90e4dd527d5863ac475e0d457d773a049cfee9b57b41ed",
+   "2ac74b5644987454a46f90782701d3f7f4f9cf6f25aa83db393626e7000e49fe",
+   "9a1274b7f34abb4a5482e44cbcc3c6ccc8cec73026b8f6eed3fe48165040c65e"
+  ],
+  "System/status/status.py": [
+   "0b7d93f7e9e642e84e6434455a9a2219152e6444eb2ccc71d7a463972ebe4e36",
+   "9cb04f74bc8f58eed11db54dc373d57bc8ac082afecf37668614e1fc92a0de30",
+   "f095a4754a04debc5af8a28797d539cc16d51debcad4e68319acdbbaaead88c5",
+   "a56a98e557ea2990a3d00ab886d3a3d3baa3a274922a294fd6f7ad86cca6fcfc",
+   "9b0025a9c4f46ad177dbe6fe44e2a49ad5e51b0d06ccc0a97307283d303ece89",
+   "2b3ec2c3c1db64c49e118f39acdea02c585c3e894f8d16ec5f063a0ded26bb78",
+   "5fb54901db8b49f8f57792108b09b64473f7fb85d3c8ce734921145599cceffe",
+   "17c526d467b77d1611dcd33d2978fd71c449e660daad9da7f48699947e3dc6e7",
+   "f1b389e11e3b8604ef2c62983dad3932d113f349f9479a2f8c9eb7f71cd69145",
+   "3ffab63143d608695344456caeea0489f8c72e1176b5ae46c92da802cd01d684",
+   "e739e529378f60bc882e945c94140b07f0a0cd121e46911f0628fa956350d98b",
+   "0c42c03b9496c2252f57a4a931bbe9681222879ceb95eeef9e9d093171ff424c",
+   "1295cb40a78b89c9025fa36826248bfb6aa3d14dbd1d69795442b4588ddd4b48",
+   "41859a3edf8d0e398bc1ca76c4314d8baa4acf157160c6d1b5fa24d5293d68c2",
+   "550fc8d67fad8fd3073c39f2faf05341f874f41a877dcb43fe193bdf02df7f31"
+  ],
+  "System/status/todo_lines.py": [
+   "eef73cd850bd8107cf983b45ea64668a069fea7149ab25c7927924a7a90e7a59",
+   "b09c345a92ee128ae851bbded625e3084459a3b4e06fba2b0402e09a9ddc33ab",
+   "b4b7e7e159f62eb2aec33ef9ba12fcb1aaa904f199be0d891b78b514cbbde43d"
   ],
   "System/templates/project/Deliverables/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

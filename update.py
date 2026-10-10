@@ -25,6 +25,17 @@ it (`System/garrick-version.json`), and sorts each into one of these:
   with `--only`.
 - **retired**: a file Garrick wrote that it no longer ships. Never deleted.
 
+The extras a workspace has installed are updated with the rest: the status
+page in `System/status`, the scheduled jobs in `System/jobs`, and desk in
+`System/cmux` with its skill in `System/skills/desk`. Their files are sorted as
+the core's are, and the report names the extras it found. Once the files are
+written, the update does what an extra needs next, and the report says so
+first: it rebuilds Garrick.app with the flags it was built with, refreshes the
+Obsidian plugin in each vault that has it, and points a `desk` command linked
+to another copy at the workspace's. What it cannot do, it prints: a merge to
+make first, or the zone guard and the Garrick band, which run from a Garrick
+kept outside the workspace.
+
 Nothing is written without `--apply`, and nothing is ever deleted. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
@@ -33,8 +44,10 @@ version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
 changes nothing the second time.
 
-Python 3.9+, standard library only. Writes nothing outside the workspace, and
-never through a symbolic link.
+Python 3.9+, standard library only. Writes nothing outside the workspace but
+the app it rebuilds and the desk link it points, both named in the report
+first, and never through a symbolic link. `System/tools/release.py update`
+downloads a release and runs this from it in one step.
 """
 
 import argparse
@@ -43,6 +56,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -65,6 +79,19 @@ NEVER_REPLACE = ("System/rules.md",)
 NEW_SUFFIX = ".new"
 
 KINDS = ("replace", "add", "merge", "yours", "restore", "retired")
+
+# The extras that live in the workspace, where their pages say to copy them:
+# (name, what it is called, [(folder in Garrick, folder in the workspace,
+# folders inside it that go elsewhere)]). An extra counts as installed when one
+# of its folders is in the workspace; its files are then updated as the core's
+# are, and any it lacks are added. The zone guard and the Garrick band run from
+# a Garrick you keep outside the workspace, so they are not here.
+EXTRAS = (
+    ("status", "the status page", (("extras/status", "System/status", ()),)),
+    ("jobs", "the scheduled jobs", (("extras/jobs", "System/jobs", ()),)),
+    ("cmux", "desk, for cmux", (("extras/cmux", "System/cmux", ("desk",)),
+                                ("extras/cmux/desk", "System/skills/desk", ()))),
+)
 
 
 class UpdateError(Exception):
@@ -117,6 +144,37 @@ def shipped(zones):
         if path in install.lib().UNLISTED:
             del out[path]
     return out
+
+
+def installed_extras(root):
+    """The names of the extras the workspace has: one of each one's folders is there."""
+    return [name for name, _, places in EXTRAS
+            if any((root / dest).is_dir() for _, dest, _ in places)]
+
+
+def extras_shipped(names):
+    """Every file this Garrick's extras of these names put in a workspace, as
+    shipped() gives the core's."""
+    out = {}
+    for name, _, places in EXTRAS:
+        if name not in names:
+            continue
+        for src, dest, skip in places:
+            if (REPO / src).is_dir():
+                _tree(REPO / src, dest, out, skip=skip)
+    return out
+
+
+def extra_place(path):
+    """Where a file of this repository goes in a workspace with its extra
+    installed, or None for a file no extra puts there."""
+    for _, _, places in EXTRAS:
+        for src, dest, skip in places:
+            if path.startswith(src + "/"):
+                rest = path[len(src) + 1:]
+                if rest.split("/", 1)[0] not in skip:
+                    return dest + "/" + rest
+    return None
 
 
 def zones_of(root, stamp):
@@ -174,6 +232,8 @@ def plan(root, zones=None):
     zones = zones if zones is not None else zones_of(root, stamp)
     known = known_hashes(zones)
     new = shipped(zones)
+    extras = installed_extras(root)
+    new.update(extras_shipped(extras))
     actions = {kind: [] for kind in KINDS}
     current, kept = [], []
     history = {}        # repository: every path it ever committed, read once, for a stamp with no list
@@ -210,7 +270,7 @@ def plan(root, zones=None):
     return {"workspace": str(root), "from": {k: stamp.get(k, "") for k in ("commit", "date")},
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
-            "recorded": recorded, "listed": listed}
+            "recorded": recorded, "listed": listed, "extras": extras}
 
 
 def ever_committed(root, path, history):
@@ -284,6 +344,14 @@ def report(p, applied=None):
     if p["kept"]:
         lines.append("Changed by you, with nothing newer from Garrick: %d file%s, left as %s." % (
             len(p["kept"]), "" if len(p["kept"]) == 1 else "s", "it is" if len(p["kept"]) == 1 else "they are"))
+    if p.get("extras"):
+        names = {name: (what, places) for name, what, places in EXTRAS}
+        lines.append("Extras updated with the rest: %s." % "; ".join(
+            "%s (%s)" % (names[n][0], ", ".join(dest for _, dest, _ in names[n][1])) for n in p["extras"]))
+    steps = p.get("then") or []
+    if steps:
+        lines += ["", "Then%s:" % (", with --apply" if applied is None else "")]
+        lines += ["  - " + what + "." for what in steps]
     return "\n".join(lines)
 
 
@@ -432,8 +500,11 @@ def apply(root, p, only=None, today=None):
             stamped = stamp(root, p, done, today)
         except (UpdateError, OSError) as exc:
             unstamped = str(exc)
+    then = []
+    for what, do in next_steps(root, p, done):
+        then.append(do() if do else "To do: %s." % what)
     return {"done": done, "skipped": skipped, "commits": commits, "hooks": hooks,
-            "problems": problems, "stamped": stamped, "unstamped": unstamped}
+            "problems": problems, "stamped": stamped, "unstamped": unstamped, "then": then}
 
 
 def put_back(root, before):
@@ -570,9 +641,248 @@ def say_applied(p, result):
         lines.append("To undo, run git revert on the commits above.")
     elif result["stamped"]:
         lines.append("System/garrick-version.json now records %s." % say_commit(p["to"]))
+    lines += result.get("then") or []
     if not lines:
         lines.append("Nothing to do: the workspace is up to date.")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- what an extra needs next
+
+
+APP_ID = "local.garrick.status"                 # make-app.sh's bundle identifier
+APP_SOURCES = ("System/status/app/", "System/status/status.py")     # the app's code, and the page that draws its icon
+PLUGIN = (".obsidian", "plugins", "garrick-status")
+PLUGIN_SOURCE = "System/status/obsidian/"
+DESK = "System/cmux/desk.py"
+
+
+def on_mac():
+    return sys.platform == "darwin"
+
+
+def app_folders():
+    return [Path.home() / "Applications", Path("/Applications")]
+
+
+def garrick_apps(root):
+    """Each Garrick.app built for this workspace, with the flags make-app.sh
+    stored in it: [(app, [flags])]. macOS only."""
+    if not on_mac():
+        return []
+    out = []
+    for folder in app_folders():
+        app = folder / "Garrick.app"
+        try:
+            with (app / "Contents" / "Info.plist").open("rb") as f:
+                info = plistlib.load(f)
+            same = bool(info.get("GarrickWorkspace")) and Path(str(info["GarrickWorkspace"])).resolve() == root.resolve()
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            continue
+        if info.get("CFBundleIdentifier") == APP_ID and same:
+            args = info.get("GarrickStatusArgs")
+            out.append((app, [str(a) for a in args] if isinstance(args, list) else []))
+    return out
+
+
+def make_app(cmd):
+    """Run make-app.sh; (exit code, its last line)."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    lines = (r.stdout + r.stderr).strip().splitlines()
+    return r.returncode, lines[-1] if lines else ""
+
+
+def plugin_copies(root):
+    """The Obsidian plugin's folder in each vault inside the workspace: its
+    top, or a folder one or two down, such as a zone or a wiki."""
+    level, vaults = [root], [root]
+    for _ in range(2):
+        nxt = []
+        for folder in level:
+            try:
+                nxt += [d for d in sorted(folder.iterdir())
+                        if d.is_dir() and not d.is_symlink() and not d.name.startswith(".")]
+            except OSError:
+                pass
+        vaults += nxt
+        level = nxt
+    return [v.joinpath(*PLUGIN) for v in vaults if v.joinpath(*PLUGIN).is_dir()]
+
+
+def desk_links():
+    """Every `desk` on the PATH, and in ~/.local/bin, that is a link to a desk.py: [(link, target)]."""
+    seen, out = set(), []
+    for folder in os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".local" / "bin")]:
+        link = Path(folder or ".") / "desk"
+        if not link.is_symlink() or str(link) in seen:
+            continue
+        seen.add(str(link))
+        target = Path(os.path.join(str(link.parent), os.readlink(str(link))))
+        if target.name == "desk.py":
+            out.append((link, Path(os.path.abspath(str(target)))))
+    return out
+
+
+def outside_copies(root):
+    """The extras that run from a Garrick kept outside the workspace, the zone
+    guard and the Garrick band, where the assistants' settings point at a copy
+    that differs from this Garrick's: [(what, path)]. Reads the settings for
+    those paths only."""
+    found = []
+    guard = REPO / "extras" / "hooks" / "zone_guard.py"
+    band = REPO / "extras" / "mods" / "garrick-band"
+    texts = []
+    for settings in (Path.home() / ".claude" / "settings.json", Path.home() / ".codex" / "hooks.json"):
+        try:
+            texts.append(settings.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    paths = set()
+    for text in texts:
+        paths |= set(re.findall(r"[^\s\"']*zone_guard\.py", text))
+    for path in sorted(paths):
+        there = Path(os.path.expanduser(path))
+        if there.is_file() and guard.is_file() and read(there) != read(guard) and not same_place(there, guard):
+            found.append(("the zone guard", str(there)))
+    dirs = set()
+    for text in texts:
+        try:
+            env = (json.loads(text).get("env") or {})
+        except (ValueError, AttributeError):
+            continue
+        value = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
+        if isinstance(value, str):
+            dirs |= {d for d in re.split(r"[:,]", value) if d.rstrip("/").endswith("garrick-band")}
+    for d in sorted(dirs):
+        there = Path(os.path.expanduser(d))
+        if there.is_dir() and band.is_dir() and not same_place(there, band) and any(
+                read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()):
+            found.append(("the Garrick band", str(there)))
+    return found
+
+
+def same_place(a, b):
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
+def next_steps(root, p, done=None):
+    """What the extras need once their files are written: rebuild the Mac
+    app, refresh the Obsidian plugin in each vault, point the desk command at
+    the workspace's copy, and say which extras run from a copy outside it.
+    `done` is apply()'s record; without it, what the plan would write. Returns
+    [(what it is, a function that does it, or None when it is for you)]."""
+    if done is None:
+        written = set(p["actions"]["replace"]) | set(p["actions"]["add"])
+        merged = set(p["actions"]["merge"])
+    else:
+        written = {path for kind in ("replace", "add", "restore") for path in done[kind]}
+        merged = set(done["merge"])
+    ours = written | set(p["current"])          # files that are, or will be, as this Garrick ships them
+    steps = []
+
+    if any(path.startswith(APP_SOURCES) for path in written):
+        for app, args in garrick_apps(root):
+            if any(path.startswith(APP_SOURCES) for path in merged):
+                steps.append(("Garrick.app in %s: merge the .new files under System/status first, then rebuild it "
+                              "with System/status/app/make-app.sh" % app.parent, None))
+                continue
+            cmd = ["/bin/bash", str(root / "System" / "status" / "app" / "make-app.sh"), "--workspace", str(root),
+                   "--dest", str(app.parent), "--"] + args
+            steps.append(("Rebuild Garrick.app in %s, with the flags it was built with%s" % (
+                app.parent, ": " + " ".join(args) if args else " (none)"), lambda cmd=cmd: say_make_app(cmd)))
+
+    sources = sorted(path for path in p["files"] if path.startswith(PLUGIN_SOURCE))
+    known = known_hashes()
+    refreshed = False
+    for copy in plugin_copies(root) if sources else []:
+        vault = os.path.relpath(copy.parent.parent.parent, root)
+        vault = "the workspace's top" if vault == "." else vault
+        stale, foreign = [], []
+        for path in sources:
+            data = p["files"][path][0]
+            have = read(copy / path[len(PLUGIN_SOURCE):])
+            if have == data:
+                continue
+            if path not in ours:
+                foreign.append(path)                        # the workspace's copy is not this Garrick's yet
+            elif have is None or digest(have) in known.get(path, ()) or digest(have) == p["recorded"].get(path):
+                stale.append(path)
+            else:
+                foreign.append(path)
+        if stale:
+            refreshed = True
+            steps.append(("Refresh the Obsidian plugin in %s: %s" % (vault, ", ".join(x[len(PLUGIN_SOURCE):] for x in stale)),
+                          lambda copy=copy, stale=stale: refresh_plugin(root, copy, stale, p)))
+        if foreign:
+            steps.append(("The Obsidian plugin in %s has %s unlike any Garrick's, so it is left as it is; copy them "
+                          "from System/status/obsidian/ to refresh it" % (
+                              vault, ", ".join(x[len(PLUGIN_SOURCE):] for x in foreign)), None))
+    if refreshed:
+        steps.append(("In Obsidian, switch Garrick off and on in Settings > Community plugins, or restart Obsidian, "
+                      "to load the refreshed plugin", None))
+
+    if "cmux" in p.get("extras", ()) and DESK in ours:
+        mine = (root / DESK).resolve() if (root / DESK).exists() else root / DESK
+        for link, target in desk_links():
+            if not same_place(target, mine):
+                steps.append(("Point the desk command, %s, at the workspace's %s, in place of %s" % (link, DESK, target),
+                              lambda link=link: relink(link, mine)))
+
+    for what, path in outside_copies(root):
+        steps.append(("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
+                      "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path), None))
+    return steps
+
+
+def say_make_app(cmd):
+    code, last = make_app(cmd)
+    return "Rebuilt Garrick.app: %s." % last if code == 0 else "Garrick.app was not rebuilt: %s. Run %s by hand." % (
+        last or "make-app.sh failed", " ".join(cmd[1:2]))
+
+
+def refresh_plugin(root, copy, paths, p):
+    """Copy this Garrick's plugin files into one vault's plugin folder. Where
+    git tracks them, the change is committed as the update's own are."""
+    targets = [copy / path[len(PLUGIN_SOURCE):] for path in paths]
+    if lib_link(root, copy):
+        return "Skipped the Obsidian plugin in %s: a symbolic link stands on the way to it." % copy
+    repo = repo_of(root, os.path.relpath(copy, root))
+    rels = [os.path.relpath(t, repo) for t in targets]
+    tracked = [rel for rel in rels if git(repo, "ls-files", "--error-unmatch", "--", rel, check=False).returncode == 0]
+    if any(status(repo, rel) for rel in tracked):
+        return "Skipped the Obsidian plugin in %s: it has changes not committed." % copy
+    try:
+        for path, target in zip(paths, targets):
+            data, mode = p["files"][path]
+            write_bytes(target, data, mode)
+        if tracked:
+            git(repo, "add", "--", *tracked)
+            git(repo, "commit", "-q", "-m", "Garrick: refresh the Obsidian plugin", "--", *tracked)
+    except (OSError, UpdateError) as exc:
+        return "The Obsidian plugin in %s could not be refreshed: %s." % (copy, exc)
+    return "Refreshed the Obsidian plugin in %s." % copy
+
+
+def lib_link(root, path):
+    return install.lib().link_on_the_way(root, path) is not None
+
+
+def relink(link, target):
+    tmp = link.with_name(link.name + ".garrick-tmp")
+    try:
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        os.symlink(str(target), str(tmp))
+        os.replace(str(tmp), str(link))
+    except OSError as exc:
+        return "The desk command was not re-linked: %s. Run: ln -sf %s %s" % (exc, target, link)
+    return "The desk command, %s, now runs %s." % (link, target)
 
 
 # --------------------------------------------------------------------------- releases
@@ -596,7 +906,8 @@ def version_key(tag):
 
 def release_hashes(repo=REPO):
     """{path: [SHA-256, ...]} of the files every tagged release's template
-    shipped, for release-hashes.json, and the texts of each release's zone
+    shipped, and its extras where a workspace keeps them (System/status for
+    extras/status), for release-hashes.json, and the texts of each release's zone
     template, since a zone's own files hold the zone's name and can only be
     recognised once it is filled in."""
     def run(*args):
@@ -613,6 +924,8 @@ def release_hashes(repo=REPO):
                 rel = None                  # copied into each zone, never to a path of its own
             elif line.startswith("template/") and line != "template/System/context.md":
                 rel = line[len("template/"):]
+            elif extra_place(line):
+                rel = extra_place(line)
             else:
                 continue
             data = run("show", "%s:%s" % (tag, line))
@@ -675,6 +988,7 @@ def main(argv=None):
         p = plan(root)
         only = [x.strip() for x in args.only.split(",") if x.strip()] or None
         if not args.apply:
+            p["then"] = [what for what, _ in next_steps(root, p)]
             if args.json:
                 print(json.dumps({k: v for k, v in p.items() if k not in ("files", "recorded")}, indent=2))
             else:

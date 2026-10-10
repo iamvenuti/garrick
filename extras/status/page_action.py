@@ -18,7 +18,9 @@ zone's repository, as the skills would:
                 {"zone", "text", "target": "-", "Project" or "Project/Thread",
                 "date": an ISO date or "-"}; the Inbox, or with a date where a
                 dated line goes; a line already there is refused
-    park        a thread note's status to parked, with a dated entry
+    park        a thread note's status to parked, with a dated entry:
+                {"zone", "file"}, or by name {"zone", "project", "thread"?};
+                with no thread, the project's hub, and all of it is parked
     wake        and back to active
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
@@ -85,7 +87,7 @@ SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "key", "date", "target", "job", "launchers", "default")
+LOGGED = ("zone", "file", "project", "thread", "key", "date", "target", "job", "launchers", "default")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
@@ -397,14 +399,26 @@ def todo_add(ws: Path, req: dict) -> str:
 
 
 def park(ws: Path, req: dict, today: dt.date) -> str:
-    """The threads skill's Park and Wake: the status, `updated:`, a dated entry, a commit."""
+    """The threads skill's Park and Wake: the status, `updated:`, a dated entry, a commit.
+    A note by its path, {"zone", "file"}: a thread note, or the hub of a
+    project that is one thread. Or by name, {"zone", "project", "thread"?}:
+    a thread, or a whole project, whose hub then says parked and every
+    thread in it counts as parked with it. Waking the project leaves a thread
+    parked on its own as it was."""
     zone = zone_dir(ws, req.get("zone"))
-    note = live_note(zone, req.get("file"))
-    parts = note.relative_to(zone).parts
-    is_thread = len(parts) == 4 and parts[1] == "Threads" and parts[2] + ".md" == parts[3]
-    is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not any((zone / parts[0] / "Threads").glob("*/*.md"))
-    if not (is_thread or is_hub):
-        raise Refused("only a thread note, or a single-thread project's hub, can be parked")
+    if req.get("file") is None and req.get("project") is not None:
+        folder, _ = cmux_folder(ws, req)
+        note = live_note(zone, (folder / (folder.name + ".md")).relative_to(zone).as_posix())
+        parts = note.relative_to(zone).parts
+        is_thread = len(parts) == 4
+    else:
+        note = live_note(zone, req.get("file"))
+        parts = note.relative_to(zone).parts
+        is_thread = len(parts) == 4 and parts[1] == "Threads" and parts[2] + ".md" == parts[3]
+        is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1] and not any((zone / parts[0] / "Threads").glob("*/*.md"))
+        if not (is_thread or is_hub):
+            raise Refused("only a thread note, or a single-thread project's hub, can be parked by its path; "
+                          "name the project to park all of it")
     status = "parked" if req["verb"] == "park" else "active"
     with zone_lock(zone):
         return park_note(zone, note, parts, is_thread, status, today)
@@ -430,8 +444,9 @@ def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str
     entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, "Parked." if status == "parked" else "Woken.")
     resume = body.find("### Resume here")
     rule = body.find("\n---\n", resume) if resume >= 0 else -1
-    if rule >= 0:                                     # newest first, below the rule and its placeholder line
-        at = rule + 5
+    play = re.search(r"(?m)^## State of play[ \t]*\n", body) if resume < 0 else None
+    at = rule + 5 if rule >= 0 else play.end() if play else -1
+    if at >= 0:     # newest first: below the Resume here block's rule, or, with no block, under ## State of play
         rest = body[at:]
         lead = re.match(r"\n*(?:<Dated entries[^\n]*>\n)?\n*", rest)
         at += lead.end()

@@ -420,7 +420,7 @@ class TestReloadAndSettle(StatusCase):
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', self.page(), re.S).group(1))
         self.assertEqual(["Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"], state["parked"])
         self.assertIn("host.postMessage({rebuild:true});else location.reload()", status.RELOAD_JS)
-        self.assertIn("data-expect=\"'+esc((o.s?'active:':'parked:')", status.PANEL_JS)
+        self.assertIn("data-expect=\"'+esc((s?'active:':'parked:')+k)", status.PANEL_JS)
         self.assertIn("GarrickExpect(x.dataset.expect)", status.JS)
 
     def test_settle_lets_only_the_last_request_build(self):
@@ -481,3 +481,192 @@ class TestSharedLauncherSettings(StatusCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def project_cards(html):
+    """Every project row's card in the threads list, by project name."""
+    return {json.loads(htmllib.unescape(raw))["n"]: json.loads(htmllib.unescape(raw))
+            for raw in re.findall(r'class="thread proj"[^>]*data-card="([^"]*)"', html)}
+
+
+PANEL_HARNESS = r"""
+const vm = require("vm");
+const [js, hosted, calls] = JSON.parse(process.argv[1]);
+const ctx = { JSON, String, Array, localStorage: { getItem: () => null, setItem: () => {} },
+              document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers: "" } } } };
+ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
+vm.createContext(ctx);
+vm.runInContext(js + ";this.out=" + JSON.stringify(calls) + ".map(function(c){return Panel[c[0]](c[1])})", ctx);
+process.stdout.write(JSON.stringify(ctx.out));
+"""
+
+
+def panel(hosted, *calls):
+    """Panel.head or Panel.acts, run in Node as the app (hosted) or a browser would."""
+    import subprocess
+    done = subprocess.run(["node", "-e", PANEL_HARNESS, json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls]])],
+                          capture_output=True, text=True, timeout=30)
+    if done.returncode:
+        raise AssertionError(done.stderr)
+    return [htmllib.unescape(out) for out in json.loads(done.stdout)]
+
+
+class TestParkAProject(StatusCase):
+    """A project parked as a whole: its hub says parked, and every thread in it
+    is parked with it, on the page, in the graph and out of the menu."""
+
+    def setUp(self):
+        super().setUp()
+        hub = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
+        hub.write_text(hub.read_text().replace("status: active", "status: parked"))
+
+    def test_its_threads_are_parked_with_it(self):
+        flags(self.root, **{"page-actions": True, "menu-bar": True})
+        html = self.page()
+        pricing = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual((1, 1), (pricing["s"], pricing["held"]))
+        self.assertNotIn("pa", pricing)                                  # woken with the project, not on its own
+        acme = project_cards(html)["Acme Review"]
+        self.assertEqual((1, 1, ["Work", "Acme Review"]), (acme["s"], acme["hp"], acme["pp"]))
+        birch = project_cards(html)["Birch Entry"]
+        self.assertEqual((0, 0, ["Work", "Birch Entry"]), (birch["s"], birch["hp"], birch["pp"]))
+        parked = html[html.index('id="parked-work"'):]
+        self.assertIn("Acme Review", parked[:parked.index("</details>")])
+        state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
+        self.assertIn("Work/Acme Review/Acme Review.md", state["parked"])        # what Park waits for
+        self.assertIn("Work/Acme Review/Threads/Pricing/Pricing.md", state["parked"])
+        menu = json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1))
+        self.assertNotIn("Acme Review", [p["n"] for z in menu["zones"] for p in z["p"]])
+        nodes = {n["n"]: n for n in graph_data(html)["nodes"]}
+        self.assertEqual((1, ["Work", "Acme Review"]), (nodes["Acme Review"]["hp"], nodes["Acme Review"]["pp"]))
+        self.assertEqual(1, nodes["Pricing"]["held"])
+        self.assertNotIn("pa", nodes["Pricing"])
+        self.assertEqual(0, nodes["Birch Entry"]["hp"])
+
+    def test_without_actions_nothing_to_send(self):
+        html = self.page()
+        self.assertNotIn("pp", project_cards(html)["Acme Review"])
+        self.assertEqual(1, project_cards(html)["Acme Review"]["hp"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_cards_buttons(self):
+        flags(self.root, **{"page-actions": True})
+        html = self.page()
+        acme, birch = project_cards(html)["Acme Review"], project_cards(html)["Birch Entry"]
+        pricing = cards(html)[("Acme Review", "Pricing")]
+        wake, park, held = panel(True, ("head", acme), ("head", birch), ("head", pricing))
+        self.assertIn('data-act="{"verb":"wake","zone":"Work","project":"Acme Review"}"', wake)
+        self.assertIn('data-expect="active:Work/Acme Review/Acme Review.md"', wake)
+        self.assertIn('title="Wake the project and every thread in it">Wake</button>', wake)
+        self.assertIn('data-act="{"verb":"park","zone":"Work","project":"Birch Entry"}"', park)
+        self.assertIn('data-expect="parked:Work/Birch Entry/Birch Entry.md"', park)
+        self.assertNotIn("pflip", held)                                    # parked with its project: no button of its own
+        self.assertIn("Parked with its project", held)
+        browser = panel(False, ("head", dict(birch, pp=None)))[0]
+        self.assertIn('data-copy="park Birch Entry"', browser)               # elsewhere it copies the phrase
+
+
+class TestTheThreadsList(StatusCase):
+    def test_a_project_without_a_chevron_keeps_its_room(self):
+        # The chevron is 16px; a project row without one, a project that is its own thread, indents by as much.
+        self.assertIn(".pchev{box-sizing:border-box;width:16px;", status.CSS)
+        self.assertIn(".tunit>.thread:not(.proj)>.t{padding-left:16px}", status.CSS)
+        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")
+        html = self.page()
+        work = html[html.index('id="zone-work"'):]
+        self.assertRegex(work, r'<div class="tunit" data-a="\d+"><div class="thread" [^>]*><div class="t"><a [^>]*>Birch Entry</a>')
+        self.assertIn('<div class="thread proj"', work)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_a_threads_card_opens_its_projects_note_by_name(self):
+        card = cards(self.page())[("Acme Review", "Pricing")]
+        acts = panel(True, ("acts", card))[0]
+        self.assertNotIn("Open project", acts)
+        self.assertRegex(acts, r'<a class="act pnote" href="file://[^"]*/Acme%20Review/Acme%20Review.md" '
+                               r'title="Open the project\'s note" aria-label="Open the note of the project Acme Review">'
+                               r'<svg[^>]*>.*</svg><span>Acme Review</span></a>')
+
+    def test_the_panels_dot_follows_the_name(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        line = swift[swift.index("struct PanelLine: View {"):swift.index("struct PanelView: View {")]
+        self.assertLess(line.index("Text(row.name)"), line.index("if let live = row.live {"))
+        self.assertLess(line.index("if let live = row.live {"), line.index("Spacer(minLength: 8)"))
+        menu = swift[swift.index("final class RowView: NSView {"):swift.index("final class MenuField")]
+        self.assertIn("draw(at: NSPoint(x: 21 + indent", menu)               # the menu's names start at 21, dot or not
+
+
+SETTINGS_HARNESS = r"""
+const vm = require("vm");
+const [js, app, steps] = JSON.parse(process.argv[1]);
+const els = {}, posted = [];
+function el(id) {
+  if (!els[id]) els[id] = { id, value: "", textContent: "", hidden: true, checked: false, disabled: false, style: {}, handlers: {},
+    addEventListener(t, f) { (this.handlers[t] = this.handlers[t] || []).push(f); },
+    closest() { return el(id + "-row"); }, blur() { this.fire("blur", {}); },
+    fire(t, e) { (this.handlers[t] || []).forEach((f) => f(e)); } };
+  return els[id];
+}
+const ctx = { JSON, String, Array, setTimeout: () => 0, clearTimeout: () => {},
+              document: { getElementById: (id) => (id === "menu-style" ? null : el(id)) } };
+ctx.window = { GarrickApp: app, webkit: { messageHandlers: { garrick: { postMessage: (m) => posted.push(m) } } } };
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+for (const [id, type, e] of steps) {
+  const ev = Object.assign({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
+                             preventDefault() {}, stopPropagation() {} }, e || {});
+  el(id).fire(type, ev);
+}
+process.stdout.write(JSON.stringify({ posted, notes: { hotkey: el("menu-hotkey-note").textContent, askhotkey: el("menu-askkey-note").textContent },
+                                     askRow: el("menu-askkey-row").style.display, ask: el("menu-askkey").value }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestHotkeyFields(unittest.TestCase):
+    """Settings › Menu bar's two key fields, run in Node against a stand-in DOM."""
+
+    def run_js(self, app, *steps):
+        import subprocess
+        done = subprocess.run(["node", "-e", SETTINGS_HARNESS, json.dumps([status.MENU_SETTINGS_JS, app, [list(s) for s in steps]])],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_field_lets_the_apps_keys_go_while_it_records(self):
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askdefault": True},
+                          ("menu-askkey", "focus"), ("menu-askkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}),
+                          ("menu-askkey", "blur"))
+        self.assertEqual([{"app": {"recording": True}},
+                          {"app": {"askhotkey": {"code": "KeyG", "mods": ["cmd"], "label": "⌘G"}}},
+                          {"app": {"recording": False}}], out["posted"])
+        self.assertEqual(("", "⌘G"), (out["askRow"], out["ask"]))
+        self.assertIn("⌘G until you set another", out["notes"]["askhotkey"])
+
+    def test_the_menu_may_take_cmd_g_from_the_default(self):
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askdefault": True},
+                          ("menu-hotkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}))
+        self.assertEqual([{"app": {"hotkey": {"code": "KeyG", "mods": ["cmd"], "label": "⌘G"}}}], out["posted"])
+
+    def test_one_key_never_serves_both(self):
+        out = self.run_js({"hotkey": "⌘G", "askhotkey": "⌃⌥A", "askdefault": False},
+                          ("menu-askkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}),
+                          ("menu-hotkey", "keydown", {"key": "a", "code": "KeyA", "ctrlKey": True, "altKey": True}))
+        self.assertEqual([], out["posted"])
+        self.assertEqual("⌘G is already the menu's hotkey. Clear it there, or pick another.", out["notes"]["askhotkey"])
+        self.assertEqual("⌃⌥A is already the Ask hotkey. Clear it there, or pick another.", out["notes"]["hotkey"])
+
+    def test_what_macos_refuses_is_said_before_asking(self):
+        out = self.run_js({"hotkey": "", "askhotkey": ""},
+                          ("menu-hotkey", "keydown", {"key": " ", "code": "Space", "altKey": True}),
+                          ("menu-hotkey", "keydown", {"key": "k", "code": "KeyK"}),
+                          ("menu-askkey", "keydown", {"key": "Backspace", "code": "Backspace"}))
+        self.assertEqual([{"app": {"askhotkey": None}}], out["posted"])             # Delete clears; the others are refused
+        self.assertEqual("Use ⌘, ⌃ or ⌥ with the key.", out["notes"]["hotkey"])
+        out = self.run_js({"hotkey": "", "askhotkey": ""}, ("menu-hotkey", "keydown", {"key": " ", "code": "Space", "altKey": True, "shiftKey": True}))
+        self.assertEqual([], out["posted"])
+        self.assertEqual("Since macOS 15, a shortcut with only ⌥ or ⌥⇧ never reaches an app: add ⌘ or ⌃.", out["notes"]["hotkey"])
+
+    def test_an_app_without_the_setting_hides_its_row(self):
+        out = self.run_js({"hotkey": "⌥Space"})
+        self.assertEqual("none", out["askRow"])
+        self.assertEqual("Opens the menu or the panel from any app", out["notes"]["hotkey"])

@@ -267,13 +267,9 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
     if project is None:
         raise Bad("%s names a project" % verb)
     if verb in ("park", "wake"):
-        if thread is None:
-            if names[zone][project]["threads"]:
-                raise Bad("%s has threads: %s one of them" % (project, verb))
-            rel = "%s/%s.md" % (project, project)
-        else:
-            rel = "%s/Threads/%s/%s.md" % (project, thread, thread)
-        return "act", {"verb": verb, "zone": zone, "file": rel}
+        if thread is None:          # the whole project: its hub, which holds every thread in it
+            return "act", {"verb": verb, "zone": zone, "project": project}
+        return "act", {"verb": verb, "zone": zone, "file": "%s/Threads/%s/%s.md" % (project, thread, thread)}
     app = a.get("app") or ""
     if app and app not in APPS:
         raise Bad("no app %r" % (app,))

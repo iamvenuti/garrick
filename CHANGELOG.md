@@ -4,6 +4,22 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Settings › Menu bar › *Ask hotkey*: the key that opens the Ask box from any app (preview `ask`), recorded like the menu's *Hotkey*, ⌘G until you set another, and clearable. *File › Ask Garrick…* shows it. One key never serves both fields; a *Hotkey* of ⌘G takes it from an *Ask hotkey* you never set.
+- *Park* and *Wake* for a whole project, on its card in the threads list and in the graph's panel: the hub says `status: parked`, with a dated entry under its `## State of play` if it has one, and every thread in it is parked with it until the project wakes. `page_action.py` takes `{"verb": "park", "zone", "project"}`, Ask proposes it when you name a project, and the threads skill parks a project the same way.
+
+### Changed
+
+- A thread card's *Open project* is now the project's name with a note's icon, and says in its tooltip that it opens the project's note.
+
+### Fixed
+
+- The Mac app's panel put a session's dot before a name, so names with a session open no longer lined up with the rest. The dot now follows the name.
+- In the threads list, a project with no thread notes, which has no chevron, started its name a chevron's width to the left of the others. Every project's name now starts in one column.
+- The Mac app's hotkey fields could not record a key the app itself held, ⌘G above all with the preview `ask` on: the app's own shortcut took the key before the field saw it. The app now lets go of its shortcuts while a field records. A shortcut with only ⌥ or ⌥⇧, which macOS 15 and later never pass to an app, is refused in the field with that reason, and one macOS will not register is said as such instead of *Another app already uses that shortcut*.
+- Opening the Mac app showed nothing when its window had been closed with the menu in the menu bar or a panel: only a second launch brought the window. Now a launch you make shows the window, and only a launch at login starts with it out of sight.
+
 ## [0.15.2] - 2026-10-10
 
 The Mac app's menu bar menu finds and asks as the panel does, ⌘G asks from any app, the panel opens folded and remembers, and a job that has not run yet still shows on the page.

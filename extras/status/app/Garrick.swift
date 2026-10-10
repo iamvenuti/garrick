@@ -28,7 +28,8 @@
 //     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
 //     its projects start folded, and it remembers the ones you unfold;
 //   - with the preview ask on, the fields of the menu and the panel, and the
-//     box ⌘G opens from any app, answer a request in plain words through
+//     box the Ask hotkey opens from any app (⌘G until Settings sets another),
+//     answer a request in plain words through
 //     ask.py, beside status.py, and run what it proposes; off, a field opens
 //     the default assistant with the words.
 // Nothing here changes a file in the workspace, as nothing on the page does,
@@ -59,6 +60,10 @@ let checking = CommandLine.arguments.contains("--check")
 // settings, the menu as the page last gave it, and whether the window was open.
 let defaults = UserDefaults.standard
 let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
+// The Ask box's hotkey (preview ask): a key as the page records it, an empty
+// one for none, or, never set, ⌘G, unless ⌘G is the menu's hotkey.
+let kAskHotkey = "askHotkey"
+let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]
 // The panel's projects whose threads you unfolded, by row: every other one starts folded.
 let kPanelOpen = "panelUnfolded"
 // Where the menu shows: unset or "icon" in the menu bar, or a panel from an edge.
@@ -123,7 +128,7 @@ func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
 	}
 }
 
-// The box ⌘G opens (preview ask): it takes the keys without bringing the app
+// The box the Ask hotkey opens (preview ask): it takes the keys without bringing the app
 // forward, as Spotlight does; Escape closes it.
 final class AskPanel: NSPanel {
 	override var canBecomeKey: Bool { true }
@@ -132,9 +137,18 @@ final class AskPanel: NSPanel {
 func savedMenu() -> [String: Any]? {
 	defaults.data(forKey: kMenu).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
 }
-// Left in the menu bar with the window closed, it starts that way again.
+// Left in the menu bar with the window closed, it starts that way again when
+// macOS opens it at login. Opened by you, from the Finder, the Dock or
+// Spotlight, it shows the window all the same: see applicationDidFinishLaunching.
 let startHidden = !checking && defaults.bool(forKey: kMenuBar) && savedMenu() != nil
 	&& defaults.object(forKey: kWindowShown) as? Bool == false
+
+// Whether this launch is macOS opening the app at login (Settings › Open at
+// login), read from the event that opened it.
+func launchedAtLogin() -> Bool {
+	guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == AEEventID(kAEOpenApplication) else { return false }
+	return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
+}
 
 // The page names a key by where it sits (KeyboardEvent.code); Carbon by the same place.
 let keyCodes: [String: Int] = [
@@ -151,6 +165,39 @@ let keyCodes: [String: Int] = [
 	"F1": kVK_F1, "F2": kVK_F2, "F3": kVK_F3, "F4": kVK_F4, "F5": kVK_F5, "F6": kVK_F6,
 	"F7": kVK_F7, "F8": kVK_F8, "F9": kVK_F9, "F10": kVK_F10, "F11": kVK_F11, "F12": kVK_F12,
 ]
+
+// The same key and modifiers, whatever the label says.
+func sameKey(_ a: [String: Any]?, _ b: [String: Any]?) -> Bool {
+	guard let a, let b, let code = a["code"] as? String, code == b["code"] as? String else { return false }
+	return Set(a["mods"] as? [String] ?? []) == Set(b["mods"] as? [String] ?? [])
+}
+
+// The Ask box's hotkey as things stand: the one set, none, or ⌘G.
+func askSpec() -> [String: Any]? {
+	if let set = defaults.dictionary(forKey: kAskHotkey) { return set["code"] == nil ? nil : set }
+	return sameKey(defaults.dictionary(forKey: kHotkey), askDefault) ? nil : askDefault
+}
+
+// A key as a menu item's key equivalent, so File › Ask Garrick… shows it.
+func keyEquivalent(_ spec: [String: Any]?) -> (String, NSEvent.ModifierFlags) {
+	guard let spec, let code = spec["code"] as? String else { return ("", []) }
+	let marks = ["Minus": "-", "Equal": "=", "BracketLeft": "[", "BracketRight": "]", "Backslash": "\\", "Semicolon": ";",
+	             "Quote": "'", "Comma": ",", "Period": ".", "Slash": "/", "Backquote": "`", "Space": " "]
+	var key = marks[code] ?? ""
+	if code.hasPrefix("Key") || code.hasPrefix("Digit") { key = String(code.dropFirst(code.hasPrefix("Key") ? 3 : 5)).lowercased() }
+	if code.hasPrefix("F"), let n = Int(code.dropFirst()), let f = UnicodeScalar(NSF1FunctionKey + n - 1) { key = String(Character(f)) }
+	var mods: NSEvent.ModifierFlags = []
+	for m in spec["mods"] as? [String] ?? [] {
+		switch m {
+		case "cmd": mods.insert(.command)
+		case "alt": mods.insert(.option)
+		case "ctrl": mods.insert(.control)
+		case "shift": mods.insert(.shift)
+		default: break
+		}
+	}
+	return (key, mods)
+}
 
 func modified(_ url: URL) -> Date? {
 	(try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
@@ -324,7 +371,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var menuState: [String: Any]?     // what the page last said the menu lists
 	var hotKey: EventHotKeyRef?
 	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
-	var askKey: EventHotKeyRef?       // ⌘G for the Ask box, from any app (preview ask)
+	var askKey: EventHotKeyRef?       // the Ask box's, from any app (preview ask)
+	var askKeySpec: [String: Any]?    // and the key it holds
+	var askMenuItem: NSMenuItem?      // File › Ask Garrick…, which shows that key
+	var recording = false             // a hotkey field in Settings has the keys: both hot keys let go of theirs
+	var keySaid: [String: String] = [:]   // why a key was refused, said under its field
 	var hotKeyHandler: EventHandlerRef?
 	var menuField: MenuField?         // the icon's menu's field, made anew each time it opens
 	var hourly: Timer?
@@ -369,11 +420,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		menuState = savedMenu()
 		present()
-		_ = setHotKey(defaults.dictionary(forKey: kHotkey))   // and ⌘G, with the preview ask on
+		applyHotKeys()    // the menu's, and the Ask box's with the preview ask on
 		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
-		if !startHidden { showWindow() }
+		if !startHidden || !launchedAtLogin() { showWindow() }   // a launch you make always shows something
 
 		watch()
 		if FileManager.default.fileExists(atPath: page.path) { load() }
@@ -389,6 +440,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	func windowWillClose(_ note: Notification) {
+		if recording { recording = false; applyHotKeys() }    // the field that had the keys goes with the window
 		guard resident else { return }
 		defaults.set(false, forKey: kWindowShown)
 		NSApp.setActivationPolicy(.accessory)  // no Dock icon while only the menu bar's or the panel is there
@@ -627,7 +679,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		var login: Any = NSNull()             // null: this macOS cannot add a login item this way
 		if #available(macOS 13, *) { login = SMAppService.mainApp.status == .enabled }
 		return ["menubar": defaults.bool(forKey: kMenuBar), "style": savedEdge()?.rawValue ?? "icon", "login": login,
-		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? ""]
+		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
+		        "askhotkey": askSpec()?["label"] as? String ?? "",
+		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid]
 	}
 
 	func appJSON() -> String {
@@ -698,16 +752,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				}
 			}
 		}
-		if let key = request["hotkey"] {
-			let spec = key as? [String: Any]
-			if setHotKey(spec) {
-				defaults.set(spec, forKey: kHotkey)
-				toast(spec == nil ? "No hotkey." : "\(spec?["label"] as? String ?? "That") opens the menu from any app.")
-			} else {
-				_ = setHotKey(defaults.dictionary(forKey: kHotkey))   // keep the one that worked
-				toast("Another app already uses that shortcut. Try another.")
-			}
+		// A hotkey field has the keys, so a key this app holds reaches it: ⌘G too.
+		if let on = request["recording"] as? Bool, on != recording {
+			recording = on
+			applyHotKeys()
 		}
+		if let key = request["hotkey"] { setKey(kHotkey, "hotkey", key as? [String: Any]) }
+		if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }
 		pushAppState()
 	}
 
@@ -721,7 +772,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			defaults.removeObject(forKey: kMenu)
 		}
 		present()
-		syncAskKey()      // the page is loaded again whenever it is rebuilt, so the flag is read often
+		recording = false     // a page loaded again has no field with the keys
+		applyHotKeys()        // the page is loaded again whenever it is rebuilt, so the flag is read often
 	}
 
 	// The icon or the panel, whichever Settings picks, or neither.
@@ -1278,7 +1330,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
-	// ⌘G is there only with the preview on.
+	// File › Ask Garrick… is there only with the preview on.
 	func validateMenuItem(_ item: NSMenuItem) -> Bool {
 		if item.action == #selector(showAsk(_:)) {
 			item.isHidden = !askOn()
@@ -1416,17 +1468,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
-	// A system-wide shortcut through Carbon's hot keys, which need no
-	// Accessibility permission. It opens the menu, or the window when the
-	// icon is off. False when the shortcut is someone else's. ⌘G follows it,
-	// since the two must not both claim ⌘G.
-	func setHotKey(_ spec: [String: Any]?) -> Bool {
-		if let old = hotKey { UnregisterEventHotKey(old); hotKey = nil }
-		if let ask = askKey { UnregisterEventHotKey(ask); askKey = nil }
-		keySpec = nil
-		defer { syncAskKey() }
-		guard let spec else { return true }
-		guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return false }
+	// System-wide shortcuts through Carbon's hot keys, which need no
+	// Accessibility permission: the menu's (Settings › Hotkey), which opens the
+	// menu, or the window when the icon is off, and the Ask box's (Settings ›
+	// Ask hotkey) while the preview ask is on. Never the same key: Settings
+	// refuses that, and ⌘G, the Ask box's until you choose, gives way to a
+	// menu hotkey set to ⌘G. Both let go while a field in Settings records a
+	// key, so the field gets it. Held globally, a key no longer reaches other
+	// apps, which is why the Ask box's goes with the preview.
+	func register(_ spec: [String: Any], _ n: UInt32, _ ref: inout EventHotKeyRef?) -> OSStatus {
+		guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return OSStatus(paramErr) }
 		var mods: UInt32 = 0
 		for m in spec["mods"] as? [String] ?? [] {
 			switch m {
@@ -1438,10 +1489,63 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 		}
 		listenForHotKeys()
-		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: 1)   // 'GRKS'
-		guard RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else { return false }
-		keySpec = spec
-		return true
+		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: n)   // 'GRKS'
+		return RegisterEventHotKey(UInt32(vk), mods, id, GetApplicationEventTarget(), 0, &ref)
+	}
+
+	// Whether macOS would let this app take the key now: taken and let go at once.
+	func available(_ spec: [String: Any]) -> OSStatus {
+		var ref: EventHotKeyRef?
+		let status = register(spec, 9, &ref)
+		if let ref { UnregisterEventHotKey(ref) }
+		return status
+	}
+
+	func applyHotKeys() {
+		if let old = hotKey { UnregisterEventHotKey(old); hotKey = nil }
+		keySpec = nil
+		if !recording && !checking, let spec = defaults.dictionary(forKey: kHotkey), spec["code"] != nil,
+		   register(spec, 1, &hotKey) == noErr {
+			keySpec = spec
+		}
+		syncAskKey()
+	}
+
+	// A key from a field in Settings: saved and taken, or refused, with why
+	// said under the field and in the toast.
+	func setKey(_ store: String, _ field: String, _ spec: [String: Any]?) {
+		let menu = store == kHotkey
+		let other = menu ? (defaults.dictionary(forKey: kAskHotkey).flatMap { $0["code"] == nil ? nil : $0 }) : defaults.dictionary(forKey: kHotkey)
+		let label = spec?["label"] as? String ?? "That"
+		var refusal: String?
+		if let spec {
+			if sameKey(spec, other) {
+				refusal = "\(label) is already the \(menu ? "Ask" : "menu's") hotkey. Clear it there, or pick another."
+			} else {
+				let status = available(spec)
+				if status == OSStatus(eventHotKeyExistsErr) {
+					refusal = "Another app already uses \(label). Try another."
+				} else if status != noErr {
+					refusal = "macOS does not let an app take \(label). Use ⌘ or ⌃ with the key."
+				}
+			}
+		}
+		if let refusal {
+			keySaid[field] = refusal
+			toast(refusal)
+			return
+		}
+		keySaid[field] = nil
+		let gaveWay = menu && sameKey(spec, askDefault) && defaults.object(forKey: kAskHotkey) == nil
+		defaults.set(spec ?? [:], forKey: store)          // an empty key: none, which for the Ask box is not ⌘G
+		if menu && spec == nil { defaults.removeObject(forKey: kHotkey) }
+		applyHotKeys()
+		if menu {
+			toast(spec == nil ? "No hotkey for the menu." : "\(label) opens the menu from any app."
+			      + (gaveWay ? " The Ask box has no hotkey now; set one under Ask hotkey." : ""))
+		} else {
+			toast(spec == nil ? "No hotkey for the Ask box." : "\(label) opens the Ask box from any app" + (askOn() ? "." : ", with the preview ask on."))
+		}
 	}
 
 	// One handler for both hot keys; the key's id says which was pressed.
@@ -1458,25 +1562,23 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}, 1, &pressed, nil, &hotKeyHandler)
 	}
 
-	// ⌘G opens the Ask box from any app while the preview ask is on, as File ›
-	// Ask Garrick… does with the window in front. The hotkey set in Settings
-	// comes first: when it is ⌘G itself, ⌘G keeps opening the menu or the
-	// panel, whose field asks too. A ⌘G another app already holds this way is
-	// left to it. Held globally, ⌘G no longer reaches other apps (Find Next),
-	// which is why it is the preview's and goes with it. Checked at launch and
-	// at every load of the page, so switching the preview needs no restart.
+	// The Ask box's key, held from any app while the preview ask is on, as
+	// File › Ask Garrick… shows it with the window in front. Checked at launch
+	// and at every load of the page, so switching the preview needs no restart.
+	// A key another app already holds this way is left to it.
 	func syncAskKey() {
-		let mods = Set(keySpec?["mods"] as? [String] ?? [])
-		let wanted = askOn() && !checking && !(keySpec?["code"] as? String == "KeyG" && mods == ["cmd"])
-		if wanted == (askKey != nil) { return }
+		let wanted = askOn() && !checking && !recording ? askSpec() : nil
+		let (key, mods) = keyEquivalent(recording ? nil : askSpec())
+		askMenuItem?.keyEquivalent = key
+		askMenuItem?.keyEquivalentModifierMask = mods
+		if sameKey(wanted, askKeySpec) && (askKey != nil) == (wanted != nil) { return }
 		if let ask = askKey { UnregisterEventHotKey(ask); askKey = nil }
-		guard wanted else { return }
-		listenForHotKeys()
-		let id = EventHotKeyID(signature: OSType(0x4752_4B53), id: 2)
-		if RegisterEventHotKey(UInt32(kVK_ANSI_G), UInt32(cmdKey), id, GetApplicationEventTarget(), 0, &askKey) != noErr { askKey = nil }
+		askKeySpec = nil
+		guard let wanted else { return }
+		if register(wanted, 2, &askKey) == noErr { askKeySpec = wanted } else { askKey = nil }
 	}
 
-	// ⌘G opens the Ask box. The hotkey opens the panel with the cursor in its
+	// The Ask hotkey opens the Ask box. The hotkey opens the panel with the cursor in its
 	// field, or the icon's menu with the cursor in its own: both find and ask.
 	func hotKeyPressed(_ which: UInt32) {
 		if which == 2 { return showAsk() }
@@ -1530,6 +1632,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			""") { result, error in
 			DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
 				print(result as? String ?? "error: \(String(describing: error))")
+				// What a normal launch shows first, before the page answers: the menu as last saved.
+				let saved = (savedMenu()?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
+				print("saved menu: " + (saved.isEmpty ? "none" : saved.map { "\($0["z"] as? String ?? "?") \(($0["p"] as? [[String: Any]] ?? []).count)" }
+				      .joined(separator: ", ") + ", showing \(savedMenu()?["place"] as? String ?? "")"))
 				// The menu bar's menu, filled from what the page sent, and its first thread pressed.
 				if self.menuState != nil {
 					let m = NSMenu()
@@ -1604,8 +1710,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			.separator(),
 			item("Quit Garrick", #selector(NSApplication.terminate(_:)), "q"),
 		])
+		let ask = item("Ask Garrick…", #selector(showAsk(_:)), "g")   // the key Settings › Ask hotkey sets, from syncAskKey()
+		askMenuItem = ask
 		sub("File", [
-			item("Ask Garrick…", #selector(showAsk(_:)), "g"),
+			ask,
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),
 			.separator(),
 			item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
@@ -1736,15 +1844,16 @@ struct PanelLine: View {
 			} else {
 				Color.clear.frame(width: 12, height: 16)
 			}
-			if let live = row.live {
-				Circle().fill(Color(liveColor(live))).frame(width: 6, height: 6)
-					.help(live == "working" ? "A session is open in it, working" : "A session is open in it")
-			}
 			Text(row.name)
 				.font(.system(size: 13, weight: depth == 0 ? .medium : .regular))
 				.foregroundColor(depth == 0 ? .primary : .primary.opacity(0.85))
 				.lineLimit(1)
 				.truncationMode(.tail)
+			// After the name, so every name starts at the same place, open or not.
+			if let live = row.live {
+				Circle().fill(Color(liveColor(live))).frame(width: 6, height: 6)
+					.help(live == "working" ? "A session is open in it, working" : "A session is open in it")
+			}
 			Spacer(minLength: 8)
 			if hover {
 				HStack(spacing: 4) {

@@ -387,15 +387,20 @@ def threads(ws: Path) -> Dict[str, dict]:
     whether the note has a Resume here block, with that block's own date
     (resume_point). A project
     with no thread note is its own single thread, read from its hub, as in a
-    workspace laid out before Garrick gave every project a Threads/ folder."""
+    workspace laid out before Garrick gave every project a Threads/ folder.
+    A project whose hub says parked holds every live thread in it parked
+    too, each marked `held`; `held` per zone names those projects."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done = [], [], 0
+        rows, parked, done, asleep = [], [], 0, []
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
             hub = project / (project.name + ".md")
             pfm = frontmatter(hub, ws)
+            hub_parked = hub.is_file() and as_text(pfm.get("status")).strip().lower() in PARKED
+            if hub_parked:
+                asleep.append(project.name)
             found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
             if not any(n.is_file() for _, n in found) and hub.is_file() and \
                     as_text(pfm.get("type")).strip().lower() == "project":
@@ -406,19 +411,22 @@ def threads(ws: Path) -> Dict[str, dict]:
                 if state in DONE:
                     done += 1
                     continue
-                state = "parked" if state in PARKED else state
+                held = hub_parked and note != hub          # parked with its project, whatever its own status
+                state = "parked" if state in PARKED or held else state
                 has_block, resumed = resume_point(note)
                 row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
                        "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
                        "updated": as_date(fm.get("updated")), "status": state,
                        "resume": has_block, "resumed": resumed}
+                if held:
+                    row["held"] = True
                 (parked if state == "parked" else rows).append(row)
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
         parked.sort(key=by_name)
-        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone}
+        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep}
     return out
 
 
@@ -1039,9 +1047,13 @@ MENU_SETTINGS_JS = r"""
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
+var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app, with the preview ask on'};
+function note(which,s){var n=document.getElementById(which==='hotkey'?'menu-hotkey-note':'menu-askkey-note');if(n)n.textContent=s||NOTE[which]}
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
-/* an app built before the panel says no style, and its row stays hidden */
+/* an app built before the panel says no style, and its row stays hidden; one built before the Ask hotkey, that row */
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
+if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
+var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
 if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
 window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 /* the app's settings: kept by the app, so a change here does not rebuild the page */
@@ -1052,13 +1064,26 @@ login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
 function name(e){var c=e.code;if(/^Key[A-Z]$/.test(c))return c.slice(3);if(/^Digit\d$/.test(c))return c.slice(5);if(/^F\d{1,2}$/.test(c))return c;
 return{Space:'Space',Minus:'-',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`'}[c]||null}
-key.addEventListener('keydown',function(e){if(e.key==='Tab')return;e.preventDefault();e.stopPropagation();
-if(e.key==='Escape'){key.blur();return}
-if((e.key==='Backspace'||e.key==='Delete')&&!(e.metaKey||e.ctrlKey||e.altKey)){host.postMessage({app:{hotkey:null}});return}
-var n=name(e);if(!n)return;if(!(e.metaKey||e.ctrlKey||e.altKey)&&!/^F\d/.test(n)){say('Use ⌘, ⌃ or ⌥ with the key.');return}
-var mods=MOD.filter(function(m){return e[m[0]]});
-host.postMessage({app:{hotkey:{code:e.code,mods:mods.map(function(m){return m[2]}),label:mods.map(function(m){return m[1]}).join('')+n}}})});
+/* A field records the keys pressed in it. While it has the focus the app lets go of
+   its own hot keys, so a key it holds, ⌘G say, reaches the field; the app takes them
+   back when the field loses it. One key never serves both: said under the field. */
+function recorder(el,which,other){if(!el)return;var o=function(v){var q={};q[which]=v;host.postMessage({app:q})};
+el.addEventListener('focus',function(){host.postMessage({app:{recording:true}})});
+el.addEventListener('blur',function(){host.postMessage({app:{recording:false}})});
+el.addEventListener('keydown',function(e){if(e.key==='Tab')return;e.preventDefault();e.stopPropagation();
+if(e.key==='Escape'){el.blur();return}
+if((e.key==='Backspace'||e.key==='Delete')&&!(e.metaKey||e.ctrlKey||e.altKey)){o(null);return}
+var n=name(e);if(!n)return;
+function no(s){note(which,s);say(s)}
+if(!(e.metaKey||e.ctrlKey||e.altKey)&&!/^F\d/.test(n)){no('Use ⌘, ⌃ or ⌥ with the key.');return}
+if(e.altKey&&!e.metaKey&&!e.ctrlKey){no('Since macOS 15, a shortcut with only ⌥ or ⌥⇧ never reaches an app: add ⌘ or ⌃.');return}
+var mods=MOD.filter(function(m){return e[m[0]]}),label=mods.map(function(m){return m[1]}).join('')+n;
+var a=window.GarrickApp||{},taken=other&&other.value===label&&!(which==='hotkey'&&a.askdefault);
+if(taken){no(label+' is already the '+(which==='hotkey'?'Ask':"menu's")+' hotkey. Clear it there, or pick another.');return}
+o({code:e.code,mods:mods.map(function(m){return m[2]}),label:label})})}
+recorder(key,'hotkey',ask);recorder(ask,'askhotkey',key);
 document.getElementById('menu-hotkey-clear').onclick=function(){host.postMessage({app:{hotkey:null}})};
+var ac=document.getElementById('menu-askkey-clear');if(ac)ac.onclick=function(){host.postMessage({app:{askhotkey:null}})};
 })();
 """
 
@@ -1352,6 +1377,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
     names = short_names(T)
     held = {(r["zone"], r["project"], r["thread"]) for z in T.values() for r in z["parked"]}
+    hubs_parked = {zone: set(data.get("held", ())) for zone, data in T.items()}
     awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
     asleep = {(zone, project) for zone, project, _ in held} - awake
     groups: List[list] = []                           # [colour, label], every vault's in turn
@@ -1435,7 +1461,13 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             live = session_in(desk, home) if kind in ("project", "thread") else None
             if live:
                 nodes[-1]["live"] = live
-        if actions and kind == "thread" and in_zone and folder_thread:
+        if kind == "project" and in_zone and project:
+            nodes[-1]["hp"] = 1 if project in hubs_parked.get(place, ()) else 0
+            if actions:
+                nodes[-1]["pp"] = [place, project]                          # Park and Wake for all of it
+        if kind == "thread" and in_zone and project in hubs_parked.get(place, ()):
+            nodes[-1]["held"] = 1                                           # woken with its project
+        elif actions and kind == "thread" and in_zone and folder_thread:
             nodes[-1]["pa"] = [place, path.relative_to(root).as_posix()]   # what Park and Wake act on
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
@@ -1981,7 +2013,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
                 drive: bool = False) -> str:
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
-    the note was updated, whether it is parked, the name to say, and links;
+    the note was updated, whether it is parked (`held` when only because its
+    project is), the name to say, and links;
     whether the note has a Resume here block (`r`) and how old that block's
     date is (`rd`). Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
@@ -1993,7 +2026,9 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
             "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
     if cmux:
         card["f"] = str(r["note"].parent)
-    if actions:
+    if r.get("held"):
+        card["held"] = 1             # parked with its project: woken with it, from the project's card
+    elif actions:
         card["pa"] = [r["zone"], r["rel"]]
     if drive:
         card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
@@ -2053,9 +2088,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
 
 def menu_settings() -> str:
     """Settings › Menu bar (preview, menu-bar), shown in Garrick.app
-    only: the icon or a panel at a screen edge, opening at login, and the
-    shortcut that opens either. The app keeps them all, so they hold when
-    the window is closed."""
+    only: the icon or a panel at a screen edge, opening at login, the
+    shortcut that opens either, and the one that opens the Ask box (preview
+    ask). The app keeps them all, so they hold when the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">A menu of the live '
             'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
             'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.</p>'
@@ -2067,9 +2102,14 @@ def menu_settings() -> str:
             '<option value="right">Panel from the right</option><option value="top">Panel from the top</option></select></div>'
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-login"> <span>Open at login'
             '<small id="menu-login-note">Starts the app when you log in, with the window as you left it</small></span></label></div>'
-            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small>Opens the menu or the panel from any app</small></span></label>'
+            '<div class="launcher-row"><label class="launcher-choice" for="menu-hotkey"><span>Hotkey<small id="menu-hotkey-note">Opens the menu '
+            'or the panel from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
-            '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div></section>')
+            '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-askkey"><span>Ask hotkey<small id="menu-askkey-note">'
+            'Opens the Ask box from any app, with the preview ask on</small></span></label>'
+            '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
+            '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div></section>')
 
 
 def copy(label: str, text: str, say: str) -> str:
@@ -2480,8 +2520,10 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
-.pchev{border:0;background:none;padding:0 3px 0 0;margin:0;cursor:pointer;color:var(--muted);line-height:0;vertical-align:-2px}
+.pchev{box-sizing:border-box;width:16px;border:0;background:none;padding:0 3px 0 0;margin:0;cursor:pointer;color:var(--muted);line-height:0;vertical-align:-2px}
 .pchev .chev{width:13px;height:13px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
+/* a project with no chevron keeps its room, so every name starts in one column */
+.tunit>.thread:not(.proj)>.t{padding-left:16px}
 .thread .t .subn{font-size:11.5px}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:12.5px}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
@@ -2531,6 +2573,8 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop h4,.tcard h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}.tcard h4{margin-right:0}
 .gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
+.act.pnote{display:inline-flex;align-items:center;gap:4px;max-width:100%}.act.pnote svg{width:12px;height:12px;flex:none}
+.act.pnote span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}.act[data-k=note][href^="obsidian:"]{--ic:var(--icon-obsidian,var(--icon-note))}
@@ -2680,20 +2724,26 @@ function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
-if(o.pu)a+='<a class="act" href="'+esc(o.pu)+'">Open project</a>';
+/* the project's hub note, by the project's name: a thread's card has no other way to it */
+if(o.pu)a+='<a class="act pnote" href="'+esc(o.pu)+'" title="Open the project&#39;s note" aria-label="Open the note of the project '+esc(o.p)+'">'
++'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.2L12.5 4.8v9.7H4z M9 1.7v3.3h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg><span>'+esc(o.p||'Project')+'</span></a>';
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
-function park(o){var v=o.s?'wake':'park';return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify({verb:v,zone:o.pa[0],file:o.pa[1]}))
-+'" data-expect="'+esc((o.s?'active:':'parked:')+o.pa[0]+'/'+o.pa[1])+'" data-say="'+(o.s?'Waking ':'Parking ')+esc(o.n)+'…">'+(o.s?'Wake':'Park')+'</button>'}
+/* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
+function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
+k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
+return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify(q))+'" data-expect="'+esc((s?'active:':'parked:')+k)
++'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+(s?'Wake':'Park')+'</button>'}
 function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
 +' data-say="Closing the session…">Close session</button>':''}
 /* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else;
    with a session open, Close session sits beside it */
 function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
-function pflip(o){if(!o.w||o.h)return'';if(o.pa&&host)return park(o);var p=(o.s?'wake ':'park ')+o.w;
-return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(o.s?'Wake':'Park')+'</button>'}
+function pflip(o){if(o.held||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
+var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
+return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
-function state(o){if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+function state(o){if(o.held)return'Parked with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
@@ -3034,7 +3084,7 @@ var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=
 var esc=Panel.esc;
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
-var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pu:hub&&hub!==n?hub.u:''};
+var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held,pu:hub&&hub!==n?hub.u:''};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
@@ -3234,9 +3284,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         party = []
         for r in items:
             party += [t for t in r["party"] if t not in party]
-        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": 0, "h": 1,
+        hp = 1 if project in T[zone].get("held", ()) else 0
+        c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp,
              "w": project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else "",
              "u": link(hub) if hub else link(items[0]["note"]), "pu": ""}
+        if acting and hub:
+            c["pp"] = [zone, project]        # what Park and Wake act on: the hub, and with it every thread
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
         if DK:
@@ -3474,7 +3527,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
-    state = {"parked": sorted("%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]),
+    state = {"parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
+                              | {"%s/%s/%s.md" % (zone, p, p) for zone, z in T.items() for p in z.get("held", ())}),
              "live": sorted(str(f) for f in folders if session_in(S, f))}
     menu += '<script type="application/json" id="state-data">%s</script>' % script_json(state)
     shared = shared_launchers(ws)

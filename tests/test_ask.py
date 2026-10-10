@@ -127,6 +127,8 @@ class TestProposals(AskCase):
         self.assertEqual(("act", {"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}),
                          ask.proposal({"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
                                       self.names, self.root))
+        self.assertEqual(("act", {"verb": "park", "zone": "Work", "project": "Acme Review"}),     # all of it, threads and all
+                         ask.proposal({"verb": "park", "zone": "Work", "project": "Acme Review"}, self.names, self.root))
         self.assertEqual(("act", {"verb": "todo-add", "zone": "Work", "text": "Call Dana", "target": "Acme Review/Pricing",
                                   "date": "2026-10-09"}),
                          ask.proposal({"verb": "todo-add", "zone": "Work", "text": " Call Dana ", "project": "Acme Review",
@@ -152,7 +154,6 @@ class TestProposals(AskCase):
                   {"verb": "open", "zone": "Elsewhere", "project": "Acme Review"},
                   {"verb": "open", "zone": "Work", "project": "Acme Review", "app": "terminal"},
                   {"verb": "open", "zone": "Work", "thread": "Pricing"},
-                  {"verb": "park", "zone": "Work", "project": "Acme Review"},                 # it has threads
                   {"verb": "todo-add", "zone": "Work", "text": ""},
                   {"verb": "todo-add", "zone": "Work", "text": "x", "date": "tomorrow"},
                   {"verb": "open", "zone": "Work", "project": "../Personal"},

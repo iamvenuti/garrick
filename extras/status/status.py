@@ -348,6 +348,8 @@ FLAGS = {
     "menu-bar": ("Menu bar", "In the Garrick app: an icon in the menu bar with the live projects and threads of the zone the "
                  "graph shows, each opening as its card does, and a red dot when something failed; or the same list in a panel "
                  "that slides out from a screen edge or from under the notch. Switched on in the app's Settings."),
+    "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
+            "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
 }
 
 

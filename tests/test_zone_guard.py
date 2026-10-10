@@ -140,6 +140,38 @@ class ZoneGuardTest(unittest.TestCase):
         self.session = "s2"
         self.assertEqual(self.decision(self.claude(target))[0], "ask")
 
+    # Where a path really leads
+
+    def test_a_link_into_another_zone_is_judged_where_it_leads(self):
+        (self.thread / "shortcut").symlink_to(self.root / "Zones/Personal/Home")
+        decision, reason = self.decision(self.claude(self.thread / "shortcut" / "Home.md"))
+        self.assertEqual(decision, "ask")
+        self.assertIn("Personal › Home (Zones/Personal/Home/Home.md)", reason)
+        patch = "*** Begin Patch\n*** Update File: shortcut/Home.md\n@@\n-a\n+b\n*** End Patch\n"
+        self.assertEqual(self.decision(self.codex(patch))[0], "deny")
+
+    def blind(self):
+        flipped = str(self.root).swapcase()
+        if not os.path.exists(flipped):
+            self.skipTest("this disk tells upper and lower case apart")
+        return flipped
+
+    def test_another_case_reaches_the_same_place(self):
+        flipped = self.blind()
+        decision, reason = self.decision(self.claude(flipped + "/system/tools/check.py"))
+        self.assertEqual(decision, "ask")
+        self.assertIn("System (System/tools/check.py)", reason)
+        decision, reason = self.decision(self.claude(self.root / "zones/work/birch entry/x.md"))
+        self.assertIn("Work › Birch Entry (Zones/Work/Birch Entry/x.md)", reason)
+        self.assertIsNone(self.claude(self.root / "zones/work/acme review/notes.md"))   # its own project
+
+    def test_a_home_given_in_another_case_is_the_same_home(self):
+        home = Path(self.blind()) / "Zones/Work/Acme Review/Threads/Kickoff".swapcase()
+        decision, reason = self.decision(self.claude(self.root / "System/tools/check.py", home=home))
+        self.assertEqual(decision, "ask")
+        self.assertIn("Work › Acme Review", reason)
+        self.assertIsNone(self.claude(self.root / "Zones/Work/Acme Review/x.md", home=home))
+
     # Codex
 
     def test_codex_is_refused_once_per_place(self):

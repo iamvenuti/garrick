@@ -68,6 +68,15 @@ What changed in each release. Dates are when the release was tagged. The format 
 - An HTML page is compared by the text a reader sees: its styles, scripts, comments, tags and attributes no longer count as wording, so two pages built from one slide template are no longer reported as repeating each other (#24).
 - The text of a link to a shared file, such as a Knowledge page's title, no longer counts as wording, so two notes that list the same Knowledge pages are no longer reported across a wall (#25).
 - `check.py` no longer reads any `node_modules`, `.venv`, `__pycache__` or `dist` folder, and the walls, sources and placeholder checks skip what the workspace's repositories ignore: an installed package's README no longer names a walled party. The inbox checks still read the inboxes, which are ignored by design (#26).
+- A placeholder quoted as code in a note (`` `{{ZONE}}` ``, or in a fenced block) is no longer reported as unfilled.
+- A scheduled job stopped mid-run, by `launchctl bootout`, a plist loaded again or a shutdown, now stops its command too, lets go of its locks and leaves a heartbeat saying it was stopped, with exit 143. Before, the command ran on with no watchdog and the next run started beside it. A command left running by a `job.py` killed outright still holds the job's lock and the shared assistant lock, and is stopped by the first fire after its time is up.
+- A run caught by a closed lid no longer loses its lock when the Mac wakes past the lock's time: a lock stands while its `job.py` lives, so the overdue fire is skipped instead of running a second copy. A process number reused by another process no longer holds a lock.
+- `job.py --timeout 0`, or less, is refused with exit 64 instead of timing out every run; `GARRICK_JOB_TIMEOUT=0` keeps the default, with a line in the log.
+- Settings in `GARRICK_ENV_FILE`, such as `GARRICK_JOB_TIMEOUT`, `GARRICK_QUIET_EXITS` and `GARRICK_JOBS_DIR`, now take effect: the file is read before them, not after.
+- A job's command killed by a signal exits 128 plus its number, as a shell reports it (137 for SIGKILL), and the reason names the signal. It exited 241 or the like before.
+- A job's command that exits 4 or 124 itself reads "exited 4", not "could not sign in" or "timed out": those words now come only from `job.py`'s own sign-in check and watchdog.
+- The zone guard follows links: a file reached through a link in the project to a folder in another zone is asked about, as that zone.
+- The zone guard ignores case on a disk that does, as a Mac's does: `/users/...` or `zones/work/...` no longer slips past it, and the session's own project in another case is no longer asked about.
 
 ## [0.14.0] - 2026-10-10
 

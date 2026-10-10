@@ -110,8 +110,9 @@ python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEM
 | 75 | The previous run still holds the lock, or another assistant job held the shared one for this run's whole time limit; this one was skipped |
 | 124 | The watchdog stopped a run that went past its time limit, 25 minutes by default, or a call passed its `--timeout` |
 | 127 | The job's command could not be started, or the assistant is not installed |
+| 128 + N | The command was killed by signal N, or `job.py` itself was stopped by it, as a shell reports it: 143 for SIGTERM, 137 for SIGKILL |
 
-A job may add codes of its own, such as 5 for a sweep that reached some of its sources and not all. List them in `GARRICK_QUIET_EXITS` if they are not news (see below).
+A job may add codes of its own, such as 5 for a sweep that reached some of its sources and not all. List them in `GARRICK_QUIET_EXITS` if they are not news (see below). The words in a notice and the heartbeat's `reason` come from what `job.py` saw: "could not sign in" only when its own sign-in check failed, "timed out" only when its own watchdog stopped the run. A command that exits 4 or 124 itself reads "exited 4 after 12s".
 
 ### Being told
 
@@ -148,7 +149,7 @@ Every setting is an environment variable, set in the job's plist under `Environm
 | Variable | Default | What it sets |
 |---|---|---|
 | `GARRICK_HARNESS` | `claude` | `claude` or `codex` |
-| `GARRICK_JOB_TIMEOUT` | 1500 | seconds before the watchdog stops a run; `--timeout` sets it for one job |
+| `GARRICK_JOB_TIMEOUT` | 1500 | seconds before the watchdog stops a run, above zero; `--timeout` sets it for one job, and a `--timeout` of zero or less is refused with exit 64 |
 | `GARRICK_LOGIN_RETRY_AFTER` | 300 | seconds between the two sign-in checks |
 | `GARRICK_IDLE_DAYS` | 7 | days of nothing before a job is idle, and between idle notices; 0 for no alarm |
 | `GARRICK_ALERT_REPEAT` | 3600 | seconds between notices while the same failure lasts |
@@ -159,7 +160,7 @@ Every setting is an environment variable, set in the job's plist under `Environm
 | `GARRICK_JOBS_DIR` | `~/Library/Logs/garrick-jobs` | where logs, heartbeats, locks and the ledger go |
 | `GARRICK_WORKSPACE` | your home folder | where the command runs when there is no `--cwd` |
 
-`GARRICK_ENV_FILE` is for a setting you would rather not write into a plist, such as a sign-in token on a Mac nobody logs in to. Lines read as a shell reads them, `export` and quotes allowed. The log names the settings it read, never their values, and warns when other users of the Mac can read the file: `chmod 600` it. On a Mac you sign in to, leave it out: Claude's own sign-in carries the claude.ai connectors, and a token does not.
+`GARRICK_ENV_FILE` is for a setting you would rather not write into a plist, such as a sign-in token on a Mac nobody logs in to. Lines read as a shell reads them, `export` and quotes allowed. It is read before anything else, so it can hold any setting in the table, `GARRICK_JOBS_DIR` included; a value in the file wins over the plist's. The log names the settings it read, never their values, and warns when other users of the Mac can read the file: `chmod 600` it. On a Mac you sign in to, leave it out: Claude's own sign-in carries the claude.ai connectors, and a token does not.
 
 ### What the status page reads
 
@@ -168,7 +169,7 @@ Everything a job leaves is in the jobs folder, named after the job. `python3 Sys
 | File | What it holds |
 |---|---|
 | `<job>.heartbeat.json` | The last run: `job`, `started`, `finished`, `finished_ts`, `exit`, `seconds`, `ok` (exit 0 or quiet), `quiet`, `reason` (the words for a failure, or empty), `items`, `idle_days`, `idle`, `agent` (whether it ran with `--agent`), `no_call` (an `--agent` run that exited 0 and added no line to the ledger), `failing_since` |
-| `<job>.lock/` | Present while a run holds it. Its `until` file reads `<until> <pid> <started>`, in seconds since 1970. A lock past its `until`, or whose process has gone, is held by nobody |
+| `<job>.lock/` | Present while a run holds it. Its `until` file reads `<until> <pid> <started>`, then `<group> <group started>` once the command runs, in seconds since 1970. The lock is held while `job.py` lives, past its `until` too. Once `job.py` has gone, it is held while the command's process group still runs, until its `until`; the next fire then stops the group and takes the lock. A lock whose `job.py` and command have both gone is held by nobody |
 | `<job>.alert.json` | Present while the job is failing: `exit`, `since` (the first failed run) and `alerted` (the last notice) |
 | `<job>.idle-alert` | When the last idle notice went |
 | `<job>.log` | One line a run, `===== <finished>  <job>  exit <code>  (<seconds>s) =====`, with `  quiet` before the closing `=====` when the exit was quiet, or `skipped` in place of the exit |
@@ -180,7 +181,8 @@ Everything a job leaves is in the jobs folder, named after the job. `python3 Sys
 
 - The suite tests the runner, the wrapper, the caps and the example against fake assistants. The deny profile, the settings sources and the ledger's numbers were checked by hand against Claude Code 2.1.287. The permission mode was checked against Claude Code 2.1.288: a job allowed only `Read` and asked to edit a file was refused (the ledger lists `Edit` as denied) and the file was unchanged; a job allowed `WebFetch` was not given the tool, because the profile denies it. The read-only Codex command was checked against Codex 0.160.0, in a scratch folder: a shell command writing a file failed with "operation not permitted", and the run had no web search, browser, app or connector tools. The same request under the write sandbox and the user's configuration wrote the file and had all of them. Codex has not been run end to end through `job.py`.
 - The sign-in check asks the assistant whether it is signed in (`claude auth status`, `codex login status`), with no model call. A scheduled job's access to the login keychain can fail now and then; the check, and its one retry five minutes later, exist for that. Only a definite no stops the job: a check that does not answer within 90 seconds, as when the Mac sleeps in the middle of it, lets the job run, with a line in the log.
-- A laptop that is asleep runs nothing. launchd runs a missed calendar job when the Mac wakes, and several overdue assistant jobs then take turns rather than fail each other's sign-in.
+- A laptop that is asleep runs nothing. launchd runs a missed calendar job when the Mac wakes, and several overdue assistant jobs then take turns rather than fail each other's sign-in. A run the lid closed on is still running when the Mac wakes, past the time on its lock: the lock stands for as long as its `job.py` lives, so the overdue fire is skipped rather than run beside it. A process number the system has since given to another process does not hold a lock: `job.py` checks when the process started (`ps -o etime=`).
+- `launchctl bootout`, loading a plist again, or a shutdown sends `job.py` a SIGTERM. It stops the command's whole process group, lets go of its locks, and writes a heartbeat whose `reason` says it was stopped, with exit 143. A stop raises no notice. SIGHUP and SIGINT do the same. If `job.py` is killed outright (SIGKILL), its command runs on with no watchdog; the lock records the command's process group, so the next fire is skipped while it runs, and stops it once the run's time is up. If only processes the command started are left, and not the command itself, `job.py` cannot be sure the group is still that run's, so the lock stands until you stop them: the skipped run's log line names the group (`kill -TERM -<group>`).
 
 ## See them on one page
 

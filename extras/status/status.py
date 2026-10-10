@@ -127,6 +127,10 @@ def load_agent(ws: Path):
             sys.path.insert(0, str(folder))
             try:
                 import agent  # noqa: F401
+                try:
+                    import job  # noqa: F401  (its lock rule, for "running now")
+                except Exception:
+                    pass
                 return agent
             except Exception:
                 return None
@@ -1567,11 +1571,20 @@ def pid_alive(pid: int) -> bool:
 
 
 def lock_held(lock: Path, now: dt.datetime) -> bool:
-    """Whether a run holds the job's lock now. job.py writes, in `until`,
-    "<until> <pid> [<started>]": the lock is held until that time while its
-    process lives. One without that record counts for three hours."""
+    """Whether a run holds the job's lock now. With the jobs extra loaded,
+    job.py's own rule decides: a run whose job.py lives holds its lock
+    whatever the time on it says, since that time runs on while a Mac
+    sleeps. Without it, the record in `until`, "<until> <pid> [<started>]",
+    holds until that time while its process lives, and a lock without a
+    record counts for three hours."""
     if not lock.is_dir():
         return False
+    job = sys.modules.get("job")
+    if job is not None and hasattr(job, "holder"):
+        try:
+            return bool(job.holder(lock, 3 * 3600)[0])
+        except Exception:
+            pass
     try:
         words = (lock / "until").read_text(encoding="utf-8").split()
         if now.timestamp() >= float(words[0]):

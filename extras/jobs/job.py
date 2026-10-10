@@ -689,9 +689,8 @@ def idle_days(items: Optional[int], lastwork: Path, now: float) -> Optional[int]
 
 
 def lock_state(lock: Path) -> Optional[dict]:
-    """Who holds a lock, or None when nobody does. A lock past its time, or
-    whose process has gone, is held by nobody, and the next fire takes it
-    over."""
+    """Who holds a lock, or None when nobody does, by the rule a run takes
+    a lock over with (holder): a living job.py holds it whatever its time."""
     if not lock.is_dir():
         return None
     try:
@@ -713,7 +712,7 @@ def lock_state(lock: Path) -> Optional[dict]:
         except OSError:
             return None
     # A lock without a record is judged by the default limits: the page cannot know the job's own.
-    if is_stale(lock, 2 * 1500 + 300 + SLACK):
+    if not holder(lock, 2 * 1500 + 300 + SLACK)[0]:
         return None
     return {"pid": pid, "started": stamp(started) if started else None, "until": stamp(until) if until else None}
 

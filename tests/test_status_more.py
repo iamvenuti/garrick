@@ -364,6 +364,11 @@ class TestSessions(StatusCase):
         work = {p["n"]: p for z in menu["zones"] if z["z"] == "Work" for p in z["p"]}
         self.assertEqual(("working", "working"), (work["Acme Review"]["s"], work["Acme Review"]["t"][0]["s"]))
         self.assertEqual(("idle", None), (work["Birch Entry"]["s"], work["Birch Entry"]["t"][0].get("s")))
+        self.assertEqual(["Work", "Acme Review", ""], work["Acme Review"]["dk"])           # what the menu's cmux row asks the desk to open
+        self.assertEqual(["Work", "Acme Review", "Pricing"], work["Acme Review"]["t"][0]["dk"])
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn('live: r["s"] as? String', swift)                                   # the app draws the dot
+        self.assertIn('["verb": "open", "zone": dk[0], "project": dk[1]]', swift)          # and opens through the desk
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(3, len(state["live"]))          # Pricing's folder, and the two projects' folders above a session
         flags(self.root, **{"menu-bar": True})

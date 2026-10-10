@@ -1966,7 +1966,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
 
 
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
-              desk: Optional[Dict[str, str]] = None) -> dict:
+              desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
     """What the app's menu bar icon lists (preview, menu-bar): per zone, its
     live projects by name, each with its live threads by name, and whether
     the Status tab carries its red dot. A project or thread gives its name,
@@ -1974,7 +1974,8 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     folder: the app offers the same actions its card does. A project with no
     thread notes is its own thread. With the cmux extra, each row also says
     whether a session is open in it (`s`: "idle", "working" or None; a
-    project counts its threads'). The app keeps the zone the graph shows;
+    project counts its threads'), and with `drive` what the desk opens
+    (`dk`: zone, project, thread or ""). The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -1982,8 +1983,10 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         for p in {r["project"] for r in data["rows"] + data["parked"]}:
             project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
 
-    def entry(name, say, note):
+    def entry(name, say, note, dk):
         e = {"n": name, "w": say, "u": link(note)}
+        if drive:
+            e["dk"] = dk
         if folders:
             e["f"] = str(note.parent)
         live = session_in(desk, note.parent)
@@ -1999,13 +2002,13 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         projects = []
         for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
             if len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]:          # its own thread
-                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"]), t=[]))
+                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"], [zone, project, ""]), t=[]))
                 continue
             hub = rs[0]["hub"] or rs[0]["note"]
             say = project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else ""
-            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"])
+            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"], [zone, project, r["thread"]])
                        for r in sorted(rs, key=lambda r: r["thread"].casefold())]
-            projects.append(dict(entry(project, say, hub), t=threads))
+            projects.append(dict(entry(project, say, hub, [zone, project, ""]), t=threads))
         zones.append({"z": zone, "p": projects})
     return {"trouble": trouble, "zones": zones}
 
@@ -3421,7 +3424,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     menu = ""
     if flags_on["menu-bar"]:
-        md = menu_data(T, names, link, cmux, trouble, S)
+        md = menu_data(T, names, link, cmux, trouble, S, DK)
         if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
             md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                             "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included

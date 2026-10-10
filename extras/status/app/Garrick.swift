@@ -132,11 +132,16 @@ func modified(_ url: URL) -> Date? {
 // A menu row that is both a button and a submenu: AppKit gives a plain item
 // with a submenu no action, so the row is a view that draws itself, runs its
 // default on a click and leaves the hover to open its submenu.
+// The dot of a live session: green while it waits for you, blue while it works.
+func liveColor(_ state: String) -> NSColor { state == "working" ? .systemBlue : .systemGreen }
+
 final class RowView: NSView {
 	let title: String
+	let live: String?
 	let click: () -> Void
-	init(_ title: String, click: @escaping () -> Void) {
+	init(_ title: String, live: String? = nil, click: @escaping () -> Void) {
 		self.title = title
+		self.live = live
 		self.click = click
 		let width = (title as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 0)]).width
 		super.init(frame: NSRect(x: 0, y: 0, width: max(200, ceil(width) + 60), height: 22))
@@ -157,6 +162,10 @@ final class RowView: NSView {
 		let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: ink]
 		let h = (title as NSString).size(withAttributes: attrs).height
 		(title as NSString).draw(at: NSPoint(x: 21, y: (bounds.height - h) / 2), withAttributes: attrs)
+		if let live {                                  // a session is open in it (the cmux extra)
+			liveColor(live).setFill()
+			NSBezierPath(ovalIn: NSRect(x: 10, y: bounds.midY - 3, width: 6, height: 6)).fill()
+		}
 		if enclosingMenuItem?.hasSubmenu == true {     // the chevron AppKit draws for a plain item
 			let x = bounds.maxX - 17, y = bounds.midY
 			let path = NSBezierPath()
@@ -741,7 +750,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		var out: [[String: Any]] = []
 		if menuState?["note"] as? Bool != false, let u = r["u"] as? String { out.append(["k": "note", "u": u]) }
 		if let f = r["f"] as? String {
-			for k in menuState?["launchers"] as? [String] ?? [] { out.append(["k": k, "f": f, "w": r["w"] as? String ?? ""]) }
+			for k in menuState?["launchers"] as? [String] ?? [] {
+				var a: [String: Any] = ["k": k, "f": f, "w": r["w"] as? String ?? ""]
+				if k == "cmux", let dk = r["dk"] { a["dk"] = dk }      // the cmux extra's desk opens it
+				out.append(a)
+			}
 		}
 		let picked = menuState?["def"] as? String ?? "note"
 		let n = out.firstIndex(where: { $0["k"] as? String == picked }) ?? out.firstIndex(where: { $0["k"] as? String == "note" }) ?? 0
@@ -793,7 +806,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let acts = acts(r)
 		let fallback = acts.first(where: { $0["d"] as? Bool == true })
 		let item = NSMenuItem(title: r["n"] as? String ?? "", action: nil, keyEquivalent: "")
-		item.view = RowView(item.title) { [weak self] in if let a = fallback { self?.run(a) } }
+		item.view = RowView(item.title, live: r["s"] as? String) { [weak self] in if let a = fallback { self?.run(a) } }
 		let sub = NSMenu()
 		sub.delegate = self
 		if !acts.isEmpty {
@@ -843,6 +856,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking { return heard.append("menu:" + k) }
 		if k == "note" {
 			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+		} else if k == "cmux", let dk = a["dk"] as? [String], dk.count == 3 {
+			var request: [String: Any] = ["verb": "open", "zone": dk[0], "project": dk[1]]
+			if !dk[2].isEmpty { request["thread"] = dk[2] }
+			act(request)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
 			launch(k, f, phrase: w.isEmpty ? "" : "open " + w)
@@ -1095,7 +1112,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		                	PanelAct(id: n, icon: icon(a), label: label(a), isDefault: a["d"] as? Bool == true) { [weak self] in self?.run(a) }
 		                },
 		                threads: (r["t"] as? [[String: Any]] ?? []).map(panelRow),
-		                open: fallback.map { a in { [weak self] in self?.run(a) } })
+		                open: fallback.map { a in { [weak self] in self?.run(a) } }, live: r["s"] as? String)
 	}
 
 	// MARK: keep awake
@@ -1413,6 +1430,7 @@ struct PanelRow: Identifiable {
 	let acts: [PanelAct]
 	let threads: [PanelRow]
 	let open: (() -> Void)?
+	var live: String? = nil
 }
 
 struct PanelZone: Identifiable {
@@ -1476,6 +1494,10 @@ struct PanelLine: View {
 			} else {
 				Color.clear.frame(width: 12, height: 16)
 			}
+			if let live = row.live {
+				Circle().fill(Color(liveColor(live))).frame(width: 6, height: 6)
+					.help(live == "working" ? "A session is open in it, working" : "A session is open in it")
+			}
 			Text(row.name)
 				.font(.system(size: 13, weight: depth == 0 ? .medium : .regular))
 				.foregroundColor(depth == 0 ? .primary : .primary.opacity(0.85))
@@ -1519,7 +1541,7 @@ struct PanelView: View {
 		return rows.compactMap { r in
 			if r.name.lowercased().contains(query) { return r }
 			let t = r.threads.filter { $0.name.lowercased().contains(query) }
-			return t.isEmpty ? nil : PanelRow(id: r.id, name: r.name, acts: r.acts, threads: t, open: r.open)
+			return t.isEmpty ? nil : PanelRow(id: r.id, name: r.name, acts: r.acts, threads: t, open: r.open, live: r.live)
 		}
 	}
 

@@ -12,6 +12,7 @@ message the page posts must have an answer in the plugin.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -156,7 +157,7 @@ class TestUnderNode(ActionCase):
         with tempfile.TemporaryDirectory() as tmp:
             harness, out = Path(tmp) / "harness.js", Path(tmp) / "out.json"
             harness.write_text(HARNESS)
-            env = dict(__import__("os").environ, FILES=json.dumps(files), PYTHON=sys.executable, SCRIPT=str(STATUS),
+            env = dict(os.environ, FILES=json.dumps(files), PYTHON=sys.executable, SCRIPT=str(STATUS),
                        ACT=json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": key}))
             done = subprocess.run(["node", str(harness), str(PLUGIN / "main.js"), str(self.work), str(out)],
                                   capture_output=True, text=True, env=env, timeout=60)

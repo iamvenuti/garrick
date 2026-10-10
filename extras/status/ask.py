@@ -285,12 +285,14 @@ class ClaudeSession:
         return self.proc is not None and self.proc.poll() is None
 
     def stop(self) -> None:
-        if self.alive():
+        if self.proc is not None:
             try:
                 self.proc.stdin.close()
                 self.proc.wait(timeout=5)
             except Exception:
                 self.proc.kill()
+                self.proc.wait()
+            self.proc.stdout.close()
         self.proc, self.turns, self.spent, self.pending = None, 0, 0.0, b""
 
     def command(self) -> List[str]:

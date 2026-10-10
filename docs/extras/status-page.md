@@ -51,7 +51,7 @@ Some features are in Garrick's source before they are in a release. They are off
 
 - **`todo-list`**: a *Todo list* card with every open action in the zones. It shows each action's thread, its section of `Todo.md` (or "in the thread note" when it sits there), and its dates as Obsidian Tasks writes them: a due date with `📅`, a day to chase a `#waiting` line with `⏳`. Overdue actions come first. It reads the notes and changes nothing.
 
-- **`page-actions`**: buttons that change your notes, in the Garrick app only. On the Todo list, a circle ticks an action and *Date* sets or clears its date, and *＋ Add* beside each zone's name writes a new one: the text, optionally a project or thread picked from a tree of the zone's projects with their threads folded under them, and optionally a date. The line goes to the top of the Inbox in the zone's `Todo.md`, opening with `[[Thread]]: ` when you picked one; with a date it goes where a dated line belongs, *This week* within seven days, *Soon* after that, *Waiting on* for a `#waiting` line. A line already in the list is refused. On a thread's card, *Park* and *Wake* replace the phrases to copy. Each button changes one line or one `status:` field, the same way the skills would: ticking adds Obsidian Tasks' `✅` date, and parking sets `status: parked`, moves `updated:` and adds a dated "Parked." entry. Each change is then committed in the zone's repository, through its wall check. If the wall check refuses the commit, the file is put back as it was. The app runs `page_action.py` from the same folder as `status.py`, so copy both. A browser has no way to reach it, so there the buttons stay hidden.
+- **`page-actions`**: buttons that change your notes, in the Garrick app only. On the Todo list, a circle ticks an action and *Date* sets or clears its date, and *＋ Add* beside each zone's name writes a new one: the text, optionally a project or thread picked from a tree of the zone's projects with their threads folded under them, and optionally a date. The line goes to the top of the Inbox in the zone's `Todo.md`, opening with `[[Thread]]: ` when you picked one; with a date it goes where a dated line belongs, *This week* within seven days, *Soon* after that, *Waiting on* for a `#waiting` line. A line already in the list is refused. On a thread's card, *Park* and *Wake* replace the phrases to copy. Each button changes one line or one `status:` field, the same way the skills would: ticking adds Obsidian Tasks' `✅` date, and parking sets `status: parked`, moves `updated:` and adds a dated "Parked." entry. Each change is then committed in the zone's repository, through its wall check. If the wall check refuses the commit, the file is put back as it was. The app runs `page_action.py` from the same folder as `status.py`, so copy both. A browser has no way to reach it, so there the buttons stay hidden; the [Obsidian plugin](#in-obsidian) reaches it as the app does. See [What the actions keep](#what-the-actions-keep).
 
 - **`effort`**: *Time* and *Cost* on the Threads card. The same rows show the assistant's active time, or its list-price cost, over the last 30 days instead of how long since each note moved, largest first; *Updated* puts them back by name, and the page remembers the choice. A project's row counts all of its work, its threads and what it did in no thread; each thread shows its own. A line under the columns gives the total and whatever no row shows: sessions outside the zones (in `System/`, a wiki or the workspace root), sessions started in a zone's own folder, and threads finished or renamed since, so the figures add up. Hover a figure for its raw tokens and sessions. It reads Claude Code's own transcripts in `~/.claude/projects/`, with no model call, through `effort.py` beside `status.py`, so copy both:
   - *Which thread.* The folder a session ran in gives the zone and project; a thread's own folder gives the thread. Otherwise the thread is the one whose `Threads/<X>/` notes the session wrote or edited most, and a project with no thread notes is its own thread. Anything left counts as the project's own work rather than a guess. A session started above the zones is placed by the notes it wrote.
@@ -64,6 +64,8 @@ Some features are in Garrick's source before they are in a release. They are off
   - Only names, durations and figures reach the page, never a line of a transcript.
 
 - **`menu-bar`**: Garrick in the menu bar, in the Garrick app only. See [In the menu bar](#in-the-menu-bar).
+
+- **`ask`**: the panel's field, and a box that ⌘G opens, answer a request in plain words and act on it, in the Garrick app only. See [Ask](#ask).
 
 A preview feature may still change. When one is released it is switched on for everyone and its flag goes away.
 
@@ -90,7 +92,7 @@ The graph's panel offers the same actions under the same labels, the app buttons
 
 ## Set it up
 
-1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing.
+1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. The previews' scripts (`page_action.py`, `ask.py` and `ask-brief.md`) go with it, and `obsidian/` holds the [Obsidian plugin](#in-obsidian). A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing.
 2. **Build it and open it:**
    ```sh
    python3 System/status/status.py --workspace ~/Garrick --open
@@ -113,6 +115,8 @@ The page says how old it is, and turns its banner red when it is more than a day
 - **It keeps the page current.** When the page is more than 30 minutes old, the app rebuilds it at launch and again whenever you bring the app forward, and it reloads the page whenever it is rewritten, by itself, a schedule or a terminal. The window's subtitle says *Rebuilding…* meanwhile, and the last build stays on screen.
 - **Its buttons do what they say.** The top row's circular arrow becomes *Rebuild now*. *Copy* puts the phrase on the clipboard, as in a browser. Project and thread cards, and the graph's panel, gain *Open in Claude*, *Open in Codex* and *Open in cmux*, for the ones that are installed and switched on in [Settings](#settings), and show every way to open a note as its app's icon. The app menu's *Settings…* (⌘-comma) opens Settings.
 - **Links go where your Mac sends them**: a note to Obsidian or your Markdown app, a log to its viewer.
+- **The Edit menu works in its fields.** ⌘V pastes into the Todo list's *Add* field and the panel's field, with Cut, Copy, Undo and Redo beside it.
+- **Safari can inspect it.** With Safari's *Develop* menu on, *Develop › your Mac › Garrick* opens the Web Inspector on the page, for its console and what it keeps in storage. The app names itself `GarrickApp` in its user agent.
 
 Build it once, from the workspace:
 
@@ -129,7 +133,7 @@ With the preview `menu-bar` on, Settings gains a *Menu bar* section, in the app 
 - **Show the menu** keeps Garrick's menu at hand outside the window: by default as Garrick's mark in the menu bar, drawn in the menu bar's own colours, or as a panel (see *Shows as*). Closing the window then leaves the app there, without a Dock icon, and *Open Garrick* in its menu, or the app's icon in Finder, brings the window back. A red dot on the mark, or *Something failed* in the panel, means the same as the red dot on the *Status* tab: something failed.
 - **Shows as** picks where the menu lives: *Menu bar icon*, or a panel that slides out from the left or right edge of the screen, or down from the top. See [As a panel](#as-a-panel).
 - **Open at login** starts the app when you log in, as a login item. It opens the way you left it: in the menu bar alone if its window was closed. It needs macOS 13 or later; macOS may ask you to allow it under *Login Items* in System Settings.
-- **Hotkey** opens the menu, or the panel, from any app. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
+- **Hotkey** opens the menu, or the panel, from any app. With the preview `ask` on and the menu as an icon, it opens the Ask box instead. Click the field and press the keys, with ⌘, ⌃ or ⌥; *Clear*, or Delete in the field, takes it away. A shortcut another app already holds is refused. It needs no Accessibility permission.
 
 The menu lists the live projects of the zone the graph shows, as last picked in the window, by name. With *All* picked it lists every zone, and with a wiki picked it lists Work. Point at a project and its submenu opens: a line of app icons, the ways its card offers to open it (the note, *Reveal in Finder*, Claude, Codex, cmux, as switched on in Settings), then its live threads. Point at a thread for its own line of icons. Click an icon to open the project or thread in that app; hover one for its name. Click a project's or a thread's name itself and it opens the way clicking a thread's name does in the window: the default chosen under *Opening a thread*, which sits on a tinted square in the line of icons. Nothing else is listed: no bars, no figures, no parked threads. At the foot are *Open Garrick's Status* and *Quit*. The keyboard moves through the menu and opens a submenu, but Return on a name does nothing; click it, or pick its icon.
 
@@ -145,7 +149,7 @@ The app holds the Mac awake itself, so quitting it, or a crash, lets the Mac sle
 
 With *Shows as* set to a panel, the icon leaves the menu bar and the same list lives in a panel at the edge you picked. Rest the pointer against that edge for a quarter of a second and the panel slides out; move away and it slides back. The hotkey opens it too, with the cursor in its field: type part of a name and Return opens the first thread that matches.
 
-The same field asks. Whatever you type also shows as *Ask Garrick* at the top of the list; click it, or press Return when no project or thread matches, and the default assistant for clicking a thread opens at the workspace root with your words, as *Process the Inbox* opens with its phrase. Claude gets them typed in for you to send; Codex and cmux get them on the clipboard. The panel itself answers nothing and calls no model. A click in another app closes it, and so does Escape when the panel has the keyboard. The panel never brings Garrick forward, so the app you were in stays in front.
+The same field asks. Whatever you type also shows as *Ask Garrick* at the top of the list; click it, or press Return when no project or thread matches, and the default assistant for clicking a thread opens at the workspace root with your words, as *Process the Inbox* opens with its phrase. Claude gets them typed in for you to send; Codex and cmux get them on the clipboard. The panel itself answers nothing and calls no model, unless the preview `ask` is on: then it answers in place (see [Ask](#ask)). A click in another app closes it, and so does Escape when the panel has the keyboard. The panel never brings Garrick forward, so the app you were in stays in front.
 
 The panel shows every project of the zone with its threads already open under it; the chevron beside a project folds them. Point at a row for its app icons, as in the menu's submenu, and click its name to open it the default way. *Process the Inbox* is at the top, and *Keep awake*, *Open Garrick* and *Quit* at the foot. A red *Something failed* in its header means what the red dot on the mark means.
 
@@ -157,11 +161,63 @@ Seeing where the pointer is needs no permission in macOS; only reading keys type
 
 The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. Rebuild the app with `make-app.sh` after updating Garrick to get the icon; the flag alone does not add it to an app built before.
 
+### Ask
+
+With the preview `ask` on, the panel's field answers you itself. Type "open Pricing in Claude", "park the launch video", "add call Dana to Acme for Friday" or "what's open", then click *Ask Garrick* or press Return when no project or thread matches. The answer shows under the field, one sentence and what was done, and the panel stays open for a follow-up such as "no, the other one". When the request opened something, the panel closes and that app comes forward. ⌘G in the app, and the hotkey when the menu is an icon rather than a panel, open a box of its own that does the same. With the preview off, the field opens your assistant with the words, as before.
+
+`ask.py`, beside `status.py`, does the asking. It keeps one assistant session warm, so a request answers in a second or two; it is replaced every three hours, and stops when nothing has been asked for three hours. The session sees the names and states of your projects and threads, read from their frontmatter, and nothing from inside a note. It proposes actions, and `ask.py` checks each one against that list before anything runs:
+
+- *open* a project or a thread, in the app you named (Claude, Codex, cmux or Finder) or your default for clicking a thread. The app opens it as a row's icon does.
+- *park* or *wake* a thread, or a project with no threads, and *add* a line to a zone's Todo list. These run through `page_action.py`, as the page's buttons do: committed in the zone's repository, logged in `page-actions.log`.
+
+It does nothing else. It does not tick lines, run jobs, change settings, read notes or send anything, and says so when asked.
+
+It runs as the [scheduled jobs](scheduled-jobs.md) do, so it needs `agent.py` from that extra in `System/jobs/`:
+
+- **The assistant** is `GARRICK_HARNESS`: Claude, by default, or Codex. Claude keeps one `claude -p` session open with no tools, no MCP servers and no transcript on disk. Codex has no warm session, so each request is one read-only `codex exec`, given the last six exchanges again, and takes longer.
+- **The tier** is `GARRICK_ASK_TIER`: `haiku` by default, or `sonnet` or `opus`. It names a tier, never a model.
+- **The limits** are the jobs' own. The session loads `headless-settings.json`, the deny profile. Each request is one call against `GARRICK_CAP_CALLS_HOUR`, `GARRICK_CAP_CALLS_DAY` and `GARRICK_CAP_COST_DAY`, and one line in the ledger as job `ask`, so the *Assistant calls* card counts it. A request past a cap is refused and calls nothing. A Claude session as a whole stops at `GARRICK_MAX_CALL_USD`, and the next request starts a new one. The app passes on the environment it started with. Opened from the Dock or at login, that is only what `launchctl setenv` has set, so the defaults hold unless you set these there.
+- **The record** is one line per request in `ask.log` in the jobs folder: the request, the answer, what was done, how long it took and the tokens.
+
+To try it from a terminal: `python3 System/status/ask.py --workspace ~/Garrick ask "what's open"`. `--list` prints what the session is given, and `stop` stops it.
+
+## In Obsidian
+
+`extras/status/obsidian/` is an Obsidian plugin that shows the page in an Obsidian tab, with the buttons the Mac app gives it. Desktop Obsidian only.
+
+1. Copy the folder into a vault inside your workspace, as `.obsidian/plugins/garrick-status/`: `main.js` and `manifest.json`. The vault can be the workspace root, a zone or a wiki.
+2. In Obsidian, *Settings › Community plugins*, switch on *Garrick*.
+3. Click Garrick's mark in the ribbon, or run *Garrick: Open* from the command palette.
+
+The plugin finds the workspace as the first folder at or above the vault that holds `System/rules.md` and `Zones/`. If your vault sits elsewhere, name the workspace in *Settings › Garrick*, which also takes the Python to run, where `status.py` is, and flags for it.
+
+What it adds, as the Mac app does:
+
+- **The page in a tab**, rebuilt when it is more than 30 minutes old, as the tab opens and each hour while it is open, and reloaded whenever it is rewritten. *Rebuild* and *Open in browser* sit at the tab's top right.
+- **Its buttons.** Copy, *Rebuild now*, *Reveal in Finder*, *Open in cmux*, *Open in Codex* and *Open in Claude* work as in the app, and so do the buttons of the preview `page-actions`, through `page_action.py`. Each says what it did in the page's own toast. The app's menu bar settings do nothing here.
+- **Links.** A note in this vault opens in a new tab beside the page. Anything else goes to macOS, as from a browser.
+- **Parked work out of the file list.** A thread whose note says `status: parked` is hidden in the file explorer, and so is a project whose hub says it or whose threads are all parked. It follows your notes as they change. Switch it off in *Settings › Garrick*.
+
+The page itself only knows how to reach the Mac app. So the plugin shows a copy of it, `status-obsidian.html` beside `status.html`, with a few lines at the top that give it the same bridge, and pass each message out through the web view's console under a word chosen at random when the plugin starts. Like the page, the copy is rebuilt output in `System/generated/`, never committed.
+
+To check it by hand after installing or updating: open the tab and click *Rebuild now*; the toast says *Rebuilding…* and the page's age resets. Copy a thread's phrase and paste it somewhere. Click a thread's note link and it opens in a tab. With `page-actions` on, tick a Todo line and untick it: each says what it did, and `page-actions.log` has two lines. Park a thread from its card and its folder leaves the file explorer; wake it and it comes back.
+
+## What the actions keep
+
+The buttons that change something (the preview `page-actions`) all go through `page_action.py`, from the Mac app, the [Obsidian plugin](#in-obsidian) or [Ask](#ask).
+
+- **A log.** Every request, done or refused, is one line in `page-actions.log` in the jobs folder: `~/Library/Logs/garrick-jobs/` on a Mac, or `GARRICK_JOBS_DIR`, the folder the [scheduled jobs](scheduled-jobs.md) use. A line holds the time, the verb, the fields that verb reads (the zone, the note, the line's key, the date, the job) and what came of it. The text of a new Todo line is cut to 60 characters, and nothing else a request carries is written. A request from Ask ends `(ask)`.
+- **A second click finds its line.** A line is named by a hash of its exact text, and giving it a date changes the text. Until the page rebuilds, a second click on the same row still carries the old name. For an hour, `page_action.py` remembers which old name became which new one, note by note, in `todo-rekeys.json` beside the log, so a second date, a tick or an undo lands on the line you meant. A line changed any other way is still refused, and the page rebuilds.
+- **Run now waits for a running job.** *Run now* on a job's strip starts the job through launchd. If the job still holds its lock, the folder `<job>.lock` that `job.py` keeps in the jobs folder, it is already running, and the button says so instead. A lock past the time its `until` file names belongs to a run that died, and the job starts.
+- **One file for how a thread opens.** `{"verb": "settings", "launchers": ["note", "cmux"], "default": "cmux"}` saves *Opening a thread* to `System/generated/status-settings.json`, so the Mac app and Obsidian agree: every way to open a thread with `true` or `false`, and the default for clicking a thread's name. The names are `note`, `finder`, `cmux`, `codex` and `claude`, and the default must be one switched on, or `note`. Like the page, the file is rebuilt output and is never committed.
+
+The app, or the plugin, rebuilds the page after every request.
+
 ## Buttons that copy, not act
 
 In a browser the page is a file, and a file cannot act on your workspace, so its buttons copy instead. Paste what a card copies to your assistant. The top row's circular arrow copies the command that rebuilds the page. It is absolute and quoted, so it runs from any folder, and it carries the flags the page was built with.
 
-Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself. That holds in the Mac app too, unless you switch on the [preview](#preview-features) `page-actions`, whose buttons tick, date, park and wake. There it can rebuild the page, which writes only the page, and open a cmux tab in a folder of your workspace, which writes nothing. It hands the folder to cmux the way Finder's *Open With* does, so it needs no access to cmux's controls and types nothing into the tab.
+Nothing on the page can change a file, and nothing it copies runs until you paste it somewhere yourself. That holds in the Mac app and in Obsidian too, unless you switch on the [preview](#preview-features) `page-actions`, whose buttons tick, date, park and wake, or `ask`. There it can rebuild the page, which writes only the page, and open a cmux tab in a folder of your workspace, which writes nothing. It hands the folder to cmux the way Finder's *Open With* does, so it needs no access to cmux's controls and types nothing into the tab.
 
 ## Reading the graph
 

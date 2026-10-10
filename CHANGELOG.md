@@ -4,6 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- An Obsidian plugin for the status page, in `extras/status/obsidian/`. It shows the page in an Obsidian tab with the buttons the Mac app gives it: Copy, *Rebuild now*, Finder, cmux, Codex and Claude, and the preview `page-actions` through `page_action.py`. It finds the workspace at or above the vault, or as named in its settings, and hides parked projects and threads in the file explorer. See [In Obsidian](docs/extras/status-page.md#in-obsidian).
+- The preview `ask`: the status app's panel field, and a box ⌘G opens, answer a request in plain words ("open Pricing in Claude", "park the launch video", "what's open") and act on it. `ask.py` keeps a warm assistant session on `GARRICK_HARNESS` and `GARRICK_ASK_TIER`, under the scheduled jobs' deny profile and caps. It sees only names and states, and what it proposes is checked and run through `page_action.py`. Off, the field opens your assistant, as before. See [Ask](docs/extras/status-page.md#ask).
+- `page-actions.log` in the jobs folder: one line for every request the page's buttons make, done or refused, naming only the fields its verb reads.
+- A `settings` request to `page_action.py`, which saves *Opening a thread* to `System/generated/status-settings.json`, so every viewer of the page can share it.
+- Edit › Cut, Paste, Undo and Redo in the status app, so ⌘V works in the Todo list's *Add* field and the panel's field. Safari's Web Inspector can open the app's page.
+
+### Fixed
+
+- A second click on a Todo row before the page rebuilt was refused: a date changes a line's key, and the row still carried the old one. `page_action.py` now follows a line it re-dated in the last hour, so a second date, a tick or an undo lands on it.
+- *Run now* said a job was running when its last run still held the lock, and the new run only skipped. It now says the job is already running.
+
 ## [0.14.0] - 2026-10-10
 
 A mail you forward from your own account is read by the people inside it: Outlook's unmarked forwards are understood, and your own addresses, listed under *Me*, carry mail without deciding whose it is.

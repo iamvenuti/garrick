@@ -280,16 +280,16 @@ class TestRunLock(ActionCase):
         pa.job_label, pa.kickstart = self._real
         super().tearDown()
 
-    def lock(self, until=None):
+    def lock(self, until=None, pid=None, started=None):
         lock = self.jobs / "whats-open.lock"
         lock.mkdir(parents=True)
         if until is not None:
-            (lock / "until").write_text("%d 4242\n" % until)
+            (lock / "until").write_text("%d %d%s\n" % (until, pid or 4242, " %d" % started if started else ""))
         return lock
 
     def test_a_held_lock_refuses(self):
         import time
-        self.lock(time.time() + 600)
+        self.lock(time.time() + 600, pid=os.getpid())                  # a job.py alive, within its time
         with self.assertRaisesRegex(pa.Refused, "whats-open is already running"):
             pa.run_job({"verb": "run", "job": "whats-open"})
         self.assertEqual([], self.started)
@@ -307,6 +307,36 @@ class TestRunLock(ActionCase):
         old = time.time() - pa.LOCK_HOLD - 60
         os.utime(lock, (old, old))
         self.assertFalse(pa.lock_held("whats-open"))
+
+    def test_job_py_decides_where_it_is_beside(self):
+        import time
+        lock = self.lock(time.time() - 60)
+        seen = []
+
+        class Job:
+            def lock_state(self, path):
+                seen.append(path)
+                return {"pid": 4242}
+        real = pa._JOB
+        pa._JOB = Job()
+        try:
+            self.assertTrue(pa.lock_held("whats-open"))                 # its rule, not the clock's
+            self.assertEqual([lock], seen)
+            self.assertFalse(pa.lock_held("whats-open", now=time.time()))   # given a time, the clock's
+            Job.lock_state = lambda self, path: 1 / 0
+            self.assertFalse(pa.lock_held("whats-open"))                # a rule that fails: the clock's
+        finally:
+            pa._JOB = real
+
+    @unittest.skipUnless(pa.job_py() is not None and hasattr(pa.job_py(), "holder"),
+                         "job.py with holder(): a live job.py holds its lock past its time")
+    def test_a_live_job_py_past_its_time_still_holds(self):
+        import time
+        started = pa.job_py().process_start(os.getpid())
+        self.lock(time.time() - 60, pid=os.getpid(), started=started)   # the time ran on through a sleep
+        with self.assertRaisesRegex(pa.Refused, "whats-open is already running"):
+            pa.run_job({"verb": "run", "job": "whats-open"})
+        self.assertEqual([], self.started)
 
     def test_the_lock_is_where_job_py_takes_it(self):
         sys.path.insert(0, str(REPO / "extras" / "jobs"))

@@ -87,6 +87,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 - A fault in `page_action.py` other than a refusal, such as a file it cannot read, now answers in JSON and is logged, instead of a traceback the app shows as "That did not work."
 - Ask refused every request for up to three hours after a Claude session spent its budget. The session is now stopped on any error, and the next request starts a new one.
 - Ask could start two servers at once, leaving one with its session running; a client that closed mid-answer stopped the server; and a server that never answered left the panel at "…". One server per workspace now holds a lock, a closed client costs only its answer, and the request and the app each stop waiting and say so.
+- *Run now* judged a job's lock by its time alone, so after the Mac slept it could start a job that was still running. It now asks `job.py`, where the jobs extra sits beside the page, and a live run holds its lock.
 - The Ask panel closed when an app it should have opened was missing, and opened apps switched off under *Opening a thread* in Settings. It now stays open unless something opened, and refuses an app switched off.
 
 ## [0.14.0] - 2026-10-10

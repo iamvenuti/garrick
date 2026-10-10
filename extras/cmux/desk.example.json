@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to System/desk.json in your workspace. Every key is optional; leave out what you do not change.",
+  "workspaces": {"Work": "Work", "Personal": "Personal", "neutral": "System"},
+  "skip": ["archive", "Archive", "Inbox"],
+  "aliases": {"pricing sheet": "Pricing"},
+  "agent": "claude",
+  "before_quit": [],
+  "socket_password_file": "~/Library/Logs/garrick-jobs/cmux-socket.password"
+}

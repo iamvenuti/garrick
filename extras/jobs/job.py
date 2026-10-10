@@ -4,6 +4,7 @@
     python3 job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] -- <command> [args...]
     python3 job.py status [<name>...]      every job's state, as JSON
     python3 job.py notify <title> <message>  send a line through the notifier
+    python3 job.py check-scripts <file>...   find job scripts that call an assistant directly
 
 The name is letters, digits, hyphens and underscores, and not `agent`. The
 scheduler (launchd, cron) runs this, and this runs the job. One place for
@@ -28,7 +29,11 @@ everything a run needs when nobody is watching it:
    several jobs overdue, can fail each other's sign-in. A run that waits its
    whole time limit for another assistant job is skipped with exit 75. Then
    a sign-in check (agent.py login), once more after five minutes if it
-   fails, and exit 4 with the run skipped if it fails again.
+   fails, and exit 4 with the run skipped if it fails again. A run that
+   exits 0 having added no line for the job to agent.py's ledger gets a line
+   in its log and `no_call` in its heartbeat: fine if it had nothing to ask,
+   but a job that runs `claude -p` or `codex exec` itself is held by no cap
+   and no deny profile, and this is how it shows.
 6. **An idle alarm.** A job that reports how much it did (agent.report_items,
    or `agent.py items`) and has done nothing for GARRICK_IDLE_DAYS days (7)
    gets a line in its log, `idle` in its heartbeat and a notice, repeated
@@ -64,7 +69,7 @@ What the status page reads, all in the jobs folder:
 
     <name>.heartbeat.json  the last run: job, started, finished, finished_ts,
                            exit, seconds, ok, quiet, reason, items, idle_days,
-                           idle, agent, failing_since
+                           idle, agent, no_call, failing_since
     <name>.lock/until      while a run holds it: "<until> <pid> <started>",
                            epoch seconds
     <name>.alert.json      while a job is failing: exit, since, alerted
@@ -73,7 +78,10 @@ What the status page reads, all in the jobs folder:
                            with `  quiet` before the closing `=====` when
                            the exit was quiet
 
-`job.py status` reads them for you.
+`job.py status` reads them for you. `job.py check-scripts` reads a job's
+scripts, or the plists that run them, for a line that runs `claude -p` or
+`codex exec` itself instead of going through agent.py, and exits 1 when it
+finds one.
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -83,6 +91,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import re
 import shlex
 import shutil
@@ -476,8 +485,76 @@ def status(folder: Optional[Path] = None, names: Optional[List[str]] = None) -> 
     return {"folder": str(folder), "assistant_lock": lock_state(folder / "agent.lock"), "jobs": jobs}
 
 
+# A line that starts an assistant itself: `claude -p` or `codex exec` in a
+# shell script, or the same two words as items of a Python list. What follows
+# a `#` is a comment and does not count.
+DIRECT_CALL = re.compile(r"""^[^#]*?(?:\b(claude)\s+(?:-p|--print)\b|\b(codex)\s+exec\b"""
+                         r"""|["'](claude)["']\s*,\s*["'](?:-p|--print)["']|["'](codex)["']\s*,\s*["']exec["'])""")
+
+
+def direct_calls(path: Path) -> List[str]:
+    """`<file>:<line>: ...` for each line of a job script that runs an
+    assistant without agent.py. Such a call loads no deny profile, counts
+    against no cap and is tied to one assistant. A plist is read for the
+    command it runs and the files that command names. agent.py, which builds
+    those commands, and this file, which describes them, are never findings."""
+    if path.name in ("agent.py", "job.py"):
+        return []
+    if path.suffix == ".plist":
+        try:
+            with path.open("rb") as f:
+                args = [str(a) for a in plistlib.load(f).get("ProgramArguments", [])]
+        except (OSError, ValueError, AttributeError) as exc:
+            return ["%s: could not be read as a plist (%s)" % (path, exc.__class__.__name__)]
+        found = []
+        if DIRECT_CALL.match(" ".join(args)):
+            found.append("%s: runs an assistant itself; run it through job.py and agent.py" % path)
+        for a in args:
+            if a.endswith((".sh", ".py", ".zsh", ".bash")) and Path(a).is_file():
+                found += direct_calls(Path(a))
+        return found
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return ["%s: could not be read (%s)" % (path, exc.__class__.__name__)]
+    found = []
+    for n, line in enumerate(text.splitlines(), 1):
+        m = DIRECT_CALL.match(line)
+        if m:
+            found.append("%s:%d: runs %s directly; call agent.py run instead"
+                         % (path, n, next(g for g in m.groups() if g)))
+    return found
+
+
+def check_scripts(paths: List[str]) -> int:
+    """0 when every file goes through agent.py, 1 when one does not or could
+    not be read: a file left unread is not a file found clean."""
+    found = []
+    for raw in paths:
+        found += direct_calls(Path(raw).expanduser())
+    for line in found:
+        print(line)
+    if not found:
+        print("job.py: %d file%s checked; every assistant call goes through agent.py"
+              % (len(paths), "" if len(paths) == 1 else "s"))
+    return 1 if found else 0
+
+
+def recorded_calls(name: str, since: float, now: float) -> int:
+    """How many lines agent.py's ledger gained for `name` from `since` on. A
+    call refused by a cap writes one too, so it counts."""
+    hours = (now - since) / 3600 + 0.1
+    return sum(1 for e in agent.read_ledger(agent.ledger_path(), now, hours)
+               if e.get("job") == name and e["ts"] >= since - 1)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "check-scripts" and "--" not in argv:
+        if len(argv) < 2:
+            print("usage: job.py check-scripts <script or plist>...", file=sys.stderr)
+            return agent.EXIT_USAGE
+        return check_scripts(argv[1:])
     if argv and argv[0] == "status" and "--" not in argv:
         problems = [agent.name_problem(n) for n in argv[1:] if agent.name_problem(n)]
         if problems:
@@ -496,7 +573,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if "--" not in argv:
         print("usage: job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] -- <command> [args...]\n"
               "       job.py status [<name>...]\n"
-              "       job.py notify <title> <message>", file=sys.stderr)
+              "       job.py notify <title> <message>\n"
+              "       job.py check-scripts <script or plist>...", file=sys.stderr)
         return agent.EXIT_USAGE
     split = argv.index("--")
     ap = argparse.ArgumentParser(prog="job.py")
@@ -611,12 +689,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     notify("idle", "Job idle", "%s has run cleanly but done nothing for %d days: its input has "
                            "stopped arriving, or it should be stopped." % (name, idle), log, name, code)
                     idle_alert.write_text("%d\n" % now, encoding="utf-8")
+            no_call = bool(args.agent) and code == 0 and recorded_calls(name, start, time.time()) == 0
+            if no_call:
+                log.write("job: %s exited 0 and recorded no assistant call. Fine if it had nothing to ask; "
+                          "otherwise it runs claude or codex around agent.py, where no cap or deny profile "
+                          "holds it, and job.py check-scripts finds the line.\n" % name)
             log.write("===== %s  %s  exit %d  (%ds)%s =====\n\n"
                       % (stamp(now), name, code, seconds, "  quiet" if is_quiet else ""))
             write_json(beat, {"job": name, "started": stamp(start), "finished": stamp(now),
                               "finished_ts": round(now, 3), "exit": code, "seconds": round(seconds),
                               "ok": ok, "quiet": is_quiet, "reason": reason, "items": items,
-                              "idle_days": idle, "idle": is_idle, "agent": bool(args.agent),
+                              "idle_days": idle, "idle": is_idle, "agent": bool(args.agent), "no_call": no_call,
                               "failing_since": stamp(failing_since) if failing_since else None})
             return code
     finally:

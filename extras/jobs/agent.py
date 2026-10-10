@@ -25,7 +25,9 @@ GARRICK_CODEX_MODEL_<TIER>, or its own default when that is unset.
 (`--allow`) and refuses any other tool that needs permission, editing and
 writing files among them. On top of it, every call loads
 `headless-settings.json`, beside this file, whose deny list names tools that
-send, share, delete or reach the web, and a deny beats an allow. Its
+send, share, delete or reach the web, and a deny beats an allow. The list
+may grow, but a profile that has lost any entry in CORE_DENY is refused, so
+an edit that trims it cannot quietly let a job send. Its
 shell rules match a command by how it starts, so they are best-effort. The
 call also loads only your user and project settings, never a project's
 `.claude/settings.local.json`: allow rules kept there for your own sessions
@@ -56,9 +58,9 @@ its own steps after the call. job.py's watchdog bounds the whole run either way.
 
 Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached and
 nothing was called, or the call passed GARRICK_MAX_CALL_USD and was stopped),
-64 (usage, or Claude's deny profile is missing or not JSON, and nothing was
-called), 124 (the call passed its --timeout), 127 (the assistant is not
-installed).
+64 (usage, or Claude's deny profile is missing, not JSON, or no longer denies
+everything in CORE_DENY, and nothing was called), 124 (the call passed its
+--timeout), 127 (the assistant is not installed).
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -96,6 +98,16 @@ JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
 ITEMS_LINE = re.compile(r"^ITEMS (\d+)\s*$", re.M)
 MAX_LOG_BYTES = 1024 * 1024
 LEDGER_DAYS = 60  # longer than every cap, a day at most, and the status page's fourteen days
+# The deny entries the profile must never lose: without one of them an
+# unattended run could send, share or delete. The shipped profile denies more.
+CORE_DENY = (
+    "mcp__claude_ai_Gmail__send_message", "mcp__claude_ai_Gmail__reply", "mcp__claude_ai_Gmail__forward",
+    "mcp__claude_ai_Gmail__trash_message", "mcp__claude_ai_Gmail__trash_thread",
+    "mcp__claude_ai_Google_Calendar__create_event", "mcp__claude_ai_Google_Calendar__delete_event",
+    "mcp__claude_ai_Google_Drive__share_file", "mcp__claude_ai_Google_Drive__trash_file",
+    "mcp__claude_ai_Notion__notion-update-page", "mcp__claude_ai_Notion__notion-create-comment",
+    "Bash(curl:*)", "Bash(git push:*)", "Bash(rm:*)",
+)
 
 
 # --------------------------------------------------------------------------- settings
@@ -280,14 +292,21 @@ def parse_claude_output(stdout: str) -> dict:
 
 def profile_problem(path: Path) -> Optional[str]:
     """Why the deny profile cannot be used, or None. Given a settings file that
-    is not there, Claude carries on without its deny list, so the runner
-    checks first."""
+    is not there, Claude carries on without its deny list, and given one that
+    has lost an entry, without that entry, so the runner checks first."""
     try:
-        json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return "is missing"
     except (OSError, ValueError):
         return "is not readable JSON"
+    permissions = data.get("permissions") if isinstance(data, dict) else None
+    deny = permissions.get("deny") if isinstance(permissions, dict) else None
+    if not isinstance(deny, list):
+        return "has no deny list (permissions.deny)"
+    missing = [t for t in CORE_DENY if t not in deny]
+    if missing:
+        return "no longer denies %s" % ", ".join(missing)
     return None
 
 
@@ -381,7 +400,8 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
     problem = profile_problem(profile) if h == "claude" else None
     if problem:
         print("agent: the deny profile %s %s, so nothing was called. Copy headless-settings.json "
-              "from Garrick's extras/jobs/ beside agent.py." % (profile, problem), file=sys.stderr)
+              "from Garrick's extras/jobs/ beside agent.py, or put those entries back." % (profile, problem),
+              file=sys.stderr)
         return EXIT_USAGE, ""
     job = job or os.environ.get("GARRICK_JOB") or "manual"
     problem = name_problem(job)

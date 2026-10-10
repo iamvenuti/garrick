@@ -67,7 +67,15 @@ To stop using it, remove the entries.
 
 ## Check it
 
-From the repository:
+To see whether it is loaded, without changing anything:
+
+```sh
+python3 /path/to/garrick/extras/hooks/zone_guard.py --check
+```
+
+It reads `~/.claude/settings.json` and `~/.codex/hooks.json` and says, for each assistant, whether the guard runs on the events above, for every editing tool, from a `zone_guard.py` that exists. A guard you moved, or a matcher that names `Edit|Write` and leaves out the other two, is named. An assistant with no folder in your home is skipped. It exits 0 when every assistant found has the guard, and 1 when one does not or none was found. It cannot see whether Codex trusts the hook: run `/hooks` in Codex for that.
+
+To run its tests, from the repository:
 
 ```sh
 python3 -m unittest discover -s tests -p test_zone_guard.py

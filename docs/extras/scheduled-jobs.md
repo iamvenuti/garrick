@@ -32,6 +32,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
    The brief lands in `~/Library/Logs/garrick-jobs/briefs/`, with the log and the heartbeat beside it.
 3. **Schedule it.** Copy `System/jobs/launchd/garrick.whats-open.plist` to `~/Library/LaunchAgents/` and edit the copy. The plist is XML, so it writes `<you>` as `&lt;you&gt;`: search for that. If your workspace is not `~/Garrick`, first replace each `/Users/&lt;you&gt;/Garrick` with its full path. Then replace every other `&lt;you&gt;` with your macOS user name, and set `GARRICK_HARNESS` to `claude` or `codex`. Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist`. If a run fails before `job.py` can write its own log, as it does when a path is left wrong, the error goes to `whats-open.launchd.log` beside that log. launchd does not create the folder, which is why step 2 comes first. If not even that file appears, `launchctl print gui/$(id -u)/garrick.whats-open` shows how launchd last ran the job.
 4. **See what it did**: `python3 System/jobs/agent.py ledger` lists the last 24 hours of calls, by job, with their cost and any tool the assistant was refused.
+5. **Check your own jobs' scripts** once you write some: `python3 System/jobs/job.py check-scripts ~/Library/LaunchAgents/garrick.*.plist` reads each plist, and each script it runs, for a line that runs `claude -p` or `codex exec` itself. It prints the file and line of each, and exits 1 when it finds one. Such a call loads no deny profile, counts against no cap and works with one assistant only. Name scripts instead of plists to check them directly.
 
 The example reads one zone per assistant call, so no single turn ever holds two zones, and writes one brief per zone outside the workspace. A zone with nothing open costs no call.
 
@@ -41,6 +42,7 @@ With nobody watching, a job gets the least it needs, and Claude is denied the wa
 
 - **An allow list per call.** A job names the tools it needs: `--allow Read`, `--allow Grep`. Claude refuses the rest: with nobody to ask, a tool that needs permission runs only when the list names it or your own settings allow it, as below. A job that must write files names the tools for it: `--allow Edit`, `--allow Write`. The runner sets the permission mode to `default` on every call, so a default mode in your own settings, such as accepting edits, does not reach a job.
 - **A deny list on every Claude call.** `headless-settings.json` denies sending, replying, forwarding, sharing and deleting through the Gmail, Google Calendar, Google Drive and Notion connectors, as claude.ai names them; publishing; fetching web pages and searching the web; shell commands that start with `curl`, `ssh`, `git push`, `rm` and a few others; publishing a Claude document or starting another agent session; the browser and computer-use servers; and edits by Claude's file tools under `System/`, inside `.git/`, to the assistants' own settings or to your launchd jobs. A deny beats an allow, so a tool on the list is refused even when a job lists it by mistake or your own settings allow it. If you have other connectors, add their sending tools to the list: each is named `mcp__<server>__<tool>`.
+- **A core the list must keep.** `agent.py` names, in `CORE_DENY`, the entries no profile may lose: sending, replying and forwarding mail, binning mail and Drive files, making and deleting calendar events, sharing a Drive file, editing a Notion page or commenting on one, and shell commands that start with `curl`, `git push` or `rm`. A profile that lacks any of them is refused like a missing one: exit 64, a line naming what it lacks, and no call. Add to the list freely; take one of these out and every Claude job stops until it is back. Keep them even for a connector you don't use, since a deny costs nothing.
 - **The shell rules are best-effort.** Each matches a command by how it starts, so `git -C . push` or `/bin/rm` gets past it, and the edit rules do not cover a shell command that writes a file. A job allowed `Bash` can do whatever a command can: allow it only to a job that needs it.
 - **Only user and project settings.** Each call loads `--setting-sources user,project`. Allow rules you saved for your own sessions in a project's `.claude/settings.local.json` would otherwise apply to the job too. Tested with Claude Code 2.1.287: a job allowed only `Read`, started in a folder whose local settings allowed `python3`, ran `python3`; with `user,project` it was refused. Loading `user` alone goes too far: the job no longer reads the workspace's `AGENTS.md`. Allow rules in `~/.claude/settings.json` and in the workspace's `.claude/settings.json` do reach a job; only the deny list overrides them.
 
@@ -92,6 +94,7 @@ python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEM
 - **Name it in letters, digits, hyphens and underscores**, as in `whats-open`. Its log, heartbeat and lock files are named after it, and `agent` is taken by the lock that all assistant jobs share.
 - **End the prompt with a closing line to print**, and check for it. A run that stopped early must not look like a run that found nothing.
 - **Report how much it handled.** A job that runs cleanly for a week and does nothing gets flagged in its log and heartbeat, and with a notifier set, you are told.
+- **Call the assistant only through `agent.py`.** A job run with `--agent` that exits 0 without adding a line for itself to the ledger gets a line in its log saying so, and `no_call` in its heartbeat. That is fine when it had nothing to ask, as the example does for a zone with nothing open. Every run, though, means it reaches the assistant some other way, where no cap or deny profile holds it: `job.py check-scripts` finds the line.
 - **One zone per call** when the job reads zone material. The [walls](../principles.md) still apply to anything it writes.
 - **Write outside the zones**, or into an inbox for `intake` to sort. A job decides nothing a session would have asked you about.
 
@@ -103,7 +106,7 @@ python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEM
 | 4 | The assistant could not sign in, twice, five minutes apart; the job did not run |
 | 6 | A connector the job needs is missing |
 | 8 | A spend limit was reached and nothing was called, or one call passed `GARRICK_MAX_CALL_USD` and was stopped |
-| 64 | The command was wrong, or Claude's deny profile is missing or not JSON; nothing was called |
+| 64 | The command was wrong, or Claude's deny profile is missing, not JSON, or has lost an entry in `CORE_DENY`; nothing was called |
 | 75 | The previous run still holds the lock, or another assistant job held the shared one for this run's whole time limit; this one was skipped |
 | 124 | The watchdog stopped a run that went past its time limit, 25 minutes by default, or a call passed its `--timeout` |
 | 127 | The job's command could not be started, or the assistant is not installed |
@@ -164,7 +167,7 @@ Everything a job leaves is in the jobs folder, named after the job. `python3 Sys
 
 | File | What it holds |
 |---|---|
-| `<job>.heartbeat.json` | The last run: `job`, `started`, `finished`, `finished_ts`, `exit`, `seconds`, `ok` (exit 0 or quiet), `quiet`, `reason` (the words for a failure, or empty), `items`, `idle_days`, `idle`, `agent` (whether it ran with `--agent`), `failing_since` |
+| `<job>.heartbeat.json` | The last run: `job`, `started`, `finished`, `finished_ts`, `exit`, `seconds`, `ok` (exit 0 or quiet), `quiet`, `reason` (the words for a failure, or empty), `items`, `idle_days`, `idle`, `agent` (whether it ran with `--agent`), `no_call` (an `--agent` run that exited 0 and added no line to the ledger), `failing_since` |
 | `<job>.lock/` | Present while a run holds it. Its `until` file reads `<until> <pid> <started>`, in seconds since 1970. A lock past its `until`, or whose process has gone, is held by nobody |
 | `<job>.alert.json` | Present while the job is failing: `exit`, `since` (the first failed run) and `alerted` (the last notice) |
 | `<job>.idle-alert` | When the last idle notice went |

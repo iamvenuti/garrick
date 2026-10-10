@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check a Garrick workspace against every rule a machine can check.
 
-    python3 System/tools/check.py [--root PATH] [--ear] [--json]
+    python3 System/tools/check.py [--root PATH] [--ear] [--json] [--quick]
     python3 System/tools/check.py --staged --walls-only      (the pre-commit hook)
     python3 System/tools/check.py --install-hooks
     python3 System/tools/check.py --version                  (which Garrick, for a bug report)
@@ -11,7 +11,10 @@ count. `--ear` gives at most three short sentences for reading aloud.
 `--json` is for other programs. Exit code 1 when there is any error, 2 when
 no workspace is found.
 
-`--walls-only` runs the walls check alone. `--staged` checks only the files
+`--quick` runs every check but the comparison of wording with the meetings
+(does a project file, person page or Knowledge page repeat one?), which is
+most of the time a full check takes on a large workspace. `--walls-only` runs
+the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and
 prints one line per wall broken: it is what each zone's pre-commit hook runs.
 `--install-hooks` writes that hook into every zone's repository.
@@ -40,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
+    SKILL_FOLDERS,
     VERSION_STAMP,
     MEDIA_EXTS,
     WALL_HOOK_MARK,
@@ -48,6 +52,7 @@ from garrick_lib import (  # noqa: E402
     is_domain,
     is_speakable,
     is_webmail,
+    fingerprint,
     load_context,
     mail_attachments,
     parse_frontmatter,
@@ -70,15 +75,20 @@ WARNING = "warning"
 CHECKS = [
     ("claude-md", "Instruction files"),
     ("instructions", "Instruction drift"),
+    ("settings", "Check settings"),
     ("placeholders", "Unfinished install"),
     ("context", "Context"),
     ("zones", "Zones"),
     ("hooks", "Commit hooks"),
+    ("skills", "Skills"),
     ("names", "Names"),
     ("projects", "Projects"),
     ("threads", "Threads"),
     ("resume", "Resume points"),
     ("deliverables", "Deliverables"),
+    ("anonymous", "Anonymous projects"),
+    ("todo", "To-do lists"),
+    ("links", "Links"),
     ("meetings", "Meeting pages"),
     ("people", "Person pages"),
     ("walls", "Walls"),
@@ -92,18 +102,23 @@ CHECKS = [
 
 # How a group of findings is said aloud when there is more than one.
 EAR_GROUP = {
-    "updates": "{n} files wait for an update to be merged",
+    "updates": "{n} files Garrick ships need attention",
     "claude-md": "{n} CLAUDE files could switch off the instructions",
     "instructions": "the instruction files have drifted in {n} places",
+    "settings": "the check settings have {n} problems",
     "placeholders": "{n} files still hold installer placeholders",
     "context": "the context file has {n} problems",
     "zones": "the zone folders have {n} gaps",
     "hooks": "git skips the hooks of {n} repositories",
+    "skills": "{n} things need fixing in the skills",
     "names": "{n} names are hard to say or sound alike",
     "projects": "{n} things need fixing in project hub notes",
     "threads": "{n} things need fixing in thread notes",
-    "resume": "{n} resume points name files that are not there",
+    "resume": "{n} resume points are out of date or name files that are not there",
     "deliverables": "{n} deliverables lack their date",
+    "anonymous": "{n} files in anonymous projects name a party",
+    "todo": "the to-do lists have {n} problems",
+    "links": "{n} links cross a boundary or lead somewhere fragile",
     "meetings": "{n} things need fixing on meeting pages",
     "people": "{n} things need fixing on person pages",
     "walls": "the walls were crossed in {n} places",
@@ -146,6 +161,11 @@ class Workspace:
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
     git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
+    settings: dict = field(default_factory=dict)  # System/garrick-checks.json, as far as it reads
+    settings_problems: List[str] = field(default_factory=list)  # what in it could not be read
+    quick: bool = False  # --quick: leave out the comparison of wording
+    zone_notes: Optional[List[Tuple[Path, str]]] = None  # every live note in the zones, read on first use
+    forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
 
 
 # ---------------------------------------------------------------------------
@@ -188,8 +208,8 @@ def visible_dirs(folder: Path) -> List[Path]:
 
 
 def project_dirs(zone: Path) -> List[Path]:
-    """A zone's projects: every visible folder but its Inbox."""
-    return [p for p in visible_dirs(zone) if p.name != INBOX]
+    """A zone's projects: every visible folder but its Inbox and an archive."""
+    return [p for p in visible_dirs(zone) if p.name != INBOX and p.name.lower() != "archive"]
 
 
 def as_list(value) -> List[str]:
@@ -337,15 +357,95 @@ def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Settings
+#
+# System/garrick-checks.json switches on the checks that only some workspaces
+# want, and holds what a check cannot know by itself. It is optional: without
+# it every check runs as Garrick ships it. Every key is optional too.
+# ---------------------------------------------------------------------------
+
+SETTINGS = ("System", "garrick-checks.json")
+SETTING_KINDS = {
+    "word-budgets": dict,    # {"root": words, "other": words} for the AGENTS.md files
+    "parent-links": list,    # zones whose notes each carry `parent:`, a link to their thread or hub
+    "note-links": list,      # zones whose hub and thread notes name other notes as links, never as code
+    "todo-labels": list,     # zones whose every open action opens with its thread's link
+    "retired-skills": dict,  # retired skill -> the skill that does its job now
+    "raw-accepted": dict,    # raw record -> the last commit in which a change to it was accepted
+    "as-shipped": list,      # path prefixes of files Garrick ships that are never changed here
+}
+AS_SHIPPED = ["System/tools/"]
+
+
+def load_settings(root: Path) -> Tuple[dict, List[str]]:
+    """(settings, problems). Settings of the wrong kind are left out, and a
+    file that does not read gives none: the check then runs as shipped."""
+    path = root.joinpath(*SETTINGS)
+    if not path.is_file():
+        return {}, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {}, ["does not read as JSON (%s); every check runs as shipped until it does" % exc]
+    if not isinstance(data, dict):
+        return {}, ["should hold one JSON object; every check runs as shipped until it does"]
+    out, problems = {}, []
+    for key, value in data.items():
+        kind = SETTING_KINDS.get(key)
+        if kind is None:
+            problems.append("`%s` is not a setting; the ones there are: %s" % (key, ", ".join(SETTING_KINDS)))
+        elif not isinstance(value, kind) or (kind is list and not all(isinstance(v, str) for v in value)):
+            problems.append("`%s` should be %s" % (key, "a list of names" if kind is list else "an object"))
+        else:
+            out[key] = value
+    return out, problems
+
+
+def check_settings(ws: Workspace) -> List[Finding]:
+    """The settings file reads, and what it names exists."""
+    r = "/".join(SETTINGS)
+    out = [Finding(ERROR, "settings", r, p, "The check settings cannot be read") for p in ws.settings_problems]
+    zones = {z.name for z in ws.zones}
+    for key in ("parent-links", "note-links", "todo-labels"):
+        for name in ws.settings.get(key, []):
+            if name not in zones:
+                out.append(Finding(WARNING, "settings", r, "`%s` names zone %s, which has no folder under Zones/" % (key, name),
+                                   "The check settings name a zone that does not exist"))
+    budgets = ws.settings.get("word-budgets", {})
+    for key, value in budgets.items():
+        if key not in ("root", "other") or not isinstance(value, int) or value <= 0:
+            out.append(Finding(WARNING, "settings", r,
+                               "`word-budgets` takes `root` and `other`, each a number of words; `%s` is left out" % key,
+                               "A word budget in the check settings cannot be read"))
+    for key in ("retired-skills", "raw-accepted"):
+        for name, value in ws.settings.get(key, {}).items():
+            if not isinstance(value, str) or not value.strip():
+                out.append(Finding(WARNING, "settings", r, "`%s` gives %s no value" % (key, name),
+                                   "A line in the check settings has no value"))
+    return out
+
+
+def setting_zones(ws: Workspace, key: str) -> List[Path]:
+    names = set(ws.settings.get(key, []))
+    return [z for z in ws.zones if z.name in names]
+
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
 def discover(root: Path) -> Workspace:
     ws = Workspace(root=root, context=load_context(root))
+    ws.settings, ws.settings_problems = load_settings(root)
     ws.zones = visible_dirs(root / "Zones")
     for zone in ws.zones:
         for project in project_dirs(zone):
             ws.projects.append((project, parse_frontmatter(project / (project.name + ".md"))))
+    # A project about the workspace itself may live in System/, in no zone.
+    for folder in visible_dirs(root / "System"):
+        fm = parse_frontmatter(folder / (folder.name + ".md"))
+        if fm.get("type") == "project":
+            ws.projects.append((folder, fm))
     wikis = root / "Wikis"
     if wikis.is_dir():
         for path in walk_files(wikis):
@@ -405,12 +505,27 @@ def check_instructions(ws: Workspace) -> List[Finding]:
     """An AGENTS.md that grows, a sentence copied between instruction files, or a
     hand-kept list of skills that no longer matches the folder: each one drifts."""
     out = []
+    # Every repository opens with an AGENTS.md: the root, and each wiki. The
+    # zones are checked with the rest of a zone.
+    wikis = ws.root / "Wikis"
+    needed = [ws.root] + ([wikis] if (wikis / ".git").exists() else [])
+    needed += [w for w in visible_dirs(wikis) if w.name in ("Meetings", "Knowledge") or (w / ".git").exists()]
+    for folder in needed:
+        if not (folder / "AGENTS.md").is_file():
+            where = rel(ws, folder) if folder != ws.root else "the workspace root"
+            out.append(Finding(ERROR, "instructions", rel(ws, folder / "AGENTS.md"),
+                               "missing; an assistant started in %s gets no instructions" % where,
+                               "An instruction file is missing"))
     files = instruction_files(ws)
     texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in files}
+    budgets = ws.settings.get("word-budgets", {})
     for f, text in texts.items():
         if f.name != "AGENTS.md":
             continue
         budget = WORD_BUDGET_ROOT if f.parent == ws.root else WORD_BUDGET_OTHER
+        wanted = budgets.get("root" if f.parent == ws.root else "other")
+        if isinstance(wanted, int) and wanted > 0:
+            budget = wanted
         words = len(text.split())
         if words > budget:
             out.append(Finding(WARNING, "instructions", rel(ws, f),
@@ -439,6 +554,29 @@ def check_instructions(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "instructions", rel(ws, f),
                                "lists skills but not %s; list the folder instead of naming them" % ", ".join(sorted(skills - named)),
                                "An instruction file lists skills that no longer match the folder"))
+    # A zone's AGENTS.md that names its projects' hub notes names every one
+    # of them, and only notes that exist.
+    for zone in ws.zones:
+        f = zone / "AGENTS.md"
+        text = texts.get(f)
+        if not text:
+            continue
+        projects = [p.name for p in project_dirs(zone) if (p / (p.name + ".md")).is_file()]
+        listed = re.findall(r"`([^`/]+)/[^`]*\.md`", text)
+        if not any(name in projects for name in listed):
+            continue  # this zone keeps no list of its projects
+        for name in projects:
+            if name not in listed:
+                out.append(Finding(WARNING, "instructions", rel(ws, f),
+                                   "lists project hub notes but not %s/%s.md; list the folder instead of naming them" % (name, name),
+                                   "The %s instructions list projects that no longer match the folder" % zone.name))
+        for m in re.finditer(r"`([^`/]+/[^`]*\.md)`", text):
+            path = m.group(1)
+            if path.split("/")[0] in {"..", "System", "Zones", "Wikis"} | {z.name for z in ws.zones}:
+                continue  # a path from another folder, not one of this zone's notes
+            if not (zone / path).exists():
+                out.append(Finding(WARNING, "instructions", rel(ws, f), "lists %s, which does not exist" % path,
+                                   "The %s instructions name a note that is not there" % zone.name))
     return out
 
 
@@ -514,6 +652,27 @@ def check_context(ws: Workspace) -> List[Finding]:
         if listed and zone.name not in listed:
             out.append(Finding(WARNING, "context", ctx_path, "zone %s is not in the Zones table" % zone.name,
                                "The %s zone is missing from the context file" % zone.name))
+    # One name, two tags: the same organisation in two roles. Saying its name
+    # never says which, so only a wall keeps the two apart in writing.
+    by_name: Dict[str, List[str]] = {}
+    for tag, entry in sorted(parties.items()):
+        key = " ".join(words(entry.get("party") or ""))
+        if key:
+            by_name.setdefault(key, []).append(tag)
+    for tags in by_name.values():
+        for i, a in enumerate(tags):
+            for b in tags[i + 1:]:
+                if not walled(ws.context, a, b):
+                    name = parties[a].get("party") or a
+                    out.append(Finding(WARNING, "context", ctx_path,
+                                       "`%s` and `%s` are both %s, with no wall between them; add one, or the name "
+                                       "alone can carry one role's material into the other's" % (a, b, name.strip("* ")),
+                                       "Two parties share a name and no wall"))
+    text = read_text(ws.root / ctx_path) or ""
+    if not re.search(r"(?m)^## Aliases\s*$", text):
+        out.append(Finding(WARNING, "context", ctx_path,
+                           "no `## Aliases` table (| Heard | Means |); names that arrive mangled by dictation have nothing to match",
+                           "The context file has no aliases table"))
     return out
 
 
@@ -596,6 +755,93 @@ def check_hooks(ws: Workspace) -> List[Finding]:
     return out
 
 
+MODEL_VERSION_RE = re.compile(r"\d")
+VENDORED = "VENDORED.md"
+
+
+def skill_repos(ws: Workspace) -> List[Path]:
+    """The folders an assistant's session can start in and look up from for
+    skills: the root, each zone, and the wikis' repository or repositories."""
+    wikis = ws.root / "Wikis"
+    out = [ws.root] + list(ws.zones)
+    out += [w for w in [wikis] + visible_dirs(wikis) if (w / ".git").exists()]
+    return out
+
+
+def _same(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def check_skills(ws: Workspace) -> List[Finding]:
+    """Both assistants find every skill in System/skills from wherever a
+    session starts, through the repository's skill link or the user's own;
+    a retired skill stays retired; a skill names a model by tier, not version;
+    a skill copied from elsewhere names the commit it came from."""
+    out = []
+    folder = ws.root / "System" / "skills"
+    skills = sorted(p.parent.name for p in folder.glob("*/SKILL.md"))
+    home = Path.home()
+    for repo in skill_repos(ws):
+        where = rel(ws, repo) if repo != ws.root else "the workspace root"
+        for f in SKILL_FOLDERS:
+            missing = [s for s in skills
+                       if not (_same(repo / f / "skills" / s, folder / s) or _same(home / f / "skills" / s, folder / s))]
+            if missing:
+                out.append(Finding(WARNING, "skills", rel(ws, repo / f / "skills"),
+                                   "a session started in %s finds no %s; link `%s/skills` to System/skills"
+                                   % (where, ", ".join(missing), f),
+                                   "An assistant cannot find some skills"))
+        # A repository with skills of its own shows the same ones to both assistants.
+        seen = [{p.name for p in (repo / f / "skills").iterdir() if (p / "SKILL.md").is_file()}
+                if (repo / f / "skills").is_dir() else None for f in SKILL_FOLDERS]
+        if all(s is not None for s in seen) and len({frozenset(s) for s in seen}) > 1:
+            only = sorted(set.union(*seen) - set.intersection(*seen))
+            out.append(Finding(WARNING, "skills", rel(ws, repo),
+                               "%s show different skills (only in one: %s); point one at the other"
+                               % (" and ".join("`%s/skills`" % f for f in SKILL_FOLDERS), ", ".join(only)),
+                               "The two assistants see different skills"))
+    retired = {k: v for k, v in ws.settings.get("retired-skills", {}).items() if isinstance(v, str)}
+    if retired:
+        live = [ws.root / p for p in ROOT_INSTRUCTIONS] + [z / "AGENTS.md" for z in ws.zones]
+        for sub in ("skills", "templates", "tools"):
+            live += [p for p in walk_files(ws.root / "System" / sub) if p.suffix in (".md", ".py", ".sh")]
+        texts = [(p, read_text(p) or "") for p in live if p.is_file()]
+        for name, by in sorted(retired.items()):
+            if (folder / name).exists():
+                out.append(Finding(ERROR, "skills", rel(ws, folder / name),
+                                   "is back; it was retired for `%s`" % by, "A retired skill is back"))
+            for f in SKILL_FOLDERS:
+                link = home / f / "skills" / name
+                if os.path.lexists(link):
+                    out.append(Finding(WARNING, "skills", str(link),
+                                       "still links the retired skill %s; remove the link" % name,
+                                       "A retired skill is still linked"))
+            pattern = re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(name))
+            for p, text in texts:
+                hit = next((i for i, line in enumerate(text.splitlines(), 1)
+                            if pattern.search(line) and "retired" not in line.lower()), None)
+                if hit:
+                    out.append(Finding(WARNING, "skills", "%s:%d" % (rel(ws, p), hit),
+                                       "still sends work to `%s`, which was retired; point it at `%s`" % (name, by),
+                                       "An instruction still names a retired skill"))
+    for s in skills:
+        model = parse_frontmatter(folder / s / "SKILL.md").get("model")
+        if isinstance(model, str) and MODEL_VERSION_RE.search(model):
+            out.append(Finding(WARNING, "skills", "System/skills/%s/SKILL.md" % s,
+                               "`model` is %s, a version; name a tier, such as sonnet or opus, so the skill "
+                               "follows each new release" % model,
+                               "The %s skill is pinned to one model version" % s))
+        vendored = folder / s / VENDORED
+        if vendored.is_file() and not re.search(r"Commit:\s*`?[0-9a-f]{7,40}\b", read_text(vendored) or ""):
+            out.append(Finding(WARNING, "skills", rel(ws, vendored),
+                               "names no source commit (`Commit: <hash>`); without it nobody can tell what to update from",
+                               "A copied skill does not say where it came from"))
+    return out
+
+
 def _check_siblings(ws: Workspace, folders: List[Path], level: str, out: List[Finding]) -> None:
     for folder in folders:
         ok, why = is_speakable(folder.name)
@@ -656,20 +902,60 @@ def bad_status(fm: dict, allowed: Tuple[str, ...]) -> Optional[str]:
     return "`status` is %r, should be %s" % (value, " or ".join(", ".join(allowed).rsplit(", ", 1)))
 
 
+def in_system(ws: Workspace, project: Path) -> bool:
+    """A project about the workspace itself, kept in System/ rather than a zone."""
+    return project.parent == ws.root / "System"
+
+
+def renamed_note(folder: Path) -> str:
+    """When `<Name>.md` is missing but `<Name>-v2.md` (or later) is there, a
+    hint saying so: hub and thread notes are found by their exact name."""
+    found = sorted(p.name for p in folder.glob("*.md") if re.fullmatch(re.escape(folder.name) + r"-v\d+\.md", p.name))
+    return "; %s is there, but these notes are found by name, so rename it back" % found[-1] if found else ""
+
+
+def own_resume(text: str) -> bool:
+    """Does a hub hold the project's resume point itself, as a project that
+    is one thread does: a `### Resume here` block, or its `### Outcome`?"""
+    return any(l.strip().lower() in ("### resume here", "### outcome") for l in text.splitlines())
+
+
+def link_names(text: str) -> set:
+    """The last part of every wikilink in `text`, lower-cased, without .md."""
+    out = set()
+    for m in WIKILINK_RE.finditer(text):
+        target = m.group(1).split("|", 1)[0].split("#", 1)[0].strip().rstrip("\\")
+        if target:
+            out.add(_strip_md(tuple(target.split("/")))[-1].strip().lower())
+    return out
+
+
+def section(text: str, heading: str) -> str:
+    """The body of a `## <heading>` section, up to the next `## ` heading."""
+    m = re.search(r"(?ms)^## %s[ \t]*$(.*?)(?=^## |\Z)" % re.escape(heading), text)
+    return m.group(1) if m else ""
+
+
+LAYOUTS = ("thread-first",)
+# The only folders a thread-first project keeps outside its threads.
+THREAD_FIRST_ALLOWED = {"threads", "archive"}
+
+
 def check_projects(ws: Workspace) -> List[Finding]:
     out = []
     for project, fm in ws.projects:
         hub = project / (project.name + ".md")
         r = rel(ws, hub)
+        system = in_system(ws, project)
         spoken = "%s, %s" % (project.parent.name, project.name)
         if not hub.is_file():
-            out.append(Finding(ERROR, "projects", rel(ws, project), "no hub note %s.md" % project.name,
+            out.append(Finding(ERROR, "projects", rel(ws, project), "no hub note %s.md%s" % (project.name, renamed_note(project)),
                                "Project %s has no hub note" % spoken))
             continue
         if fm.get("type") != "project":
             out.append(Finding(ERROR, "projects", r, "frontmatter `type` is %r, should be project" % fm.get("type"),
                                "The %s hub note is not marked as a project" % project.name))
-        if fm.get("zone") != project.parent.name:
+        if fm.get("zone") != project.parent.name and not (system and fm.get("zone") is None):
             out.append(Finding(ERROR, "projects", r,
                                "frontmatter `zone` is %r but the project sits in %s" % (fm.get("zone"), project.parent.name),
                                "The %s hub note names the wrong zone" % project.name))
@@ -678,17 +964,45 @@ def check_projects(ws: Workspace) -> List[Finding]:
             out.append(Finding(ERROR, "projects", r, status, "Project %s has a status no tool reads" % project.name))
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "projects", r, problem, "The %s hub note has a date in the wrong form" % project.name))
+        threads = visible_dirs(project / "Threads")
         tags = [strip_tag(t) for t in as_list(fm.get("party"))]
-        if not tags:
+        if not tags and not system:
             out.append(Finding(WARNING, "projects", r, "no `party`; it cannot draw on the Meetings wiki until it has one",
                                "Project %s has no party" % project.name))
         for tag in tags:
             if tag not in ws.context["parties"]:
                 out.append(Finding(ERROR, "projects", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Project %s names an unknown party" % project.name))
-        if not visible_dirs(project / "Threads"):
-            out.append(Finding(WARNING, "projects", rel(ws, project), "no threads; every piece of work belongs to one",
+        text = read_text(hub) or ""
+        if not threads and not own_resume(text):
+            out.append(Finding(WARNING, "projects", rel(ws, project),
+                               "no threads; every piece of work belongs to one, or, in a project that is one thread, "
+                               "to the hub's own `### Resume here` block",
                                "Project %s has no threads" % project.name))
+        # The hub is the project's index: it links every thread, and lists a
+        # finished one under ## Finished.
+        linked = link_names(text)
+        finished = section(text, "Finished").lower()
+        for thread in threads:
+            if thread.name.lower() not in linked:
+                out.append(Finding(WARNING, "projects", r, "does not link the thread %s; the hub lists every thread" % thread.name,
+                                   "The %s hub note does not list the thread %s" % (project.name, thread.name)))
+            elif str(parse_frontmatter(thread / (thread.name + ".md")).get("status") or "").strip().lower() == "done" \
+                    and thread.name.lower() not in finished:
+                out.append(Finding(WARNING, "projects", r,
+                                   "the finished thread %s is not listed under `## Finished`" % thread.name,
+                                   "The %s hub note does not list the finished thread %s" % (project.name, thread.name)))
+        layout = fm.get("layout")
+        if layout is not None and layout not in LAYOUTS:
+            out.append(Finding(WARNING, "projects", r, "`layout` is %r; the one there is: %s" % (layout, ", ".join(LAYOUTS)),
+                               "The %s hub note names a layout no check knows" % project.name))
+        elif layout == "thread-first":
+            for folder in visible_dirs(project):
+                if folder.name.lower() not in THREAD_FIRST_ALLOWED:
+                    out.append(Finding(WARNING, "projects", rel(ws, folder),
+                                       "the project is thread-first, so everything sits inside a thread: move it into "
+                                       "Threads/<Thread>/, and give material with no thread a thread of its own",
+                                       "Project %s keeps a folder outside its threads" % project.name))
     return out
 
 
@@ -701,7 +1015,7 @@ def check_threads(ws: Workspace) -> List[Finding]:
             r = rel(ws, note)
             spoken = "%s, %s" % (project.name, thread.name)
             if not note.is_file():
-                out.append(Finding(ERROR, "threads", rel(ws, thread), "no thread note %s.md" % thread.name,
+                out.append(Finding(ERROR, "threads", rel(ws, thread), "no thread note %s.md%s" % (thread.name, renamed_note(thread)),
                                    "Thread %s has no note" % spoken))
                 continue
             fm = parse_frontmatter(note)
@@ -745,6 +1059,9 @@ def check_threads(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "threads", r, "`project` is %s but the thread sits in %s" % (link, project.name),
                                    "Thread %s points at the wrong project" % spoken))
             ttags = {strip_tag(t) for t in as_list(fm.get("party"))}
+            for tag in sorted(ttags - set(ws.context["parties"])):
+                out.append(Finding(ERROR, "threads", r, "`party` %s is not a tag in the Parties table" % tag,
+                                   "Thread %s names an unknown party" % spoken))
             if ttags and ptags and ttags != ptags:
                 out.append(Finding(WARNING, "threads", r,
                                    "`party` %s differs from the project's %s" % (", ".join(sorted(ttags)), ", ".join(sorted(ptags))),
@@ -778,73 +1095,539 @@ RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action
 RESUME_DATE_PROMPT = "**Where it stands, <"
 
 
+# A line that says its file sits on a shared or synced drive: the path is
+# read there, not here, and the check cannot see it.
+SHARE_RE = re.compile(r"\b(?:share|shared|sharepoint|onedrive|google drive|dropbox)\b", re.I)
+# A part inside an Office file, which is a zip: `xl/workbook.xml`, `word/document.xml`.
+OFFICE_PART_RE = re.compile(r"^(?:xl|ppt|word|docProps|customXml|_rels)/")
+STALE_DAYS = 14
+# Files that are not work on a thread: archives, build output, scripts and hidden files.
+NOT_WORK_RE = re.compile(r"(?:^|/)(?:archive|render[^/]*|build)/|\.(?:py|sh)$|(?:^|/)\.", re.I)
+
+
+def live_status(fm: dict) -> bool:
+    return str(fm.get("status") or "").strip().lower() not in ("done", "parked")
+
+
+def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], spoken: str,
+                    files: List[Optional[PathIndex]], shared: bool) -> List[Finding]:
+    """Findings for one Resume here block: still the template's, a link that
+    leads nowhere, a file path that is not there."""
+    out = []
+    unfilled = [m.group(1) for m in (RESUME_PROMPT_RE.match(line) for line in block) if m]
+    if unfilled or any(RESUME_DATE_PROMPT in line for line in block):
+        out.append(Finding(WARNING, "resume", rel(ws, note),
+                           "Resume here is still the template's (%s not filled in); say \"wrap %s\" to fill it"
+                           % (", ".join(unfilled).lower() or "its date", spoken.rsplit(", ", 1)[-1]),
+                           "Thread %s has no real resume point yet" % spoken))
+    # Where a relative path may start: the note's folder and those above it
+    # in the project, the project's own folders, the zone, the workspace, the
+    # wikis and the skills.
+    bases, d = [], note.parent
+    while d == project or project in d.parents:
+        bases.append(d)
+        d = d.parent
+    bases += [x for x in visible_dirs(project) if x not in bases]
+    bases += [project.parent, ws.root / "Zones", ws.root, ws.root / "Wikis"] + visible_dirs(ws.root / "Wikis")
+    bases += [ws.root / "System" / "skills"]
+    inside: Optional[List[str]] = None  # the project's files, listed on the first path not found
+    for line in block:
+        for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
+            target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
+            if not target or target.startswith("<") or "://" in target:
+                continue
+            if files[0] is None:
+                files[0] = PathIndex(ws, walk_files(ws.root))
+            if not resolve(ws, note, target, files[0]):
+                out.append(Finding(WARNING, "resume", rel(ws, note),
+                                   "Resume here links [[%s]], which leads nowhere" % target,
+                                   "Thread %s points at a note that is not there" % spoken))
+        for m in TICK_RE.finditer(line):
+            path = m.group(1).strip()
+            if (path.startswith(("<", "/tmp/", "/private/", "/var/")) or "://" in path or "*" in path
+                    or COMMAND_RE.match(path) or OFFICE_PART_RE.match(path) or not PATHLIKE_RE.match(path)
+                    or "/" not in path.rstrip("/")):
+                continue
+            if path.startswith(("~", "/")):
+                found = Path(path).expanduser().exists()
+            else:
+                found = any((b / path).exists() for b in bases)
+                if not found:
+                    # Relative to a folder the block names elsewhere: any file
+                    # in the project whose path ends the same way.
+                    if inside is None:
+                        inside = ["/" + f.relative_to(project).as_posix() for f in walk_files(project)]
+                    tail = "/" + path.strip("./").rstrip("/")
+                    found = any(f.endswith(tail) or (path.endswith("/") and tail + "/" in f) for f in inside)
+            if not found and (shared or SHARE_RE.search(line)):
+                continue  # on a shared drive, which the check does not read
+            if not found:
+                out.append(Finding(WARNING, "resume", rel(ws, note),
+                                   "Resume here names `%s`, which is not there" % path,
+                                   "Thread %s names a file that is not there" % spoken))
+    return out
+
+
+def stale_resume(ws: Workspace, project: Path, notes: List[Path]) -> Optional[Finding]:
+    """A resume point left behind: files added to the project more than
+    STALE_DAYS days after the newest `updated` of its hub and the notes
+    holding its resume points. Only files git saw added count, with renames
+    followed, since a rename or a sweep of small fixes is not work."""
+    dates = []
+    for n in notes:
+        value = parse_frontmatter(n).get("updated")
+        if isinstance(value, str) and ISO_DATE_RE.match(value.strip()):
+            try:
+                dates.append(datetime.date.fromisoformat(value.strip()))
+            except ValueError:
+                pass
+    if not dates or _repo_top(ws, project) is None:
+        return None
+    resume = max(dates)
+    log = _git(["log", "--diff-filter=A", "-M", "--name-only", "--format=%ad", "--date=short",
+                "--since", resume.isoformat(), "--", "."], project) or ""
+    newest = day = None
+    for line in log.splitlines():
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", line):
+            day = datetime.date.fromisoformat(line)
+        elif line and day and not NOT_WORK_RE.search(line):
+            newest = max(newest or day, day)
+    if newest and (newest - resume).days > STALE_DAYS:
+        return Finding(WARNING, "resume", rel(ws, project / (project.name + ".md")),
+                       "files were added on %s, but the resume point was last updated on %s; wrap the thread "
+                       "so it says where things stand" % (newest.isoformat(), resume.isoformat()),
+                       "The resume point of %s may be out of date" % project.name)
+    return None
+
+
 def check_resume(ws: Workspace) -> List[Finding]:
     """A resume point is the signpost a cold resume follows first. Every link
     and file path in a live thread's Resume here block must still lead
     somewhere: a deliverable renamed or moved shows here the day it happens,
     not when someone opens the thread months later. Placeholders, commands,
-    web addresses and anything on another machine are not paths."""
+    web addresses and anything on another machine are not paths. A hub that
+    keeps the resume point of a project that is one thread is read the same
+    way, and a resume point that work has left behind is reported."""
     out = []
-    files: Optional[PathIndex] = None  # every file in the workspace, indexed on the first link
-    for project, _ in ws.projects:
+    files: List[Optional[PathIndex]] = [None]  # every file in the workspace, indexed on the first link
+    for project, pfm in ws.projects:
+        hub = project / (project.name + ".md")
+        if not hub.is_file() or not live_status(pfm):
+            continue  # finished, or set aside: nobody resumes it until it is woken
+        shared = bool(str(pfm.get("share") or "").strip())
+        holding = [hub]
+        block = resume_block(read_text(hub) or "")
+        if block:
+            out += resume_findings(ws, project, hub, block, project.name, files, shared)
         for thread in visible_dirs(project / "Threads"):
             note = thread / (thread.name + ".md")
             text = read_text(note) if note.is_file() else None
-            if not text or str(parse_frontmatter(note).get("status") or "").strip().lower() in ("done", "parked"):
-                continue  # finished, or set aside: nobody resumes it until it is woken
-            spoken = "%s, %s" % (project.name, thread.name)
+            if not text:
+                continue
             block = resume_block(text)
-            unfilled = [m.group(1) for m in (RESUME_PROMPT_RE.match(line) for line in block) if m]
-            if unfilled or any(RESUME_DATE_PROMPT in line for line in block):
-                out.append(Finding(WARNING, "resume", rel(ws, note),
-                                   "Resume here is still the template's (%s not filled in); say \"wrap %s\" to fill it"
-                                   % (", ".join(unfilled).lower() or "its date", thread.name),
-                                   "Thread %s has no real resume point yet" % spoken))
-            for line in block:
-                for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
-                    target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
-                    if not target or target.startswith("<") or "://" in target:
-                        continue
-                    if files is None:
-                        files = PathIndex(ws, walk_files(ws.root))
-                    if not resolve(ws, note, target, files):
-                        out.append(Finding(WARNING, "resume", rel(ws, note),
-                                           "Resume here links [[%s]], which leads nowhere" % target,
-                                           "Thread %s points at a note that is not there" % spoken))
-                for m in TICK_RE.finditer(line):
-                    path = m.group(1).strip()
-                    if (path.startswith(("<", "/tmp/", "/private/", "/var/")) or "://" in path or "*" in path
-                            or COMMAND_RE.match(path) or not PATHLIKE_RE.match(path) or "/" not in path.rstrip("/")):
-                        continue
-                    if path.startswith(("~", "/")):
-                        found = Path(path).expanduser().exists()
-                    else:
-                        bases = [thread, project, project.parent, ws.root]
-                        found = any((b / path).exists() for b in bases)
-                    if not found:
-                        out.append(Finding(WARNING, "resume", rel(ws, note),
-                                           "Resume here names `%s`, which is not there" % path,
-                                           "Thread %s names a file that is not there" % spoken))
+            if block:
+                holding.append(note)
+            if not live_status(parse_frontmatter(note)):
+                continue
+            out += resume_findings(ws, project, note, block, "%s, %s" % (project.name, thread.name), files, shared)
+        stale = stale_resume(ws, project, holding)
+        if stale:
+            out.append(stale)
+    return out
+
+
+# What sits in a Deliverables/ folder without being a deliverable: build
+# intermediates, a readme or ledger about the folder, scripts, hidden and
+# lock files. They keep the names they have.
+NOT_DELIVERABLE_RE = re.compile(r"^(?:build|render.*|specs|archive|published\.md|readme\.md)$|^[.~]|\.(?:py|sh)$", re.I)
+BUILD_CONTAINER_RE = re.compile(r"^(?:render.*|build.*\.(?:py|sh)|deploy\.sh)$", re.I)
+
+
+def deliverable_folders(project: Path) -> List[Path]:
+    """A project's Deliverables/ and each thread's own, as a thread-first
+    project keeps them, and the archive/ in each: a deliverable keeps its
+    date when it is archived."""
+    out = [project / "Deliverables"]
+    out += [t / "Deliverables" for t in visible_dirs(project / "Threads")]
+    out += [f / a for f in list(out) if f.is_dir() for a in os.listdir(f) if a.lower() == "archive"]
+    return [f for f in out if f.is_dir()]
+
+
+def undated(folder: Path, depth: int = 0) -> List[Path]:
+    """Entries of a Deliverables/ folder that should carry their date and do
+    not. A folder of build output is an intermediate by what it holds; an
+    undated folder holding dated entries groups deliverables, and its entries
+    are read instead; any other folder is a deliverable in itself."""
+    out = []
+    for path in sorted(folder.iterdir()):
+        if NOT_DELIVERABLE_RE.search(path.name):
+            continue
+        m = DELIVERABLE_RE.match(path.name)
+        if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
+            continue
+        if path.is_dir():
+            inside = [p.name for p in path.iterdir()]
+            if any(BUILD_CONTAINER_RE.match(x) for x in inside):
+                continue
+            if depth == 0 and any(DELIVERABLE_RE.match(x) for x in inside):
+                out += undated(path, 1)
+                continue
+        out.append(path)
     return out
 
 
 def check_deliverables(ws: Workspace) -> List[Finding]:
     out = []
     for project, _ in ws.projects:
-        folder = project / "Deliverables"
-        if not folder.is_dir():
-            continue
-        for path in sorted(folder.iterdir()):
-            if path.name.startswith("."):
-                continue
-            if path.is_dir() and path.name.lower() == "archive":
-                continue
-            m = DELIVERABLE_RE.match(path.name)
-            ok = bool(m) and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31
-            if not ok:
+        for folder in deliverable_folders(project):
+            for path in undated(folder):
                 out.append(Finding(WARNING, "deliverables", rel(ws, path),
                                    "name does not start with its creation date, `YYMMDD - <name>`",
                                    "A deliverable in %s lacks its date" % project.name))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Anonymous projects
+# ---------------------------------------------------------------------------
+
+OFFICE_SUFFIXES = {".docx", ".xlsx", ".pptx"}
+
+
+def office_text(path: Path) -> str:
+    """The XML text inside an Office file, which is a zip of XML parts; an
+    unreadable one gives nothing."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(str(path)) as z:
+            return "\n".join(z.read(n).decode("utf-8", errors="replace") for n in z.namelist()
+                             if n.endswith(".xml") and not n.startswith("docProps/")  # who saved it, not what it says
+                             and z.getinfo(n).file_size <= MAX_SCAN_BYTES)
+    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError):
+        return ""
+
+
+def check_anonymous(ws: Workspace) -> List[Finding]:
+    """A project marked `anonymous` in its hub makes things that name nobody,
+    such as templates built from real cases: nothing in its deliverables names
+    another party of its zone, or one of their people, aliases or domains.
+    `anonymous` may also list further names to keep out. What it received, in
+    Sources/, may name anyone. Party tags are not looked for, since a tag can
+    be an everyday word."""
+    out = []
+    for project, fm in ws.projects:
+        value = fm.get("anonymous")
+        extra = [str(v) for v in value] if isinstance(value, list) else []
+        if not (value is True or extra or str(value).strip().lower() == "true"):
+            continue
+        own = {strip_tag(t) for t in as_list(fm.get("party"))}
+        zone = project.parent.name
+        others = {t for t, e in ws.context["parties"].items()
+                  if t not in own and e.get("zone", "").strip() in ("", zone)}
+        forms = []
+        for tag, found in name_forms(ws, others).items():
+            name = " ".join(words(ws.context["parties"][tag].get("party") or ""))
+            forms += [f for f in found if f[1] != " ".join(words(tag)) or f[1] == name]
+        forms += [(False, " ".join(words(n))) for n in extra if words(n)]
+        if not forms:
+            continue
+        for folder in deliverable_folders(project):
+            for path in walk_files(folder):
+                if path.name.startswith((".", "~")):
+                    continue
+                suffix = path.suffix.lower()
+                text = path.stem
+                if suffix in TEXT_SUFFIXES:
+                    text += "\n" + (read_text(path) or "")
+                elif suffix in OFFICE_SUFFIXES:
+                    text += "\n" + re.sub(r"<[^>]+>", " ", office_text(path))
+                if names_hit(text, forms):
+                    out.append(Finding(WARNING, "anonymous", rel(ws, path),
+                                       "names another party of its zone, one of their people, or a name the hub keeps out; "
+                                       "%s is anonymous, so what it makes names nobody" % project.name,
+                                       "A deliverable of %s names someone" % project.name))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# To-do lists
+# ---------------------------------------------------------------------------
+
+TODO_LABEL_RE = re.compile(r"^- \[ \] \[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]:")
+# Obsidian Tasks reads its fields from the end of a line only: a date with
+# any text after it stays part of the description, unread.
+TASKS_FIELD_RE = re.compile(r"(?:\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2}|#[^\s#]+))$")
+TASKS_DATE_RE = re.compile(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕)\uFE0F? *\d{4}-\d{2}-\d{2}")
+INBOX_GROWTH = 20  # open actions added to a list's Inbox in a week, past which triage is not keeping up
+
+
+def tasks_description(line: str) -> str:
+    """A task line without the fields and tags at its end."""
+    d = line.rstrip()
+    m = TASKS_FIELD_RE.search(d)
+    while m:
+        d = d[:m.start()].rstrip()
+        m = TASKS_FIELD_RE.search(d)
+    return d
+
+
+def inbox_count(text: str) -> int:
+    n, sec = 0, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            sec = line[3:].strip().lower()
+        elif sec == "inbox" and line.startswith("- [ ] "):
+            n += 1
+    return n
+
+
+def check_todo(ws: Workspace) -> List[Finding]:
+    """Each zone's Todo.md: an open action that opens with a thread's link
+    leads to a live note; its dates come last, where Obsidian Tasks reads them;
+    the Inbox does not grow by more than INBOX_GROWTH in a week. In a zone the
+    check settings name under `todo-labels`, every open action opens with
+    its thread's link."""
+    out = []
+    strict = set(setting_zones(ws, "todo-labels"))
+    for zone in ws.zones:
+        todo = zone / "Todo.md"
+        text = read_text(todo) if todo.is_file() else None
+        if text is None:
+            continue
+        r = rel(ws, todo)
+        open_lines = [l for l in text.splitlines() if l.startswith("- [ ] ")]
+        stems = {p.stem.lower() for p, _ in zone_notes(ws, zone)}
+        broken, unlabelled = set(), 0
+        for line in open_lines:
+            m = TODO_LABEL_RE.match(line)
+            if not m:
+                unlabelled += 1
+            elif m.group(1).strip().startswith("<"):
+                continue  # the template's example line, still to be replaced
+            elif m.group(1).strip().rsplit("/", 1)[-1].lower() not in stems:
+                broken.add(m.group(1).strip())
+        if broken:
+            out.append(Finding(WARNING, "todo", r,
+                               "open actions name %s, which lead to no live note; the thread was renamed or archived"
+                               % ", ".join("[[%s]]" % b for b in sorted(broken)),
+                               "Open actions in %s name a thread that is not there" % zone.name))
+        if zone in strict and unlabelled:
+            out.append(Finding(WARNING, "todo", r,
+                               ("1 open action does not open with its thread's link, `[[Thread]]: `" if unlabelled == 1 else
+                                "%d open actions do not open with their thread's link, `[[Thread]]: `" % unlabelled),
+                               "Open actions in %s do not name their thread" % zone.name))
+        unread = sum(1 for l in open_lines if TASKS_DATE_RE.search(tasks_description(l)))
+        if unread:
+            out.append(Finding(WARNING, "todo", r,
+                               "%d open action%s a date with text after it, which Obsidian Tasks does not read; "
+                               "put the dates last" % (unread, " has" if unread == 1 else "s have"),
+                               "Some actions in %s have a date that is not read" % zone.name))
+        if (zone / ".git").exists():
+            then = _git(["log", "-1", "--before=7.days", "--format=%H", "--", "Todo.md"], zone)
+            old = _git(["show", "%s:Todo.md" % then.strip()], zone) if then and then.strip() else None
+            if old is not None:
+                grew = inbox_count(text) - inbox_count(old)
+                if grew > INBOX_GROWTH:
+                    out.append(Finding(WARNING, "todo", r,
+                                       "the Inbox grew by %d open actions in a week; triage is not keeping up" % grew,
+                                       "The %s to-do Inbox is growing faster than it is sorted" % zone.name))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Links
+# ---------------------------------------------------------------------------
+
+# Folders whose notes no longer count as live: archives, build output, specs,
+# hidden and template folders.
+NOT_LIVE_DIR_RE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
+CLOUD_PATH_RE = re.compile(r"Library/CloudStorage/")
+TICKED_NOTE_RE = re.compile(r"(?<!`)`([^`\n*~/][^`\n*]*?\.md)`(?!`)")
+
+
+def live_files(folder: Path) -> Iterable[Path]:
+    """Every file under `folder` outside archives, build output, hidden and
+    template folders, and any repository of its own kept inside a project,
+    such as a program's code: its files are not notes."""
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = sorted(d for d in dirnames
+                             if not NOT_LIVE_DIR_RE.match(d) and not os.path.lexists(os.path.join(dirpath, d, ".git")))
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
+
+
+def zone_notes(ws: Workspace, zone: Optional[Path] = None) -> List[Tuple[Path, str]]:
+    """(note, text) for every live Markdown note in the zones, read once, or
+    in one zone. What waits in a zone's Inbox/ is not a note yet."""
+    if ws.zone_notes is None:
+        ws.zone_notes = []
+        for z in ws.zones:
+            for path in live_files(z):
+                if path.suffix.lower() == ".md" and path.relative_to(z).parts[0] != INBOX:
+                    ws.zone_notes.append((path, read_text(path) or ""))
+    if zone is None:
+        return ws.zone_notes
+    return [(p, t) for p, t in ws.zone_notes if zone in p.parents]
+
+
+def check_links(ws: Workspace) -> List[Finding]:
+    """Links that cross a boundary or lead somewhere fragile: a link from one
+    zone into another; an absolute path into a cloud-synced folder; a link to
+    a name both wikis hold, which Obsidian resolves to either. In the zones
+    the check settings name: a note with no `parent:` link to its thread or
+    hub (`parent-links`), and a note named as code rather than linked
+    (`note-links`)."""
+    out = []
+    zones = {z.name: z for z in ws.zones}
+    for path, text in zone_notes(ws):
+        zone = next(z for z in ws.zones if z in path.parents)
+        r = rel(ws, path)
+        if path.name != "AGENTS.md" and ("[[" in text or "](" in text or "obsidian:" in text):
+            for written, target in extract_links(text):
+                other = None
+                parts = [p for p in target.replace("\\", "/").split("/") if p and p != "."]
+                if target.startswith("obsidian:"):
+                    other = target.split(":", 2)[1]
+                elif len(parts) > 1 and parts[0] == "Zones":
+                    other = parts[1]
+                elif target.startswith(("./", "../")):
+                    try:
+                        dest = (path.parent / target).resolve()
+                    except (OSError, RuntimeError):
+                        dest = None
+                    other = next((n for n, z in zones.items() if dest and (z == dest or z.resolve() in dest.parents)), None)
+                if other in zones and other != zone.name:
+                    out.append(Finding(ERROR, "links", r,
+                                       "links %s, in the %s zone; zones never reference each other unless asked" % (written, other),
+                                       "A note in %s links into the %s zone" % (zone.name, other)))
+                    break
+        if CLOUD_PATH_RE.search(text):
+            line = next(i for i, l in enumerate(text.splitlines(), 1) if CLOUD_PATH_RE.search(l))
+            out.append(Finding(WARNING, "links", "%s:%d" % (r, line),
+                               "writes the absolute path of a cloud-synced folder; reach it through a link inside the "
+                               "workspace, since the provider renames that folder",
+                               "A note in %s writes a cloud folder's full path" % zone.name))
+    out += wiki_name_links(ws)
+    for zone in setting_zones(ws, "parent-links"):
+        out += parent_links(ws, zone)
+    for zone in setting_zones(ws, "note-links"):
+        out += note_refs(ws, zone)
+    return out
+
+
+def wiki_name_links(ws: Workspace) -> List[Finding]:
+    """A page name both wikis hold resolves to either in Obsidian, by the
+    shortest path. A link to one must name its wiki: `[[Meetings/wiki/...]]`."""
+    out = []
+    wikis = ws.root / "Wikis"
+    by_suffix: Dict[Tuple[str, str], List[Path]] = {}
+    for page in ws.wiki_files:
+        parts = Path(rel(ws, page)).parts  # Wikis/<wiki>/wiki/<folder>/<name>.md
+        if len(parts) == 5 and parts[2] == "wiki":
+            by_suffix.setdefault((parts[3], page.stem.lower()), []).append(page)
+    both = {k: v for k, v in by_suffix.items() if len({Path(rel(ws, p)).parts[1] for p in v}) > 1}
+    if not both:
+        return out
+    registry = wikis / "Registry"
+    for (folder, name), pages in sorted(both.items()):
+        if registry.is_dir() and not (registry / (pages[0].stem + ".md")).is_file():
+            out.append(Finding(WARNING, "links", "Wikis/Registry",
+                               "wiki/%s/%s is in both wikis with no Registry note to say which holds what"
+                               % (folder, pages[0].stem),
+                               "A name both wikis hold has no registry note"))
+    index = PathIndex(ws, [p for v in both.values() for p in v])
+    names = {name for _, name in both}
+    others = [p for p in ws.wiki_files if "raw" not in Path(rel(ws, p)).parts[:3] and p != registry / "index.md"]
+    others += [ws.root / p for p in ROOT_INSTRUCTIONS if (ws.root / p).is_file()]
+    others += [p for project, _ in ws.projects if in_system(ws, project)
+               for p in live_files(project) if p.suffix.lower() == ".md"]
+    scanned = list(zone_notes(ws)) + [(p, read_text(p) or "") for p in others]
+    for path, text in scanned:
+        if "[[" not in text or not any(n in text.lower() for n in names):
+            continue
+        # A wiki's own pages link inside that wiki, which is where a link
+        # from one of them lands first (see check_knowledge).
+        parts = Path(rel(ws, path)).parts
+        own = parts[1] if parts[0] == "Wikis" and len(parts) > 2 else None
+        for m in WIKILINK_RE.finditer(re.sub(r"`[^`\n]*`", "", text)):
+            target = m.group(1).split("|", 1)[0].split("#", 1)[0].strip().rstrip("\\")
+            if target.split("/", 1)[0] in ("Meetings", "Knowledge", "Wikis") or target.startswith(("./", "../", "/")):
+                continue
+            hits = {Path(rel(ws, h)).parts[1] for h in resolve(ws, path, target, index)}
+            if len(hits) > 1 and own not in hits:
+                out.append(Finding(WARNING, "links", rel(ws, path),
+                                   "links [[%s]], a name both wikis hold, so Obsidian picks one; name the wiki, "
+                                   "[[Meetings/...]] or [[Knowledge/...]]" % target,
+                                   "A link names a page both wikis hold"))
+                break
+    return out
+
+
+PARENT_RE = re.compile(r'^parent:\s*["\']?\[\[([^\]|#]+)', re.M)
+
+
+def parent_links(ws: Workspace, zone: Path) -> List[Finding]:
+    """Every live note in a project, other than its hub, carries `parent:`, a
+    link to its thread note or hub that leads to a live note, so the graph
+    attaches it to its project whatever its prose says."""
+    out = []
+    notes = zone_notes(ws, zone)
+    stems = {p.stem for p, _ in notes}
+    for path, text in notes:
+        parts = path.relative_to(zone).parts
+        if len(parts) < 2 or not (zone / parts[0] / (parts[0] + ".md")).is_file() or path == zone / parts[0] / (parts[0] + ".md"):
+            continue  # loose in the zone, outside any project, or the hub itself
+        m = PARENT_RE.search(parse_frontmatter_block(text))
+        if not m:
+            out.append(Finding(WARNING, "links", rel(ws, path), "no `parent:`, a link to its thread note or hub",
+                               "A note in %s does not say which thread it belongs to" % zone.name))
+        elif m.group(1).strip().rsplit("/", 1)[-1] not in stems and not (zone / (m.group(1).strip() + ".md")).is_file():
+            out.append(Finding(WARNING, "links", rel(ws, path),
+                               "`parent: [[%s]]` leads to no live note" % m.group(1).strip(),
+                               "A note in %s names a parent that is not there" % zone.name))
+    return out
+
+
+def parse_frontmatter_block(text: str) -> str:
+    """The frontmatter of `text`, as text."""
+    m = re.match(r"---[^\n]*\n(.*?)\n(?:---|\.\.\.)", text, re.S)
+    return m.group(1) if m else ""
+
+
+def note_refs(ws: Workspace, zone: Path) -> List[Finding]:
+    """A hub or thread note names another note as a wikilink, never as a
+    path in backticks, which draws no link in the graph. Only a path that
+    reaches a live note counts. Deliverables/ and Sources/ are left alone:
+    their wording is final, or received."""
+    out = []
+    for project in project_dirs(zone):
+        hub = project / (project.name + ".md")
+        if not hub.is_file():
+            continue
+        scan = [hub] + [p for folder in ("Threads", "Notes") for p in live_files(project / folder)
+                        if p.suffix.lower() == ".md" and not {"Deliverables", "Sources"} & set(p.relative_to(project).parts)]
+        subs = visible_dirs(project)
+        for path in scan:
+            text = read_text(path) or ""
+            fence = found = False
+            for line in body_of(text).splitlines():
+                if line.lstrip().startswith(("```", "~~~")):
+                    fence = not fence
+                if fence or found:
+                    continue
+                for ref in TICKED_NOTE_RE.findall(line):
+                    bases, d = [], path.parent
+                    while d == project or project in d.parents:
+                        bases.append(d)
+                        d = d.parent
+                    bases += subs + ([zone] if "/" in ref else [])
+                    hit = next((b / ref for b in bases if (b / ref).is_file()), None)
+                    if hit is not None and not {p.lower() for p in hit.relative_to(zone).parts[:-1]} & {"archive"}:
+                        out.append(Finding(WARNING, "links", rel(ws, path),
+                                           "names `%s` as code; write it as a wikilink, so the graph sees it" % ref,
+                                           "A note in %s names another note as code" % zone.name))
+                        found = True
+                        break
     return out
 
 
@@ -868,6 +1651,12 @@ def check_meetings(ws: Workspace) -> List[Finding]:
                 out.append(Finding(ERROR, "meetings", r,
                                    "party `%s` is not a tag in the Parties table, so no wall can see it" % tag,
                                    "A meeting page names an unknown party"))
+        both = sorted(sorted(w) for w in ws.context["walls"] if len(w) == 2 and w <= set(tags))
+        if both:
+            out.append(Finding(WARNING, "meetings", r,
+                               "names both %s and %s, which a wall keeps apart, so no project of either may use it; "
+                               "if it was two conversations, file them as two pages" % tuple(both[0]),
+                               "A meeting page sits on both sides of a wall"))
         if fm and fm.get("type") not in (None, "meeting", "email"):
             out.append(Finding(WARNING, "meetings", r, "`type` is %r, should be meeting or email" % fm.get("type"),
                                    "A meeting page is not marked as a meeting"))
@@ -876,6 +1665,39 @@ def check_meetings(ws: Workspace) -> List[Finding]:
                                    "A meeting page is misnamed"))
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "meetings", r, problem, "A meeting page has a date in the wrong form"))
+    out += cited_across_walls(ws)
+    return out
+
+
+def cited_across_walls(ws: Workspace) -> List[Finding]:
+    """A page of the Meetings wiki written for one party, such as a person or
+    an organisation it keeps a page on, with `party` in its frontmatter,
+    cites no meeting walled from that party. One organisation in two roles
+    gets one page per role, and a meeting cited by both would make the two
+    one history."""
+    out = []
+    wiki = ws.root / "Wikis" / "Meetings" / "wiki"
+    sources = wiki / "sources"
+    if ws.meeting_links is None:
+        ws.meeting_links = PathIndex(ws, ws.meetings)
+    for page in ws.wiki_files:
+        if wiki not in page.parents or sources in page.parents or page.parent == wiki:
+            continue
+        text = read_text(page) or ""
+        tags = {strip_tag(t) for t in as_list(parse_frontmatter_text(text).get("party"))} - {"none"}
+        if not tags:
+            continue
+        for written, target in extract_links(text):
+            hits = [m for m in resolve(ws, page, target, ws.meeting_links)
+                    for a in tags for b in as_list(ws.meetings[m].get("parties")) if walled(ws.context, a, strip_tag(b))]
+            if hits:
+                b = next(strip_tag(t) for t in as_list(ws.meetings[hits[0]].get("parties"))
+                         if any(walled(ws.context, a, strip_tag(t)) for a in tags))
+                out.append(Finding(WARNING, "meetings", rel(ws, page),
+                                   "cites %s, a meeting with %s, but is written for %s, across a wall"
+                                   % (hits[0].stem, b, ", ".join(sorted(tags))),
+                                   "A page for one party cites a meeting across a wall"))
+                break
     return out
 
 
@@ -911,6 +1733,8 @@ def check_people(ws: Workspace) -> List[Finding]:
                                "The page for %s is not marked as a person" % name))
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "people", r, problem, "The page for %s has a date in the wrong form" % name))
+        if ws.quick:
+            continue
         if common is None:
             common = quote_index(ws).common
         heard = meeting_wording(ws, body_of(text), common)
@@ -961,11 +1785,16 @@ VTT_TIMING_RE = re.compile(r"(?m)^\s*(?:WEBVTT.*|\d+|[\d:.]+\s*-->.*)\s*$")
 VTT_TAG_RE = re.compile(r"<[^>\n]*>")
 
 
+# The blocks of combining marks: what NFKD splits off a letter as its accent.
+COMBINING_RE = re.compile("[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]")
+
+
 def words(text: str) -> List[str]:
     """Lower-case words: accents dropped, `&` read as "and", punctuation gone."""
-    text = unicodedata.normalize("NFKD", text.replace("&", " and "))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
-    return re.findall(r"[a-z0-9]+", text)
+    text = text.replace("&", " and ")
+    if not text.isascii():  # plain ASCII has no accents to drop
+        text = COMBINING_RE.sub("", unicodedata.normalize("NFKD", text))
+    return re.findall(r"[a-z0-9]+", text.lower())
 
 
 def transcript_text(path: Path, text: str) -> str:
@@ -1215,6 +2044,13 @@ def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, st
     when it is an everyday word. A form that also names a party on this side of
     the wall is dropped: it cannot tell the two apart.
     """
+    key = frozenset(walled_tags)
+    if key not in ws.forms:
+        ws.forms[key] = _name_forms(ws, walled_tags)
+    return ws.forms[key]
+
+
+def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
     ctx = ws.context
     forms: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     firsts: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
@@ -1255,8 +2091,16 @@ def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, st
     return out
 
 
-def names_hit(text: str, forms: List[Tuple[bool, str]]) -> bool:
-    padded = " %s " % " ".join(words(text))
+def padded_words(text: str) -> str:
+    """`text` as its words, with a space either side, for names_hit."""
+    return " %s " % " ".join(words(text))
+
+
+def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
+    """Does `text` hold one of `forms`? `padded` is padded_words(text), when
+    the caller has it already."""
+    if padded is None:
+        padded = padded_words(text)
     for case_sensitive, form in forms:
         if case_sensitive:
             if re.search(r"(?<![\w])%s(?![\w])" % re.escape(form), text):
@@ -1338,8 +2182,9 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
     if far and not in_sources:
         scanned = without_party_field(text) + "\n" + path.name
+        padded = padded_words(scanned)
         for b, forms in name_forms(ws, far).items():
-            if b in reported or not forms or not names_hit(scanned, forms):
+            if b in reported or not forms or not names_hit(scanned, forms, padded):
                 continue
             a = sorted(t for t in tags if walled(ws.context, t, b))[0]
             reported.add(b)
@@ -1356,6 +2201,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # not vouch for itself. A file in Sources/ is what a party sent, which may
     # repeat what another party sent too: like the name check, the file check
     # leaves it out, and only meetings count against it.
+    if ws.quick:
+        return out  # --quick leaves the wording to the full check and the commit hook
     index = quote_index(ws)
     sent = _in_sources(project, path)
     lifted: Dict[Path, int] = {}
@@ -1865,6 +2712,8 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                     out.append(Finding(ERROR, "knowledge", rel(ws, path),
                                        "links %s, a Meetings page; Knowledge must not carry anyone's confidence" % written,
                                        "A Knowledge page links into Meetings"))
+        if ws.quick:
+            continue
         if beyond is None:
             beyond = quote_index(ws).common_beyond_knowledge
         heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond)
@@ -1887,7 +2736,10 @@ def _git(args: List[str], cwd: Path) -> Optional[str]:
 
 
 def check_raw(ws: Workspace) -> List[Finding]:
+    """A raw record is never changed after its first commit, unless the check
+    settings accept that change (`raw-accepted`): then only a later one counts."""
     out = []
+    accepted = {k: v.strip() for k, v in ws.settings.get("raw-accepted", {}).items() if isinstance(v, str) and v.strip()}
     wikis = ws.root / "Wikis"
     if not wikis.is_dir():
         return out
@@ -1909,6 +2761,18 @@ def check_raw(ws: Workspace) -> List[Finding]:
             status, _, name = line.partition("\t")
             if name:
                 changed.setdefault(name, "deleted" if status.startswith("D") else "edited")
+        # A change the user accepted (raw-accepted in the check settings)
+        # counts no more; one in a later commit does.
+        for name in list(changed):
+            commit = accepted.get(rel(ws, top_path / name))
+            if commit:
+                later = _git(["log", "--no-renames", "--diff-filter=MD", "--format=%H", commit + "..HEAD", "--", name], top_path)
+                if later is None:
+                    out.append(Finding(WARNING, "raw", rel(ws, top_path / name),
+                                       "the check settings accept a change to it in commit %s, which git does not know" % commit,
+                                       "An accepted change names a commit git does not know"))
+                elif not later.strip():
+                    del changed[name]
         status = _git(["status", "--porcelain", "--no-renames", "--untracked-files=no", "--", rawrel], top_path) or ""
         for line in status.splitlines():
             if len(line) > 3 and ("M" in line[:2] or "D" in line[:2]):
@@ -1957,13 +2821,41 @@ def check_updates(ws: Workspace) -> List[Finding]:
     keeps the older version's wording. Only files Garrick ships can have one:
     those the version stamp lists, and System/rules.md. A stamp with no list,
     from before 0.4.0 and not yet updated, means walking the workspace."""
-    files = read_version(ws.root).get("files")
+    out = []
+    stamp_path = ws.root.joinpath(*VERSION_STAMP)
+    stamp = read_version(ws.root)
+    if stamp_path.is_file() and not stamp:
+        out.append(Finding(WARNING, "updates", "/".join(VERSION_STAMP),
+                           "does not read as JSON; `check.py --version` cannot say which Garrick this is, and an "
+                           "update cannot tell your changes from Garrick's",
+                           "The version stamp cannot be read"))
+    files = stamp.get("files")
+    if isinstance(files, dict):
+        # Garrick's own code is changed in Garrick, never here: an update
+        # would find the change and leave its newer version beside it.
+        prefixes = ws.settings.get("as-shipped", AS_SHIPPED)
+        for path, want in sorted(files.items()):
+            if not isinstance(want, str) or not any(path.startswith(p) for p in prefixes):
+                continue
+            here = ws.root / path
+            try:
+                have = fingerprint(here) if here.is_file() else None
+            except OSError:
+                have = None
+            if have is None:
+                out.append(Finding(WARNING, "updates", path,
+                                   "is missing; it is Garrick's, so take it back from an update",
+                                   "A file Garrick ships is missing"))
+            elif have != want:
+                out.append(Finding(WARNING, "updates", path,
+                                   "differs from what Garrick shipped; it is Garrick's, so change it in Garrick instead, "
+                                   "or the next update leaves its version beside yours as .new",
+                                   "A file Garrick ships was changed here"))
     if isinstance(files, dict):
         candidates = sorted(set(files) | {"System/rules.md"})
     else:
         candidates = sorted(rel(ws, new.with_suffix("")) for new in walk_files(ws.root)
                             if new.suffix == ".new" and new.with_suffix("").is_file())
-    out = []
     for path in candidates:
         if (ws.root / (path + ".new")).is_file():
             out.append(Finding(WARNING, "updates", path + ".new",
@@ -1974,16 +2866,22 @@ def check_updates(ws: Workspace) -> List[Finding]:
 
 
 ALL_CHECKS = [
-    check_claude_md, check_instructions, check_placeholders, check_context, check_zones, check_hooks, check_names,
-    check_projects, check_threads, check_resume, check_deliverables, check_meetings, check_people, check_walls,
-    check_sources, check_inbox, check_knowledge, check_raw, check_generated, check_updates,
+    check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_zones, check_hooks,
+    check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
+    check_todo, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
+    check_raw, check_generated, check_updates,
 ]
 
 
-def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None) -> List[Finding]:
+def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None, quick: bool = False) -> List[Finding]:
     """Every check, or with `walls_only` the walls check alone. With `staged`, a
-    folder inside a git repository, the walls check alone on what it has staged."""
+    folder inside a git repository, the walls check alone on what it has staged.
+    With `quick`, every check but the comparison of wording: whether a project
+    file, a person page or a Knowledge page repeats a meeting. That comparison
+    reads every meeting and project file, and is most of the time a full check
+    takes on a large workspace; the commit hook still runs it on what is staged."""
     ws = discover(Path(root).resolve())
+    ws.quick = quick and staged is None
     findings: List[Finding] = []
     if staged is not None:
         findings = check_walls_staged(ws, Path(staged))
@@ -2099,6 +2997,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     fmt.add_argument("--ear", action="store_true", help="at most three short sentences, for reading aloud")
     fmt.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--walls-only", action="store_true", help="run the walls check alone")
+    parser.add_argument("--quick", action="store_true",
+                        help="leave out the comparison of wording with the meetings, the slow part on a large workspace")
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
@@ -2127,7 +3027,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         stamp = read_version(root)
         print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))
         return 0
-    findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None)
+    findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)
         if text:

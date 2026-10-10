@@ -120,26 +120,69 @@ python3 System/tools/check.py
 Tests the workspace against every rule a machine can check:
 
 - a `CLAUDE.md` in or above the workspace, which stops Claude Code reading `AGENTS.md`;
-- instruction files that drift: an `AGENTS.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills that no longer matches `System/skills/` (warnings);
+- a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder (warnings);
 - installer placeholders left unfilled;
-- a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties (a warning);
+- a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);
+- a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning);
 - a zone or the Wikis repository whose own hooks git skips, because `core.hooksPath` points somewhere else (a warning);
 - names that cannot be said aloud, or siblings that sound alike;
-- project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (a thread is active, parked or done; a project is active or done), or a `created` or `updated` date not written YYYY-MM-DD;
-- deliverables without a date prefix;
-- a link or a path in a live thread's Resume here block that leads nowhere, or a block still holding the template's prompts (warnings; parked threads are skipped);
+- project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (active, parked or done), or a `created` or `updated` date not written YYYY-MM-DD; a hub or thread note renamed `-v2`;
+- a hub that does not link one of its threads, or lists a finished one outside `## Finished`, and a thread-first project with a folder outside its threads (warnings);
+- deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);
+- a deliverable of an anonymous project that names another party of its zone, one of their people, or a name its hub keeps out, Word, Excel and PowerPoint files included (a warning);
+- a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere, or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
+- in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, or an Inbox that grew by more than twenty in a week (warnings);
+- a link from one zone into another (an error), a note that writes the full path of a cloud-synced folder, and a link to a page name both wikis hold that does not say which (warnings);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
-- meeting and mail pages missing a zone or parties, or with a date not written YYYY-MM-DD;
+- meeting and mail pages missing a zone or parties, or naming both sides of a wall (a warning), or with a date not written YYYY-MM-DD; a page in the Meetings wiki written for one party, with `party` in its frontmatter as a person page has, that cites a meeting across a wall (a warning);
 - person pages without a known party (`party: none` is allowed), or repeating eight or more words from a meeting (a warning);
 - anything committed from a zone's `Inbox/` (the zone's pre-commit hook refuses it too) or from `Wikis/Meetings/raw/inbox/`, a recording in either instead of its transcript, or a copy left behind after an item was filed;
 - a file in a project's `Sources/` that came from mail with no finished page in Meetings: an attachment, found by its exact bytes, or a whole saved mail;
 - a project file that crosses a wall: it links to a meeting page the wall should have kept out, names a party, person or alias from the far side (files in `Sources/`, which came from the party itself, are exempt from this one), repeats eight or more words in a row held only across the wall, in a walled meeting page or its raw transcript or in a file of a project on the far side (files in `Sources/` are compared with meetings only), or is an attachment of a mail from the far side. A link to, or eight words from, a meeting page with no zone or parties is an error whatever the walls. The finding names the file and the walled party, never the words that matched;
 - a Knowledge page that links into Meetings, or carries `party`, `parties` or a `zone`, or a Knowledge page or raw record that shares eight or more words with a meeting (a warning);
-- a raw record changed after it was filed;
-- a `.new` file an update left beside one of yours, waiting to be merged (a warning).
+- a raw record changed after it was filed, unless you accepted that change in the check settings;
+- a `.new` file an update left beside one of yours, waiting to be merged, a version stamp that does not read, or one of Garrick's own tools in `System/tools/` changed here (warnings).
 
 It reports two kinds of finding. An error breaks a rule; a warning is something to look at, such as a deliverable without its date or a project without a party. Plain text by default, grouped by check; add `--ear` for a three-sentence version meant to be read aloud, or `--json` for another program to consume. The exit code is 0 when there is no error, warnings included, 1 when there is at least one, and 2 when no workspace is found.
+
+`--quick` runs every check but one part: the comparison of wording, whether a project file, a person page or a Knowledge page repeats a meeting. That part reads every meeting and project file, and on a workspace with a few hundred meetings it is most of the time a check takes. The commit hook still compares the wording of whatever is committed.
+
+### Check settings
+
+A hub's frontmatter can change what is checked in its project:
+
+| Key | Means |
+|---|---|
+| `layout: thread-first` | Everything sits inside the threads, each with its own `Sources/` and `Deliverables/`; nothing but `Threads/` at the project's top |
+| `anonymous: true` | The project makes things that name nobody: its deliverables are read for the other parties of its zone, their people, aliases and domains. A list, such as `anonymous: [Cedar Labs]`, adds names to keep out |
+| `share: <folder>` | The project's files also live on a shared drive. A path in its resume points that is not here is not reported |
+
+A project about the workspace itself can live in `System/<Project>/`, with `type: project` and no zone or party.
+
+`System/garrick-checks.json` holds the rest. It is optional, and so is every key in it:
+
+```json
+{
+  "parent-links": ["Work"],
+  "note-links": ["Work"],
+  "todo-labels": ["Work"],
+  "word-budgets": {"root": 1000, "other": 1200},
+  "retired-skills": {"old-wrap": "threads"},
+  "raw-accepted": {"Wikis/Meetings/raw/260310-acme-kickoff.txt": "4f2a91c"},
+  "as-shipped": ["System/tools/"]
+}
+```
+
+- `parent-links`: zones where every note in a project, other than its hub, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
+- `note-links`: zones where hub and thread notes name another note as a wikilink, never as a path in backticks, which draws no link in the graph.
+- `todo-labels`: zones where every open action in `Todo.md` opens with its thread's link.
+- `word-budgets`: the most words the root `AGENTS.md` (`root`) and the others (`other`) may hold; 800 and 1000 otherwise.
+- `retired-skills`: a skill you retired, and the one that does its job now. The check reports the old one if its folder comes back, a link to it stays, or an instruction still names it.
+- `raw-accepted`: a raw record you changed on purpose, and the commit of that change. Only a later change is reported.
+- `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.
+
+The check reports a settings file that does not read, a key it does not know, and a zone it names that does not exist.
 
 The walls part also runs before every commit. The installer puts a git hook in each zone that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall. Take the material out and commit again. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
 

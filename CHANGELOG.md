@@ -31,6 +31,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `status.py --settle SECONDS` builds only after a burst of requests has stopped. After *Park*, *Wake*, *Open in cmux* or *Close session*, the page asks for rebuilds until it shows the change.
 - `status.py --also FOLDER` and `--moved OLD=NEW`, passed to `effort.py`.
 - Launcher settings saved for every viewer, in `System/generated/status-settings.json`: inside the app the page prefers them, and closing Settings after a change sends them to `page_action.py` to save.
+- The check reads more of the rules: a missing `AGENTS.md` at the root or in a wiki; a zone's hand-kept list of projects that no longer matches the folder; two parties with one name and no wall between them; no Aliases table; a skill an assistant cannot find from the root, a zone or a wiki, through the repository's link or your own; a skill pinned to a model version, or copied in with no source commit; a hub that does not link a thread, or lists a finished one outside `## Finished`; a hub or thread note renamed `-v2`; a thread naming an unknown party; a meeting page naming both sides of a wall; a page in the Meetings wiki written for one party, a person or an organisation in one of its roles, that cites a meeting across a wall; a link from one zone into another; the full path of a cloud-synced folder in a note; a link to a page name both wikis hold that does not say which.
+- Checks on to-do lists: an action whose thread link leads nowhere, a date with text after it, an Inbox that grew by more than twenty in a week.
+- A resume point left behind is reported: files added to a project more than two weeks after its resume point was last updated. A hub's own Resume here block is read like a thread's, and a project that is only ever one thread may keep its resume point in its hub.
+- Hub keys the check reads: `layout: thread-first`, for a project that keeps everything inside its threads; `anonymous: true`, or a list of names, for a project whose deliverables name nobody, Word, Excel and PowerPoint files included; `share:`, for a project whose files also live on a shared drive.
+- `System/garrick-checks.json`, optional, for rules only some workspaces keep: `parent:` links on every note, notes linked rather than named as code, a thread link on every action, word budgets, retired skills, accepted changes to raw records, and which of Garrick's files are never changed here. See [check settings](docs/getting-started.md#check-settings).
+- A project about the workspace itself can live in `System/<Project>/`, in no zone, and is checked like any other.
+- `check.py --quick`: every check but the comparison of wording with the meetings, the slow part on a large workspace.
+- The check warns when one of Garrick's own tools in `System/tools/` was changed here, or the version stamp does not read.
 
 ### Changed
 
@@ -38,6 +46,9 @@ What changed in each release. Dates are when the release was tagged. The format 
 - A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
 - The deny profile for unattended Claude calls adds publishing Claude documents, the remaining Notion writes, starting or messaging other agent sessions, and the browser and computer-use servers.
 - `System/rules.md` says what "open X", "close X" and "close for the day" do where the desk skill is installed, and the `threads` skill hands those phrases to it.
+- Deliverables are checked in each thread's `Deliverables/` and in `archive/` too. Build intermediates (`build/`, `render/`, `specs/`), scripts, a `README.md` and a folder of build output are not deliverables, and an undated folder of dated deliverables is read inside.
+- The name check on walled files is faster: plain ASCII text skips the accent folding, and each file's words are read once for every party.
+- An `archive` folder in a zone is no longer taken for a project.
 
 ### Fixed
 

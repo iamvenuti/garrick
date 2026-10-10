@@ -14,12 +14,16 @@ What changed in each release. Dates are when the release was tagged. The format 
 - `GARRICK_ENV_FILE`: settings read into a run from a file, such as a sign-in token on a Mac nobody logs in to. The log names them and never shows their values.
 - `agent.py run --prompt` takes the prompt itself, and `--timeout` stops one call with exit 124 so a job keeps time for its own steps. `agent.py items <n>` and `agent.py items-from <file>` report a count from the shell, the second from an `ITEMS <n>` line in the assistant's answer.
 - The assistant-call ledger names the model each call used.
+- The cmux extra, `extras/cmux/`: the `desk` skill and command keep one cmux tab per thread, for Claude Code and Codex alike. "Open Pricing" opens the thread's tab, or brings it forward, and its session starts on "open Pricing". "Close Pricing" has that session wrap the thread, then closes the tab. "Close for the day" wraps each tab used today in its own session, runs the commands you list under `before_quit`, then quits cmux; "shut everything down" quits without wrapping; "start the day" brings the tabs back and resumes any that came back empty. Nothing is closed or quit under a session that is mid-turn. Settings in `System/desk.json`, all optional. See [cmux](docs/extras/cmux.md).
+- `cmuxlib.sessions_by_folder()` in the cmux extra: which folders have a live session, and whether it is idle or working, read from cmux's records and each session's transcript, for the status page.
+- Four status page actions in `extras/status/page_action.py`, available when the cmux extra sits beside it and cmux is installed: `open` and `close` a project's or thread's tab, `startup` and `shutdown`. `close` is refused while a session there is mid-turn; `shutdown` checks first and then goes on in the background.
 
 ### Changed
 
 - The idle notice repeats every `GARRICK_IDLE_DAYS` days while a job stays idle, rather than on every run, and `GARRICK_IDLE_DAYS=0` turns the alarm off. `GARRICK_NOTIFY=1` follows the same throttle: a lasting failure no longer raises a notification on every run.
 - A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
 - The deny profile for unattended Claude calls adds publishing Claude documents, the remaining Notion writes, starting or messaging other agent sessions, and the browser and computer-use servers.
+- `System/rules.md` says what "open X", "close X" and "close for the day" do where the desk skill is installed, and the `threads` skill hands those phrases to it.
 
 ### Fixed
 

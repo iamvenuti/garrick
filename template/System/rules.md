@@ -59,6 +59,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **When a name matches more than one thing**, ask in one line, naming the candidates. Never guess.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
 - **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
+- **Where the desk skill is installed** (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back. **"What's parked"**: name the parked threads.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.

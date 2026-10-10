@@ -231,7 +231,87 @@ def run_job(req: dict, folder: Path = None) -> str:
     return "%s is running now" % name
 
 
+# ---- cmux tabs: open, close, startup, shutdown -------------------------------
+# Only with the cmux extra (extras/cmux, beside this folder) and cmux installed.
+# Each runs that extra's desk.py, which reads cmux's socket password itself.
+#   {"verb": "open", "zone", "project", "thread"?}  a tab in that folder, started on "open …"
+#   {"verb": "close", "zone", "project", "thread"?} its tabs; refused while one is mid-turn
+#   {"verb": "startup"}    start or restore cmux and resume its tabs, detached
+#   {"verb": "shutdown"}   the dry run here, so a busy tab is refused while the page
+#                          watches; the wraps and the quit go on detached
+CMUX_VERBS = ("open", "close", "startup", "shutdown")
+CMUX_EXTRA = Path(__file__).resolve().parent.parent / "cmux"
+
+
+def cmux_desk() -> Path:
+    desk = CMUX_EXTRA / "desk.py"
+    if not (desk.is_file() and (CMUX_EXTRA / "cmuxlib.py").is_file()):
+        raise Refused("tabs need the cmux extra, extras/cmux, beside the status page")
+    spec = importlib.util.spec_from_file_location("garrick_cmuxlib", str(CMUX_EXTRA / "cmuxlib.py"))
+    cx = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cx)
+    if not cx.installed():
+        raise Refused("cmux is not installed here")
+    return desk
+
+
+def run_desk(ws: Path, *args, timeout: int = 60) -> str:
+    try:
+        done = subprocess.run([sys.executable, str(cmux_desk()), "--workspace", str(ws)] + list(args),
+                              capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise Refused("cmux did not answer in time")
+    out = (done.stdout if done.returncode == 0 else done.stderr or done.stdout).strip().splitlines()
+    if done.returncode:
+        raise Refused(out[-1].replace("desk: ", "", 1) if out else "desk failed")
+    return "\n".join(out)
+
+
+def desk_detached(ws: Path, *args) -> None:
+    """desk in a session of its own, so it outlives this request; its notifications report the outcome."""
+    subprocess.Popen([sys.executable, str(cmux_desk()), "--workspace", str(ws)] + list(args),
+                     start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+
+
+def cmux_folder(ws: Path, req: dict) -> tuple:
+    """The project's or thread's folder, and the name to say for it."""
+    zone = zone_dir(ws, req.get("zone"))
+    names = [req.get("project")] + ([req["thread"]] if req.get("thread") not in (None, "", "-") else [])
+    if any(not isinstance(n, str) or not n or n.startswith((".", "_")) or "/" in n or n in ("..", "Threads")
+           for n in names):
+        raise Refused("not a project or thread")
+    folder = zone / names[0] if len(names) == 1 else zone / names[0] / "Threads" / names[1]
+    if not (folder / (folder.name + ".md")).is_file():
+        raise Refused("no %s called %s in %s" % ("project" if len(names) == 1 else "thread", names[-1], zone.name))
+    return folder, ", ".join(names)
+
+
+def cmux_act(ws: Path, req: dict) -> str:
+    verb = req["verb"]
+    if verb == "open":
+        folder, name = cmux_folder(ws, req)
+        said = run_desk(ws, "open", str(folder), "--prompt", "open " + name, "--front").splitlines()
+        return said[0][:1].upper() + said[0][1:] if said else "Opened %s in cmux" % name
+    if verb == "close":
+        folder, name = cmux_folder(ws, req)
+        run_desk(ws, "close", "--folder", str(folder), "--yes")
+        return "Closed the tabs in %s" % name
+    if verb == "startup":
+        cmux_desk()
+        desk_detached(ws, "start", "--notify")
+        return "Starting cmux; a notification follows when every tab is back"
+    m = re.search(r"(\d+) used today", run_desk(ws, "shutdown"))
+    desk_detached(ws, "shutdown", "--yes")
+    n = int(m.group(1)) if m else None
+    return "Shutting down: %s, then cmux quits" % (
+        "wrapping %d tab%s" % (n, "" if n == 1 else "s") if n is not None else "wrapping each tab used today")
+# ---- end of cmux tabs ----------------------------------------------------------
+
+
 def act(ws: Path, req, today=None) -> str:
+    if isinstance(req, dict) and req.get("verb") in CMUX_VERBS:
+        return cmux_act(ws, req)
     if not isinstance(req, dict) or req.get("verb") not in VERBS:
         raise Refused("unknown action")
     if req["verb"] == "run":

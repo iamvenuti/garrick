@@ -2,10 +2,10 @@
 
 Start with [one useful session](../first-session.md) in your app or terminal assistant. Add an extra when you know what it would help you do. Obsidian is for browsing, cmux is for terminal sessions, and phone access connects to the computer holding your workspace. Neither Obsidian nor cmux requires a provider's desktop app; the documented Codex remote voice route does.
 
-Everything on this page is optional. Core Garrick, the folder structure, `AGENTS.md`, `System/rules.md`, `System/context.md`, the installer, the scaffold and check scripts, the skills in `System/skills`, never depends on any of it. None of it is installed by `install.py`, including the code this repository ships for five of them: the IMAP fetcher in `extras/fetch/`, the scheduled-job runner in `extras/jobs/`, the status page in `extras/status/`, the Claude Code mod in `extras/mods/` and the zone guard in `extras/hooks/`. Each is a tool you can point at a Garrick workspace because the workspace is just files on disk, and none of them is required to get value from Garrick on day one.
+Everything on this page is optional. Core Garrick, the folder structure, `AGENTS.md`, `System/rules.md`, `System/context.md`, the installer, the scaffold and check scripts, the skills in `System/skills`, never depends on any of it. None of it is installed by `install.py`, including the code this repository ships for six of them: the IMAP fetcher in `extras/fetch/`, the scheduled-job runner in `extras/jobs/`, the status page in `extras/status/`, the tab-per-thread skill for cmux in `extras/cmux/`, the Claude Code mod in `extras/mods/` and the zone guard in `extras/hooks/`. Each is a tool you can point at a Garrick workspace because the workspace is just files on disk, and none of them is required to get value from Garrick on day one.
 
 - [Obsidian](obsidian.md), for reading and browsing the workspace as a linked vault.
-- [cmux](cmux.md), for one terminal tab per thread.
+- [cmux](cmux.md), for one terminal tab per thread: the `desk` skill opens a thread's tab, wraps and closes it, and brings every tab back the next day, by voice or from the status page.
 - [A meeting recorder](meeting-recorder.md), for feeding the Meetings wiki's inbox.
 - [Ways in](ways-in.md), for fetching mail into a zone's inbox without doing it by hand: your assistant's own mail connector, the IMAP script in `extras/fetch/`, or a mail rule. It also sets out where core sorts what arrives.
 - [Phone access](phone-access.md), through the assistants' own remote features.

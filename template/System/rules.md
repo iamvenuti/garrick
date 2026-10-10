@@ -18,7 +18,7 @@ When there are several good ways to do something, name two or three, recommend o
 
 **One memory, walled use.** The user holds every conversation in one head, so the memory holds them in one place. The walls stand where material is *used*, not where it is stored.
 
-- **Zones never mix in storage.** Each zone is its own folder and its own git repository. Nothing moves or is copied between zones unless the user asks.
+- **Zones never mix in storage.** Each zone is its own folder and its own git repository. Nothing moves or is copied between zones unless the user asks, and no note links into another zone.
 - **The Meetings wiki spans every zone.** Each meeting page names its zone and its parties. A page without both is unfinished, and nothing on it may be used in any project until it has them.
 - **Check the wall before you use a conversation.** Before material from a meeting goes into a project's notes, or into anything made for it, compare the project's `party` with the meeting's `parties`, against the Walls table in `System/context.md`. If a wall stands between them, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back. Do not say what.
 - **Cross-zone work happens only when asked**, and only for that request. The answer stays in the conversation unless the user says where to write it.
@@ -43,11 +43,12 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 ## Threads
 
-- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread.
+- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread. A project that is only ever one thread may keep that section in its hub instead.
+- **The hub is the project's index.** It links every thread: under `## Threads`, or under `## Finished` once it is done.
 - **Rewrite the Resume here block at the end of any session that produced a decision or a deliverable**, so that it describes now. Add a dated entry below it; keep the old entries.
 - **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
 - **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken.
-- **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it.
+- **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it. An action that opens with its thread's link keeps pointing at a live thread: when a thread is renamed, its lines follow. Dates go last on the line, where Obsidian Tasks reads them.
 - **If your assistant has a memory of its own**, keep one entry per live or parked thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread is finished.
 
 ## Voice
@@ -69,10 +70,12 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 ## Files
 
 - **Git holds the history.** Edit notes in place, and commit at the end of the session with a message that says what changed. Never commit across two zones in one go: they are separate repositories.
-- **Deliverables carry the date they were first made**: `YYMMDD - <name>.<ext>`. The date never moves, so a folder sorts by when the work started.
+- **Deliverables carry the date they were first made**: `YYMMDD - <name>.<ext>`. The date never moves, so a folder sorts by when the work started. Build intermediates (`build/`, `render/`, `specs/`), scripts and a folder's `README.md` are not deliverables and keep their names.
+- **A hub can change two things about its project.** `layout: thread-first` keeps everything inside the threads, each with its own `Sources/` and `Deliverables/`, and nothing at the project's top but `Threads/`. `anonymous: true` makes a project whose deliverables name no other party of its zone, nor any of their people; it can be a list of further names to keep out instead.
+- **Reach a cloud-synced folder through a link inside the workspace**, never by its full path (`~/Library/CloudStorage/...`): the provider renames that folder when an account or library is renamed, and every note that wrote it breaks without a sound.
 - **Another session may be working here too.** Re-read a shared file (a `Todo.md`, a wiki index, a hub note) right before you add to it, not once at the start.
 - **Instruction files point, they do not restate.** An `AGENTS.md` routes to the file that owns a fact; it never copies it, holds status, or keeps a hand-written list of projects or skills.
-- **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud.
+- **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud. Rules that only this workspace keeps are switched on in `System/garrick-checks.json`.
 - **Raw is never edited.** Anything in a wiki's `raw/` folder is the record. Summaries go in `wiki/`.
 - **`System/generated/` belongs to the tools**: pages a tool rebuilds, such as the status page. Never edit one, never file anything there, and never commit it. The next build replaces what is there, and `check.py` reports a generated page that is committed.
 

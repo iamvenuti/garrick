@@ -106,11 +106,13 @@ def commit_all(folder: Path, message: str = "snapshot") -> None:
         "commit", "-q", "--allow-empty", "-m", message)
 
 
-def project_hub(zone: str, project: str, party: str = "acme") -> str:
+def project_hub(zone: str, project: str, party: str = "acme", threads=()) -> str:
     party_line = "party: %s\n" % party if party else ""
+    listed = "".join("- [[%s/Threads/%s/%s|%s]]: a thread\n" % (project, t, t, t) for t in threads)
     return (
         "---\ntitle: %s\ntype: project\nzone: %s\n%sstatus: active\ncreated: 2026-03-01\nupdated: 2026-03-01\n---\n\n"
         "# %s\n\nA fictional project.\n" % (project, zone, party_line, project)
+        + ("\n## Threads\n\n" + listed if listed else "")
     )
 
 
@@ -153,14 +155,14 @@ def build_workspace(root: Path) -> Path:
 
     work = root / "Zones" / "Work"
     acme = work / "Acme Review"
-    write(acme / "Acme Review.md", project_hub("Work", "Acme Review", "acme"))
+    write(acme / "Acme Review.md", project_hub("Work", "Acme Review", "acme", ["Pricing"]))
     write(acme / "Threads" / "Pricing" / "Pricing.md",
           thread_note("Acme Review", "Pricing", "acme", "Draws on [[260310-acme-kickoff]]."))
     write(acme / "Sources" / ".gitkeep")
     write(acme / "Deliverables" / "260301 - Pricing memo.md", "# Pricing memo\n")
 
     birch = work / "Birch Entry"
-    write(birch / "Birch Entry.md", project_hub("Work", "Birch Entry", "birch"))
+    write(birch / "Birch Entry.md", project_hub("Work", "Birch Entry", "birch", ["Market Sizing"]))
     write(birch / "Threads" / "Market Sizing" / "Market Sizing.md",
           thread_note("Birch Entry", "Market Sizing", "birch"))
 

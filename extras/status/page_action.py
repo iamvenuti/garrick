@@ -35,7 +35,19 @@ page learns the new key only when it rebuilds; until then a second click on the
 same row still carries the old key, so the handler keeps, for an hour, which
 old key became which new one (todo-rekeys.json in the jobs folder) and follows
 it. Every path must be a live note inside a zone. When the zone's wall check
-refuses the commit, the file is put back as it was.
+refuses the commit, or git takes longer than GIT_TIMEOUT, the file is put back
+as it was, unless it was edited meanwhile, in Obsidian say: then it is left as
+it is, and the reply says so.
+
+Every click is its own process, so two quick clicks, or a click and an ask,
+can run at once. Each takes a lock on the zone first (page-action-<zone>.lock
+in the jobs folder) and holds it from reading the note to committing it; a
+second request waits for the first. The rekey map has a lock of its own.
+
+The actions are a preview: every verb but `settings` is refused unless
+System/garrick-flags.json switches `page-actions` on, read at each request,
+so a page built while it was on stops acting once it is off. The cmux verbs
+also need the cmux extra and cmux itself.
 
 Every request, done or refused, is one line in page-actions.log in the jobs
 folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
@@ -49,16 +61,23 @@ after every request. The reply is one line of JSON: {"ok": true|false,
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:             # not on Windows, where the status app does not run
+    fcntl = None
 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings")
@@ -70,6 +89,12 @@ LOGGED = ("zone", "file", "key", "date", "target", "job", "launchers", "default"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
+FLAG = "page-actions"
+# Seconds: git's whole share of one commit (add, commit and its hooks), then
+# how long a request waits for another on the same zone. Together they stay
+# under the two minutes the Obsidian plugin gives a request.
+GIT_TIMEOUT = 60
+LOCK_WAIT = 45
 # A lock with no record of its own, left by an older job.py, holds for the
 # default limit job.py gives it: twice the watchdog's 1500 s, the sign-in
 # retry's 300 s and its 600 s of slack.
@@ -91,6 +116,57 @@ def jobs_dir() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "garrick-jobs"
     return Path.home() / ".local" / "state" / "garrick-jobs"
+
+
+def flag_on(ws: Path, name: str = FLAG) -> bool:
+    """A preview feature switched on in System/garrick-flags.json, read as
+    status.py's preview_flags() reads it: only a JSON true counts."""
+    try:
+        data = json.loads((ws / "System" / "garrick-flags.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get(name) is True
+
+
+@contextlib.contextmanager
+def held(name: str, wait: float = None, strict: bool = True, busy: str = "another action is still running"):
+    """An exclusive lock on `name` in the jobs folder for the length of the
+    block, waiting up to `wait` seconds for another process to let it go.
+    Strict, a lock that cannot be had is refused, saying `busy`; otherwise
+    the block runs without it."""
+    wait = LOCK_WAIT if wait is None else wait
+    if fcntl is None:
+        yield
+        return
+    try:
+        folder = jobs_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(folder / name), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        if strict:
+            raise Refused("cannot take the lock in %s: %s" % (jobs_dir(), e.strerror or e))
+        yield
+        return
+    try:
+        deadline = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    if strict:
+                        raise Refused("%s; try again in a moment" % busy)
+                    break
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(fd)                # and with it the lock
+
+
+def zone_lock(zone: Path):
+    """One request at a time per zone, from reading a note to committing it."""
+    return held("page-action-%s.lock" % zone.name, busy="another action in %s is still running" % zone.name)
 
 
 def audit(req, ok: bool, say: str, via: str = "") -> None:
@@ -122,6 +198,30 @@ def rekeys(zone: str, rel: str, update=None) -> dict:
     `update` is (old, new): a line re-dated again moves every key that led to
     it on to the newest, and one dated back to where it started drops out."""
     path = jobs_dir() / "todo-rekeys.json"
+    scope = "%s/%s|" % (zone, rel)
+    if update:
+        with held("todo-rekeys.lock", wait=10, strict=False):    # one zone's update never loses another's
+            data = recent_rekeys(path)
+            old, new = scope + update[0], update[1]
+            now = time.time()
+            data = {k: ([new, now] if k.startswith(scope) and v[0] == update[0] else v) for k, v in data.items()}
+            data[old] = [new, now]
+            data = {k: v for k, v in data.items() if k != scope + v[0]}
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(prefix=".todo-rekeys-", dir=str(path.parent))
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                os.replace(tmp, str(path))
+            except OSError:
+                pass
+    else:
+        data = recent_rekeys(path)
+    return {k[len(scope):]: v[0] for k, v in data.items() if k.startswith(scope)}
+
+
+def recent_rekeys(path: Path) -> dict:
+    """The rekey map as saved, less what is older than the hour."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -129,23 +229,7 @@ def rekeys(zone: str, rel: str, update=None) -> dict:
     except (OSError, ValueError):
         data = {}
     cut = time.time() - REKEY_HOURS * 3600
-    data = {k: v for k, v in data.items() if isinstance(v, list) and len(v) == 2 and isinstance(v[1], (int, float)) and v[1] >= cut}
-    scope = "%s/%s|" % (zone, rel)
-    if update:
-        old, new = scope + update[0], update[1]
-        now = time.time()
-        data = {k: ([new, now] if k.startswith(scope) and v[0] == update[0] else v) for k, v in data.items()}
-        data[old] = [new, now]
-        data = {k: v for k, v in data.items() if k != scope + v[0]}
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(prefix=".todo-rekeys-", dir=str(path.parent))
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f)
-            os.replace(tmp, str(path))
-        except OSError:
-            pass
-    return {k[len(scope):]: v[0] for k, v in data.items() if k.startswith(scope)}
+    return {k: v for k, v in data.items() if isinstance(v, list) and len(v) == 2 and isinstance(v[1], (int, float)) and v[1] >= cut}
 
 
 def todo_lines():
@@ -174,17 +258,57 @@ def live_note(base: Path, rel) -> Path:
     return p
 
 
+def git(zone: Path, *args, timeout: float = None):
+    """One git command in the zone: (exit code, what it said). It runs in a
+    process group of its own, so a hook that hangs, or a signing key waiting
+    for its passphrase, is stopped with it when the time is up: politely
+    first, so git takes away its own index.lock. Past the time, the code is None."""
+    timeout = GIT_TIMEOUT if timeout is None else timeout
+    try:
+        p = subprocess.Popen(["git", "-C", str(zone)] + list(args), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+    except OSError as e:
+        return 127, "git did not run: %s" % (e.strerror or e)
+    try:
+        out, err = p.communicate(timeout=max(1.0, timeout))
+    except subprocess.TimeoutExpired:
+        for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, None)):
+            try:
+                os.killpg(p.pid, sig)
+            except OSError:
+                pass
+            try:
+                p.communicate(timeout=grace)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        return None, "git took longer than %d s and was stopped" % round(timeout)
+    return p.returncode, (err or out or "")
+
+
 def commit(zone: Path, note: Path, before: bytes, message: str) -> None:
-    """Commit the one file, or put it back as it was and say why."""
+    """Commit the one file, or put it back as it was and say why. Put back
+    only if it still holds what this request wrote: an edit made meanwhile,
+    in Obsidian say, is left alone."""
     rel = str(note.relative_to(zone))
-    add = subprocess.run(["git", "-C", str(zone), "add", "--", rel], capture_output=True, text=True)
-    done = add if add.returncode else subprocess.run(
-        ["git", "-C", str(zone), "commit", "-q", "-m", message, "--", rel], capture_output=True, text=True)
-    if done.returncode:
-        note.write_bytes(before)
-        subprocess.run(["git", "-C", str(zone), "reset", "-q", "--", rel], capture_output=True)
-        why = (done.stderr or done.stdout).strip().splitlines()
-        raise Refused("not committed, so nothing changed: %s" % (why[-1] if why else "git refused"))
+    mine = note.read_bytes()
+    deadline = time.time() + GIT_TIMEOUT
+    code, said = git(zone, "add", "--", rel)
+    if code == 0:
+        code, said = git(zone, "commit", "-q", "-m", message, "--", rel, timeout=deadline - time.time())
+    if code != 0:
+        why = said.strip().splitlines() if code is not None else [said]
+        why = why[-1] if why else "git refused"
+        try:
+            ours = note.read_bytes() == mine
+        except OSError:
+            ours = False
+        if ours:
+            note.write_bytes(before)
+        git(zone, "reset", "-q", "--", rel, timeout=10)
+        if not ours:
+            raise Refused("not committed: %s. The note was edited meanwhile, so it was left as it is" % why)
+        raise Refused("not committed, so nothing changed: %s" % why)
 
 
 def todo(ws: Path, req: dict) -> str:
@@ -202,18 +326,19 @@ def todo(ws: Path, req: dict) -> str:
             when = None if raw == "-" else dt.date.fromisoformat(raw or "")
         except (TypeError, ValueError):
             raise Refused("not a date: %r" % raw)
-    before = note.read_bytes()
-    try:
+    with zone_lock(zone):
+        before = note.read_bytes()
         try:
-            said, message = todo_edit(tl, zone, rel, key, req["verb"], when)
+            try:
+                said, message = todo_edit(tl, zone, rel, key, req["verb"], when)
+            except tl.NotFound:
+                newer = rekeys(zone.name, rel).get(key)      # a second click before the page rebuilt
+                if not newer:
+                    raise
+                said, message = todo_edit(tl, zone, rel, newer, req["verb"], when)
         except tl.NotFound:
-            newer = rekeys(zone.name, rel).get(key)      # a second click before the page rebuilt
-            if not newer:
-                raise
-            said, message = todo_edit(tl, zone, rel, newer, req["verb"], when)
-    except tl.NotFound:
-        raise Refused("that line has changed since the page was built; it rebuilds now, try again")
-    commit(zone, note, before, message[:200])
+            raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+        commit(zone, note, before, message[:200])
     return said
 
 
@@ -258,15 +383,16 @@ def todo_add(ws: Path, req: dict) -> str:
         when = None if raw == "-" else dt.date.fromisoformat(raw)
     except ValueError:
         raise Refused("not a date: %r" % raw)
-    before = note.read_bytes()
-    try:
-        line, section, _ = tl.add(str(zone), text, label, when)
-    except ValueError as e:
-        raise Refused(str(e))
-    except tl.NotFound:
-        raise Refused("%s's Todo.md has no Inbox section" % zone.name)
-    said = tl.parse(line)["text"]
-    commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
+    with zone_lock(zone):
+        before = note.read_bytes()
+        try:
+            line, section, _ = tl.add(str(zone), text, label, when)
+        except ValueError as e:
+            raise Refused(str(e))
+        except tl.NotFound:
+            raise Refused("%s's Todo.md has no Inbox section" % zone.name)
+        said = tl.parse(line)["text"]
+        commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
     return "Added to %s: %s" % (section, said)
 
 
@@ -280,8 +406,17 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
     if not (is_thread or is_hub):
         raise Refused("only a thread note, or a single-thread project's hub, can be parked")
     status = "parked" if req["verb"] == "park" else "active"
+    with zone_lock(zone):
+        return park_note(zone, note, parts, is_thread, status, today)
+
+
+def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str, today: dt.date) -> str:
+    """The edit and its commit, under the zone's lock."""
     before = note.read_bytes()
-    text = before.decode("utf-8")
+    try:
+        text = before.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Refused("the note is not UTF-8 text")
     m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
     if not m:
         raise Refused("the note has no frontmatter to set its status in")
@@ -469,10 +604,15 @@ def cmux_act(ws: Path, req: dict) -> str:
 
 
 def act(ws: Path, req, today=None) -> str:
-    if isinstance(req, dict) and req.get("verb") in CMUX_VERBS:
-        return cmux_act(ws, req)
-    if not isinstance(req, dict) or req.get("verb") not in VERBS:
+    """Carry out one request, or raise Refused. Every verb but settings needs
+    the page-actions flag, read now rather than when the page was built."""
+    if not isinstance(req, dict) or req.get("verb") not in VERBS + CMUX_VERBS:
         raise Refused("unknown action")
+    if req["verb"] != "settings" and not flag_on(ws):
+        raise Refused("actions are a preview feature, and they are off; switch on %s in System/garrick-flags.json" % FLAG)
+    if req["verb"] in CMUX_VERBS:
+        cmux_desk()                 # the cmux extra and cmux itself, before anything else
+        return cmux_act(ws, req)
     if req["verb"] == "run":
         return run_job(req)
     if req["verb"] == "settings":
@@ -500,6 +640,8 @@ def main(argv=None) -> int:
         out = {"ok": True, "say": act(ws, req)}
     except Refused as e:
         out = {"ok": False, "say": str(e)}
+    except Exception as e:          # a fault still answers in JSON, and is logged
+        out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
     audit(req, out["ok"], out["say"])
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1

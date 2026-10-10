@@ -438,6 +438,10 @@ class DeskVerbTest(CmuxCase):
 
 
 class PageVerbTest(CmuxCase):
+    def setUp(self):
+        super().setUp()
+        (self.ws / "System" / "garrick-flags.json").write_text('{"page-actions": true}')     # the verbs need the preview
+
     def act(self, req):
         return pa.act(self.ws, req)
 

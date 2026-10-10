@@ -53,6 +53,7 @@ class ActionCase(unittest.TestCase):
         self._env = os.environ.get("GARRICK_JOBS_DIR")
         os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)
         build_workspace(self.root)
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook
         git(self.work, "init", "-q")
@@ -374,10 +375,135 @@ class TestAudit(ActionCase):
         self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
 
     def test_a_log_that_cannot_be_written_stops_nothing(self):
-        self.jobs.parent.mkdir(parents=True, exist_ok=True)
-        self.jobs.write_text("a file where the folder should be")
+        (self.jobs / "page-actions.log").mkdir(parents=True)          # a folder where the log should be
         done = self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
         self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, json.loads(done.stdout))
+
+
+class TestFlag(ActionCase):
+    """The page-actions flag is read at each request, not when the page was built."""
+
+    def test_off_refuses_all_but_settings(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": False}))
+        before = (self.work / "Todo.md").read_bytes()
+        for req in ({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")},
+                    {"verb": "todo-add", "zone": "Work", "text": "Book the room"},
+                    {"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
+                    {"verb": "run", "job": "whats-open"}):
+            with self.assertRaisesRegex(pa.Refused, "preview feature, and they are off", msg=req):
+                pa.act(self.root, req, today=TODAY)
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note"]))
+        os.remove(self.root / "System" / "garrick-flags.json")                       # no flags at all: off
+        with self.assertRaisesRegex(pa.Refused, "they are off"):
+            self.act(verb="todo-add", zone="Work", text="Book the room")
+
+    def test_cmux_verbs_need_the_flag_and_the_desk(self):
+        real = pa.CMUX_EXTRA
+        pa.CMUX_EXTRA = Path(self._tmp.name) / "no-cmux-extra"       # never the real desk
+        try:
+            write(self.root / "System" / "garrick-flags.json", json.dumps({}))
+            with self.assertRaisesRegex(pa.Refused, "they are off"):
+                pa.act(self.root, {"verb": "startup"})
+            write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
+            for verb in ("open", "close", "startup", "shutdown"):
+                with self.assertRaisesRegex(pa.Refused, "need the cmux extra", msg=verb):
+                    pa.act(self.root, {"verb": verb, "zone": "Nowhere", "project": "Acme Review"})
+        finally:
+            pa.CMUX_EXTRA = real
+
+
+class TestTogether(ActionCase):
+    """Two requests at once: each click is its own process, so the zone's lock
+    keeps one from reading the note while the other is still committing it."""
+
+    def hook(self, body):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\n" + body)
+        hook.chmod(0o755)
+
+    def start(self):
+        return subprocess.Popen([sys.executable, str(SCRIPT), "--workspace", str(self.root)], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
+
+    def test_two_quick_adds_both_land(self):
+        mark = Path(self._tmp.name) / "in-the-hook"
+        self.hook('touch "%s"\nsleep 1\n' % mark)
+        first = self.start()
+        first.stdin.write(json.dumps({"verb": "todo-add", "zone": "Work", "text": "Book the room"}))
+        first.stdin.close()
+        import time
+        deadline = time.time() + 20
+        while not mark.exists() and time.time() < deadline:      # the first is committing
+            time.sleep(0.02)
+        second = self.start()
+        out2, _ = second.communicate(json.dumps({"verb": "todo-add", "zone": "Work", "text": "Call Dana"}), timeout=60)
+        out1 = first.stdout.read()
+        first.wait(timeout=60)
+        first.stdout.close()
+        first.stderr.close()
+        self.assertEqual({"ok": True, "say": "Added to Inbox: Book the room"}, json.loads(out1))
+        self.assertEqual({"ok": True, "say": "Added to Inbox: Call Dana"}, json.loads(out2))
+        todo = (self.work / "Todo.md").read_text()
+        self.assertIn("- [ ] Book the room\n", todo)
+        self.assertIn("- [ ] Call Dana\n", todo)
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertEqual(["Work: added to Inbox, Call Dana", "Work: added to Inbox, Book the room"],
+                         git(self.work, "log", "-2", "--format=%s").splitlines())
+
+    def test_an_edit_made_while_committing_is_kept(self):
+        todo = self.work / "Todo.md"
+        self.hook('printf "%%s\\n" "- [ ] Saved in Obsidian" >> "%s"\nexit 1\n' % todo)     # a save, then the wall check refuses
+        with self.assertRaisesRegex(pa.Refused, "edited meanwhile, so it was left as it is"):
+            self.act(verb="todo-add", zone="Work", text="Book the room")
+        text = todo.read_text()
+        self.assertIn("- [ ] Saved in Obsidian\n", text)
+        self.assertIn("- [ ] Book the room\n", text)
+        self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
+
+    def test_a_hook_that_hangs_is_stopped(self):
+        import time
+        self.hook("sleep 30\n")
+        before = (self.work / "Todo.md").read_bytes()
+        real, pa.GIT_TIMEOUT = pa.GIT_TIMEOUT, 1
+        try:
+            t0 = time.time()
+            with self.assertRaisesRegex(pa.Refused, "longer than 1 s and was stopped"):
+                self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Invoice"))
+            self.assertLess(time.time() - t0, 15)
+        finally:
+            pa.GIT_TIMEOUT = real
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse((self.work / ".git" / "index.lock").exists())             # git took its lock away
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_a_held_zone_waits_then_refuses(self):
+        real, pa.LOCK_WAIT = pa.LOCK_WAIT, 0.3
+        try:
+            with pa.zone_lock(self.work):              # a lock of its own, as another process's would be
+                with self.assertRaisesRegex(pa.Refused, "another action in Work is still running; try again in a moment"):
+                    self.act(verb="todo-add", zone="Work", text="Book the room")
+        finally:
+            pa.LOCK_WAIT = real
+        self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
+        self.assertEqual("Added to Inbox: Book the room", self.act(verb="todo-add", zone="Work", text="Book the room"))
+
+    def test_rekeys_from_two_processes_are_all_kept(self):
+        code = ("import importlib.util, sys\n"
+                "spec = importlib.util.spec_from_file_location('pa', %r)\n"
+                "pa = importlib.util.module_from_spec(spec); spec.loader.exec_module(pa)\n"
+                "for i in range(60):\n"
+                "    pa.rekeys(sys.argv[1], 'Todo.md', ('%%016x' %% i, '%%016x' %% (i + 1000)))\n") % str(SCRIPT)
+        procs = [subprocess.Popen([sys.executable, "-c", code, zone], env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
+                 for zone in ("Work", "Personal")]
+        for p in procs:
+            p.wait(timeout=60)
+        self.assertEqual(60, len(pa.rekeys("Work", "Todo.md")))
+        self.assertEqual(60, len(pa.rekeys("Personal", "Todo.md")))
 
 
 class TestScript(ActionCase):
@@ -394,6 +520,25 @@ class TestScript(ActionCase):
         self.assertEqual({"ok": False, "say": "not a request"}, json.loads(refused.stdout))
         elsewhere = self.run_script("{}", ws=self.root.parent)
         self.assertEqual("not a Garrick workspace", json.loads(elsewhere.stdout)["say"])
+
+    def test_a_fault_still_answers_and_is_logged(self):
+        import contextlib
+        import io
+        real, stdin = pa.act, sys.stdin
+
+        def broken(ws, req, today=None):
+            raise OSError("the disk went away")
+        pa.act, sys.stdin = broken, io.StringIO(json.dumps({"verb": "todo-done", "zone": "Work"}))
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = pa.main(["--workspace", str(self.root)])
+        finally:
+            pa.act, sys.stdin = real, stdin
+        self.assertEqual(1, code)
+        self.assertEqual({"ok": False, "say": "that did not work: OSError: the disk went away"}, json.loads(buf.getvalue()))
+        self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
+            'todo-done zone="Work"  ->  refused: that did not work: OSError: the disk went away'))
 
 
 if __name__ == "__main__":

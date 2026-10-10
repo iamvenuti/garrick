@@ -41,8 +41,9 @@ def _load():
 ask = _load()
 
 # A stand-in for `claude -p --input-format stream-json`: each user message gets
-# the next answer from FAKE_ANSWERS, with the session's running cost, and its
-# arguments go to FAKE_ARGS.
+# the next answer from FAKE_ANSWERS, counted across every process started, with
+# the session's running cost, and its arguments go to FAKE_ARGS. An answer that
+# is null is the error Claude reports when the session's budget is spent.
 FAKE_CLAUDE = textwrap.dedent("""\
     #!%s
     import json, os, sys
@@ -53,9 +54,15 @@ FAKE_CLAUDE = textwrap.dedent("""\
         msg = json.loads(line)
         with open(os.environ["FAKE_ARGS"] + ".seen", "a") as f:
             f.write(json.dumps(msg["message"]["content"]) + "\\n")
+        seen = len(open(os.environ["FAKE_ARGS"] + ".seen").read().splitlines())
         n += 1
         print(json.dumps({"type": "assistant", "message": {"content": []}}), flush=True)
-        print(json.dumps({"type": "result", "subtype": "success", "result": answers[n - 1], "num_turns": 1,
+        answer = answers[seen - 1]
+        if answer is None:
+            print(json.dumps({"type": "result", "subtype": "error_max_budget_usd", "is_error": True, "num_turns": 1,
+                              "total_cost_usd": 0.01 * n}), flush=True)
+            continue
+        print(json.dumps({"type": "result", "subtype": "success", "result": answer, "num_turns": 1,
                           "total_cost_usd": 0.01 * n, "usage": {"input_tokens": 100, "output_tokens": 20}}), flush=True)
     """) % sys.executable
 
@@ -63,7 +70,7 @@ FAKE_CLAUDE = textwrap.dedent("""\
 class AskCase(ActionCase):
     def setUp(self):
         super().setUp()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "page-actions": True}))
         self.names = ask.scan(self.root)
         self._saved = {k: os.environ.get(k) for k in ("GARRICK_HARNESS", "GARRICK_ASK_TIER", "GARRICK_CAP_CALLS_HOUR", "PATH")}
 
@@ -124,6 +131,18 @@ class TestProposals(AskCase):
                                   "date": "2026-10-09"}),
                          ask.proposal({"verb": "todo-add", "zone": "Work", "text": " Call Dana ", "project": "Acme Review",
                                        "thread": "Pricing", "date": "2026-10-09"}, self.names, self.root))
+
+    def test_an_app_switched_off_in_settings(self):
+        a = {"verb": "open", "zone": "Work", "project": "Acme Review", "app": "codex"}
+        settings = self.root / "System" / "generated" / "status-settings.json"
+        write(settings, json.dumps({"launchers": {"note": True, "codex": False}, "default": "note"}))
+        with self.assertRaisesRegex(ask.Bad, "Codex is switched off in Settings"):
+            ask.proposal(a, self.names, self.root)
+        self.assertEqual("launch", ask.proposal(dict(a, app="cmux"), self.names, self.root)[0])     # left out: on
+        self.assertEqual("launch", ask.proposal(dict(a, app=""), self.names, self.root)[0])         # the app picks
+        write(settings, json.dumps({"launchers": ["note", "claude"]}))
+        with self.assertRaisesRegex(ask.Bad, "cmux is switched off"):
+            ask.proposal(dict(a, app="cmux"), self.names, self.root)
 
     def test_refused(self):
         for a in ({"verb": "run", "job": "whats-open"}, {"verb": "shutdown"}, {"verb": "settings", "launchers": []},
@@ -203,6 +222,39 @@ class TestCarryOut(AskCase):
         self.assertFalse(out["ok"])
         self.assertIn("preview feature, and it is off", out["say"])
         self.assertEqual([], session.seen)
+
+    def test_actions_need_the_page_actions_flag_too(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        session = FakeSession(json.dumps({"say": "Parked.", "do": [
+            {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
+            {"verb": "open", "zone": "Work", "project": "Acme Review"}]}))
+        out = ask.Asker(self.root, session).ask("park Pricing, then open Acme")
+        self.assertEqual(["Refused: actions are a preview feature, and they are off; switch on page-actions in "
+                          "System/garrick-flags.json", "Opening Acme Review"], out["done"])
+        self.assertIn("\nstatus: active\n", self.thread.read_text())
+
+    def test_the_ask_flag_switched_off_mid_turn(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
+        out = ask.Asker(self.root).carry_out("Parked.", [{"verb": "park", "zone": "Work", "project": "Acme Review",
+                                                          "thread": "Pricing"}], self.names)
+        self.assertFalse(out["ok"])
+        self.assertIn("\nstatus: active\n", self.thread.read_text())
+
+    def test_a_fault_in_an_action_is_a_refusal(self):
+        pa = ask.page_action()
+        real = pa.act
+
+        def broken(ws, req, today=None):
+            raise OSError("the disk went away")
+        pa.act = broken
+        try:
+            out = ask.Asker(self.root).carry_out("Parked.", [{"verb": "park", "zone": "Work", "project": "Acme Review",
+                                                              "thread": "Pricing"}], self.names)
+        finally:
+            pa.act = real
+        self.assertEqual(["Refused: OSError: the disk went away"], out["done"])
+        self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
+            "refused: OSError: the disk went away  (ask)"))
 
     def test_the_flag_off_from_the_command_line(self):
         os.remove(self.root / "System" / "garrick-flags.json")
@@ -304,6 +356,92 @@ class TestWarmSession(AskCase):
         self.assertFalse(self.args.exists())
         self.assertTrue(json.loads((self.jobs / "ledger.jsonl").read_text().splitlines()[-1])["refused"])
 
+
+    def test_a_spent_budget_starts_a_fresh_session(self):
+        self.answers.write_text(json.dumps([None, '{"say": "Fresh.", "do": []}']))
+        asker = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        try:
+            with self.assertRaisesRegex(ask.Bad, "error_max_budget_usd; the next request starts a new session"):
+                asker.ask("what's open")
+            self.assertIsNone(asker.session.proc)                                  # stopped, not left to refuse
+            self.assertEqual("Fresh.", asker.ask("what's open")["say"])
+            self.assertIn("<workspace>", (Path(str(self.args) + ".seen")).read_text().splitlines()[1])   # told it all again
+        finally:
+            asker.session.stop()
+
+    def serve_in_thread(self):
+        import threading
+        t = threading.Thread(target=ask.serve, args=(self.root,), daemon=True)
+        t.start()
+        return t
+
+    def test_one_server_per_workspace(self):
+        import socket
+        import threading
+        path = ask.sock_path(self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        first = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)          # a server that has the socket already
+        first.bind(str(path))
+        first.listen(1)
+        inode = path.stat().st_ino
+        real, ask.SERVE_WAIT = ask.SERVE_WAIT, 0.2
+        try:
+            with ask.page_action().held(path.with_suffix(".lock").name):
+                t = self.serve_in_thread()
+                t.join(10)
+            self.assertFalse(t.is_alive())                                          # the second left at once
+            self.assertEqual(inode, path.stat().st_ino)                             # and left the socket alone
+        finally:
+            ask.SERVE_WAIT = real
+            first.close()
+
+    def test_a_server_that_never_answers(self):
+        import socket
+        import threading
+        import time
+        path = ask.sock_path(self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        wedged = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        wedged.bind(str(path))
+        wedged.listen(1)
+
+        def hold():
+            conn, _ = wedged.accept()
+            time.sleep(3)
+            conn.close()
+        threading.Thread(target=hold, daemon=True).start()
+        real, ask.ASK_WAIT = ask.ASK_WAIT, 0.5
+        try:
+            t0 = time.time()
+            out = ask.call(self.root, "status", start=False)
+            self.assertLess(time.time() - t0, 2.5)
+        finally:
+            ask.ASK_WAIT = real
+            wedged.close()
+        self.assertFalse(out["ok"])
+        self.assertIn("did not answer", out["say"])
+
+    def test_a_client_that_leaves_mid_turn(self):
+        import socket
+        self.answers.write_text(json.dumps(['{"say": "Two projects.", "do": []}']))
+        t = self.serve_in_thread()
+        try:
+            path = ask.sock_path(self.root)
+            for _ in range(100):
+                if path.exists():
+                    break
+                __import__("time").sleep(0.05)
+            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            c.connect(str(path))
+            c.sendall(b'{"op": "ask", "text": "what\'s open"}\n')
+            c.close()                                                               # gone before the answer
+            t.join(3)
+            out = ask.call(self.root, "status", start=False)
+            self.assertIsNotNone(out)                                               # the server carried on
+            self.assertTrue(out["session"])
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
 
     def test_through_the_server(self):
         import contextlib

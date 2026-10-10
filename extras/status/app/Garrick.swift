@@ -76,6 +76,20 @@ func askOn() -> Bool {
 	return flags["ask"] as? Bool == true
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+// Seconds the app waits for ask.py: longer than ask.py waits for its server
+// (ASK_WAIT), so its own message comes first; past it, the request is let go.
+let askWait = 180.0
+
+// Settings › Opening a thread, as status.py's shared_launchers() reads it:
+// {name: true or false}, a name left out being on, or a list of those on.
+// Nothing saved, or nothing that reads: every way is on.
+func launcherOn(_ k: String) -> Bool {
+	guard let data = try? Data(contentsOf: workspace.appendingPathComponent("System/generated/status-settings.json")),
+	      let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return true }
+	if let on = saved["launchers"] as? [String: Any] { return on[k] == nil || on[k] as? Bool == true }
+	if let on = saved["launchers"] as? [String] { return on.contains(k) }
+	return true
+}
 
 // ask.py with its arguments; its answer, parsed, back on the main queue.
 func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
@@ -88,11 +102,17 @@ func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
 	p.standardError = FileHandle.nullDevice
 	p.standardInput = FileHandle.nullDevice
 	do { try p.run() } catch { return done(["say": "Cannot run \(python)", "ok": false]) }
+	let late = DispatchWorkItem { if p.isRunning { p.terminate() } }
+	DispatchQueue.global().asyncAfter(deadline: .now() + askWait, execute: late)
 	DispatchQueue.global().async {
 		let data = out.fileHandleForReading.readDataToEndOfFile()
 		p.waitUntilExit()
+		let timedOut = !late.isCancelled && p.terminationReason == .uncaughtSignal
+		late.cancel()
 		let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-		DispatchQueue.main.async { done(said ?? ["say": "No answer.", "ok": false]) }
+		let none: [String: Any] = ["say": timedOut ? "Garrick did not answer in \(Int(askWait)) seconds. Ask again." : "No answer.",
+		                           "ok": false]
+		DispatchQueue.main.async { done(said ?? none) }
 	}
 }
 
@@ -441,42 +461,54 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Open a project or thread folder in Claude, Codex or cmux, or show it in Finder. Claude gets the
 	// phrase typed into a new session, for you to send; Codex and cmux get the
 	// folder, and the phrase goes on the clipboard. Nothing is sent and no
-	// command is typed into a terminal.
-	func launch(_ app: String, _ path: String, phrase: String) {
-		guard let folder = inWorkspace(path) else { return }
+	// command is typed into a terminal. Says whether anything was opened.
+	@discardableResult
+	func launch(_ app: String, _ path: String, phrase: String) -> Bool {
+		guard let folder = inWorkspace(path) else { return false }
 		switch app {
 		case "claude":
 			guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) != nil else {
 				toast("Claude is not installed here any more. Rebuilding the page without it.")
-				return freshen(force: true)
+				freshen(force: true)
+				return false
 			}
 			var c = URLComponents()
 			c.scheme = "claude"; c.host = "code"; c.path = "/new"
 			c.queryItems = [URLQueryItem(name: "folder", value: folder.path)] + (phrase.isEmpty ? [] : [URLQueryItem(name: "q", value: phrase)])
-			if let url = c.url { NSWorkspace.shared.open(url) }
+			guard let url = c.url else { return false }
+			return NSWorkspace.shared.open(url)
 		case "codex":
 			guard let codex = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexBundle) else {
 				toast("Codex is not installed here any more. Rebuilding the page without it.")
-				return freshen(force: true)
+				freshen(force: true)
+				return false
 			}
 			let cli = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"]
 				.map { codex.appendingPathComponent($0) }
 				.first { FileManager.default.isExecutableFile(atPath: $0.path) }
-			guard let cli else { return toast("Codex's own launcher is missing; reinstall the Codex app.") }
+			guard let cli else {
+				toast("Codex's own launcher is missing; reinstall the Codex app.")
+				return false
+			}
 			copyText(phrase)
 			let p = Process()
 			p.executableURL = cli
 			p.arguments = ["app", folder.path]
 			p.standardOutput = FileHandle.nullDevice
 			p.standardError = FileHandle.nullDevice
-			do { try p.run() } catch { toast("Codex did not open that folder.") }
+			do { try p.run() } catch {
+				toast("Codex did not open that folder.")
+				return false
+			}
+			return true
 		case "cmux":
 			copyText(phrase)
-			openInCmux(folder.path)
+			return openInCmux(folder.path)
 		case "finder":
 			NSWorkspace.shared.activateFileViewerSelecting([folder])
+			return true
 		default:
-			return
+			return false
 		}
 	}
 
@@ -516,15 +548,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// Only a folder inside this workspace, and only through Launch Services, as
 	// Finder's Open With would: no socket, no password, no command typed.
-	func openInCmux(_ path: String) {
-		guard let folder = inWorkspace(path) else { return }
+	// Says whether it was asked to; a failure after that is a toast of its own.
+	@discardableResult
+	func openInCmux(_ path: String) -> Bool {
+		guard let folder = inWorkspace(path) else { return false }
 		guard let cmux = NSWorkspace.shared.urlForApplication(withBundleIdentifier: cmuxBundle) else {
 			toast("cmux is not installed here any more. Rebuilding the page without it.")
-			return freshen(force: true)
+			freshen(force: true)
+			return false
 		}
 		NSWorkspace.shared.open([folder], withApplicationAt: cmux, configuration: NSWorkspace.OpenConfiguration()) { _, error in
 			if error != nil { DispatchQueue.main.async { self.toast("cmux did not open that folder.") } }
 		}
+		return true
 	}
 
 	// MARK: the menu bar (preview, menu-bar)
@@ -1000,12 +1036,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// open, a project or a thread, opens here, as its row's icons open it, in
 	// the app the request named or the default assistant. The reply is the
 	// session's sentence and what was done; ranAway says an app came forward.
+	// An app the request named must be switched on in Settings, as on the page.
 	func askGarrick(_ text: String, done: @escaping (String, Bool) -> Void) {
 		askCall(["ask", "--", text]) { [weak self] out in
 			guard let self else { return }
 			let say = out["say"] as? String ?? ""
-			let lines = out["done"] as? [String] ?? []
-			let ok = out["ok"] as? Bool ?? false
+			var lines = out["done"] as? [String] ?? []
+			var ok = out["ok"] as? Bool ?? false
 			var opened = false
 			for item in out["launch"] as? [[String: Any]] ?? [] {
 				guard let folder = item["folder"] as? String else { continue }
@@ -1014,8 +1051,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					self.toast("Switch on Claude, Codex or cmux in Settings to open threads from here.")
 					continue
 				}
-				self.launch(app, folder, phrase: item["phrase"] as? String ?? "")
-				opened = true
+				guard launcherOn(app) else {
+					lines.append("Refused: \(app == "cmux" ? app : app.capitalized) is switched off in Settings")
+					ok = false
+					continue
+				}
+				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "") { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok)

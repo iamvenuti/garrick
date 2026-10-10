@@ -24,6 +24,11 @@ before the next request, and the server exits after three hours with nothing
 asked of it. Codex has no such mode: each request is one `codex exec`
 through agent.py, read-only, given the last few exchanges again.
 
+A Claude session that reports an error, its budget spent say, is stopped,
+so the next request starts a fresh one. One server per workspace: a lock
+beside the socket keeps a second from starting, and a client that hears
+nothing for ASK_WAIT seconds stops waiting and says so.
+
 **The tier and the caps are the scheduled jobs'.** The session runs on
 GARRICK_ASK_TIER (`haiku`, or `sonnet`, `opus`), named as a tier, never a
 model, as agent.py names them. It loads agent.py's deny profile,
@@ -40,9 +45,11 @@ from their frontmatter, sent again only when it has changed. It answers with
 JSON (ask-brief.md). Each action is checked against that list, then:
 
     open       comes back to the app as a folder to open, in an app the
-               request named or the user's default; the app checks it again
+               request named or the user's default; an app switched off in
+               Settings is refused, and the app checks it again
     park, wake run through page_action.act(), as the page's buttons do: the
-    todo-add   status field or the line, committed in the zone's repository
+    todo-add   status field or the line, committed in the zone's repository,
+               and only with the page's own preview, page-actions, on too
 
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
 is carried into the next request as `<last-results>`. One line per request
@@ -55,6 +62,7 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import importlib.util
@@ -78,6 +86,9 @@ FLAG = "ask"
 DEFAULT_TIER = "haiku"
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
 TURN_TIMEOUT = 60           # seconds: a turn that takes longer ends the session
+ASK_WAIT = 150              # seconds: a client waits this long for the server's answer, two turns and the actions
+SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
+SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
 MAX_REQUEST = 2000
 GONE = ("done",)
@@ -122,11 +133,24 @@ def page_action():
 
 
 def flag_on(ws: Path) -> bool:
+    return page_action().flag_on(ws, FLAG)
+
+
+def launcher_on(ws: Path, app: str) -> bool:
+    """Whether Settings › Opening a thread has this app switched on, read as
+    status.py's shared_launchers() reads System/generated/status-settings.json:
+    {name: true or false}, a name left out being on, or a list of the names
+    on. No settings saved, or none that read: every app is on."""
     try:
-        data = json.loads((ws / "System" / "garrick-flags.json").read_text(encoding="utf-8"))
+        data = json.loads((ws / "System" / "generated" / "status-settings.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    return isinstance(data, dict) and data.get(FLAG) is True
+        return True
+    on = data.get("launchers") if isinstance(data, dict) else None
+    if isinstance(on, dict):
+        return on.get(app, True) is True
+    if isinstance(on, list):
+        return app in on
+    return True
 
 
 def tier() -> str:
@@ -253,6 +277,8 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
     app = a.get("app") or ""
     if app and app not in APPS:
         raise Bad("no app %r" % (app,))
+    if app and not launcher_on(ws, app):
+        raise Bad("%s is switched off in Settings" % ("cmux" if app == "cmux" else app.capitalize()))
     folder = ws / "Zones" / zone / project
     if thread is not None:
         folder = folder / "Threads" / thread
@@ -376,7 +402,9 @@ class ClaudeSession:
                                                                        "denied": denied, "subtype": event.get("subtype")},
                                                time.time() - start, code))
         if code:
-            raise Bad("the assistant reported an error: %s" % (event.get("subtype") or "unknown"))
+            self.stop()             # a spent budget would refuse every turn after it; the next request starts afresh
+            raise Bad("the assistant reported an error: %s; the next request starts a new session"
+                      % (event.get("subtype") or "unknown"))
         return event.get("result") or "", event.get("usage") or {}
 
 
@@ -464,6 +492,8 @@ class Asker:
         return self.carry_out(say, do, names, usage)
 
     def carry_out(self, say: str, do: list, names, usage=None) -> dict:
+        if do and not flag_on(self.ws):             # switched off while the session was answering
+            return off()
         pa = page_action()
         done, launch, ok = [], [], True
         for a in do:
@@ -481,6 +511,8 @@ class Asker:
                 said, good = pa.act(self.ws, item), True
             except pa.Refused as e:
                 said, good = str(e), False
+            except Exception as e:                  # a fault is a refusal, logged as the page's are
+                said, good = "%s: %s" % (type(e).__name__, e), False
             pa.audit(item, good, said, via="ask")
             done.append(said if good else "Refused: " + said)
             ok = ok and good
@@ -514,12 +546,34 @@ def log(line: str) -> None:
         pass
 
 
+def send(conn, out: dict) -> None:
+    """The answer, to a client that may have gone: a closed or stuck
+    connection costs that answer, never the server."""
+    try:
+        conn.settimeout(SEND_TIMEOUT)
+        conn.sendall((json.dumps(out, ensure_ascii=False) + "\n").encode("utf-8"))
+    except OSError:
+        pass
+
+
 def serve(ws: Path) -> None:
-    have = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
-    os.environ["PATH"] = os.pathsep.join(have + [os.path.expanduser(p) for p in EXTRA_PATH if os.path.expanduser(p) not in have])
+    """The server, unless another holds the workspace's lock: then it has
+    started, or is on its way out, and this one leaves its socket alone."""
     path = sock_path(ws)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    pa = page_action()
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(pa.held(path.with_suffix(".lock").name, wait=SERVE_WAIT))
+        except pa.Refused:
+            return
+        serve_locked(ws, path)
+
+
+def serve_locked(ws: Path, path: Path) -> None:
+    have = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    os.environ["PATH"] = os.pathsep.join(have + [os.path.expanduser(p) for p in EXTRA_PATH if os.path.expanduser(p) not in have])
+    if path.exists():                           # a server that died without taking it away
         path.unlink()
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o077)
@@ -566,7 +620,7 @@ def serve(ws: Path) -> None:
                                "age_min": round((time.time() - s.started) / 60) if s and s.alive() else None}
                     elif op == "stop":
                         path.unlink()
-                        conn.sendall((json.dumps({"say": "Stopped."}) + "\n").encode("utf-8"))
+                        send(conn, {"say": "Stopped."})
                         break
                     else:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
@@ -580,7 +634,7 @@ def serve(ws: Path) -> None:
                                                   json.dumps(out.get("say", ""), ensure_ascii=False),
                                                   json.dumps(out.get("done", []), ensure_ascii=False), out["ms"],
                                                   json.dumps(out.get("usage", {}))))
-                conn.sendall((json.dumps(out, ensure_ascii=False) + "\n").encode("utf-8"))
+                send(conn, out)
     finally:
         if asker.session is not None:
             asker.session.stop()
@@ -612,8 +666,15 @@ def call(ws: Path, op: str, text: str = "", start: bool = True) -> Optional[dict
     else:
         return {"say": "The ask server did not start.", "ok": False}
     with c:
-        c.sendall((json.dumps({"op": op, "text": text}) + "\n").encode("utf-8"))
-        reply = c.makefile(encoding="utf-8").readline()
+        c.settimeout(ASK_WAIT)
+        try:
+            c.sendall((json.dumps({"op": op, "text": text}) + "\n").encode("utf-8"))
+            reply = c.makefile(encoding="utf-8").readline()
+        except socket.timeout:
+            return {"say": "The ask server did not answer in %d seconds. Ask again, or stop it with ask.py stop." % ASK_WAIT,
+                    "ok": False}
+        except OSError:
+            reply = ""
     if not reply and start and op != "stop":     # reached a server on its way out
         time.sleep(0.3)
         return call(ws, op, text, start)

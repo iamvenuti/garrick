@@ -24,7 +24,8 @@ It is a hook for two harnesses, reading the event on stdin:
 
 The session's home is $CLAUDE_PROJECT_DIR when Claude Code sets it, which
 stays where the session started however often a command changes folder;
-otherwise the event's cwd. A scheduled job (GARRICK_HEADLESS=1) has nobody to
+otherwise the event's cwd. Paths are judged where they really lead, through
+any link, and on a disk that ignores case, as a Mac's does, without it. A scheduled job (GARRICK_HEADLESS=1) has nobody to
 ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
 
@@ -68,14 +69,54 @@ def parents(path):
         path = up
 
 
-def parts(root, path):
-    """`path` below `root` as a list of names, or None when it is not below."""
+def case_blind(root):
+    """Whether the disk under `root` ignores case, as a Mac's does unless it
+    was formatted otherwise: there `/users/...` and `zones/work` name the same
+    folders as `/Users/...` and `Zones/Work`."""
+    flipped = root.swapcase()
+    if flipped == root:
+        return sys.platform == "darwin"
+    try:
+        return os.path.samefile(root, flipped)
+    except OSError:
+        return False
+
+
+def parts(root, path, blind=False):
+    """`path` below `root` as a list of names, or None when it is not below.
+    Both are real paths. On a disk that ignores case (`blind`), the names are
+    matched without it and given as the folders spell them."""
     rel = os.path.relpath(path, root)
     if rel == ".":
         return []
-    if rel == ".." or rel.startswith(".." + os.sep):
+    if rel != ".." and not rel.startswith(".." + os.sep):
+        names = rel.split(os.sep)
+    elif blind:
+        top, below = root.split(os.sep), path.split(os.sep)
+        if [n.casefold() for n in below[:len(top)]] != [n.casefold() for n in top]:
+            return None
+        names = below[len(top):]
+        if not names:
+            return []
+    else:
         return None
-    return rel.split(os.sep)
+    return true_case(root, names) if blind else names
+
+
+def true_case(root, names):
+    """`names` below `root` as the folders there spell them. A name that is
+    not there yet, as for a new file, stays as given."""
+    out, here = [], root
+    for i, name in enumerate(names):
+        try:
+            entries = os.listdir(here)
+        except OSError:
+            return out + names[i:]
+        if name not in entries:
+            name = next((e for e in entries if e.casefold() == name.casefold()), name)
+        out.append(name)
+        here = os.path.join(here, name)
+    return out
 
 
 def home_place(names):
@@ -131,7 +172,9 @@ def edits(event):
         found = [given.get("file_path") or given.get("notebook_path") or ""]
     else:
         return []
-    return [os.path.abspath(os.path.join(cwd, os.path.expanduser(p))) for p in found if p]
+    # Real paths: a link inside the project to a folder in another zone is
+    # judged by where the file lands, not by the link's place.
+    return [os.path.realpath(os.path.join(cwd, os.path.expanduser(p))) for p in found if p]
 
 
 def memory_file(event):
@@ -165,16 +208,17 @@ def outside(event):
     home_dir = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or ""
     if not home_dir:
         return None, []
-    home_dir = os.path.abspath(home_dir)
+    home_dir = os.path.realpath(home_dir)
     root = workspace_root(home_dir)
     if root is None:
         return None, []
-    home = home_place(parts(root, home_dir))
+    blind = case_blind(root)
+    home = home_place(parts(root, home_dir, blind))
     if not home:
         return home, []
     out = []
     for path in edits(event):
-        names = parts(root, path)
+        names = parts(root, path, blind)
         if names and not allowed(home, names):
             out.append((target_place(names), "/".join(names)))
     return home, out

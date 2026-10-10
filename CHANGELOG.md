@@ -71,6 +71,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 - Settings in `GARRICK_ENV_FILE`, such as `GARRICK_JOB_TIMEOUT`, `GARRICK_QUIET_EXITS` and `GARRICK_JOBS_DIR`, now take effect: the file is read before them, not after.
 - A job's command killed by a signal exits 128 plus its number, as a shell reports it (137 for SIGKILL), and the reason names the signal. It exited 241 or the like before.
 - A job's command that exits 4 or 124 itself reads "exited 4", not "could not sign in" or "timed out": those words now come only from `job.py`'s own sign-in check and watchdog.
+- The zone guard follows links: a file reached through a link in the project to a folder in another zone is asked about, as that zone.
+- The zone guard ignores case on a disk that does, as a Mac's does: `/users/...` or `zones/work/...` no longer slips past it, and the session's own project in another case is no longer asked about.
 
 ## [0.14.0] - 2026-10-10
 

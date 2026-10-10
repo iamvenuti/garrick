@@ -12,6 +12,8 @@ A session belongs to the project it was opened in: the folder at `Zones/<Zone>/<
 - **Anywhere else in the workspace**, meaning another project, another zone, a wiki or `System/`: the edit stops once, with a sentence naming both places, such as *this session was opened in Work › Acme Review, and this edit is in System (System/tools/check.py)*.
 - **Outside the workspace** (a scratch folder, `/tmp`, the assistant's own memory): the edit goes ahead.
 
+A path is judged by where it really leads. A link inside the project to a folder in another zone counts as that zone, and on a disk that ignores case, as a Mac's does unless formatted otherwise, `zones/work` and `/users/...` count as `Zones/Work` and `/Users/...`.
+
 A session opened at the workspace root is never stopped, since it belongs to no project, and neither is one opened in `System/`, which governs every zone and wiki. A session opened in a zone's folder may write anywhere in that zone, and one opened in a wiki anywhere in that wiki.
 
 How each assistant stops:

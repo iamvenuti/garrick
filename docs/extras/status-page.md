@@ -143,7 +143,9 @@ The app holds the Mac awake itself, so quitting it, or a crash, lets the Mac sle
 
 #### As a panel
 
-With *Shows as* set to a panel, the icon leaves the menu bar and the same list lives in a panel at the edge you picked. Rest the pointer against that edge for a quarter of a second and the panel slides out; move away and it slides back. The hotkey opens it too, with the cursor in its filter: type part of a name and Return opens the first thread that matches. A click in another app closes it, and so does Escape when the panel has the keyboard. The panel never brings Garrick forward, so the app you were in stays in front.
+With *Shows as* set to a panel, the icon leaves the menu bar and the same list lives in a panel at the edge you picked. Rest the pointer against that edge for a quarter of a second and the panel slides out; move away and it slides back. The hotkey opens it too, with the cursor in its field: type part of a name and Return opens the first thread that matches.
+
+The same field asks. Whatever you type also shows as *Ask Garrick* at the top of the list; click it, or press Return when no project or thread matches, and the default assistant for clicking a thread opens at the workspace root with your words, as *Process the Inbox* opens with its phrase. Claude gets them typed in for you to send; Codex and cmux get them on the clipboard. The panel itself answers nothing and calls no model. A click in another app closes it, and so does Escape when the panel has the keyboard. The panel never brings Garrick forward, so the app you were in stays in front.
 
 The panel shows every project of the zone with its threads already open under it; the chevron beside a project folds them. Point at a row for its app icons, as in the menu's submenu, and click its name to open it the default way. *Process the Inbox* is at the top, and *Keep awake*, *Open Garrick* and *Quit* at the foot. A red *Something failed* in its header means what the red dot on the mark means.
 

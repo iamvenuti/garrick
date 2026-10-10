@@ -1448,6 +1448,8 @@ class TestApp(unittest.TestCase):
         self.assertNotIn("addGlobalMonitorForEvents(matching: [.keyDown", swift)   # keys from other apps would
         self.assertIn("asyncAfter(deadline: .now() + 0.25", swift)              # resting at the edge, not passing by
         self.assertIn("p.y >= v.maxY - v.height / 3", swift)                   # a side opens from its top third only
+        self.assertIn('"Find a thread, or ask Garrick"', swift)                # the field asks too
+        self.assertIn("self.launch(app, workspace.path, phrase: text)", swift)  # a question opens the assistant at the root, as the inbox does
         self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
         self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 

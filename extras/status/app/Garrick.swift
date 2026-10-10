@@ -831,13 +831,18 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// first of those switched on when the default is the note or Finder) at the
 	// workspace root with "process the inbox", as a thread's row opens with
 	// "open X": Claude gets it typed in, Codex and cmux on the clipboard.
-	func inbox() -> (title: String, waiting: Int, act: [String: String], where: String)? {
-		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
-		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
+	// The assistant a phrase goes to: the default for clicking a thread when it
+	// is Claude, Codex or cmux, else the first of those switched on.
+	func assistant() -> String? {
 		let on = menuState?["launchers"] as? [String] ?? []
 		let assistants = ["claude", "codex", "cmux"].filter(on.contains)
 		let picked = menuState?["def"] as? String ?? ""
-		guard let app = assistants.contains(picked) ? picked : assistants.first else { return nil }
+		return assistants.contains(picked) ? picked : assistants.first
+	}
+
+	func inbox() -> (title: String, waiting: Int, act: [String: String], where: String)? {
+		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
+		      let folder = row["f"] as? String, let phrase = row["w"] as? String, let app = assistant() else { return nil }
 		// Where they wait, as "Meetings 1 · Work 4": a page built before it says only how many.
 		let places = (row["b"] as? [[Any]] ?? []).compactMap { b -> String? in
 			guard b.count == 2, let name = b[0] as? String, let n = b[1] as? Int else { return nil }
@@ -893,6 +898,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.display = defaults.bool(forKey: kAwakeDisplay)
 		m.pickAwake = { [weak self] tag in self?.pickAwake(tag: tag) }
 		m.openApp = { [weak self] in self?.showWindow() }
+		// A question typed in the panel's field: the assistant opens at the
+		// workspace root with it, as Process the Inbox opens with its phrase.
+		if let app = assistant() {
+			m.askVia = label(["k": app]).replacingOccurrences(of: "Open in ", with: "")
+			m.ask = { [weak self] text in
+				guard let self else { return }
+				if checking { return self.heard.append("panel:ask") }
+				self.launch(app, workspace.path, phrase: text)
+			}
+		} else {
+			m.askVia = ""
+			m.ask = nil
+		}
 	}
 
 	func panelRow(_ r: [String: Any]) -> PanelRow {
@@ -1115,6 +1133,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					print("panel: \(projects.count) projects, \(projects.reduce(0) { $0 + $1.threads.count }) threads")
 					rows.first?.click()
 					projects.first?.open?()
+					panel.ask?("what's open")
 				} else {
 					print("menu: none")
 				}
@@ -1236,6 +1255,8 @@ final class PanelModel: ObservableObject {
 	@Published var typing = 0                // bumped when the hotkey opens it, to put the cursor in the filter
 	var pickAwake: (Int) -> Void = { _ in }
 	var openApp: () -> Void = {}
+	var ask: ((String) -> Void)?
+	@Published var askVia = ""               // the assistant a question opens in, by name
 	var after: () -> Void = {}
 	// Close first, then act, so the app that opens comes forward over a panel already leaving.
 	func perform(_ f: @escaping () -> Void) { after(); f() }
@@ -1312,11 +1333,19 @@ struct PanelView: View {
 		}
 	}
 
-	// Return opens the first thread that matches, or the first project.
+	// Return opens the first thread that matches, or the first project; with
+	// nothing matching, it asks.
 	func first() -> (() -> Void)? {
 		let rows = model.zones.flatMap { shown($0.rows) }
 		if !query.isEmpty, let t = rows.flatMap({ $0.threads }).first(where: { $0.name.lowercased().contains(query) }) { return t.open }
-		return rows.first?.open
+		if let open = rows.first?.open { return open }
+		return asking()
+	}
+
+	func asking() -> (() -> Void)? {
+		let text = model.filter.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty, let ask = model.ask else { return nil }
+		return { ask(text) }
 	}
 
 	func awake(_ title: String, _ tag: Int, _ on: Bool) -> some View {
@@ -1335,7 +1364,7 @@ struct PanelView: View {
 			}
 			HStack(spacing: 6) {
 				Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
-				TextField("Find a project or thread", text: $model.filter)
+				TextField(model.ask == nil ? "Find a project or thread" : "Find a thread, or ask Garrick", text: $model.filter)
 					.textFieldStyle(.plain)
 					.font(.system(size: 12))
 					.focused($typing)
@@ -1346,6 +1375,22 @@ struct PanelView: View {
 			.background(Capsule().fill(Color.primary.opacity(0.08)))
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
+					if let ask = asking() {
+						HStack(alignment: .firstTextBaseline, spacing: 6) {
+							Image(systemName: "text.bubble").frame(width: 12)
+							VStack(alignment: .leading, spacing: 2) {
+								Text("Ask Garrick").font(.system(size: 13, weight: .medium))
+								Text("\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D} in \(model.askVia)")
+									.font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
+							}
+							Spacer()
+						}
+						.padding(.horizontal, 8).padding(.vertical, 5)
+						.background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.12)))
+						.contentShape(Rectangle())
+						.onTapGesture { model.perform(ask) }
+						Divider().padding(.vertical, 4)
+					}
 					if let inbox = model.inbox, query.isEmpty {
 						HStack(alignment: .firstTextBaseline, spacing: 6) {
 							Image(systemName: "tray.and.arrow.down").frame(width: 12)

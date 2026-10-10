@@ -61,11 +61,13 @@ if args[:2] == ["auth", "status"]:
 elif args[:2] == ["mcp", "list"]:
     print("Checking MCP server health...\n\nclaude.ai Gmail: https://example.invalid/mcp - Connected")
 else:
+    import time
+    time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
     result = os.environ.get("FAKE_RESULT", "# Brief\n- Pricing: send the draft\nEND OF BRIEF")
     print("a warning line before the JSON")
-    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2,
-                      "result": result, "total_cost_usd": 0.25,
-                      "permission_denials": [{"tool_name": "Bash"}]}))
+    print(json.dumps({"type": "result", "subtype": os.environ.get("FAKE_SUBTYPE", "success"), "is_error": False,
+                      "num_turns": 2, "result": result, "total_cost_usd": 0.25,
+                      "modelUsage": {"sonnet-test": {}}, "permission_denials": [{"tool_name": "Bash"}]}))
 '''
 
 FAKE_CODEX = r'''
@@ -105,7 +107,9 @@ class FakeAssistants(unittest.TestCase):
         for q in self.quiet:
             q.start()
         for key in ("GARRICK_CAP_CALLS_DAY", "GARRICK_CAP_CALLS_HOUR", "GARRICK_CAP_COST_DAY", "GARRICK_JOB",
-                    "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN"):
+                    "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
+                    "GARRICK_NOTIFY", "GARRICK_NOTIFY_CMD", "GARRICK_QUIET_EXITS", "GARRICK_ALERT_REPEAT",
+                    "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT"):
             os.environ.pop(key, None)
 
     def tearDown(self):
@@ -211,6 +215,9 @@ class ProfileTest(unittest.TestCase):
                      "mcp__claude_ai_Google_Drive__share_file", "mcp__claude_ai_Google_Calendar__create_event",
                      "mcp__claude_ai_Notion__notion-create-comment", "Bash(git push:*)", "Bash(curl:*)",
                      "Bash(rm:*)", "Edit(System/**)", "Write(**/.git/**)",
+                     # Publishing a document, starting another agent, and driving a browser or the screen.
+                     "mcp__claude_ai_Claude_Docs__create", "mcp__claude_ai_Notion__notion-spawn-session",
+                     "mcp__claude-in-chrome", "mcp__cmux-cua",
                      # A user-level allow would otherwise reach a job: the web is denied outright.
                      "WebFetch", "WebSearch"):
             self.assertIn(tool, deny, tool)
@@ -490,6 +497,305 @@ class JobTest(FakeAssistants):
         for name in ("GARRICK_JOB_TIMEOUT", "GARRICK_LOGIN_RETRY_AFTER", "GARRICK_IDLE_DAYS"):
             self.assertIn("job: %s is " % name, log)
         self.assertIn("job: idle", log)                             # seven days, the default, still applied
+
+
+class RunnerExtrasTest(FakeAssistants):
+    def test_a_call_past_its_timeout_is_stopped(self):
+        os.environ["FAKE_SLEEP"] = "30"
+        started = time.time()
+        code, _ = agent.run("sonnet", "Sweep.", timeout=1)
+        self.assertEqual(agent.EXIT_TIMEOUT, code)
+        self.assertLess(time.time() - started, 20)
+        self.assertEqual(124, self.ledger()[-1]["exit"])
+        self.assertIn("--timeout", sys.stderr.getvalue())
+
+    def test_a_call_stopped_by_its_budget_exits_as_a_cap(self):
+        os.environ["FAKE_SUBTYPE"] = "error_max_budget_usd"
+        code, _ = agent.run("sonnet", "Sweep.")
+        self.assertEqual(agent.EXIT_CAP, code)
+        line = self.ledger()[-1]
+        self.assertEqual((8, "error_max_budget_usd", "sonnet-test"), (line["exit"], line["subtype"], line["model"]))
+
+    def test_the_prompt_as_an_argument(self):
+        self.assertEqual(0, agent.main(["run", "--tier", "haiku", "--prompt", "Say hello.", "--allow", "Read"]))
+        call = self.calls()[0]
+        self.assertEqual("Say hello.", call[call.index("-p") + 1])
+        self.assertTrue(sys.stdout.getvalue().endswith("END OF BRIEF\n"))
+
+    def test_items_from_an_answer(self):
+        self.assertEqual(4, agent.items_from("Filed four.\nITEMS 2\nmore\nITEMS 4\n"))
+        self.assertIsNone(agent.items_from("I handled ITEMS 3 of them"))   # a line of its own, or nothing
+        self.assertIsNone(agent.items_from(""))
+
+    def test_items_from_the_shell(self):
+        items = self.tmp / "sweep.items"
+        os.environ["GARRICK_ITEMS_FILE"] = str(items)
+        answer = self.tmp / "answer.txt"
+        answer.write_text("Swept.\nSWEEP_COMPLETE\n")
+        self.assertEqual(0, agent.main(["items-from", str(answer)]))
+        self.assertFalse(items.exists())                          # no line, no report: not zero
+        answer.write_text("Swept.\nITEMS 7\nSWEEP_COMPLETE\n")
+        self.assertEqual(0, agent.main(["items-from", str(answer)]))
+        self.assertEqual("7\n", items.read_text())
+        self.assertEqual(0, agent.main(["items", "0"]))
+        self.assertEqual("0\n", items.read_text())
+        self.assertEqual(0, agent.main(["items-from", str(self.tmp / "missing.txt")]))
+
+    def test_a_sign_in_check_that_does_not_answer_is_not_a_no(self):
+        with mock.patch.object(agent.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 90)):
+            self.assertIsNone(agent.login_state(self.tmp))
+            self.assertTrue(agent.login_ok(self.tmp))
+            self.assertEqual(0, agent.main(["login"]))
+        os.environ["FAKE_LOGGED_IN"] = "0"
+        self.assertIs(False, agent.login_state(self.tmp))
+        self.assertEqual(1, agent.main(["login"]))
+
+
+NOTIFIER = r'''
+import json, os, sys
+with open(os.environ["NOTICES"], "a") as f:
+    f.write(json.dumps({"title": sys.argv[1], "message": sys.argv[2], "kind": os.environ["GARRICK_NOTIFY_KIND"],
+                        "job": os.environ["GARRICK_JOB"], "exit": os.environ["GARRICK_EXIT"]}) + "\n")
+sys.exit(int(os.environ.get("NOTIFIER_EXIT", "0")))
+'''
+
+
+class NoticeTest(FakeAssistants):
+    """job.py's notices, through a notifier command that records what it was given."""
+
+    def setUp(self):
+        super().setUp()
+        self.notices_file = self.tmp / "notices.jsonl"
+        notifier = self.tmp / "notifier.py"
+        notifier.write_text(NOTIFIER, encoding="utf-8")
+        os.environ["GARRICK_NOTIFY_CMD"] = "%s %s" % (sys.executable, notifier)
+        os.environ["NOTICES"] = str(self.notices_file)
+
+    def job(self, name, code=0, items=None, *flags, env=None):
+        script = "import os, sys\n"
+        if items is not None:
+            script += "open(os.environ['GARRICK_ITEMS_FILE'], 'w').write('%d')\n" % items
+        script += "sys.exit(%d)\n" % code
+        return subprocess.run([sys.executable, str(JOBS / "job.py"), name] + list(flags)
+                              + ["--", sys.executable, "-c", script],
+                              env=dict(os.environ, **(env or {})), capture_output=True, text=True)
+
+    def notices(self):
+        if not self.notices_file.exists():
+            return []
+        return [json.loads(l) for l in self.notices_file.read_text().splitlines()]
+
+    def beat(self, name):
+        return json.loads((self.jobs / ("%s.heartbeat.json" % name)).read_text())
+
+    def test_first_failure_change_of_code_and_recovery(self):
+        self.assertEqual(3, self.job("sweep", 3).returncode)
+        (first,) = self.notices()
+        self.assertEqual(("failed", "Job failed", "sweep", "3"),
+                         (first["kind"], first["title"], first["job"], first["exit"]))
+        self.assertIn("sweep exited 3 after", first["message"])
+        self.assertIn(str(self.jobs / "sweep.log"), first["message"])
+        self.job("sweep", 3)
+        self.assertEqual(1, len(self.notices()))                       # the same failure, within the hour
+        self.job("sweep", 6)
+        self.assertEqual(2, len(self.notices()))                       # a new code is news
+        self.assertIn("needs a connector claude does not have", self.notices()[-1]["message"])
+        state = json.loads((self.jobs / "sweep.alert.json").read_text())
+        self.assertEqual(6, state["exit"])
+        beat = self.beat("sweep")
+        self.assertEqual((False, False, "needs a connector claude does not have; see the log"),
+                         (beat["ok"], beat["quiet"], beat["reason"]))
+        self.assertTrue(beat["failing_since"])
+        self.assertEqual(0, self.job("sweep", 0).returncode)
+        last = self.notices()[-1]
+        self.assertEqual(("recovered", "0"), (last["kind"], last["exit"]))
+        self.assertIn("working again", last["message"])
+        self.assertFalse((self.jobs / "sweep.alert.json").exists())
+        beat = self.beat("sweep")
+        self.assertEqual((True, None, None), (beat["ok"], beat["reason"], beat["failing_since"]))
+        self.job("sweep", 0)
+        self.assertEqual(3, len(self.notices()))                       # working stays quiet
+
+    def test_a_lasting_failure_repeats_at_its_interval(self):
+        self.job("sweep", 3, env={"GARRICK_ALERT_REPEAT": "0"})
+        self.job("sweep", 3, env={"GARRICK_ALERT_REPEAT": "0"})
+        self.assertEqual(2, len(self.notices()))
+        self.assertIn("Still failing", self.notices()[-1]["message"])
+        self.assertNotIn("Still failing", self.notices()[0]["message"])
+
+    def test_the_failure_began_when_it_first_failed(self):
+        self.jobs.mkdir(parents=True)
+        began = time.time() - 7200
+        (self.jobs / "sweep.alert.json").write_text(json.dumps({"exit": 3, "since": began, "alerted": began}))
+        self.job("sweep", 3)
+        self.assertEqual(1, len(self.notices()))                       # an hour gone: once more
+        state = json.loads((self.jobs / "sweep.alert.json").read_text())
+        self.assertEqual(began, state["since"])
+        self.assertEqual(job.stamp(began), self.beat("sweep")["failing_since"])
+
+    def test_quiet_exits_never_notify_and_count_as_working(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "sweep.lastwork").write_text("%d\n" % (time.time() - 2 * 86400))
+        r = self.job("sweep", 5, 0, env={"GARRICK_QUIET_EXITS": "5, 9"})
+        self.assertEqual(5, r.returncode)
+        self.assertEqual([], self.notices())
+        beat = self.beat("sweep")
+        self.assertEqual((5, True, True, 0, 2), (beat["exit"], beat["ok"], beat["quiet"], beat["items"],
+                                                 beat["idle_days"]))
+        log = (self.jobs / "sweep.log").read_text()
+        self.assertIn("exit 5  (", log)
+        self.assertRegex(log, r"exit 5  \(\d+s\)  quiet =====")
+        self.assertEqual([("sweep", "5")], [(m.group(2), m.group(3)) for m in LOGLINE.finditer(log)])
+        self.assertFalse((self.jobs / "sweep.alert.json").exists())
+        self.job("sweep", 3)
+        self.job("sweep", 5, 1, env={"GARRICK_QUIET_EXITS": "5"})
+        self.assertEqual(["failed", "recovered"], [n["kind"] for n in self.notices()])   # quiet is working
+
+    def test_a_quiet_exit_that_is_not_a_number_is_left_out(self):
+        r = self.job("sweep", 5, env={"GARRICK_QUIET_EXITS": "five 5 300"})
+        self.assertEqual([], self.notices())
+        log = (self.jobs / "sweep.log").read_text()
+        self.assertIn("'five'", log)
+        self.assertIn("'300'", log)
+        self.assertEqual(5, r.returncode)
+
+    def test_reasons_in_words(self):
+        with mock.patch.dict(os.environ, {"GARRICK_HARNESS": "codex"}):
+            self.assertEqual("could not sign in to codex, twice", job.describe(4, 3, 1500))
+            self.assertEqual("needs a connector codex does not have; see the log", job.describe(6, 3, 1500))
+        self.assertIn("spending cap", job.describe(8, 3, 1500))
+        self.assertEqual("timed out and was stopped after 1500s", job.describe(124, 1500, 1500))
+        self.assertIn("could not start", job.describe(127, 0, 1500))
+        self.assertEqual("exited 2 after 41s", job.describe(2, 41.4, 1500))
+
+    def test_a_timeout_says_so(self):
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "slow", "--timeout", "1", "--",
+                            sys.executable, "-c", "import time; time.sleep(30)"],
+                           env=dict(os.environ), capture_output=True, text=True)
+        self.assertEqual(124, r.returncode)
+        self.assertIn("timed out and was stopped after 1s", self.notices()[0]["message"])
+        self.assertIn("job: slow timed out", (self.jobs / "slow.log").read_text())
+
+    def test_the_idle_notice_repeats_every_idle_period(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "sweep.lastwork").write_text("%d\n" % (time.time() - 9 * 86400))
+        self.job("sweep", 0, 0)
+        (idle,) = self.notices()
+        self.assertEqual(("idle", "Job idle"), (idle["kind"], idle["title"]))
+        self.assertIn("9 days", idle["message"])
+        self.assertTrue(self.beat("sweep")["idle"])
+        self.job("sweep", 0, 0)
+        self.assertEqual(1, len(self.notices()))                       # once a week, not every run
+        (self.jobs / "sweep.idle-alert").write_text("%d\n" % (time.time() - 8 * 86400))
+        self.job("sweep", 0, 0)
+        self.assertEqual(2, len(self.notices()))                       # a week on, and still idle
+        self.job("sweep", 0, 2)
+        self.assertFalse((self.jobs / "sweep.idle-alert").exists())    # it worked: the clock starts again
+        self.assertFalse(self.beat("sweep")["idle"])
+
+    def test_zero_idle_days_turns_the_alarm_off(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "sweep.lastwork").write_text("%d\n" % (time.time() - 30 * 86400))
+        self.job("sweep", 0, 0, env={"GARRICK_IDLE_DAYS": "0"})
+        self.assertEqual([], self.notices())
+        self.assertFalse(self.beat("sweep")["idle"])
+
+    def test_a_failing_notifier_costs_a_line_not_the_run(self):
+        r = self.job("sweep", 3, env={"NOTIFIER_EXIT": "2"})
+        self.assertEqual(3, r.returncode)
+        self.assertIn("job: the notifier exited 2", (self.jobs / "sweep.log").read_text())
+        r = self.job("other", 3, env={"GARRICK_NOTIFY_CMD": str(self.tmp / "no-such-notifier")})
+        self.assertEqual(3, r.returncode)
+        self.assertIn("job: the notifier could not start", (self.jobs / "other.log").read_text())
+        self.assertTrue((self.jobs / "other.heartbeat.json").exists())
+
+    def test_a_job_sends_its_own_line(self):
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "notify", "Digest", "Three open, one due today."],
+                           env=dict(os.environ, GARRICK_JOB="digest"), capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual([{"title": "Digest", "message": "Three open, one due today.", "kind": "message",
+                           "job": "digest", "exit": ""}], self.notices())
+        env = dict(os.environ)
+        env.pop("GARRICK_NOTIFY_CMD")
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "notify", "Digest", "x"], env=env,
+                           capture_output=True, text=True)
+        self.assertEqual(0, r.returncode)
+        self.assertIn("no notifier is set", r.stderr)
+
+
+class JobExtrasTest(FakeAssistants):
+    def job(self, *args, env=None):
+        return subprocess.run([sys.executable, str(JOBS / "job.py")] + list(args),
+                              env=dict(os.environ, **(env or {})), capture_output=True, text=True)
+
+    def test_the_heartbeat_holds_what_the_page_shows(self):
+        r = self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", "pass")
+        self.assertEqual(0, r.returncode, r.stderr)
+        beat = json.loads((self.jobs / "tidy.heartbeat.json").read_text())
+        self.assertEqual({"agent", "exit", "failing_since", "finished", "finished_ts", "idle", "idle_days", "items",
+                          "job", "ok", "quiet", "reason", "seconds", "started"}, set(beat))
+        self.assertEqual((True, 0, True, False, None), (beat["agent"], beat["exit"], beat["ok"], beat["quiet"],
+                                                        beat["reason"]))
+        self.assertLessEqual(beat["started"], beat["finished"])
+
+    def test_status_says_which_jobs_are_running(self):
+        self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(3)")
+        lock = self.jobs / "sweep.lock"
+        lock.mkdir()
+        (lock / "until").write_text("%d %d %d\n" % (time.time() + 600, os.getpid(), time.time() - 30))
+        r = self.job("status")
+        self.assertEqual(0, r.returncode, r.stderr)
+        got = json.loads(r.stdout)
+        self.assertEqual(str(self.jobs), got["folder"])
+        self.assertIsNone(got["assistant_lock"])
+        by = {j["job"]: j for j in got["jobs"]}
+        self.assertEqual(["sweep", "tidy"], sorted(by))
+        self.assertTrue(by["sweep"]["running"])
+        self.assertEqual(os.getpid(), by["sweep"]["lock"]["pid"])
+        self.assertFalse(by["tidy"]["running"])
+        self.assertEqual(3, by["tidy"]["heartbeat"]["exit"])
+        self.assertEqual(3, by["tidy"]["failing"]["exit"])
+        self.assertEqual(["tidy"], [j["job"] for j in json.loads(self.job("status", "tidy").stdout)["jobs"]])
+        self.assertEqual(agent.EXIT_USAGE, self.job("status", "../x").returncode)
+
+    def test_a_lock_whose_holder_has_gone_is_taken_over(self):
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        self.jobs.mkdir(parents=True)
+        lock = self.jobs / "tidy.lock"
+        lock.mkdir()
+        (lock / "until").write_text("%d %d %d\n" % (time.time() + 3600, gone.pid, time.time()))
+        self.assertIsNone(job.lock_state(lock))
+        self.assertEqual(0, self.job("tidy", "--", sys.executable, "-c", "print('ran')").returncode)
+        self.assertIn("ran", (self.jobs / "tidy.log").read_text())
+
+    def test_an_env_file_reaches_the_job_but_not_the_log(self):
+        envfile = self.tmp / "jobs.env"
+        envfile.write_text("# for the jobs\nexport GREETING='hello there'\nPLAIN=yes\nnot a setting\n")
+        envfile.chmod(0o600)
+        script = "import os; print('got', os.environ['GREETING'], os.environ['PLAIN'])"
+        r = self.job("tidy", "--", sys.executable, "-c", script, env={"GARRICK_ENV_FILE": str(envfile)})
+        self.assertEqual(0, r.returncode, r.stderr)
+        log = (self.jobs / "tidy.log").read_text()
+        self.assertIn("job: read GREETING, PLAIN from", log)
+        self.assertIn("got hello there yes", log)                       # the job's own output, not job.py's
+        self.assertEqual(1, log.count("hello there"))
+        self.assertNotIn("other users", log)
+        envfile.chmod(0o644)
+        self.job("tidy", "--", sys.executable, "-c", "pass", env={"GARRICK_ENV_FILE": str(envfile)})
+        self.assertIn("other users", (self.jobs / "tidy.log").read_text())
+        r = self.job("tidy", "--", sys.executable, "-c", "pass", env={"GARRICK_ENV_FILE": str(self.tmp / "none")})
+        self.assertEqual(0, r.returncode)
+        self.assertIn("could not be read", (self.jobs / "tidy.log").read_text())
+
+    def test_a_sign_in_check_without_an_answer_runs_the_job(self):
+        out = self.tmp / "ran.txt"
+        with mock.patch.object(job.agent, "login_state", return_value=None):
+            code = job.main(["tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c",
+                             "open(%r, 'w').write('ran')" % str(out)])
+        self.assertEqual(0, code)
+        self.assertTrue(out.exists())
+        self.assertIn("did not answer the sign-in check", (self.jobs / "tidy.log").read_text())
 
 
 class WhatsOpenTest(FakeAssistants):

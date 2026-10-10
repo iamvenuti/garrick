@@ -4,6 +4,28 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Scheduled jobs tell you where you choose: `GARRICK_NOTIFY_CMD` runs a command of yours with a title and a message, beside or instead of the macOS notification of `GARRICK_NOTIFY=1`. See [Being told](docs/extras/scheduled-jobs.md#being-told).
+- A failing job notifies on its first failure and on any change of exit code, then at most hourly while the failure lasts (`GARRICK_ALERT_REPEAT`), and always once when it works again. The notice and the log say why in words: could not sign in, a connector missing, a spending cap, timed out, or the exit code and how long it ran.
+- `GARRICK_QUIET_EXITS`: exit codes, such as a partial sweep's, that are logged and marked `quiet` in the heartbeat and the log line, never notify, and count as a working run.
+- `job.py status` prints every job's state as JSON: whether a run holds its lock now, its last heartbeat, and whether it is failing or idle. The heartbeat adds `started`, `finished_ts`, `ok`, `quiet`, `reason`, `idle`, `agent` and `failing_since`; the lock records when it was taken. See [What the status page reads](docs/extras/scheduled-jobs.md#what-the-status-page-reads).
+- `job.py notify <title> <message>` sends a job's own line, such as a digest, through the same notifier.
+- `GARRICK_ENV_FILE`: settings read into a run from a file, such as a sign-in token on a Mac nobody logs in to. The log names them and never shows their values.
+- `agent.py run --prompt` takes the prompt itself, and `--timeout` stops one call with exit 124 so a job keeps time for its own steps. `agent.py items <n>` and `agent.py items-from <file>` report a count from the shell, the second from an `ITEMS <n>` line in the assistant's answer.
+- The assistant-call ledger names the model each call used.
+
+### Changed
+
+- The idle notice repeats every `GARRICK_IDLE_DAYS` days while a job stays idle, rather than on every run, and `GARRICK_IDLE_DAYS=0` turns the alarm off. `GARRICK_NOTIFY=1` follows the same throttle: a lasting failure no longer raises a notification on every run.
+- A Claude call stopped by its own budget, `GARRICK_MAX_CALL_USD`, exits 8 like a spending cap.
+- The deny profile for unattended Claude calls adds publishing Claude documents, the remaining Notion writes, starting or messaging other agent sessions, and the browser and computer-use servers.
+
+### Fixed
+
+- A sign-in check that does not answer within 90 seconds, as when the Mac sleeps in the middle of it, no longer stops an assistant job: only a definite "not signed in" does.
+- A job's lock whose process has gone, as after a crash, is taken over at the next run instead of blocking it for up to an hour.
+
 ## [0.14.0] - 2026-10-10
 
 A mail you forward from your own account is read by the people inside it: Outlook's unmarked forwards are understood, and your own addresses, listed under *Me*, carry mail without deciding whose it is.

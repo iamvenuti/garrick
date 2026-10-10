@@ -77,6 +77,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 - A job's command that exits 4 or 124 itself reads "exited 4", not "could not sign in" or "timed out": those words now come only from `job.py`'s own sign-in check and watchdog.
 - The zone guard follows links: a file reached through a link in the project to a folder in another zone is asked about, as that zone.
 - The zone guard ignores case on a disk that does, as a Mac's does: `/users/...` or `zones/work/...` no longer slips past it, and the session's own project in another case is no longer asked about.
+- desk checks each tab again the moment it sends a wrap. A tab that started a turn after the shutdown's first check, or stopped on a permission question, gets nothing typed into it, where before the wrap's Enter could answer the question. "Close for the day" wraps the rest, then stops with cmux running and names the tab; `close --wrap` leaves it open.
+- "Start the day" types a resume command only into a tab it brought back itself, and only when a shell alone holds the tab. Before, it could type into a tab running an editor or a password prompt, resume with cmux already running, or give one session's folder to another tab of the same name. Its record of the last quit is used once, and ignored when cmux has started a session since.
+- `desk close` no longer takes a part of a tab's name shorter than four letters, such as "it", or one two tabs share: it asks which tab.
+- Text desk types into a tab is kept to one line, so a newline in a prompt or a folder's name cannot send it early.
+- A Claude Code session whose turn ends with only a `stop_hook_summary` record, as a run with no terminal writes, no longer reads as working for ever; a turn a session starts itself, on a task's notice, reads as working until it ends.
 
 ## [0.14.0] - 2026-10-10
 

@@ -42,7 +42,7 @@ with the same arguments, where `<garrick>` is the Garrick download.
 | "close the X tab" | `desk close X`, read it back, then `--yes` | Closes without a wrap. |
 | "close for the day", "I'm done for today" | `desk shutdown`, read it back, then `desk shutdown --yes` | Each tab used today wraps its own thread, then cmux quits. It ends this session too. |
 | "shut everything down" | `desk end`, read it back, then `desk end --yes` | Quits without wrapping. Every tab comes back on `start`. |
-| "start the day", "restore my tabs", "bring everything back" | `desk start` | Read back what came back and anything it could not find. |
+| "start the day", "restore my tabs", "bring everything back" | `desk start` | Read back what came back and anything it did not resume, with the reason. |
 | "what tabs are open" | `desk status` | Spoken: how many, then the busy ones by name. |
 | "new workspace X" | `desk workspace X` | |
 
@@ -67,18 +67,28 @@ workspace root, `Zones/`, a zone's folder, `Wikis/`. A session there reaches
 every project below it. The root opens only when named by its full path, for
 work that files into every zone, such as processing the inboxes.
 
+`close` finds an open tab by its whole name or folder, or by a part of one at
+least four letters long that no other tab shares. When it refuses a short or
+shared part, ask which tab in one line.
+
 ## Busy, idle and unknown
 
 A tab's state is read from its assistant's transcript, never from its title:
-Claude Code ends a turn with a `turn_duration` record, Codex with
-`task_complete` or `turn_aborted` for the same turn. A tab whose transcript is
-missing or unreadable is `?`.
+Claude Code ends a turn with a `turn_duration` or `stop_hook_summary` record
+(`local_command` for a slash command), Codex with `task_complete` or
+`turn_aborted` for the same turn. A tab whose transcript is missing or
+unreadable is `?`.
 
 - `close` refuses a tab that is busy or `?`, and closes nothing when it does.
 - `shutdown` refuses while any tab is busy or `?`. With `--yes` it wraps one
   tab at a time, because wraps write shared files. Each wrap has 90 seconds to
   start and 15 minutes to finish; one that does not stops the shutdown with
-  cmux still running, and a notification says which tab. Then the commands
+  cmux still running, and a notification says which tab.
+- Each tab is checked again the moment its wrap is sent. One that has started
+  a turn since, or stopped on a question, gets nothing typed into it: the
+  wrap's Enter would answer the question. `shutdown` wraps the rest, then stops
+  with cmux still running and names the tab; `close --wrap` leaves it open.
+  After the wraps, the commands
   under `before_quit` in `System/desk.json` run, in order, from the workspace
   root, such as a backup. Progress goes to `desk-shutdown.log` in the jobs
   folder.
@@ -90,8 +100,15 @@ Quitting keeps every tab in cmux's restore set; closing one takes it out. cmux
 does not always bring the assistant back inside a tab, so every quit writes
 `desk-snapshot.json` in the jobs folder: which session sat in which tab. `start`
 waits until cmux has stopped reopening sessions, then types the assistant's own
-resume command into each recorded tab that came back at a bare prompt. It never
-types into a tab with an assistant in it, and a second run does nothing.
+resume command into each recorded tab that came back at a bare prompt.
+
+It types only into a tab that this `start` brought back, by launching cmux or
+restoring its tabs, and only when cmux shows a shell alone in that tab's
+foreground: never into an editor, a database client, a password prompt or an
+assistant. With cmux already running and sessions open, it resumes nothing. The
+record is used once, renamed `desk-snapshot.used.json`, and it is ignored when
+cmux has started a session since it was written. A tab it did not resume is
+listed with the reason; its resume command is in the used record.
 
 ## Settings
 

@@ -38,6 +38,10 @@ APP_BINARIES = ("/Applications/cmux.app/Contents/Resources/bin/cmux",
                 "~/Applications/cmux.app/Contents/Resources/bin/cmux")
 STATUS_TIMEOUT = 2                    # seconds: the page waits no longer than this
 TAIL = 256 * 1024                     # the end of a transcript is enough to say idle or working
+# The system records that close a Claude Code turn. A run with no terminal
+# writes only stop_hook_summary; a tab writes it and then turn_duration.
+CLAUDE_TURN_ENDS = ("turn_duration", "stop_hook_summary", "local_command")
+SHELLS = ("bash", "csh", "dash", "fish", "ksh", "nu", "sh", "tcsh", "zsh")
 
 PASSWORD_FILE: Optional[Path] = None  # set from desk's config; the environment wins
 
@@ -277,8 +281,11 @@ def surface_titles() -> Dict[str, dict]:
 def turn_state(path, agent: Optional[str] = None, tail: Optional[int] = None) -> Tuple[str, int]:
     """(idle | working | ?, turns started) from a Claude Code or Codex transcript.
 
-    Claude Code closes a turn with a system record, turn_duration (or
-    local_command, for a slash command). Codex records event_msg task_started,
+    Claude Code closes a turn with a system record: turn_duration, or
+    stop_hook_summary alone in a run with no terminal, or local_command for a
+    slash command. A reply after that record, with no prompt typed, is a turn
+    the session began itself, on a task's notice or a stop hook that sent it
+    back to work. Codex records event_msg task_started,
     then task_complete or turn_aborted for the same turn id; its commentary,
     tool output and final message do not end a turn. With no agent given it is
     told from the records. A transcript that is missing, or whose records are
@@ -337,9 +344,12 @@ def turn_state(path, agent: Optional[str] = None, tail: Optional[int] = None) ->
                         recognised = True
                         turns += 1
                         state = "idle" if "[Request interrupted" in text else "working"
-                    elif kind == "system" and d.get("subtype") in ("turn_duration", "local_command"):
+                    elif kind == "system" and d.get("subtype") in CLAUDE_TURN_ENDS:
                         recognised = True
                         state = "idle"
+                    elif kind == "assistant" and state == "idle" \
+                            and (d.get("message") or {}).get("model") != "<synthetic>":
+                        state = "working"
     except (OSError, TypeError, ValueError):
         return "?", 0
     return (state if recognised else "?"), turns
@@ -368,6 +378,57 @@ def sessions_by_folder(workspace: Path) -> Dict[str, str]:
         return out
     except Exception:
         return {}
+
+
+def foregrounds() -> Dict[str, Optional[List[str]]]:
+    """{surface id: the names of the programs in its terminal's foreground}.
+
+    Read from cmux's process view. A surface whose foreground cmux does not
+    show, or shows without its programs, maps to None: nobody can say what
+    would read a line typed there. Empty when cmux does not answer."""
+    try:
+        data = cmux("top", "--all", "--processes", "--json", "--id-format", "both", parse=True)
+    except CmuxError:
+        return {}
+    out: Dict[str, Optional[List[str]]] = {}
+
+    def processes(items, found):
+        for p in items or []:
+            if isinstance(p, dict):
+                found.append(p)
+                processes(p.get("children"), found)
+        return found
+
+    def visit(node):
+        if isinstance(node, list):
+            for x in node:
+                visit(x)
+        elif isinstance(node, dict):
+            if node.get("kind") == "surface" and node.get("id"):
+                groups = node.get("foreground_pgids") or []
+                procs = processes(node.get("processes"), [])
+                names: Optional[List[str]] = []
+                for g in groups:
+                    members = [p for p in procs if p.get("pgid") == g]
+                    leaders = [p for p in members if p.get("pid") == g] or members
+                    if not leaders:
+                        names = None
+                        break
+                    names += [Path(str(p.get("name") or "")).name.lstrip("-") for p in leaders]
+                out[node["id"]] = names or None
+                return
+            for v in node.values():
+                visit(v)
+
+    visit(data)
+    return out
+
+
+def at_shell_prompt(names: Optional[List[str]]) -> bool:
+    """Only a shell holds the terminal: a line typed there is a command. An
+    editor, a database client, a password prompt or an assistant would take it
+    as their own input."""
+    return bool(names) and all(n in SHELLS for n in names)
 
 
 # --------------------------------------------------------------------------- places

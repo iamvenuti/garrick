@@ -13,7 +13,7 @@ cmux is a Mac terminal built for running several assistant sessions side by side
 - **"Start the day"** or **"restore my tabs"** starts cmux, or restores its last tabs, then puts the right session back into any tab that came back at a bare prompt.
 - **"What tabs are open"** lists them: workspace, tab, assistant, idle or working, folder.
 
-desk works with Claude Code and Codex sessions alike. It tells idle from working by reading each session's own transcript, never the tab's title, and it refuses to close, wrap or quit under a session that is mid-turn or waiting on a question, or one whose transcript it cannot read. Before it does anything that closes or quits, it says what it would do and waits for you to say yes.
+desk works with Claude Code and Codex sessions alike. It tells idle from working by reading each session's own transcript, never the tab's title, and it refuses to close, wrap or quit under a session that is mid-turn or waiting on a question, or one whose transcript it cannot read. A wrap can take minutes, so each tab is checked again the moment its wrap is sent, and one that has started a turn since, or stopped on a question, gets nothing typed into it. Before it does anything that closes or quits, it says what it would do and waits for you to say yes.
 
 These phrases are in `System/rules.md`, under Voice. Without the extra, "close X" and "close for the day" are wraps done from the session you are in, and "open X" opens the thread there.
 
@@ -77,7 +77,7 @@ The trade: any process running as you that can read the file can type into every
 
 ## When cmux brings its tabs back
 
-cmux can restore its tabs after a restart, but the assistant does not always come back inside them: in testing, Claude Code came back in some tabs while others opened at a bare prompt, and Codex did not come back in any. "Start the day" deals with that from desk's record of the last quit. Without desk, start the session again with the assistant's own resume command, typed in the tab's folder:
+cmux can restore its tabs after a restart, but the assistant does not always come back inside them: in testing, Claude Code came back in some tabs while others opened at a bare prompt, and Codex did not come back in any. "Start the day" deals with that from desk's record of the last quit. It types the resume command only into a tab that it brought back itself, by starting cmux or restoring its tabs, and only when a shell alone holds that tab: never into an editor or a password prompt. If cmux was already running with sessions open, it resumes nothing. The record is used once, and ignored when cmux has started a session since it was written. Without desk, start the session again with the assistant's own resume command, typed in the tab's folder:
 
 - Claude Code: `claude --resume <id>`, or `claude --continue` for the most recent conversation.
 - Codex: `codex resume <id>`, or `codex resume --last`.

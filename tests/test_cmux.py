@@ -60,6 +60,12 @@ elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
 elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
+elif a[:1] == ["top"]:
+    print(json.dumps(state.get("top", {})))
+elif a[:1] == ["restore-session"] and "after_restore" in state:
+    state.update(state.pop("after_restore"))
+    json.dump(state, open(os.environ["FAKE_CMUX_STATE"], "w"))
+    print("OK")
 else:
     print("OK")
 """
@@ -72,6 +78,19 @@ def claude_rows(done=True):
 
 def event(kind, turn="turn-1"):
     return {"type": "event_msg", "payload": {"type": kind, "turn_id": turn}}
+
+
+def top(foreground):
+    """cmux's process view: each surface id given the programs in its foreground,
+    or None for a surface that shows none."""
+    surfaces = []
+    for n, (sid, names) in enumerate(sorted(foreground.items())):
+        procs = [{"kind": "process", "name": name, "pid": 100 * n + i + 1, "pgid": 100 * n + i + 1, "children": []}
+                 for i, name in enumerate(names or [])]
+        surfaces.append({"kind": "surface", "id": sid, "ref": "surface:%d" % n,
+                         "foreground_pgids": [p["pid"] for p in procs], "processes": procs})
+    return {"windows": [{"kind": "window", "workspaces": [{"kind": "workspace", "panes": [
+        {"kind": "pane", "surfaces": surfaces}]}]}]}
 
 
 def dead_pid():
@@ -152,6 +171,26 @@ class TurnStateTest(CmuxCase):
         self.append(p, [{"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}}])
         self.assertEqual(cx.turn_state(p)[0], "idle")
 
+    def test_claude_turns_shaped_like_current_transcripts(self):
+        # A run with no terminal ends its turn with stop_hook_summary alone; a
+        # tab writes turn_duration after it. A task's notice starts a turn with
+        # no prompt typed: a hidden prompt, then the reply.
+        p = self.transcript("current.jsonl", [
+            {"type": "permission-mode"}, {"type": "user", "message": {"content": "open Pricing"}},
+            {"type": "attachment"}, {"type": "assistant", "message": {"model": "m", "content": [{"type": "tool_use"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}},
+            {"type": "assistant", "message": {"model": "m", "content": [{"type": "text", "text": "Done."}]}},
+            {"type": "system", "subtype": "stop_hook_summary"}, {"type": "cost-state"}])
+        self.assertEqual(cx.turn_state(p, "claude")[0], "idle")
+        self.append(p, [{"type": "queue-operation"}, {"type": "user", "isMeta": True, "message": {"content": "task done"}},
+                        {"type": "assistant", "message": {"model": "m", "content": [{"type": "text", "text": "Noted."}]}}])
+        self.assertEqual(cx.turn_state(p, "claude")[0], "working")
+        self.append(p, [{"type": "system", "subtype": "stop_hook_summary"}, {"type": "system", "subtype": "turn_duration"}])
+        self.assertEqual(cx.turn_state(p, "claude")[0], "idle")
+        self.append(p, [{"type": "system", "subtype": "local_command"},
+                        {"type": "assistant", "message": {"model": "<synthetic>", "content": []}}])
+        self.assertEqual(cx.turn_state(p, "claude")[0], "idle")
+
     def test_codex_commentary_and_final_text_do_not_end_a_turn(self):
         p = self.transcript("x.jsonl", [{"type": "session_meta", "payload": {}}, event("task_started"),
                                         {"type": "response_item", "payload": {"type": "message", "phase": "final_answer"}}])
@@ -173,6 +212,21 @@ class TurnStateTest(CmuxCase):
         p = self.transcript("long.jsonl", claude_rows() + [{"type": "assistant", "message": {"content": "x" * 4000}}] * 50
                             + [{"type": "user", "message": {"content": "again"}}])
         self.assertEqual(cx.turn_state(p, tail=8192)[0], "working")
+
+
+class ForegroundTest(CmuxCase):
+    def test_only_a_shell_alone_in_the_foreground_is_a_prompt(self):
+        view = top({"shell": ["-zsh"], "editor": ["vim"], "empty": None})
+        view["windows"][0]["workspaces"][0]["panes"][0]["surfaces"].append(
+            {"kind": "surface", "id": "behind", "foreground_pgids": [7],
+             "processes": [{"name": "zsh", "pid": 6, "pgid": 6, "children": [{"name": "psql", "pid": 7, "pgid": 7}]}]})
+        self.state({"top": view})
+        fore = cx.foregrounds()
+        self.assertEqual(fore, {"shell": ["zsh"], "editor": ["vim"], "empty": None, "behind": ["psql"]})
+        self.assertEqual([k for k in sorted(fore) if cx.at_shell_prompt(fore[k])], ["shell"])
+        self.assertFalse(cx.at_shell_prompt(fore.get("unknown")))
+        self.state({"fail": True})
+        self.assertEqual(cx.foregrounds(), {})
 
 
 class SessionsByFolderTest(CmuxCase):
@@ -357,6 +411,24 @@ class DeskVerbTest(CmuxCase):
         closed = [c["argv"][2] for c in self.calls() if c["argv"][0] == "close-surface"]
         self.assertEqual(sorted(closed), ["a-surface", "b-surface"])
 
+    def test_close_takes_part_of_a_name_only_when_it_is_long_enough(self):
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows()),
+                                 self.session("b", self.work / "Birch Entry", claude_rows())]})
+        code, _, err = self.run_desk("close", "ic", "--yes")          # inside "Pricing", and too short to mean it
+        self.assertEqual(code, 2)
+        self.assertIn("say more of its name", err)
+        self.assertNotIn("close-surface", self.verbs())
+        self.assertEqual(self.run_desk("close", "rici", "--yes")[0], 0)
+        self.assertEqual([c["argv"][2] for c in self.calls() if c["argv"][0] == "close-surface"], ["a-surface"])
+
+    def test_text_typed_into_a_tab_cannot_submit_itself(self):
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
+        self.assertEqual(self.run_desk("open", "pricing", "--prompt", "open Pricing\rrm -rf x\nyes\x1b[A")[0], 0)
+        typed = [c["argv"][-1] for c in self.calls() if c["argv"][0] == "send"]
+        self.assertEqual(typed, ["open Pricing rm -rf x yes [A"])
+        self.assertEqual([c["argv"][-1] for c in self.calls() if c["argv"][0] == "send-key"], ["enter"])
+        self.assertNotIn("\n", desk.start_command("claude", "Acme\nReview", "open\rPricing"))
+
     def test_close_with_a_wrap_waits_for_the_tabs_own_wrap(self):
         s = self.session("a", self.pricing, claude_rows())
         self.state({"sessions": [s]})
@@ -400,6 +472,38 @@ class DeskVerbTest(CmuxCase):
         snap = json.loads((self.tmp / "jobs" / "desk-snapshot.json").read_text())
         self.assertEqual(sorted(t["session_id"] for t in snap["tabs"]), ["a", "b"])
 
+    def test_a_tab_busy_by_its_turn_to_wrap_is_typed_nothing(self):
+        # Both idle at the check. While the first wraps, the second starts a
+        # turn and stops on a question: the wrap's text and Enter would answer it.
+        first = self.session("a", self.work / "Birch Entry", claude_rows())
+        second = self.session("b", self.pricing, claude_rows())
+        self.state({"sessions": [first, second]})
+        sent = []
+
+        def answer(surface, text):
+            sent.append(surface)
+            if surface == "a-surface":
+                self.append(first["transcript_path"], claude_rows())
+                self.append(second["transcript_path"], [{"type": "user", "message": {"content": "deploy it"}},
+                                                        {"type": "assistant", "message": {"model": "m"}}])
+
+        with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep"):
+            code, _, err = self.run_desk("shutdown", "--yes")
+        self.assertEqual(sent, ["a-surface"])
+        self.assertEqual(code, 2)
+        self.assertIn("not wrapped, busy when its turn came: (Pricing)", err)
+        desk.quit_cmux.assert_not_called()
+
+        self.log.unlink()
+        for path in (first["transcript_path"], second["transcript_path"]):
+            Path(path).write_text("".join(json.dumps(r) + "\n" for r in claude_rows()), encoding="utf-8")
+        sent.clear()
+        with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep"):
+            code, out, err = self.run_desk("close", "--folder", str(self.work), "--wrap", "--yes")
+        self.assertEqual((code, sent), (2, ["a-surface"]))
+        self.assertEqual([c["argv"][2] for c in self.calls() if c["argv"][0] == "close-surface"], ["a-surface"])
+        self.assertIn("left open", err)
+
     def test_shutdown_refuses_a_busy_or_unreadable_tab(self):
         for rows in (claude_rows(done=False), [{"type": "unknown"}]):
             self.state({"sessions": [self.session("a", self.pricing, rows)]})
@@ -422,19 +526,89 @@ class DeskVerbTest(CmuxCase):
         self.assertIn("never started", err)
         desk.quit_cmux.assert_not_called()
 
+    def snapshot(self, tabs, taken=None):
+        write(self.tmp / "jobs" / "desk-snapshot.json", json.dumps(
+            {"taken_unix": time.time() - 60 if taken is None else taken, "tabs": tabs}))
+
+    def recorded(self, sid, surface, tab, folder, agent="claude"):
+        return {"session_id": sid, "agent": agent, "surface": surface, "workspace": "Work", "tab": tab, "cwd": str(folder)}
+
+    def typed(self):
+        return [c["argv"] for c in self.calls() if c["argv"][0] == "send"]
+
     def test_start_resumes_tabs_that_came_back_empty(self):
-        write(self.tmp / "jobs" / "desk-snapshot.json", json.dumps({"tabs": [
-            {"session_id": "gone", "agent": "codex", "surface": "s-1", "workspace": "Work", "tab": "Pricing",
-             "cwd": str(self.pricing)},
-            {"session_id": "here", "agent": "claude", "surface": "s-2", "workspace": "Work", "tab": "Birch",
-             "cwd": str(self.work / "Birch Entry")}]}))
+        tabs = [self.recorded("gone", "s-1", "Pricing", self.pricing, agent="codex"),
+                self.recorded("here", "s-2", "Birch", self.work / "Birch Entry")]
         self.state({"sessions": [self.session("here", self.work / "Birch Entry", claude_rows(), surface="s-2")],
-                    "workspaces": [{"id": "ws-work", "title": "Work"}],
+                    "workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"s-1": ["zsh"], "s-2": ["claude"]}),
                     "surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Birch"}]}})
-        resumed, lost = desk.resume_missing()
+        resumed, lost = desk.resume_missing(tabs, set())
         self.assertEqual((resumed, lost), (["Pricing"], []))
-        typed = [c["argv"][-1] for c in self.calls() if c["argv"][0] == "send"]
-        self.assertEqual(shlex.split(typed[0]), ["cd", str(self.pricing), "&&", "codex", "resume", "gone"])
+        self.assertEqual(shlex.split(self.typed()[0][-1]), ["cd", str(self.pricing), "&&", "codex", "resume", "gone"])
+
+    def test_start_resumes_nothing_when_cmux_was_already_running(self):
+        self.snapshot([self.recorded("gone", "s-1", "Pricing", self.pricing)])
+        self.state({"sessions": [self.session("here", self.work / "Birch Entry", claude_rows(), surface="s-2")],
+                    "workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"s-1": ["zsh"]}),
+                    "surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Birch"}]}})
+        code, out, _ = self.run_desk("start")
+        self.assertEqual(code, 0)
+        self.assertIn("already running", out)
+        self.assertEqual(self.typed(), [])
+
+    def test_start_types_only_at_a_shell_prompt_in_a_tab_it_brought_back(self):
+        # cmux is up with no session. The user's own tab, s-0, sits at a shell
+        # prompt; the restore brings back s-1 at a prompt and s-2 with an editor open.
+        self.snapshot([self.recorded("mine", "s-0", "Notes", self.work / "Birch Entry"),
+                       self.recorded("one", "s-1", "Pricing", self.pricing),
+                       self.recorded("two", "s-2", "Acme", self.work / "Acme Review")])
+        bare = {"workspaces": [{"id": "ws-work", "title": "Work"}],
+                "top": top({"s-0": ["zsh"], "s-1": ["zsh"], "s-2": ["vim"]})}
+        self.state(dict(bare, surfaces={"ws-work": [{"id": "s-0", "title": "Notes"}]}, after_restore={"surfaces": {
+            "ws-work": [{"id": "s-0", "title": "Notes"}, {"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Acme"}]}}))
+        with patch.object(desk, "settle"):
+            code, out, _ = self.run_desk("start")
+        self.assertEqual(code, 0)
+        self.assertEqual([(a[2], shlex.split(a[-1])[-1]) for a in self.typed()], [("s-1", "one")])
+        self.assertIn("Notes (not among the tabs this start brought back)", out)
+        self.assertIn("Acme (something other than a shell holds the tab)", out)
+        # The record is used once.
+        self.assertFalse((self.tmp / "jobs" / "desk-snapshot.json").exists())
+        self.log.unlink()
+        self.state(dict(bare, surfaces={"ws-work": []}, after_restore={"surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}]}}))
+        with patch.object(desk, "settle"):
+            self.run_desk("start")
+        self.assertEqual(self.typed(), [])
+
+    def test_two_recorded_tabs_with_one_name_are_not_guessed_between(self):
+        self.snapshot([self.recorded("one", "old-1", "Pricing", self.pricing),
+                       self.recorded("two", "old-2", "Pricing", self.work / "Birch Entry")])
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"new-1": ["zsh"]}),
+                    "after_restore": {"surfaces": {"ws-work": [{"id": "new-1", "title": "Pricing"}]}}})
+        with patch.object(desk, "settle"):
+            code, out, _ = self.run_desk("start")
+        self.assertEqual((code, self.typed()), (0, []))
+        self.assertIn("Pricing (not among the tabs this start brought back)", out)
+
+    def test_a_record_older_than_cmuxs_last_session_or_undated_is_ignored(self):
+        tabs = [self.recorded("one", "s-1", "Pricing", self.pricing)]
+        later = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 30))
+        restore = {"surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}]}}
+        for taken, records, said in (
+                (None, [dict(self.session("old", self.pricing, claude_rows(), pid=dead_pid()), started_at=later)],
+                 "cmux has run since the last quit"),
+                ("undated", [], "carries no date")):
+            with self.subTest(said=said):
+                if taken == "undated":
+                    write(self.tmp / "jobs" / "desk-snapshot.json", json.dumps({"taken": "2026-01-01T09:00:00", "tabs": tabs}))
+                else:
+                    self.snapshot(tabs)
+                self.state({"sessions": records, "workspaces": [{"id": "ws-work", "title": "Work"}],
+                            "top": top({"s-1": ["zsh"]}), "after_restore": dict(restore)})
+                with patch.object(desk, "settle"):
+                    code, out, _ = self.run_desk("start")
+                self.assertEqual((code, self.typed()), (0, []))
+                self.assertIn(said, out)
 
 
 class PageVerbTest(CmuxCase):

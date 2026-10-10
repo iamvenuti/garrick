@@ -12,13 +12,13 @@
     desk end [--yes]               check nothing is mid-turn, then quit cmux
     desk shutdown [--yes]          wrap each tab used today (the threads skill), run the
                                    before-quitting commands, quit cmux
-    desk start                     launch or restore cmux, resume any tab that came back
-                                   without its session, then list the tabs
+    desk start                     launch or restore cmux, resume any tab it brought back
+                                   at a bare shell prompt, then list the tabs
 
 Without --yes, close, end and shutdown change nothing and say what they would
 do. Quitting keeps every tab in cmux's restore set; closing a tab takes it out.
 A quit also records which session sat in which tab, so `start` can resume a
-tab cmux brought back at a bare prompt.
+tab cmux brought back at a bare prompt. The record is used once.
 
 The workspace is --workspace, else GARRICK_WORKSPACE, else the folder you are
 in or the nearest one above it holding System/rules.md, else ~/Garrick. The
@@ -38,6 +38,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -54,6 +55,8 @@ QUIT_AFTER_S = 3
 SKIP = ("archive", "Archive", "Inbox")
 SETTINGS = ("workspaces", "skip", "aliases", "agent", "before_quit", "socket_password_file")
 FILLER = {"the", "thread", "project", "tab"}
+MATCH_MIN = 4                                     # letters before part of a tab's name may stand for it
+CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 class DeskError(Exception):
@@ -329,11 +332,17 @@ def wrap_prompt(agent: str, why: str = None) -> str:
     return ("/threads wrap it. " if agent == "claude" else "Use the threads skill to wrap it. ") + (why or WRAP_PROMPT)
 
 
+def plain(text: str) -> str:
+    """Text on one line. A newline or another control character typed into a
+    tab acts as a key: a newline would send the line before it was finished."""
+    return CONTROL.sub(" ", text)
+
+
 def start_command(agent: str, name: str, prompt: Optional[str]) -> str:
     """Claude Code is named after the thread; both take a first prompt as an argument."""
-    args = ["claude", "-n", name] if agent == "claude" else [agent]
+    args = ["claude", "-n", plain(name)] if agent == "claude" else [agent]
     if prompt:
-        args.append(prompt)
+        args.append(plain(prompt))
     return shlex.join(args)
 
 
@@ -403,7 +412,8 @@ def write_snapshot(sessions: List[dict]) -> int:
     target = snapshot_file()
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"taken": time.strftime("%Y-%m-%dT%H:%M:%S"), "tabs": rows}, indent=1), encoding="utf-8")
+    tmp.write_text(json.dumps({"taken": time.strftime("%Y-%m-%dT%H:%M:%S"), "taken_unix": time.time(), "tabs": rows},
+                              indent=1), encoding="utf-8")
     tmp.replace(target)
     return len(rows)
 
@@ -431,7 +441,8 @@ def workspaces() -> Dict[str, dict]:
 
 
 def send(surface: str, text: str) -> None:
-    cmux("send", "--surface", surface, "--", text)
+    """Type one line into a tab, then press Enter: the only key that submits it."""
+    cmux("send", "--surface", surface, "--", plain(text))
     cmux("send-key", "--surface", surface, "enter")
 
 
@@ -518,12 +529,18 @@ def cmd_open(desk: Desk, a) -> None:
 
 
 def match_tab(query: str, sessions: List[dict]) -> dict:
+    """The one tab a heard name means: its whole name or folder, or else a part
+    of one at least MATCH_MIN letters long that no other tab shares. A shorter
+    part, "it" say, sits inside too many names to close a tab on."""
     q = norm(query, filler=True)
+    if not q:
+        raise DeskError("say which tab")
     names = lambda s: (norm(tab_label(s)), norm(Path(s.get("cwd") or "").name))
-    exact = [s for s in sessions if q and q in names(s)]
-    if len(exact) == 1:
-        return exact[0]
-    hits = exact or [s for s in sessions if q and any(q in n for n in names(s))]
+    hits = [s for s in sessions if q in names(s)]
+    if not hits:
+        if len(q) < MATCH_MIN:
+            raise DeskError("no open tab is called %r; say more of its name" % query)
+        hits = [s for s in sessions if any(q in n for n in names(s))]
     if len(hits) == 1:
         return hits[0]
     if not hits:
@@ -564,14 +581,26 @@ def cmd_close(desk: Desk, a) -> None:
                   "`%s`" % cx.resume_command(s["agent"], s["session_id"]) for s in chosen if s.get("agent") in cx.AGENTS)
                   or "its assistant"))
         return
+    closed, left = [], []
     for s in chosen:
+        # Checked again tab by tab: a wrap takes minutes, and a tab may have
+        # started a turn since the check above.
         if a.wrap:
-            wrap_tab(s, CLOSE_PROMPT, None)
+            ready = wrap_tab(s, CLOSE_PROMPT, None) is not None
+        else:
+            ready = state_of(s) == "idle"
+        if not ready:
+            left.append(tab_label(s))
+            continue
         args = ["close-surface", "--surface", s["surface"]]
         if s.get("workspace"):
             args += ["--workspace", s["workspace"]]
         cmux(*args)
-    print("closed %s" % labels)
+        closed.append(tab_label(s))
+    if closed:
+        print("closed %s" % ", ".join(closed))
+    if left:
+        raise DeskError("left open, busy since the check or no longer readable: %s" % ", ".join(left))
 
 
 def cmd_workspace(desk: Desk, a) -> None:
@@ -621,11 +650,22 @@ def stop(why: str, log: Optional[Path]) -> None:
     raise DeskError(why)
 
 
-def wrap_tab(s: dict, why: str, log: Optional[Path]) -> float:
+def wrap_tab(s: dict, why: str, log: Optional[Path]) -> Optional[float]:
     """Ask the tab's own session to wrap its thread, and wait for that turn to
-    end. Seconds taken; DeskError, and a notification, when it does not."""
+    end. Seconds taken; DeskError, and a notification, when it does not.
+
+    None, having typed nothing, when the tab is not idle at the moment of
+    sending. Tabs are checked once before the first wrap, and a wrap can take
+    fifteen minutes: a tab may start a turn in that time, and one stopped on a
+    permission question would take the wrap's text and Enter as its answer."""
     name, transcript = tab_label(s), s.get("transcript")
-    _, turns = cx.turn_state(transcript, s["agent"])
+    state, turns = cx.turn_state(transcript, s["agent"])
+    alive = s["session_id"] in {x["session_id"] for x in live_sessions()}
+    if state != "idle" or not alive or not s.get("surface"):
+        say("skipped %s: %s; typed nothing" % (name, "its session has ended" if not alive else
+                                                 "mid-turn or waiting on a question" if state == "working"
+                                                 else "its state cannot be read"), log)
+        return None
     send(s["surface"], wrap_prompt(s["agent"], why))
     began = time.time()
     while True:
@@ -672,9 +712,15 @@ def cmd_shutdown(desk: Desk, a) -> None:
 
     say("shutdown: %d tab(s) to wrap" % len(todo), log)
     notify("Shutting down: wrapping %d tab(s), then quitting cmux" % len(todo))
+    skipped = []
     for i, s in enumerate(todo, 1):
         took = wrap_tab(s, WRAP_PROMPT, log)
+        if took is None:
+            skipped.append(tab_label(s))
+            continue
         say("wrapped %d of %d: %s (%ds)" % (i, len(todo), tab_label(s), took), log)
+    if skipped:
+        stop("not wrapped, busy when its turn came: %s" % ", ".join(skipped), log)
 
     unsafe = [tab_label(s) for s in live_sessions() if state_of(s) != "idle"]
     if unsafe:
@@ -712,46 +758,101 @@ def settle(limit: int = 60, quiet: int = 10) -> None:
         time.sleep(2)
 
 
-def resume_missing() -> Tuple[List[str], List[str]]:
-    """Resume, from the last quit's record, each tab cmux reopened without its session.
+def last_session_start() -> Optional[float]:
+    """When cmux last started an assistant in any tab, from its records; 0 for
+    never, None when the records cannot be read."""
+    try:
+        found = cx.records()
+    except cx.CmuxError:
+        return None
+    newest = 0.0
+    for r in found:
+        try:
+            when = datetime.fromisoformat(str(r.get("started_at")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        newest = max(newest, when)
+    return newest
 
-    A tab is found by its surface id, or else by workspace and name, and only
-    when no assistant is alive in it: `cd <folder> && <the resume command>`."""
+
+def take_snapshot(since: Optional[float]) -> Tuple[List[dict], Optional[str]]:
+    """The last quit's record of its tabs, and why it is not to be used, if it
+    is not. It is renamed on reading, so it is acted on once. It is out of date
+    when cmux has started a session since it was taken: cmux ran after that
+    quit, and its tabs are no longer the ones the record names."""
     snap = snapshot_file()
     if not snap.is_file():
-        return [], []
+        return [], None
+    used = snap.with_name("desk-snapshot.used.json")
     try:
-        tabs = json.loads(snap.read_text(encoding="utf-8")).get("tabs", [])
+        snap.replace(used)
+        data = json.loads(used.read_text(encoding="utf-8"))
+        tabs, taken = data.get("tabs", []), data.get("taken_unix")
     except (OSError, ValueError, AttributeError):
+        return [], "the record of the last quit could not be read"
+    if not isinstance(tabs, list) or not isinstance(taken, (int, float)):
+        return [], "the record of the last quit carries no date"
+    if since is None:
+        return [], "cmux's own records could not be read, so the age of the last quit's record is unknown"
+    if since > taken:
+        return [], "cmux has run since the last quit was recorded"
+    return [t for t in tabs if isinstance(t, dict)], None
+
+
+def resume_missing(tabs: List[dict], before: set) -> Tuple[List[str], List[str]]:
+    """Resume each recorded tab cmux brought back without its session.
+
+    Only into a tab this start brought back (one not in `before`), found by its
+    surface id, or else by workspace and name when exactly one recorded tab
+    and one tab brought back carry them. Only when cmux shows a shell alone in
+    that tab's foreground, since a line typed into an editor or a password
+    prompt is theirs: `cd <folder> && <the resume command>`."""
+    if not tabs:
         return [], []
     live = live_sessions()
     alive_ids = {s["session_id"] for s in live}
     taken = {s.get("surface") for s in live}
-    titles = cx.surface_titles()
-    by_name: Dict[tuple, List[str]] = {}
+    titles = {k: v for k, v in cx.surface_titles().items() if k not in before}
+    fore = cx.foregrounds()
+    label = lambda t: re.sub(r"^[^\w(]+\s*", "", t or "")
+    named: Dict[tuple, List[str]] = {}
     for sid, meta in titles.items():
-        by_name.setdefault((meta.get("workspace"), re.sub(r"^[^\w(]+\s*", "", meta.get("tab") or "")), []).append(sid)
+        named.setdefault((meta.get("workspace"), label(meta.get("tab"))), []).append(sid)
+    recorded: Dict[tuple, int] = {}
+    for t in tabs:
+        key = (t.get("workspace"), t.get("tab"))
+        recorded[key] = recorded.get(key, 0) + 1
     resumed, lost = [], []
     for t in tabs:
+        name = t.get("tab") or "?"
         if t.get("session_id") in alive_ids:
             continue
-        if t.get("agent") not in cx.AGENTS:
-            lost.append("%s (desk cannot resume %s)" % (t.get("tab"), t.get("agent")))
+        if t.get("agent") not in cx.AGENTS or not t.get("session_id") or not t.get("cwd"):
+            lost.append("%s (desk cannot resume it)" % name)
             continue
         surface = t.get("surface") if t.get("surface") in titles else None
+        key = (t.get("workspace"), t.get("tab"))
+        if not surface and recorded.get(key) == 1 and len(named.get(key, [])) == 1:
+            surface = named[key][0]
         if not surface:
-            hits = [x for x in by_name.get((t.get("workspace"), t.get("tab")), []) if x not in taken]
-            surface = hits[0] if len(hits) == 1 else None
-        if not surface or surface in taken:
-            lost.append(t.get("tab") or "?")
+            lost.append("%s (not among the tabs this start brought back)" % name)
+            continue
+        if surface in taken:
+            lost.append("%s (another session is in its tab)" % name)
+            continue
+        if not cx.at_shell_prompt(fore.get(surface)):
+            lost.append("%s (something other than a shell holds the tab)" % name)
             continue
         send(surface, "cd %s && %s" % (shlex.quote(t["cwd"]), cx.resume_command(t["agent"], t["session_id"])))
         taken.add(surface)
-        resumed.append(t.get("tab") or "?")
+        resumed.append(name)
     return resumed, lost
 
 
 def cmd_start(desk: Desk, a) -> None:
+    # Read before cmux brings anything back, which starts sessions of its own.
+    since = last_session_start()
+    before: Optional[set] = None              # the tabs there before this start; None, it brought none back
     if not cx.alive():
         if not bring_forward():
             raise DeskError("cmux is not running, and desk cannot start it from here")
@@ -762,20 +863,29 @@ def cmd_start(desk: Desk, a) -> None:
         else:
             raise DeskError("cmux did not come up within 30 seconds")
         time.sleep(3)                                     # its own restore is still reopening tabs
+        before = set()
         print("started cmux; it reopens the tabs it had")
     elif not live_sessions():
+        before = set(cx.surface_titles())
         cmux("restore-session")
         time.sleep(3)
         print("restored cmux's last saved tabs")
-    settle()
-    resumed, lost = resume_missing()
+    resumed, lost = [], []
+    if before is None:
+        print("cmux was already running: desk resumes only the tabs it brings back itself")
+    else:
+        settle()
+        tabs, stale = take_snapshot(since)
+        if stale:
+            print("  ! resumed nothing: %s" % stale)
+        resumed, lost = resume_missing(tabs, before)
     if resumed:
         print("resumed %d tab(s) cmux left at a bare prompt: %s" % (len(resumed), ", ".join(resumed)))
     if lost:
-        print("  ! could not find the tab for: %s" % ", ".join(lost))
+        print("  ! not resumed: %s" % ", ".join(lost))
     if a.notify:
         notify("cmux is up.%s%s" % (" Resumed %d tab(s)." % len(resumed) if resumed else "",
-                                     " Not found: %s." % ", ".join(lost) if lost else ""))
+                                     " Not resumed: %s." % ", ".join(lost) if lost else ""))
     cmd_status(desk, a)
 
 

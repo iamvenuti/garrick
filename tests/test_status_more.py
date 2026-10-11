@@ -313,6 +313,31 @@ class TestVaultGraph(StatusCase):
         self.assertNotIn("g", by["Acme kick-off"])                             # a wiki with no vault of its own keeps the kinds
         self.assertIn("n.g===-1?G.other", status.GRAPH_JS)
 
+    def test_the_legend_names_each_group_as_a_person_would(self):
+        cases = [
+            (['path:"Notes/wiki/concepts/"'], "Concepts"),
+            (["path:domains/system-integrator"], "System integrator"),
+            (["file:Notes/Brief.md"], "Brief"),
+            (['["type","customer"]', 'path:"Notes/customers"'], "Customer"),
+            (["[type:customer]", "path:Notes/customers"], "Customer"),
+            (['["status":"waiting"]'], "Waiting"),
+            (["[status]"], "Status"),
+            (['"loose words"', "line:(budget)"], "Group 4"),
+            (['"loose words"', "tag:#pricing"], "Pricing"),
+        ]
+        for terms, said in cases:
+            self.assertEqual(said, status.group_label(terms, 4), terms)
+
+    def test_a_quoted_property_term_matches_by_property(self):
+        for term in ('["type":"customer"]', '["type","customer"]', "[type:customer]", '[type:"customer"]'):
+            self.assertTrue(status.group_match(term, {"type": "customer"}, "Zones/Work/x"), term)
+        self.assertFalse(status.group_match('["type","customer"]', {"type": "supplier"}, "Zones/Work/x"))
+
+    def test_an_unreadable_group_is_numbered_in_the_vaults_order(self):
+        work = self.root / "Zones" / "Work"
+        self.obsidian(work, groups=[("path:Birch Entry", 0x00FF00), ('"loose words"', 0xFF0000)])
+        self.assertEqual([["#00ff00", "Birch Entry"], ["#ff0000", "Group 2"]], graph_data(self.page())["groups"])
+
     def test_ignore_filters_leave_notes_out(self):
         work = self.root / "Zones" / "Work"
         self.obsidian(work, ignore=["Birch Entry/", "/Sources/"])

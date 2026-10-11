@@ -1341,7 +1341,7 @@ def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, st
             terms = [t.strip() for t in re.split(r"\s+OR\s+", str(cg.get("query") or "")) if t.strip()]
             rgb = (cg.get("color") or {}).get("rgb")
             if terms and isinstance(rgb, int):
-                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms)))
+                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms, len(groups) + 1)))
     except (OSError, ValueError, AttributeError, TypeError):
         groups = []
     try:
@@ -1358,23 +1358,57 @@ def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, st
     return groups, ignore
 
 
-def group_label(terms: List[str]) -> str:
+# A property term: [key], [key:value], with either side quoted, and the
+# ["key","value"] form some vaults hold.
+PROPERTY_TERM = re.compile(r"""\[\s*["']?([\w-]+)["']?\s*(?:[:,]\s*(.+?))?\s*\]""")
+
+
+def group_word(term: str) -> str:
+    """One term of a colour group as a person would say it: a folder's last
+    name, a file's name, a property's value (or its key), a tag. Empty for a
+    term Garrick does not read."""
+    m = PROPERTY_TERM.fullmatch(term.strip())
+    if m:
+        word = (m.group(2) or m.group(1)).strip().strip("\"'")
+    else:
+        m = re.fullmatch(r"(file|path|tag):(.+)", term.strip())
+        if not m:
+            return ""
+        kind, value = m.group(1), m.group(2).strip().strip("\"'")
+        if kind == "path":
+            value = [part for part in value.split("/") if part.strip()][-1:] or [""]
+            value = value[0]
+        elif kind == "file":
+            value = value.rsplit("/", 1)[-1]
+            value = value[:-3] if value.lower().endswith(".md") else value
+        else:
+            value = value.lstrip("#")
+        word = value
+    word = re.sub(r"[-_]+", " ", word).strip()
+    return word[:1].upper() + word[1:]
+
+
+def group_label(terms: List[str], n: int = 0) -> str:
     """A colour group as the legend says it: `[type:project] OR file:Brief`
-    reads "Project, Brief"."""
-    said = []
+    reads "Project, Brief", `path:"Notes/wiki/concepts/"` reads "Concepts".
+    A word said twice, or as singular and plural, is said once; a group with
+    no word Garrick reads is "Group n"."""
+    said, seen = [], set()
     for t in terms:
-        m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", t)
-        word = (m.group(2) or m.group(1)) if m else re.sub(r"^(?:file|path|tag):", "", t)
-        said.append(word.strip().strip("\"'"))
-    text = ", ".join(w for w in said if w)
-    return text[:1].upper() + text[1:]
+        word = group_word(t)
+        key = word.lower()
+        key = key[:-1] if key.endswith("s") and len(key) > 3 else key
+        if word and key not in seen:
+            seen.add(key)
+            said.append(word)
+    return ", ".join(said) or "Group %d" % n
 
 
 def group_match(term: str, fm: dict, rel: str) -> bool:
     """Whether a note answers one term of a colour group's query, in the forms
     Garrick reads: [key], [key:value], file:, path: and tag:. Any other term
     never matches: the page reads no note's text to test it."""
-    m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", term)
+    m = PROPERTY_TERM.fullmatch(term.strip())
     if m:
         key, want = m.group(1), m.group(2)
         if key not in fm:

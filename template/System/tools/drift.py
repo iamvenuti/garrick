@@ -102,6 +102,8 @@ def shared_root(zone: Path, value: str) -> Optional[Path]:
 
 
 def destination(zone: Path, hub_shared: Optional[Path], value: str) -> Optional[Path]:
+    if value.startswith(("/", "~")) or "\\" in value:
+        return None                                  # only ever inside a linked shared folder
     if ":" in value:
         link, _, rest = value.partition(":")
         base = shared_root(zone, link)
@@ -189,8 +191,8 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
         return "encrypted", "one copy is saved with a password, so its content cannot be compared"
     try:
         fa, fb = office_form(a), office_form(b)
-    except (zipfile.BadZipFile, KeyError, ValueError) as exc:
-        return "drifted", "one copy does not open as an Office file (%s)" % exc
+    except Exception as exc:      # a half-synced or damaged file: zip, zlib, EOF and parse errors alike
+        return "drifted", "one copy does not open as an Office file (%s)" % (str(exc)[:80] or type(exc).__name__)
     if fa == fb:
         return "same", ""
     parts = sorted(set(fa) ^ set(fb)) + sorted(k for k in set(fa) & set(fb) if fa[k] != fb[k])
@@ -222,6 +224,10 @@ def survey(root: Path) -> List[dict]:
                                "authoritative: %s" % line[:80]})
         for row in rows:
             ours = project / "Deliverables" / row["file"]
+            if row["file"].startswith(("/", "~")) or ".." in Path(row["file"]).parts:
+                out.append({"zone": zone.name, "project": project.name, "file": row["file"], "state": "unread",
+                            "say": "the file must be a path under Deliverables/"})
+                continue
             theirs = destination(zone, hub_shared, row["destination"])
             if theirs is None:
                 state, say = "unchecked", ("the hub names no shared folder, `shared:`, through a link in %s/%s/"

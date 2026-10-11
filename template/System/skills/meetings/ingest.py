@@ -323,8 +323,13 @@ def log_head_end(lines: List[str]) -> int:
         if line.strip().startswith("One line per ingest"):
             return i + 1
     i = 0
-    if lines and lines[0].startswith("# "):
-        i = 1
+    if lines and lines[0].strip() == "---":           # frontmatter is never written into
+        end = next((j for j in range(1, len(lines)) if lines[j].strip() in ("---", "...")), None)
+        i = end + 1 if end is not None else 0
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+    if i < len(lines) and lines[i].startswith("# "):
+        i += 1
     while i < len(lines):
         stripped = lines[i].lstrip()
         if stripped.startswith(("- ", "* ", "#")) or re.match(r"\d+\. ", stripped):

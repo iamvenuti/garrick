@@ -489,6 +489,11 @@ class LogTest(unittest.TestCase):
         self.assertIn("260312-birch-kick-off", lines[2])
         self.assertEqual("## 2026-03-01", lines[4])
 
+    def test_frontmatter_is_never_written_into(self):
+        lines = self._log("---\ntags:\n  - log\n---\n\n# Log\n\n- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertEqual(["---", "tags:", "  - log", "---"], lines[:4])
+        self.assertIn("260312-birch-kick-off", lines[7])
+
     def test_a_log_with_no_title_or_entries_gets_the_entry_at_the_top(self):
         lines = self._log("- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
         self.assertIn("260312-birch-kick-off", lines[0])

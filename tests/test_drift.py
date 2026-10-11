@@ -99,6 +99,19 @@ class DriftTest(unittest.TestCase):
         target.unlink()
         self.assertEqual("missing", self.one()["state"])
 
+    def test_a_damaged_copy_is_reported_and_the_rest_still_checked(self):
+        good = docx()
+        damaged = good[:len(good) // 2] + b"\0" * 40 + good[len(good) // 2 + 40:]
+        (self.share / "Acme" / "Terms.docx").write_bytes(damaged)
+        self.assertEqual("drifted", self.one()["state"])
+
+    def test_a_row_cannot_point_outside_its_folders(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("`Terms.docx`", "`/etc/hosts`"))
+        self.assertEqual("unchecked", self.one()["state"])
+        ledger.write_text(ledger.read_text().replace("`260930 - Terms.docx`", "`../../Other/secret.docx`"))
+        self.assertEqual("unread", self.one()["state"])
+
     def test_a_row_that_does_not_read_is_reported_and_saved_for_the_page(self):
         ledger = self.acme / "Deliverables" / "published.md"
         ledger.write_text(ledger.read_text() + "| last week | Terms.docx | somewhere | Dana | share |\n")

@@ -212,6 +212,140 @@ class TestNothingIsLost(SplitCase):
         self.assertEqual([("## B", ["```", "code", "```"])], additions)     # the fences move with their block
 
 
+MEETINGS = "Wikis/Meetings/AGENTS.md"
+
+# A Meetings schema of the user's own, grown before the split: its frontmatter
+# templates in plain fences, sharing their `---`, `created:` and `updated:`
+# lines with each other and with Garrick's ```yaml blocks, and fences further
+# down for an index row and a log line.
+OWN_SCHEMA = """# Birch & Co meeting schema
+
+This file is the schema for the meeting wiki: layout, page types, frontmatter.
+The ingest procedure defers to it, and where the two disagree this file wins.
+
+## Folder layout
+- `wiki/sources/` holds one summary for each meeting or mail thread
+- `wiki/people/` holds one page for each person met, and nothing else
+- `raw/inbox/` holds transcripts waiting for an ingest, never committed
+
+## Page frontmatter
+Every page carries YAML frontmatter, and every link in it is a wikilink.
+
+**meeting** and **email**, a page in `wiki/sources/`:
+```
+---
+title: Page Title
+type: meeting | email
+zone: Work
+parties: [acme-corp, birch-co]
+people:
+  - "[[wiki/people/some-person]]"
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+relevance: high | medium | low
+---
+```
+
+**entity**, a page in `wiki/entities/`, which names the domain it belongs to:
+```
+---
+title: Page Title
+type: entity
+domain: technology-partner
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+---
+```
+
+**person**, a page in `wiki/people/`, one per person met:
+```
+---
+title: Full Name
+type: person
+party: acme-corp
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+---
+```
+Then a heading with the name and one sentence on who they are and their party.
+
+## index.md
+One row per page, newest first, in the shape below:
+```
+| [[wiki/sources/260412-acme-pricing-call]] | Acme pricing call with Dana Whitfield | 2026-04-12 |
+```
+
+## log.md
+One line per ingest, newest first:
+```
+## 2026-04-12 — Ingest: Acme pricing call, 1 recording
+```
+"""
+
+
+class TestCodeBlocks(SplitCase):
+    """A fenced code block is one passage: never split inside, settled whole."""
+
+    def assertBalanced(self, text):
+        fences = [x for x in text.splitlines() if split.FENCE_RE.match(x)]
+        self.assertEqual(0, len(fences) % 2, text)
+        self.assertEqual([], [x for x in split.units(text) if "\n" not in x and split.FENCE_RE.match(x)])  # none open
+
+    def test_a_schema_of_your_own_splits_with_every_block_whole(self):
+        path = self.root / MEETINGS
+        shipped = path.read_text()
+        path.write_text(OWN_SCHEMA)
+        self.commit(path.parent, "My schema")
+        blocks = [x for x in split.units(OWN_SCHEMA) if "\n" in x]
+        self.assertEqual(5, len(blocks))
+        with mock.patch.object(split, "garrick_versions", return_value=[]):
+            [item] = self.split_plan()                      # as with a schema older than any Garrick
+        self.assertIsNone(item["base"])
+        self.assertBalanced(item["text"])
+        for block in blocks:
+            self.assertIn(block, item["text"])
+        [item] = self.split_plan()
+        self.assertIsNotNone(item["base"])
+        result = split.apply(self.root, [item])
+        self.assertEqual([MEETINGS], result["done"])
+        self.assertEqual(shipped, path.read_text())
+        local = (path.parent / "AGENTS.local.md").read_text()
+        self.assertBalanced(local)
+        for block in blocks:
+            self.assertIn(block, local)
+        kept = set(shipped.splitlines()) | set(local.splitlines())
+        self.assertEqual([], [x for x in OWN_SCHEMA.splitlines() if x.strip() and x not in kept])
+
+    def test_a_changed_block_is_one_decision_and_yours_is_the_whole_block(self):
+        base = ("# Schema\n\n## A meeting page\n\n```yaml\n---\ntitle: <what it was about>\ntype: meeting\n"
+                "parties: [<tag>, <tag>]      # from the Parties table\ncreated: YYYY-MM-DD\n---\n```\n\n"
+                "Then what was decided, and an actions table.\n")
+        user = base.replace("parties: [<tag>, <tag>]      # from the Parties table",
+                            "parties: [<tag>]             # everyone in the room, from the Parties table\n"
+                            "client: Acme Corp")
+        additions, decisions = split.split_text(user, base, base)
+        self.assertEqual([], additions)
+        [d] = decisions
+        self.assertEqual(("changed", "## A meeting page"), (d["kind"], d["section"]))
+        block = user.split("\n\n")[2]
+        self.assertEqual(block.splitlines(), d["yours"])                      # fences included
+        self.assertEqual([base.split("\n\n")[2]], d["garrick"])               # Garrick's, one item
+        text = split.render("# Schema, this workspace's own\n", "AGENTS.md", additions, decisions)
+        self.assertBalanced(text)
+        self.assertIn(block, text)
+        self.assertIn('Garrick\'s code block beginning "title: <what it was about>"', text)
+
+    def test_a_heading_inside_a_block_is_not_one(self):
+        local = "# Mine\n\n## Tools\n\n```sh\n# run this first\nmake all\n```\n\n## Other\n\n- Something else.\n"
+        text = split.render(local, "AGENTS.md", [("## Tools", ["- Run the tests before every commit, always."])], [])
+        self.assertIn("make all\n```\n\n- Run the tests before every commit, always.\n\n## Other", text)
+        self.assertBalanced(text)
+
+    def test_blank_lines_in_a_block_are_kept(self):
+        text = split.render("# Mine\n", "AGENTS.md", [("## Tools", ["```sh", "make", "", "", "make test", "```"])], [])
+        self.assertIn("```sh\nmake\n\n\nmake test\n```", text)
+
+
 class TestApply(SplitCase):
     def test_garricks_file_as_shipped_and_yours_beside_it_in_one_commit(self):
         older, user = self.diverge()

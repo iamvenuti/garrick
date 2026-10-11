@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- The split broke a fenced code block of yours apart when you had changed a line inside it: your line went to the review section and the rest of the block stayed behind, leaving the local file with a fence that never closed. A code block is now one passage. It moves whole, and one you changed is settled whole, fences included.
 - `check.py` warned that the local files the split starts say the same thing, over the line each one opens with. That line is Garrick's, and the copy check now passes over it.
 
 ## [0.16.0] - 2026-10-11

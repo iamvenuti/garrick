@@ -29,6 +29,9 @@ goes under the review heading. The base is the Garrick version in the file's
 history, or its `.new`'s, that your file is closest to. Without one, all that
 differs from this Garrick's counts as yours, and the report says so.
 
+A fenced code block is one passage throughout: compared, moved and settled
+whole, its fences included, never split inside.
+
 Nothing is written without --apply. Each repository gets one commit holding
 Garrick's file, the local file, and the removal of a `.new` an earlier update
 left beside it, so `git revert` undoes it. The version stamp then records
@@ -53,6 +56,7 @@ digest = update.digest
 UpdateError = update.UpdateError
 
 HEADING_RE = re.compile(r"^#{1,2}\s+\S")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
 REVIEW = "## From your earlier %s, to review"
 REVIEW_RE = re.compile(r"^## From your earlier .+, to review\s*$")
@@ -83,13 +87,51 @@ def heading_name(heading):
 
 
 def opening(line, words=8):
-    """The first words of a line, without its Markdown, to name it by."""
+    """The first words of a line, without its Markdown, to name it by. A
+    fenced block is named by the first line inside it that has words."""
+    if "\n" in line:
+        inner = line.split("\n")[1:-1]
+        line = next((x for x in inner if WORD_RE.search(x)), "")
     text = line.replace("**", "").replace("`", "").replace('"', "'")
     text = re.sub(r"^\s*(?:[-*>]|\d+\.|\|)\s*", "", text)
     parts = text.split()
     if len(parts) > words:
         return " ".join(parts[:words]).rstrip(".,;:") + "…"
     return " ".join(parts).rstrip(".,;:")
+
+
+def units(text):
+    """The lines of `text`, except that a fenced code block, its fences
+    included, is one item, its lines joined: a block is compared, moved and
+    settled whole, never split. A fence that never closes is an ordinary line."""
+    lines = text.splitlines() if isinstance(text, str) else list(text)
+    out, k = [], 0
+    while k < len(lines):
+        m = FENCE_RE.match(lines[k])
+        if m:
+            close = re.compile(r"^ {0,3}%s{%d,}\s*$" % (re.escape(m.group(1)[0]), len(m.group(1))))
+            end = next((e for e in range(k + 1, len(lines)) if close.match(lines[e])), None)
+            if end is not None:
+                out.append("\n".join(lines[k:end + 1]))
+                k = end + 1
+                continue
+        out.append(lines[k])
+        k += 1
+    return out
+
+
+def lines_of(items):
+    """`items` with each fenced block back in its lines."""
+    return [x for item in items for x in item.split("\n")]
+
+
+def fenced(lines):
+    """For each of `lines`, whether it sits in a fenced code block, fences included."""
+    out = []
+    for item in units(lines):
+        n = item.count("\n") + 1
+        out += [n > 1] * n          # only a block spans lines
+    return out
 
 
 def trim(lines):
@@ -113,8 +155,12 @@ def split_text(user, base, shipped, known_base=True):
     "removed" when no base is known, and `base` is this Garrick's), `section`,
     `garrick` (Garrick's lines at the base), `yours` (your lines), `newer`
     (this Garrick's lines like them, where Garrick has since changed them) and
-    `rewritten` (Garrick has since changed them past recognising)."""
-    U, B, S = user.splitlines(), base.splitlines(), shipped.splitlines()
+    `rewritten` (Garrick has since changed them past recognising).
+
+    A fenced code block is one item throughout (see units): an addition holds
+    it whole, a decision's `yours` holds the whole block, fences included, and
+    in `garrick` and `newer` it is one item, its lines joined."""
+    U, B, S = units(user), units(base), units(shipped)
     Un, Bn, Sn = [norm(x) for x in U], [norm(x) for x in B], [norm(x) for x in S]
     in_user, in_shipped, in_base = set(Un), set(Sn), set(Bn)
 
@@ -199,12 +245,12 @@ def split_text(user, base, shipped, known_base=True):
             decisions.append({"kind": "both" if changed else "changed",
                               "section": heads[j1 - 1] if j1 > 0 else None,
                               "garrick": garrick or [B[i] for i in range(i1, i2) if substantial(B[i])],
-                              "yours": yours, "newer": newer(changed), "rewritten": rewritten(changed),
+                              "yours": lines_of(yours), "newer": newer(changed), "rewritten": rewritten(changed),
                               "known_base": known_base})
         else:
             removed(i1, i2)
             add(j1, j2)
-    return additions, decisions
+    return [(section, lines_of(block)) for section, block in additions], decisions
 
 
 def like(a, b):
@@ -243,11 +289,14 @@ def starter(path, shipped):
 
 def section_end(lines, start):
     """The index where the section opened at `start` ends: the next heading of
-    its level or higher, or the end."""
-    for k in range(start + 1, len(lines)):
-        if is_heading(lines[k]):
-            return k
-    return len(lines)
+    its level or higher, or the end. A line in a code block is never a heading."""
+    heads = headings(lines)
+    return next((k for k in range(start + 1, len(lines)) if heads[k]), len(lines))
+
+
+def headings(lines):
+    """For each of `lines`, whether it is a heading: one outside every code block."""
+    return [is_heading(x) and not inside for x, inside in zip(lines, fenced(lines))]
 
 
 def insert_block(lines, at, block):
@@ -267,14 +316,16 @@ def render(existing, name, additions, decisions):
     lines = existing.splitlines()
 
     def review_at():
-        return next((k for k, x in enumerate(lines) if REVIEW_RE.match(x)), None)
+        heads = headings(lines)
+        return next((k for k, x in enumerate(lines) if heads[k] and REVIEW_RE.match(x)), None)
 
     for section, block in additions:
+        heads = headings(lines)
         if section is None:
-            at = next((k for k, x in enumerate(lines) if is_heading(x) and not x.startswith("# ")), len(lines))
+            at = next((k for k, x in enumerate(lines) if heads[k] and not x.startswith("# ")), len(lines))
             lines = insert_block(lines, at, block)
             continue
-        found = next((k for k, x in enumerate(lines) if norm(x) == norm(section)), None)
+        found = next((k for k, x in enumerate(lines) if heads[k] and norm(x) == norm(section)), None)
         if found is not None:
             lines = insert_block(lines, section_end(lines, found), block) if block else lines
         else:
@@ -296,8 +347,10 @@ def render(existing, name, additions, decisions):
         for d in decisions:
             n += 1
             lines = insert_block(lines, section_end(lines, at), say_decision(n, d, name))
-    text = "\n".join(lines).rstrip("\n") + "\n"
-    return re.sub(r"\n{3,}", "\n\n", text)
+    # One blank line at most between passages; a code block keeps its own as they are.
+    inside = fenced(lines)
+    lines = [x for k, x in enumerate(lines) if x or inside[k] or k == 0 or lines[k - 1]]
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 
 def where(section):
@@ -316,7 +369,8 @@ def say_decision(n, d, name):
         return ["### %d. Not placed" % n, "", "Lines of your earlier %s the split found no place for. They hold here "
                 "until you settle them:" % name, ""] + d["yours"]
     one = len(d["garrick"]) == 1
-    garrick = "Garrick's line%s beginning %s" % ("" if one else "s", named(d["garrick"]))
+    noun = "code block" if all("\n" in x for x in d["garrick"]) else "line"
+    garrick = "Garrick's %s%s beginning %s" % (noun, "" if one else "s", named(d["garrick"]))
     if d["kind"] in ("removed", "absent"):
         if d["kind"] == "absent":
             body = "Your earlier %s had nothing like %s, which %s in `%s` now." % (
@@ -508,8 +562,8 @@ def report(root, items, applied=False):
                 lines.append("    %d. %s, %s." % (n, {"changed": "Changed", "both": "Changed on both sides",
                                                       "removed": "Removed", "absent": "Not in yours"}[d["kind"]],
                                                      where(d["section"])))
-                lines += say_lines(d["garrick"], "         Garrick's: ")
-                lines += say_lines(d["newer"], "         Garrick's now: ")
+                lines += say_lines(lines_of(d["garrick"]), "         Garrick's: ")
+                lines += say_lines(lines_of(d["newer"]), "         Garrick's now: ")
                 lines += say_lines([x for x in d["yours"] if x.strip()], "         Yours: ")
         if it["unplaced"]:
             lines.append("  %d line%s could not be placed and go under the review heading as they are." % (

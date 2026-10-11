@@ -15,6 +15,15 @@ sys.dont_write_bytecode = True
 
 from test_setup import Installed  # noqa: E402
 
+import importlib.util  # noqa: E402
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+_spec = importlib.util.spec_from_file_location("garrick_page_action_manage", str(REPO / "extras" / "status" / "page_action.py"))
+pa = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(pa)
+
 
 class ManageCase(Installed):
     def setUp(self):
@@ -165,6 +174,48 @@ class TestDelete(ManageCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertFalse((self.work / "Acme").exists())
         self.assertNotIn("- [ ] [[Pricing]]", (self.work / "Todo.md").read_text())
+
+
+class TestFromThePage(ManageCase):
+    """The page's buttons run scaffold.py and nothing else."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "System" / "garrick-flags.json").write_text('{"page-actions": true}')
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+
+    def act(self, **req):
+        return pa.act(self.root, req)
+
+    def test_new_project_and_thread_match_the_script_and_are_committed(self):
+        said = self.act(verb="check-name", kind="thread", zone="Work", project="Acme", name="Renewal")
+        self.assertIn("will do", said)
+        with self.assertRaisesRegex(pa.Refused, "sounds too much like Pricing"):
+            self.act(verb="check-name", kind="thread", zone="Work", project="Acme", name="Prising")
+        self.assertIn("Created thread Renewal", self.act(verb="new-thread", zone="Work", project="Acme", name="Renewal"))
+        self.assertIn("Created project Birch", self.act(verb="new-project", zone="Work", name="Birch", party="birch",
+                                                         thread="Launch Plan"))
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertIn("New project Birch (birch), first thread Launch Plan", self.git("log", "-1", "--format=%s").stdout)
+        self.assertTrue((self.work / "Birch" / "Threads" / "Launch Plan" / "Launch Plan.md").is_file())
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
+
+    def test_rename_delete_and_undo(self):
+        self.assertIn("Renamed the thread Pricing to Renewal",
+                      self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal"))
+        listed = self.act(verb="delete", zone="Work", project="Acme", thread="Freight")
+        self.assertIn("Nothing was deleted", listed)
+        said = self.act(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        self.assertIn(commit, said)
+        self.assertIn("Undone", self.act(verb="undo", zone="Work", commit=commit))
+        self.assertTrue(self.freight.is_file())
+        for bad in ({"verb": "undo", "zone": "Work", "commit": "HEAD~1"},
+                    {"verb": "rename", "zone": "Work", "project": "Acme", "to": "--root=/"},
+                    {"verb": "new-thread", "zone": "../Personal", "project": "Acme", "name": "X"}):
+            with self.assertRaises(pa.Refused):
+                pa.act(self.root, bad)
 
 
 if __name__ == "__main__":

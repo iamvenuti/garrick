@@ -231,6 +231,12 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `todo-add` | Writes a new line in a zone's `Todo.md`, and refuses one already there |
 | `park` | Sets a thread's `status:` to `parked`, with a dated entry; named by its project alone, the hub's, which parks every thread in it |
 | `wake` | Sets it back to `active`, with a dated entry |
+| `new-project` | Makes a project with its first thread, through `scaffold.py`, and commits it in the zone |
+| `new-thread` | Makes a thread in a project the same way |
+| `check-name` | Says whether a new name, or a new name for a rename, would do; makes nothing |
+| `rename` | Renames a project or thread and every link to it in the zone, through `scaffold.py rename`, in one commit |
+| `delete` | Without `confirm`, lists what deleting a project or thread would remove; with `confirm` naming it, removes it in one commit, through `scaffold.py delete` |
+| `undo` | Reverts a rename or a deletion, while it is still the zone's last commit |
 | `run` | Starts a scheduled job now, through launchd, unless it holds its lock |
 | `settings` | Saves how a thread opens, for every viewer of the page |
 | `open` | With the [cmux extra](cmux.md): a tab for a thread or project, resumed. Or by `folder`, its full path: a project's or a thread's folder, the same way, or the workspace root, whose tab starts on the request's `prompt`; any other folder is refused |

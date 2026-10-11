@@ -55,9 +55,10 @@ Every request, done or refused, is one line in page-actions.log in the jobs
 folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
 on a Mac): the time, the verb, the fields it names and what came of it. Only
 the fields a verb reads are written, the text of a new line cut short, so
-nothing else a request carries reaches the log. The host rebuilds the page
-after every request. The reply is one line of JSON: {"ok": true|false,
-"say": "…"}. Standard library only.
+nothing else a request carries reaches the log. The host hands the request
+and the reply to the page (window.GarrickActed), which moves a parked or woken
+row at once, and rebuilds the page after every request. The reply is one line
+of JSON: {"ok": true|false, "say": "…"}. Standard library only.
 """
 
 from __future__ import annotations

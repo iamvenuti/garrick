@@ -107,8 +107,9 @@ class StatusCase(unittest.TestCase):
 class TestMetadataOnly(StatusCase):
     def test_names_parties_and_dates(self):
         html = self.page()
-        for text in ("Work", "Personal", "Acme Review", "Pricing", "Market Sizing", ">acme<", ">birch<"):
+        for text in ("Work", "Personal", "Acme Review", "Pricing", "Market Sizing"):
             self.assertIn(text, html)
+        self.assertEqual(["acme"], cards(html)[("Acme Review", "Pricing")]["t"])       # the parties are in the card
 
     def test_never_note_content(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -256,7 +257,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(3, html.count("</script>"))          # the graph's data, the state the page waits for, the page's script
+        self.assertEqual(5, html.count("</script>"))          # the graph's data, the state the page waits for, the page's, the menu's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -579,7 +580,7 @@ class TestThreadCards(StatusCase):
         for label in (">Open</a>", 'title="Open the project&#39;s note"', "<span>'+esc(o.p||'Project')+'</span></a>", "Copy “", "'open '", "'wake '", "'park '"):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
-            self.assertIn("Panel.head(o)+Panel.acts(o)", js)
+            self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o\)")      # a row's card as itself, the graph's as a panel
             self.assertNotIn("data-copy=", js)
             self.assertNotIn('class="act"', js)
 
@@ -924,10 +925,31 @@ class TestPreviewFeatures(StatusCase):
                           "b": [["Work", 1], ["Meetings", 1]]}, intake)   # the page's own count, and where they wait
         self.assertNotIn("intake", self.menu(self.page()))                    # nothing installed to open it in
 
+    def test_the_menus_script_stands_alone(self):
+        # In a script element of its own, an error anywhere else on the page
+        # cannot keep the app from hearing what its menu lists.
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
+        html = self.page()
+        self.assertIn("<script>%s</script>" % status.MENU_JS, html)
+        self.assertEqual(1, html.count(status.MENU_JS))
+        if not shutil.which("node"):
+            self.skipTest("Node is not installed")
+        js = """const vm=require("vm");const [code,data]=JSON.parse(process.argv[1]);const posted=[];
+const ctx={JSON,String,setTimeout:()=>0,localStorage:{getItem:()=>null},document:{body:{dataset:{launchers:"claude,cmux"}},
+addEventListener:()=>{},getElementById:(id)=>id==="menu-data"?{textContent:data}:null}};
+ctx.window={webkit:{messageHandlers:{garrick:{postMessage:(m)=>posted.push(m)}}}};vm.createContext(ctx);vm.runInContext(code,ctx);
+process.stdout.write(JSON.stringify(posted));"""
+        data = re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)
+        done = subprocess.run(["node", "-e", js, json.dumps([status.MENU_JS, data])], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        menu = json.loads(done.stdout)[0]["menu"]                 # no GarrickPrefs: PANEL_JS's script failed, and still it says
+        self.assertEqual(("note", True, ["claude", "cmux"]), (menu["def"], menu["note"], menu["launchers"]))
+        self.assertEqual({"Work", "Personal"}, {z["z"] for z in menu["data"]["zones"]})
+
     def test_the_menu_follows_the_graph_and_settings(self):
         self.assertIn("g('garrick-graph-place')", status.MENU_JS)
-        self.assertIn("def:GarrickPrefs.def()", status.MENU_JS)                                # what Settings chose, shared or this window's
-        self.assertIn("var on=GarrickPrefs.launchers()", status.MENU_JS)
+        self.assertIn("def:P?P.def():'note'", status.MENU_JS)                                 # what Settings chose, shared or this window's
+        self.assertIn("var P=window.GarrickPrefs,on=P?P.launchers():{}", status.MENU_JS)
         self.assertIn("document.addEventListener('change',function(){setTimeout(sync,0)},true)", status.MENU_JS)
         self.assertIn("note:on.note!==false", status.MENU_JS)                                  # the note's link, unless switched off
         self.assertIn("e.stopPropagation();host.postMessage({app:o})", status.MENU_SETTINGS_JS)     # the app's settings do not rebuild the page
@@ -1497,8 +1519,11 @@ class TestApp(unittest.TestCase):
 
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "Garrick.swift").read_text()
-        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile"}, set(re.findall(r"FileManager\.default\.(\w+)", swift)))   # it only looks
-        self.assertNotIn("write(to:", swift)
+        # It only looks, but for what it last filled its menu with, in the jobs folder, outside the workspace.
+        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile", "createDirectory"},
+                         set(re.findall(r"FileManager\.default\.(\w+)", swift)))
+        self.assertEqual(["try? FileManager.default.createDirectory(at: jobsDir,"], re.findall(r"try\? FileManager\.default\.createDirectory\(at: \w+,", swift))
+        self.assertEqual(["write(to: menuReport,"], re.findall(r"write\(to: \w+,", swift))
         self.assertIn("withBundleIdentifier: cmuxBundle", swift)               # cmux through Launch Services, no socket
         for bundle in ("claudeBundle", "codexBundle"):
             self.assertIn("withBundleIdentifier: %s" % bundle, swift)
@@ -1569,10 +1594,47 @@ class TestApp(unittest.TestCase):
         # macOS opens it at login; opened from the Finder, the Dock or
         # Spotlight it shows the window, so one launch is always seen.
         swift = (self.APP / "Garrick.swift").read_text()
-        self.assertIn("if !startHidden || !launchedAtLogin() { showWindow() }", swift)
+        self.assertIn("let outOfSight = startHidden && launchedAtLogin()", swift)
+        self.assertIn("if !outOfSight { showWindow() }", swift)
         self.assertIn("event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)", swift)
         self.assertIn("if !hasVisibleWindows { showWindow() }", swift)          # and a second one, while it runs
         self.assertIn('print("saved menu: "', swift)                              # --check says what a launch shows first
+
+    def test_a_launch_goes_straight_to_the_window(self):
+        # Made an accessory before it ran and a regular app again when the
+        # window showed, a launch from the Finder showed the Dock icon, took it
+        # away and brought it back. Regular from the start, only a login launch
+        # left out of sight turns accessory.
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn("app.setActivationPolicy(checking ? .prohibited : .regular)", swift)
+        self.assertNotIn("startHidden ? .accessory", swift)
+        launch = swift[swift.index("	func applicationDidFinishLaunching("):swift.index("	func applicationShouldTerminateAfterLastWindowClosed(")]
+        self.assertEqual(1, launch.count("setActivationPolicy"))
+        self.assertLess(launch.index("if outOfSight { NSApp.setActivationPolicy(.accessory) }"), launch.index("WKWebView("))   # first thing
+
+    def test_the_app_says_what_it_filled_its_menu_with(self):
+        # For a menu that lists less than the page holds: each fill leaves
+        # garrick-app-menu.json in the jobs folder, in counts and zone names.
+        swift = (self.APP / "Garrick.swift").read_text()
+        self.assertIn('ProcessInfo.processInfo.environment["GARRICK_JOBS_DIR"]', swift)     # agent.py's jobs folder
+        self.assertIn('NSHomeDirectory() + "/Library/Logs/garrick-jobs"', swift)
+        self.assertIn('let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")', swift)
+        rows = swift[swift.index("	func fillRows("):swift.index("	func header(")]
+        self.assertIn('reportMenu("menu", query: text, rows: menu.items.filter { $0.view is RowView }.count)', rows)
+        panel = swift[swift.index("	func fillPanel("):swift.index("	// MARK: ask (preview, ask)")]
+        self.assertIn('reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })', panel)
+        report = swift[swift.index("	func reportMenu("):swift.index("	// A row's actions, as its card offers them")]
+        self.assertIn("guard !checking else { return }", report)                          # a check never writes over the app's
+        for key in ('"style"', '"zones"', '"place"', '"shownZones"', '"query"', '"rows"', '"pagePost"', '"pageLoaded"', '"pageErrors"', '"saved"'):
+            self.assertIn(key, report)
+        self.assertIn('"z": $0["z"] as? String ?? "?", "projects":', report)                # zone names and counts
+        for name in ('["n"]', '["w"]', '["u"]', '["f"]'):
+            self.assertNotIn(name, report)                                                 # never a project's or thread's name, link or folder
+        self.assertIn(".count, \"rows\": rows", report.replace("\n", " ").replace("\t", ""))  # the query's length, not its words
+        self.assertIn('menuHeard = (Date(), data != nil, (data?["zones"] as? [Any])?.count ?? -1, (menuHeard?.count ?? 0) + 1)', swift)
+        self.assertIn("guard checking else { pageLoaded = Date(); return }", swift)
+        self.assertIn("window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:", swift)
+        self.assertIn('print("page errors: ', swift)                                        # --check says them too
 
     def test_a_field_records_a_key_this_app_holds(self):
         # Carbon's hot keys are taken before any window sees the key, so while

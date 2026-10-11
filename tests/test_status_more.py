@@ -496,13 +496,14 @@ const ctx = { JSON, String, Array, localStorage: { getItem: () => null, setItem:
               document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers: "" } } } };
 ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
 vm.createContext(ctx);
-vm.runInContext(js + ";this.out=" + JSON.stringify(calls) + ".map(function(c){return Panel[c[0]](c[1])})", ctx);
+vm.runInContext(js + ";this.out=" + JSON.stringify(calls) + ".map(function(c){return Panel[c[0]](c[1],c[2])})", ctx);
 process.stdout.write(JSON.stringify(ctx.out));
 """
 
 
 def panel(hosted, *calls):
-    """Panel.head or Panel.acts, run in Node as the app (hosted) or a browser would."""
+    """Panel.head or Panel.acts, run in Node as the app (hosted) or a browser would.
+    A call is (name, card) or, for a row's card, ("head", card, 1)."""
     import subprocess
     done = subprocess.run(["node", "-e", PANEL_HARNESS, json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls]])],
                           capture_output=True, text=True, timeout=30)
@@ -593,6 +594,355 @@ class TestTheThreadsList(StatusCase):
         self.assertLess(line.index("if let live = row.live {"), line.index("Spacer(minLength: 8)"))
         menu = swift[swift.index("final class RowView: NSView {"):swift.index("final class MenuField")]
         self.assertIn("draw(at: NSPoint(x: 21 + indent", menu)               # the menu's names start at 21, dot or not
+
+
+    def test_party_tags_are_the_cards_not_the_rows(self):
+        # Under a name a party tag reads as part of it; the card says them.
+        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")     # Birch Entry: a project that is its own thread
+        html = self.page()
+        work = html[html.index('id="zone-work"'):]
+        work = work[:work.index("</details>")]
+        for party in ("acme", "birch"):
+            self.assertNotIn('<span class="chip">%s</span>' % party, work)
+        self.assertEqual(["birch"], cards(html)[("Birch Entry", "Birch Entry")]["t"])
+        self.assertEqual(["acme"], cards(html)[("Acme Review", "Pricing")]["t"])
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_a_rows_card_names_no_kind_zone_or_project(self):
+        card = cards(self.page())[("Acme Review", "Pricing")]
+        row, graph = panel(True, ("head", card, 1), ("head", card))
+        self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the button the project
+        self.assertNotIn('<div class="muted">', row)
+        self.assertIn('<span class="chip" style="margin:0 4px 0 0">acme</span>', row)
+        self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
+        self.assertIn("tc.innerHTML=Panel.head(o,1)+Panel.acts(o)", status.JS)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_a_project_that_is_its_own_thread_has_no_project_button(self):
+        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")
+        birch = cards(self.page())[("Birch Entry", "Birch Entry")]
+        self.assertEqual("", birch["pu"])                                       # the note Open already opens
+        self.assertNotIn("pnote", panel(True, ("acts", birch))[0])
+        same = dict(birch, pu=birch["u"])                                       # a page built by 0.15.3 says it twice
+        self.assertNotIn("pnote", panel(True, ("acts", same))[0])
+
+    def test_the_live_dot_keeps_its_distance(self):
+        self.assertIn(".thread .t a+.live{margin-left:.4em}", status.CSS)
+        self.assertNotIn("a+.live{margin-left:0}", status.CSS)
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        line = swift[swift.index("struct PanelLine: View {"):swift.index("struct PanelView: View {")]
+        self.assertIn("HStack(spacing: 6) {", line)                              # the panel's dot, six points after the name
+        menu = swift[swift.index("final class RowView: NSView {"):swift.index("final class MenuField")]
+        self.assertIn("NSRect(x: 10 + indent, y: bounds.midY - 3, width: 6, height: 6)", menu)   # the menu's, before it, the name at 21
+
+
+# PARK_JS against a page status.py wrote, in a DOM just big enough for it:
+# the requests, each with page_action.py's reply, then what the list shows.
+DOM_HARNESS = r"""
+const vm = require("vm");
+const [html, js, steps, redo, expect] = JSON.parse(process.argv[1]);
+// Just enough of a DOM for PARK_JS on a page status.py wrote: elements, text,
+// attributes, the selectors it uses, and an HTML reader for well-formed markup.
+const VOID = new Set(["meta", "link", "input", "br", "img", "hr", "path", "circle", "rect", "line"]);
+const RAW = new Set(["script", "style", "title", "textarea"]);
+const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const unent = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => e[0] === "#"
+  ? String.fromCodePoint(e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : (e in ENT ? ENT[e] : m));
+const escText = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+class Text {
+  constructor(t) { this.nodeType = 3; this.data = t; this.parentNode = null; }
+  get textContent() { return this.data; }
+  get outerHTML() { return escText(this.data); }
+  cloneNode() { return new Text(this.data); }
+}
+const dashed = (k) => "data-" + String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+class El {
+  constructor(tag) { this.nodeType = 1; this.localName = tag.toLowerCase(); this.attrs = {}; this.childNodes = []; this.parentNode = null; }
+  get children() { return this.childNodes.filter((n) => n.nodeType === 1); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  hasAttribute(k) { return k in this.attrs; }
+  get id() { return this.attrs.id || ""; }
+  set id(v) { this.attrs.id = v; }
+  get className() { return this.attrs["class"] || ""; }
+  set className(v) { this.attrs["class"] = v; }
+  get classList() {
+    const el = this, list = () => el.className.split(/\s+/).filter(Boolean);
+    return { contains: (c) => list().includes(c),
+             add: (...cs) => { el.className = list().concat(cs.filter((c) => !list().includes(c))).join(" "); },
+             remove: (...cs) => { el.className = list().filter((c) => !cs.includes(c)).join(" "); } };
+  }
+  get dataset() {
+    const el = this;
+    return new Proxy({}, { get: (t, k) => { const v = el.getAttribute(dashed(k)); return v === null ? undefined : v; },
+                           set: (t, k, v) => { el.setAttribute(dashed(k), v); return true; } });
+  }
+  get hidden() { return this.hasAttribute("hidden"); }
+  set hidden(v) { if (v) this.attrs.hidden = ""; else delete this.attrs.hidden; }
+  get textContent() { return this.childNodes.map((n) => n.textContent).join(""); }
+  set textContent(v) { this.childNodes.forEach((n) => { n.parentNode = null; }); this.childNodes = []; if (v !== "") this.appendChild(new Text(String(v))); }
+  get innerHTML() { return this.childNodes.map((n) => n.outerHTML).join(""); }
+  set innerHTML(h) { this.childNodes.forEach((n) => { n.parentNode = null; }); this.childNodes = []; parse(h, this); }
+  get outerHTML() {
+    const a = Object.entries(this.attrs).map(([k, v]) => " " + k + (v === "" ? "" : '="' + escText(v).replace(/"/g, "&quot;") + '"')).join("");
+    return "<" + this.localName + a + ">" + (VOID.has(this.localName) ? "" : this.innerHTML + "</" + this.localName + ">");
+  }
+  appendChild(n) { return this.insertBefore(n, null); }
+  insertBefore(n, ref) {
+    if (n.parentNode) n.parentNode.removeChild(n);
+    const i = ref ? this.childNodes.indexOf(ref) : -1;
+    if (ref && i < 0) throw new Error("insertBefore: not a child");
+    if (i < 0) this.childNodes.push(n); else this.childNodes.splice(i, 0, n);
+    n.parentNode = this;
+    return n;
+  }
+  removeChild(n) { const i = this.childNodes.indexOf(n); if (i >= 0) this.childNodes.splice(i, 1); n.parentNode = null; return n; }
+  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+  cloneNode(deep) { const c = new El(this.localName); c.attrs = Object.assign({}, this.attrs); if (deep) this.childNodes.forEach((n) => c.appendChild(n.cloneNode(true))); return c; }
+  addEventListener() {}
+  matches(sel) { return sel.split(",").some((s) => match(this, parseSel(s.trim()), null)); }
+  closest(sel) { for (let e = this; e && e.nodeType === 1; e = e.parentNode) if (e.matches(sel)) return e; return null; }
+  querySelectorAll(sel) {
+    const parts = sel.split(",").map((s) => parseSel(s.trim())), out = [], root = this;
+    (function walk(e) { e.children.forEach((c) => { if (parts.some((p) => match(c, p, root))) out.push(c); walk(c); }); })(this);
+    return out;
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+}
+function parseCompound(t) {
+  const c = { tag: null, id: null, cls: [], attrs: [], not: [], scope: false };
+  let rest = t, m;
+  if ((m = /^[a-z][\w-]*/i.exec(rest))) { c.tag = m[0].toLowerCase(); rest = rest.slice(m[0].length); }
+  while (rest) {
+    if ((m = /^#([\w-]+)/.exec(rest))) c.id = m[1];
+    else if ((m = /^\.([\w-]+)/.exec(rest))) c.cls.push(m[1]);
+    else if ((m = /^\[([\w-]+)(?:([$^]?=)"([^"]*)")?\]/.exec(rest))) c.attrs.push([m[1], m[2], m[3]]);
+    else if ((m = /^:not\(([^)]*)\)/.exec(rest))) c.not.push(parseCompound(m[1]));
+    else if ((m = /^:scope/.exec(rest))) c.scope = true;
+    else throw new Error("selector: " + t);
+    rest = rest.slice(m[0].length);
+  }
+  return c;
+}
+function parseSel(s) {
+  const steps = [];
+  let i = 0, comb = null;
+  while (i < s.length) {
+    if (s[i] === " ") { comb = comb || " "; i++; continue; }
+    if (s[i] === ">") { comb = ">"; i++; continue; }
+    let j = i, depth = 0;
+    while (j < s.length && (depth || (s[j] !== " " && s[j] !== ">"))) { if ("([".includes(s[j])) depth++; if (")]".includes(s[j])) depth--; j++; }
+    steps.push({ comb: steps.length ? comb || " " : null, c: parseCompound(s.slice(i, j)) });
+    comb = null;
+    i = j;
+  }
+  return steps;
+}
+function one(e, c, root) {
+  if (c.scope && e !== root) return false;
+  if (c.tag && e.localName !== c.tag) return false;
+  if (c.id && e.id !== c.id) return false;
+  if (!c.cls.every((x) => e.classList.contains(x))) return false;
+  for (const [k, op, v] of c.attrs) {
+    const a = e.getAttribute(k);
+    if (a === null || (op === "=" && a !== v) || (op === "$=" && !a.endsWith(v)) || (op === "^=" && !a.startsWith(v))) return false;
+  }
+  return !c.not.some((n) => one(e, n, root));
+}
+function match(e, steps, root) {
+  function at(el, i) {
+    if (!one(el, steps[i].c, root)) return false;
+    if (i === 0) return true;
+    if (steps[i].comb === ">") return !!el.parentNode && el.parentNode.nodeType === 1 && at(el.parentNode, i - 1);
+    for (let p = el.parentNode; p && p.nodeType === 1; p = p.parentNode) if (at(p, i - 1)) return true;
+    return false;
+  }
+  return at(e, steps.length - 1);
+}
+function parse(h, parent) {
+  const stack = [parent], TAG = /<([a-zA-Z][\w-]*)((?:\s+[^\s=>\/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/y;
+  let i = 0;
+  while (i < h.length) {
+    const cur = stack[stack.length - 1];
+    if (h.startsWith("<!--", i)) { const j = h.indexOf("-->", i); i = j < 0 ? h.length : j + 3; continue; }
+    if (h.startsWith("<!", i)) { i = h.indexOf(">", i) + 1; continue; }
+    if (h.startsWith("</", i)) {
+      const j = h.indexOf(">", i), tag = h.slice(i + 2, j).trim().toLowerCase();
+      for (let k = stack.length - 1; k > 0; k--) if (stack[k].localName === tag) { stack.length = k; break; }
+      i = j + 1;
+      continue;
+    }
+    TAG.lastIndex = i;
+    const m = h[i] === "<" ? TAG.exec(h) : null;
+    if (m) {
+      const el = new El(m[1]), ar = /([^\s=>\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+      let a;
+      while ((a = ar.exec(m[2]))) el.attrs[a[1].toLowerCase()] = unent(a[2] ?? a[3] ?? a[4] ?? "");
+      cur.appendChild(el);
+      i = TAG.lastIndex;
+      if (RAW.has(el.localName)) {
+        const end = h.toLowerCase().indexOf("</" + el.localName, i), j = end < 0 ? h.length : end;
+        if (j > i) el.appendChild(new Text(h.slice(i, j)));
+        i = end < 0 ? h.length : h.indexOf(">", j) + 1;
+      } else if (!m[3] && !VOID.has(el.localName)) stack.push(el);
+      continue;
+    }
+    const j = h.indexOf("<", i + 1), end = j < 0 ? h.length : j;
+    cur.appendChild(new Text(unent(h.slice(i, end))));
+    i = end;
+  }
+}
+const doc = new El("#document");
+parse(html, doc);
+const store = {};
+if (expect) store["garrick-expect"] = JSON.stringify(expect);
+const calls = { bind: 0, chev: 0, close: 0 };
+const ctx = { JSON, String, Array, Object,
+  localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+  document: { querySelectorAll: (s) => doc.querySelectorAll(s), querySelector: (s) => doc.querySelector(s), createElement: (t) => new El(t),
+              getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null, addEventListener: () => {} } };
+ctx.window = { ThreadRows: { bind: () => { calls.bind++; }, chev: () => { calls.chev++; }, close: () => { calls.close++; } }, GarrickRedo: redo || undefined };
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+const done = steps.map(([q, out]) => { ctx.window.GarrickActed(q, out); return null; });
+function row(r) {
+  const c = JSON.parse(r.dataset.card);
+  const o = { n: c.n, s: c.s };
+  ["held", "pend", "hp"].forEach((k) => { if (c[k] != null) o[k] = c[k]; });
+  if (r.classList.contains("pending")) o.pending = 1;
+  return o;
+}
+function unit(u) {
+  const h = u.querySelector(":scope>.thread.proj");
+  if (!h) return row(u.querySelector(":scope>.thread"));
+  return Object.assign(row(h), { subn: h.querySelector(".subn").textContent, sub: u.querySelector(":scope>.subthreads").id,
+                                 chev: h.querySelector(".pchev").getAttribute("data-sub"), threads: u.querySelectorAll(":scope>.subthreads>.thread").map(row) });
+}
+const zones = {};
+doc.querySelectorAll(".tview details.zone").forEach((z) => {
+  const f = z.children.filter((c) => c.matches("details.parked"))[0];
+  zones[z.id] = { meta: z.querySelector(":scope>summary .meta").textContent, none: !!z.querySelector(":scope>p.muted"),
+                  live: z.children.filter((c) => c.classList.contains("tunit")).map(unit),
+                  parked: f ? { id: f.id, n: f.querySelector(":scope>summary .n").textContent, units: f.children.filter((c) => c.classList.contains("tunit")).map(unit) } : null };
+});
+const tile = doc.querySelector('a.tile[href="#threads"] .val');
+process.stdout.write(JSON.stringify({ zones, gsum: doc.querySelector(".tview .gsum").textContent, tile: tile && tile.textContent, calls,
+                                      expect: store["garrick-expect"] ? JSON.parse(store["garrick-expect"]) : null }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestParkLandsAtOnce(StatusCase):
+    """Park and Wake move the row as soon as the host says the request was
+    done, and the rebuild confirms it."""
+
+    def setUp(self):
+        super().setUp()
+        flags(self.root, **{"page-actions": True})
+        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")    # its own thread
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Renewal" / "Renewal.md",
+              thread_note("Acme Review", "Renewal", "acme"))
+
+    def run_js(self, *steps, redo=None, expect=None, html=None):
+        import subprocess
+        html = html or self.page(show_graph=False)
+        done = subprocess.run(["node", "-e", DOM_HARNESS, json.dumps([html, status.PARK_JS, [list(s) for s in steps], redo, expect])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    BIRCH = {"verb": "park", "zone": "Work", "file": "Birch Entry/Birch Entry.md"}
+    PRICING = {"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}
+    ACME = {"verb": "park", "zone": "Work", "project": "Acme Review"}
+    OK = {"ok": True, "say": "done"}
+
+    def test_a_project_that_is_its_own_thread(self):
+        out = self.run_js((self.BIRCH, self.OK))
+        work = out["zones"]["zone-work"]
+        self.assertEqual(["Acme Review"], [u["n"] for u in work["live"]])
+        self.assertEqual(("parked-work", "1"), (work["parked"]["id"], work["parked"]["n"]))
+        self.assertEqual({"n": "Birch Entry", "s": 1, "pending": 1}, work["parked"]["units"][0])   # greyed until the rebuild
+        self.assertTrue(work["meta"].startswith("2 live"))
+        self.assertTrue(out["gsum"].startswith("2 live · 1 parked"))
+        self.assertEqual("2", out["tile"])
+        back = self.run_js((self.BIRCH, self.OK), (dict(self.BIRCH, verb="wake"), self.OK))["zones"]["zone-work"]
+        self.assertEqual(["Acme Review", "Birch Entry"], [u["n"] for u in back["live"]])        # by name, as the build lists them
+        self.assertIsNone(back["parked"])                                                     # an empty fold goes
+        self.assertTrue(back["meta"].startswith("3 live"))
+
+    def test_a_thread_in_a_project_of_several(self):
+        out = self.run_js((self.PRICING, self.OK))
+        work = out["zones"]["zone-work"]
+        acme = work["live"][0]
+        self.assertEqual(("1 thread", ["Renewal"]), (acme["subn"], [t["n"] for t in acme["threads"]]))
+        held = work["parked"]["units"][0]
+        self.assertEqual(("Acme Review", 0, "1 thread"), (held["n"], held["hp"], held["subn"]))   # the project itself stays awake
+        self.assertEqual(("sub-work-acme-review-parked", "sub-work-acme-review-parked"), (held["sub"], held["chev"]))
+        self.assertEqual([{"n": "Pricing", "s": 1, "pending": 1}], held["threads"])
+        self.assertEqual({"bind": 1, "chev": 1, "close": 1}, out["calls"])                 # the project's copied row answers as the others
+
+    def test_a_whole_project_and_back(self):
+        out = self.run_js((self.PRICING, self.OK), (self.ACME, self.OK))
+        work = out["zones"]["zone-work"]
+        self.assertEqual(["Birch Entry"], [u["n"] for u in work["live"]])
+        acme = work["parked"]["units"][0]
+        self.assertEqual((1, 1, "2 threads"), (acme["hp"], acme["s"], acme["subn"]))
+        self.assertEqual([{"n": "Pricing", "s": 1, "pending": 1}, {"n": "Renewal", "s": 1, "held": 1, "pending": 1}], acme["threads"])
+        self.assertTrue(out["gsum"].startswith("1 live · 2 parked"))
+        woken = self.run_js((self.PRICING, self.OK), (self.ACME, self.OK), (dict(self.ACME, verb="wake"), self.OK))["zones"]["zone-work"]
+        self.assertEqual(["Acme Review", "Birch Entry"], [u["n"] for u in woken["live"]])
+        self.assertEqual([{"n": "Renewal", "s": 0, "pending": 1}], woken["live"][0]["threads"])
+        self.assertEqual(0, woken["live"][0]["hp"])
+        self.assertEqual(["Pricing"], [t["n"] for t in woken["parked"]["units"][0]["threads"]])  # parked on its own, it stays
+
+    def test_waking_a_project_parked_in_the_note(self):
+        hub = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
+        hub.write_text(hub.read_text().replace("status: active", "status: parked"))
+        out = self.run_js((dict(self.ACME, verb="wake"), self.OK))
+        acme = out["zones"]["zone-work"]["live"][0]
+        self.assertEqual(("Acme Review", 0), (acme["n"], acme["hp"]))
+        # Its threads had no Park of their own while held: none until the rebuild gives them one.
+        self.assertEqual([{"n": "Pricing", "s": 0, "pend": 1, "pending": 1}, {"n": "Renewal", "s": 0, "pend": 1, "pending": 1}],
+                         acme["threads"])
+        self.assertIsNone(out["zones"]["zone-work"]["parked"])
+
+    def test_nothing_moves_on_a_refusal_or_a_second_reply(self):
+        before = self.run_js()
+        self.assertEqual(before["zones"], self.run_js((self.BIRCH, {"ok": False, "say": "refused"}))["zones"])
+        once = self.run_js((self.BIRCH, self.OK))
+        self.assertEqual(once["zones"], self.run_js((self.BIRCH, self.OK), (self.BIRCH, self.OK))["zones"])
+        self.assertEqual(before["zones"], self.run_js(({"verb": "todo-done", "zone": "Work"}, self.OK))["zones"])
+
+    def test_a_reload_before_the_rebuild_moves_it_again(self):
+        wait = {"x": "parked:Work/Birch Entry/Birch Entry.md", "until": 9e15}
+        out = self.run_js((self.BIRCH, self.OK), expect=wait)
+        self.assertEqual(dict(wait, q=self.BIRCH), out["expect"])                    # kept beside what the page waits for
+        other = {"x": "parked:Work/Acme Review/Acme Review.md", "until": 9e15}
+        self.assertEqual(other, self.run_js((self.BIRCH, self.OK), expect=other)["expect"])    # another click's, left alone
+        again = self.run_js(redo=self.BIRCH)["zones"]["zone-work"]
+        self.assertEqual("Birch Entry", again["parked"]["units"][0]["n"])
+        self.assertIn("if(w.q)window.GarrickRedo=w.q;", status.RELOAD_JS)
+        self.assertIn("if(window.GarrickRedo)moved(window.GarrickRedo);", status.PARK_JS)
+
+    def test_the_hosts_hand_over_the_reply(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	// Only a folder inside this workspace")]
+        self.assertIn("JSONSerialization.data(withJSONObject: [request, said])", act)
+        self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", act)
+        self.assertLess(act.index("GarrickActed"), act.index("self.freshen(force: true)"))   # at once, then the rebuild
+        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", plugin)
+        self.assertIn("this.rebuild(true);", plugin)
+        page = self.page()
+        self.assertLess(page.index("window.ThreadRows="), page.index("window.GarrickActed="))   # PARK_JS after the rows it moves
+
+    def test_a_rebuild_asked_for_during_one_follows_it(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn("if force || age >= maxAge { rebuild(queue: force) }", swift)
+        self.assertIn("guard !rebuilding else { again = again || queue; return }", swift)
+        self.assertIn("if self.again { self.again = false; self.rebuild() }", swift)
+        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn("if (queue) this.again = true;", plugin)
 
 
 SETTINGS_HARNESS = r"""

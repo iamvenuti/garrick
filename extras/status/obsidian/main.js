@@ -18,7 +18,8 @@
 //     else the page logs is taken for one. The plugin answers as the app does:
 //     Copy, Rebuild, the ways to open a thread (Finder, cmux, Codex, Claude),
 //     and page_action.py for a button that changes something (preview
-//     page-actions), then a toast on the page and a rebuild;
+//     page-actions), then a toast on the page, the reply handed to the page
+//     (window.GarrickActed, which shows a park or a wake at once) and a rebuild;
 //   - every link on the page: a note in this vault opens in a new tab here,
 //     anything else goes to macOS, as from a browser;
 //   - a rebuild when the page is over 30 minutes old, as the tab opens and
@@ -270,10 +271,15 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		if (force || age >= MAX_AGE_MS) await this.rebuild();
 	}
 
-	rebuild() {
+	// A rebuild asked for after a change (queue) while one runs follows it: the
+	// one running may have read the workspace before the change.
+	rebuild(queue) {
 		const root = this.root();
 		if (!root) return Promise.resolve(new Notice("No Garrick workspace found; name it in Settings › Garrick."));
-		if (this.building) return this.building;
+		if (this.building) {
+			if (queue) this.again = true;
+			return this.building;
+		}
 		const notice = new Notice("Rebuilding Garrick's status page…", 0);
 		const flags = (this.settings.flags || "").split(/\s+/).filter(Boolean);
 		this.building = new Promise((resolve) => {
@@ -283,6 +289,10 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 				if (err) new Notice("The status page did not rebuild; showing the last build.");
 				if (!this.watcher) this.watch();
 				resolve();
+				if (this.again) {
+					this.again = false;
+					this.rebuild();
+				}
 			});
 		});
 		return this.building;
@@ -369,7 +379,11 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 			let said = null;
 			try { said = JSON.parse(out); } catch (e) {}
 			view.toast((said && said.say) || "That did not work.");
-			this.rebuild();
+			if (said && view.web) {
+				view.web.executeJavaScript(`(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(${
+					JSON.stringify([request, said]).replace(/</g, "\\u003c")})`).catch(() => {});
+			}
+			this.rebuild(true);
 		});
 		child.stdin.end(JSON.stringify(request));
 	}

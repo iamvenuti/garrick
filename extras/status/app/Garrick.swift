@@ -32,6 +32,8 @@
 //     answer a request in plain words through
 //     ask.py, beside status.py, and run what it proposes; off, a field opens
 //     the default assistant with the words.
+// Each time it fills the menu or the panel it leaves garrick-app-menu.json in
+// the jobs folder: what it had to fill them with, in counts and zone names.
 // Nothing here changes a file in the workspace, as nothing on the page does,
 // except through page_action.py (preview page-actions) and ask.py (preview ask).
 import AppKit
@@ -52,6 +54,12 @@ let cmuxBundle = "com.cmuxterm.app"
 let claudeBundle = "com.anthropic.claudefordesktop"
 let codexBundle = "com.openai.codex"
 let maxAge: TimeInterval = 30 * 60
+// The jobs extra's folder, as agent.py's jobs_dir() finds it, and what the app
+// leaves there each time it fills its menu or panel: counts and zone names,
+// never a note's content, for a menu that lists less than the page holds.
+let jobsDir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["GARRICK_JOBS_DIR"].map { NSString(string: $0).expandingTildeInPath }
+	?? NSHomeDirectory() + "/Library/Logs/garrick-jobs", isDirectory: true)
+let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")
 // --check loads the page out of sight, acts on nothing, prints what it found
 // and quits: the test that the page loads, sees the app and is answered.
 let checking = CommandLine.arguments.contains("--check")
@@ -369,6 +377,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Living outside the window, as an icon or a panel: closing the window keeps the app.
 	var resident: Bool { statusItem != nil || edgePanel != nil }
 	var menuState: [String: Any]?     // what the page last said the menu lists
+	var menuHeard: (at: Date, data: Bool, zones: Int, count: Int)?   // when the page last said it, with rows or not, and how often since launch
+	var pageLoaded: Date?             // when the page last finished loading
+	var pageErrors: [[String: Any]] = []   // the page's script errors since, where and of what kind
+	let launched = Date()
+	var again = false                 // a rebuild asked for during one: one more after it
 	var hotKey: EventHotKeyRef?
 	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
 	var askKey: EventHotKeyRef?       // the Ask box's, from any app (preview ask)
@@ -388,6 +401,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askReply: NSTextField!
 
 	func applicationDidFinishLaunching(_ note: Notification) {
+		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
+		// straight to the window. Only macOS opening it at login, left in the menu bar, goes out of sight,
+		// and loses its Dock icon first thing: this is the first point a login launch can be told from yours.
+		let outOfSight = startHidden && launchedAtLogin()
+		if outOfSight { NSApp.setActivationPolicy(.accessory) }
 		NSApp.mainMenu = menu()
 		let config = WKWebViewConfiguration()
 		// So the page, and Safari's Web Inspector, can tell the app's view from a browser's.
@@ -424,7 +442,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
-		if !startHidden || !launchedAtLogin() { showWindow() }   // a launch you make always shows something
+		if !outOfSight { showWindow() }   // a launch you make always shows something
 
 		watch()
 		if FileManager.default.fileExists(atPath: page.path) { load() }
@@ -458,6 +476,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func load() {
 		shown = modified(page)
+		pageErrors = []
 		web.loadFileURL(page, allowingReadAccessTo: generated)
 	}
 
@@ -465,16 +484,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard modified(page) != nil else { return }
 		if web.url == nil { return load() }
 		shown = modified(page)
+		pageErrors = []
 		web.reload()
 	}
 
 	func freshen(force: Bool = false) {
 		let age = modified(page).map { -$0.timeIntervalSinceNow } ?? .infinity
-		if force || age >= maxAge { rebuild() }
+		if force || age >= maxAge { rebuild(queue: force) }
 	}
 
-	func rebuild() {
-		guard !rebuilding else { return }
+	// A rebuild asked for (queue) while one runs follows it: the one running may
+	// have read the workspace before a button changed it.
+	func rebuild(queue: Bool = false) {
+		guard !rebuilding else { again = again || queue; return }
 		rebuilding = true
 		window.subtitle = "Rebuilding…"
 		let p = Process()
@@ -489,6 +511,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				self.window.subtitle = proc.terminationStatus == 0 ? "" : "Did not rebuild; showing the last build"
 				if self.watcher == nil { self.watch() }
 				if self.web.url == nil { self.load() }
+				if self.again { self.again = false; self.rebuild() }
 			}
 		}
 		do { try p.run() } catch {
@@ -527,8 +550,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
 		guard let body = message.body as? [String: Any] else { return }
+		if let e = body["pageError"] as? [String: Any] {   // appScript's: the page's script stopped somewhere
+			pageErrors = Array((pageErrors + [e]).suffix(5))
+			return
+		}
 		if let m = body["menu"] {
 			if checking { menuState = m as? [String: Any]; return heard.append("menu") }
+			let data = (m as? [String: Any])?["data"] as? [String: Any]
+			menuHeard = (Date(), data != nil, (data?["zones"] as? [Any])?.count ?? -1, (menuHeard?.count ?? 0) + 1)
 			return setMenu(m as? [String: Any])
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
@@ -642,6 +671,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
 				self.toast(said?["say"] as? String ?? "That did not work.")
+				// The page shows a park or a wake at once, and the rebuild confirms it.
+				if let said, let both = try? JSONSerialization.data(withJSONObject: [request, said]),
+				   let text = String(data: both, encoding: .utf8) {
+					self.web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
+				}
 				self.freshen(force: true)
 			}
 		}
@@ -708,6 +742,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		WKUserScript(source: """
 			window.GarrickApp=\(appJSON());(function(i){var r=document.documentElement;r.classList.add('appicons');
 			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
+			window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:{line:e.lineno||0,
+			col:e.colno||0,msg:String(e.message||'').replace(/(["'`]).*?\\1/g,'…').slice(0,160)}})}catch(x){}});
 			""", injectionTime: .atDocumentStart, forMainFrameOnly: true)
 	}
 
@@ -895,6 +931,40 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return zones
 	}
 
+	// What a fill had to go on, left in the jobs folder as garrick-app-menu.json:
+	// the menu or the panel, the style, the zones it held with a count of
+	// projects each (-1: not a list the app can read), the zones shown, the
+	// length of what the field held and the rows built; when the page last
+	// sent its menu (a post comes just before the load it belongs to ends),
+	// with rows or not, and its script errors since; and the menu saved for the
+	// next launch. Zone names and counts only. A failure to write is no failure to fill.
+	func reportMenu(_ place: String, query: String, rows: Int) {
+		guard !checking else { return }
+		let iso = ISO8601DateFormatter()
+		let data = menuState?["data"] as? [String: Any]
+		func zones(_ d: [String: Any]?) -> Any {
+			guard let raw = d?["zones"] else { return NSNull() }
+			guard let list = raw as? [[String: Any]] else { return "not a list of zones" }
+			return list.map { ["z": $0["z"] as? String ?? "?", "projects": ($0["p"] as? [[String: Any]])?.count ?? -1] as [String: Any] }
+		}
+		let report: [String: Any] = [
+			"time": iso.string(from: Date()), "launched": iso.string(from: launched), "filled": place,
+			"style": savedEdge()?.rawValue ?? "icon", "menuBar": defaults.bool(forKey: kMenuBar),
+			"menuState": menuState != nil, "keys": data.map { $0.keys.sorted() } ?? [],
+			"zones": zones(data), "place": menuState?["place"] as? String ?? "",
+			"shownZones": shownZones().map { $0["z"] as? String ?? "?" },
+			"query": query.trimmingCharacters(in: .whitespacesAndNewlines).count, "rows": rows,
+			"pagePost": menuHeard.map { ["time": iso.string(from: $0.at), "data": $0.data, "zones": $0.zones, "posts": $0.count] as [String: Any] } ?? NSNull(),
+			"pageLoaded": pageLoaded.map { iso.string(from: $0) } ?? NSNull(),
+			"pageErrors": pageErrors,
+			"saved": zones(savedMenu()?["data"] as? [String: Any]),
+		]
+		guard JSONSerialization.isValidJSONObject(report),
+		      let out = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) else { return }
+		try? FileManager.default.createDirectory(at: jobsDir, withIntermediateDirectories: true)
+		try? out.write(to: menuReport, options: .atomic)
+	}
+
 	// A row's actions, as its card offers them: the note's own link, then each
 	// app switched on in Settings that can open its folder. The one Settings
 	// picks for clicking a thread is the default, and the note where it is not
@@ -956,6 +1026,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if !text.isEmpty { (p["t"] as? [[String: Any]] ?? []).forEach { menu.addItem(row($0, depth: 1)) } }
 			}
 		}
+		reportMenu("menu", query: text, rows: menu.items.filter { $0.view is RowView }.count)
 		menu.addItem(.separator())
 		menu.addItem(awakeItem())
 		let open = NSMenuItem(title: "Open Garrick", action: #selector(showWindow(_:)), keyEquivalent: "")
@@ -1175,6 +1246,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.trouble = trouble
 		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
 		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
+		reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })
 		m.inbox = inbox().map { title, n, act, places in
 			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting", places: places) { [weak self] in
 				guard let self, let k = act["k"], let f = act["f"] else { return }
@@ -1617,7 +1689,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The stored key alternates, so a second --check shows whether the first
 	// one's write survived the quit.
 	func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
-		guard checking else { return }
+		guard checking else { pageLoaded = Date(); return }
 		web.evaluateJavaScript("""
 			(function(){var k='garrick-app-check',p=null;
 			try{p=localStorage.getItem(k);if(p)localStorage.removeItem(k);else localStorage.setItem(k,String(Date.now()))}catch(e){p='error: '+e}
@@ -1671,6 +1743,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					print("menu: none")
 				}
 				print("heard: \(self.heard)")
+				print("page errors: \(self.pageErrors.count)" + self.pageErrors.map { " line \($0["line"] ?? "?"): \($0["msg"] ?? "")" }.joined(separator: ";"))
 				exit(0)
 			}
 		}
@@ -2368,5 +2441,10 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 let app = NSApplication.shared
 let delegate = StatusApp()
 app.delegate = delegate
-app.setActivationPolicy(checking ? .prohibited : startHidden ? .accessory : .regular)
+// Regular from the start, as Info.plist launches it: made an accessory here and a
+// regular app again a moment later, a launch from the Finder or the Dock showed the
+// Dock icon, took it away and brought it back before the window. A login launch that
+// stays out of sight turns accessory in applicationDidFinishLaunching, the first point
+// it can tell a login launch from yours.
+app.setActivationPolicy(checking ? .prohibited : .regular)
 app.run()

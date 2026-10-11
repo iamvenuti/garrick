@@ -4,6 +4,23 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Garrick.app writes `garrick-app-menu.json` in the jobs folder each time it fills its menu or its panel: what it had to fill them with, in counts and zone names, the rows it built, and when the page last told it what to list. It is there for a menu that lists less than the page holds. `--check` also prints the page's script errors.
+
+### Changed
+
+- *Park* and *Wake* on a card show at once: when the app or the Obsidian plugin says the change was made, the row moves to the zone's *Parked* fold or back, its card follows and the counts with it, greyed until the rebuild confirms it. A rebuild asked for while one runs now follows it instead of being dropped.
+- Party tags are on a thread's card only, no longer under its name in the threads list.
+- A card in the threads list no longer opens with the line naming its kind, zone and project: the column says the zone, and a thread's project button says the project. The graph's panel keeps the line.
+- The menu's script runs in a script element of its own, so an error elsewhere on the page cannot keep the app's menu from hearing what to list.
+
+### Fixed
+
+- A project that is its own thread had a project button on its card that opened the same note as *Open*. It shows only for a thread in a project of several.
+- In the threads list, a live session's dot touched the name before it. It now sits a small gap after it.
+- A launch of Garrick.app from the Finder or the Dock showed its Dock icon, took it away and brought it back before the window. The app now starts as a regular app and goes straight to its window; only a login launch with the window left closed turns into a menu bar app, out of sight.
+
 ## [0.15.3] - 2026-10-11
 
 Garrick can tell you when a newer release is out, if you switch that on, and an update now brings the status page, the jobs and desk along with the rest. The Mac app opens at the first try, its panel lines up, the Ask hotkey is yours to set, and a whole project can be parked.

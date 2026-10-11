@@ -1040,7 +1040,9 @@ rows.insertBefore(r,rows.firstChild);var c=g.querySelector('summary .n');if(c)c.
 # (a session opened or closed through the desk, a thread parked or woken),
 # the page keeps asking for a rebuild, every two seconds for up to thirty,
 # until #state-data shows what was asked for. In a browser it reloads. The
-# scroll position survives each reload.
+# scroll position survives each reload. A park or wake the host has said was
+# done keeps its request beside the expectation, so a reload of a page built
+# before it lands moves the row again (window.GarrickRedo, read by JS).
 RELOAD_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function keep(){try{sessionStorage.setItem('garrick-scroll',String(window.scrollY))}catch(e){}}
@@ -1054,6 +1056,7 @@ if(want==='parked'||want==='active')now=(S.parked||[]).indexOf(key)>=0?'parked':
 /* live: or none: with no folder (Start up, Shut down) asks about every folder */
 else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?'live':'none';
 if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
+if(w.q)window.GarrickRedo=w.q;
 setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.reload()},2000)})();
 """
 
@@ -1064,13 +1067,14 @@ setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.rel
 # app a thread opens in, both kept in this window's storage. It sends them at
 # load and after any change, so the menu follows the graph's drop-down and
 # Settings. Settings › Menu bar is the app's, not the page's: the app puts
-# its values in window.GarrickApp and keeps what is chosen here.
+# its values in window.GarrickApp and keeps what is chosen here. It runs in a
+# script element of its own, so nothing else on the page can stop it.
 MENU_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
 var el=document.getElementById('menu-data'),data=null;try{data=el?JSON.parse(el.textContent):null}catch(e){}
-function sync(){var on=GarrickPrefs.launchers();
-host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:GarrickPrefs.def(),note:on.note!==false,
+function sync(){var P=window.GarrickPrefs,on=P?P.launchers():{};     /* PANEL_JS's, in another script: the defaults if it failed */
+host.postMessage({menu:data&&{data:data,place:g('garrick-graph-place')||'',def:P?P.def():'note',note:on.note!==false,
 launchers:(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}})}
 sync();document.addEventListener('change',function(){setTimeout(sync,0)},true);
 })();
@@ -2051,15 +2055,16 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked (`held` when only because its
-    project is), the name to say, and links;
-    whether the note has a Resume here block (`r`) and how old that block's
-    date is (`rd`). Where an app to open it in is installed (`cmux`, for any
+    project is), the name to say, and links: its note's and, for a thread in a
+    project of several, the project's hub note (`pu`), which a project that is
+    its own thread does not repeat; whether the note has a Resume here block
+    (`r`) and how old that block's date is (`rd`). Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
     sessions open), the session's state, and with `drive` (the extra, cmux
     and page-actions) what the desk opens and closes."""
     card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
-            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] else "", "r": 1 if r.get("resume") else 0,
+            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] and r["hub"] != r["note"] else "", "r": 1 if r.get("resume") else 0,
             "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
     if cmux:
         card["f"] = str(r["note"].parent)
@@ -2630,7 +2635,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
 @media (prefers-reduced-motion:reduce){.live.working{animation:none}}
-.thread .t a+.live{margin-left:0}.tline .live{margin:0 7px 1px 1px}
+.thread .t a+.live{margin-left:.4em}.thread.pending{opacity:.55}.tline .live{margin:0 7px 1px 1px}
 .thread .t>a{display:inline-block;max-width:calc(100% - 16px);vertical-align:bottom}
 .chip.nores{color:var(--muted);border-style:dashed}.phead .pbtns{display:flex;gap:6px;flex:none}
 .status.running{color:var(--accent)}
@@ -2762,8 +2767,9 @@ function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
-/* the project's hub note, by the project's name: a thread's card has no other way to it */
-if(o.pu)a+='<a class="act pnote" href="'+esc(o.pu)+'" title="Open the project&#39;s note" aria-label="Open the note of the project '+esc(o.p)+'">'
+/* the project's hub note, by the project's name: a thread's card has no other way to it. Only when it is another note
+   than the card's own: a project that is its own thread has Open for that */
+if(o.pu&&o.pu!==o.u)a+='<a class="act pnote" href="'+esc(o.pu)+'" title="Open the project&#39;s note" aria-label="Open the note of the project '+esc(o.p)+'">'
 +'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.2L12.5 4.8v9.7H4z M9 1.7v3.3h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg><span>'+esc(o.p||'Project')+'</span></a>';
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
@@ -2777,16 +2783,18 @@ function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="butt
 /* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else;
    with a session open, Close session sits beside it */
 function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
-function pflip(o){if(o.held||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
+function pflip(o){if(o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
 var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
 return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
-function state(o){if(o.held)return'Parked with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+function state(o){if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
 function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
-function head(o){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div><div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>'
+/* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, its project button the project;
+   the graph's panel, which floats free of any list, keeps them */
+function head(o,row){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
 +line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)}
 /* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
@@ -2837,9 +2845,10 @@ document.addEventListener('click',function(e){var a=e.target.closest&&e.target.c
 window.TaddSend=function(z,target,date,text){if(!host)return;host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}});
 if(window.TodoPending)TodoPending(z,target,date,text)};
 /* A project's threads fold under its row on the Threads card; the fold is remembered. */
-document.querySelectorAll('.pchev').forEach(function(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
+function chev(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
 function set(o){box.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}set(st.get('garrick-fold-'+b.dataset.sub)==='1');
-b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var o=box.hidden;set(o);st.set('garrick-fold-'+b.dataset.sub,o?'1':'0')})});
+b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();var o=box.hidden;set(o);st.set('garrick-fold-'+b.dataset.sub,o?'1':'0')})}
+document.querySelectorAll('.pchev').forEach(chev);
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
 window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
@@ -2886,20 +2895,91 @@ function tPlace(){if(!tRow)return;var b=tRow.getBoundingClientRect();if(b.bottom
 var w=tc.offsetWidth,h=tc.offsetHeight,x=Math.min(b.right-w,innerWidth-w-8),y=b.bottom-1;if(y+h>innerHeight-8&&b.top-h+1>=8)y=b.top-h+1;
 tc.style.left=Math.max(8,x)+'px';tc.style.top=Math.max(8,y)+'px'}
 function tOpen(row){clearTimeout(tHide);clearTimeout(tShow);if(tRow!==row){var o;try{o=JSON.parse(row.dataset.card)}catch(x){return}
-if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.head(o)+Panel.acts(o);tc.setAttribute('aria-label',o.n);
+if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.head(o,1)+Panel.acts(o);tc.setAttribute('aria-label',o.n);
 row.parentNode.insertBefore(tc,row.nextSibling)}tc.hidden=false;tPlace()}
 function tClose(){clearTimeout(tShow);clearTimeout(tHide);if(tRow)tRow.classList.remove('on');tRow=null;tc.hidden=true}
 function tLater(){clearTimeout(tShow);clearTimeout(tHide);tHide=setTimeout(tClose,220)}
-document.querySelectorAll('.thread[data-card]').forEach(function(row){
+function bindRow(row){
 row.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow);if(tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
 row.addEventListener('mouseleave',tLater);
 row.addEventListener('focusin',function(){if(tQuiet){tQuiet=false;return}tOpen(row)});
-row.addEventListener('click',function(e){if(e.target.closest('a,button'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})});
+row.addEventListener('click',function(e){if(e.target.closest('a,button'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})}
+document.querySelectorAll('.thread[data-card]').forEach(bindRow);
 tc.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow)});tc.addEventListener('mouseleave',tLater);
 document.addEventListener('focusin',function(e){if(tRow&&!tRow.contains(e.target)&&!tc.contains(e.target))tClose()});
 document.addEventListener('keydown',function(e){if(e.key!=='Escape'||!tRow)return;var r=tRow,back=tc.contains(document.activeElement);tClose();
 if(back){var a=r.querySelector('a');if(a){tQuiet=true;a.focus()}}});
 window.addEventListener('scroll',function(){if(tRow)requestAnimationFrame(tPlace)},{passive:true});window.addEventListener('resize',function(){if(tRow)tPlace()});
+/* what PARK_JS needs of the list: a row's card and fold, bound as these are */
+window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
+})();
+"""
+
+
+# Park and Wake land on the threads list at once, with no wait for the
+# rebuild: Garrick.app and the Obsidian plugin hand page_action.py's reply to
+# window.GarrickActed, and a request that was done moves its row. It runs
+# after JS, whose rows it moves and binds through window.ThreadRows.
+PARK_JS = r"""
+(function(){var R=window.ThreadRows||{bind:function(){},chev:function(){},close:function(){}};
+/* Park and Wake land on the list at once. When the host says the request was done (window.GarrickActed, called by
+   Garrick.app and the Obsidian plugin with the request and page_action.py's reply), the row moves to its zone's
+   Parked fold or back, a project with every thread in it, its card says what it now is, and the counts follow.
+   It stays greyed until the rebuild brings the real row; a reload of a page built before that moves it again. */
+function cardOf(r){try{return JSON.parse(r.dataset.card)}catch(e){return null}}
+function setCard(r,f){var c=cardOf(r);if(c){f(c);r.dataset.card=JSON.stringify(c)}}
+function inFold(r){return!!r.closest('details.parked')}
+function nameOf(el){var a=el.querySelector('.t>a');return a?a.textContent.toLowerCase():''}
+/* by name, as the build lists them; a zone's live units stay above its Parked fold */
+function place(box,el,tail){var kind=el.classList.contains('tunit')?'tunit':'thread',n=nameOf(el);
+box.insertBefore(el,[].filter.call(box.children,function(x){return x.classList.contains(kind)&&x!==el&&nameOf(x)>n})[0]||tail||null)}
+function fold(z,make){var f=[].filter.call(z.children,function(x){return x.matches('details.parked')})[0]||null;if(f||!make)return f;
+var c=z.querySelector(':scope>summary>svg');f=document.createElement('details');f.className='parked tsort';f.id='parked-'+z.id.slice(5);
+f.innerHTML='<summary>'+(c?c.outerHTML:'')+'Parked<span class="n">0</span></summary>';z.appendChild(f);return f}
+function headOf(u){return u.querySelector(':scope>.thread.proj')}
+function group(box,project){return[].filter.call(box.children,function(u){var h=u.classList.contains('tunit')&&headOf(u),c=h&&cardOf(h);return c&&c.n===project})[0]||null}
+/* a project's row in the other list, its threads to follow: a copy of this one's */
+function newGroup(src,box,tail){var u=document.createElement('div'),h=headOf(src).cloneNode(true),b=h.querySelector('.pchev'),s=document.createElement('div');
+u.className='tunit';u.dataset.a=src.dataset.a;h.classList.remove('on');s.className='subthreads tsort';s.hidden=true;
+s.id=/-parked$/.test(b.dataset.sub)?b.dataset.sub.replace(/-parked$/,''):b.dataset.sub+'-parked';b.dataset.sub=s.id;
+u.appendChild(h);u.appendChild(s);place(box,u,tail);R.chev(b);R.bind(h);return u}
+/* a project's row counts its threads; one with none left goes */
+function recountUnit(u){var h=headOf(u),s=u.querySelector(':scope>.subthreads');if(!h||!s)return;var rs=s.querySelectorAll(':scope>.thread'),n=rs.length;if(!n){u.remove();return}
+var bare=inFold(u)?0:[].filter.call(rs,function(r){var c=cardOf(r);return c&&c.r===0}).length,t=h.querySelector('.subn'),b=h.querySelector('.pchev');
+if(t)t.textContent=n+' thread'+(n===1?'':'s')+(bare?' · '+bare+' without a resume block':'');if(b)b.title='Show its '+n+' thread'+(n===1?'':'s')}
+/* a zone's line as the build writes it: live, aging and stale by each live row's bar, and the done it counted */
+function count(z,f,sel){return z.querySelectorAll(sel).length-(f?f.querySelectorAll(sel).length:0)}
+function recount(){var live=0,held=0;document.querySelectorAll('.tview details.zone').forEach(function(z){var f=fold(z,false),
+p=f?f.querySelectorAll('.thread:not(.proj)').length:0,l=count(z,f,'.thread:not(.proj)'),meta=z.querySelector(':scope>summary .meta');
+live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj) .fresh.warning'),o=count(z,f,'.thread:not(.proj) .fresh.critical'),d=/(\d+) done/.exec(meta.textContent);
+meta.textContent=l+' live'+(a?' · '+a+' aging':'')+(o?' · '+o+' stale':'')+(d?' · '+d[1]+' done':'')}
+if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
+var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
+if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
+var g=document.querySelector('.tview .gsum'),v=document.querySelector('a.tile[href="#threads"] .val');
+if(g)g.textContent=g.textContent.replace(/^\d+ live · \d+ parked/,live+' live · '+held+' parked');if(v)v.textContent=live}
+function moved(q){if(!q||(q.verb!=='park'&&q.verb!=='wake'))return false;var park=q.verb==='park',byName=q.file==null,row=null,c=null;
+[].forEach.call(document.querySelectorAll('.tview .thread[data-card]'),function(r){if(row||inFold(r)===park)return;var k=cardOf(r);if(!k)return;
+if(byName?k.h&&k.pp&&k.pp[0]===q.zone&&k.pp[1]===q.project:!k.h&&k.pa&&k.pa[0]===q.zone&&k.pa[1]===q.file){row=r;c=k}});
+if(!row)return false;R.close();
+var z=row.closest('details.zone'),dest=park?fold(z,true):z,tail=park?null:fold(z,false),unit=row.closest('.tunit'),other;
+if(byName){       /* the project's hub, and every thread parked with it; waking it leaves one parked on its own as it was */
+var subs=[].slice.call(unit.querySelectorAll(':scope>.subthreads>.thread')),go=subs.filter(function(r){var k=cardOf(r);return park||(k&&k.held)});
+setCard(row,function(k){k.hp=k.s=park?1:0});
+go.forEach(function(r){r.classList.add('pending');setCard(r,function(k){if(park){if(!k.s){k.held=1;k.s=1}}else{delete k.held;k.s=0;if(!k.pa)k.pend=1}})});
+other=group(dest,c.n);
+if(!other&&go.length===subs.length){row.classList.add('pending');place(dest,unit,tail)}
+else{if(!other)other=newGroup(unit,dest,tail);setCard(headOf(other),function(k){k.hp=k.s=park?1:0});
+var box=other.querySelector(':scope>.subthreads');go.forEach(function(r){place(box,r,null)});recountUnit(other);recountUnit(unit)}}
+else{setCard(row,function(k){k.s=park?1:0});row.classList.add('pending');
+if(!row.classList.contains('sub'))place(dest,unit,tail);
+else{other=group(dest,c.p)||newGroup(unit,dest,tail);place(other.querySelector(':scope>.subthreads'),row,null);recountUnit(other);recountUnit(unit)}}
+recount();return true}
+window.GarrickActed=function(q,out){if(!out||!out.ok||!moved(q))return;
+/* what RELOAD_JS waits for gets the request, so a reload before the rebuild lands moves the row again */
+var k=q.file!=null?q.zone+'/'+q.file:q.zone+'/'+q.project+'/'+q.project+'.md';
+try{var w=JSON.parse(localStorage.getItem('garrick-expect')||'null');if(w&&w.x.slice(w.x.indexOf(':')+1)===k){w.q=q;localStorage.setItem('garrick-expect',JSON.stringify(w))}}catch(e){}};
+if(window.GarrickRedo)moved(window.GarrickRedo);
 })();
 """
 
@@ -3307,9 +3387,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     def row_html(r, sub=False, figures=None, parked=False, place=0):
         days = (now.date() - r["updated"]).days if r["updated"] else None
         k = fresh_of(days)
-        chips = "".join('<span class="chip">%s</span>' % E(p) for p in r["party"])
-        if not parked and not r.get("resume"):              # the threads skill resumes from that block
-            chips += '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>'
+        # The party tags are the card's, not the row's: under a name they read as part of it.
+        chips = "" if parked or r.get("resume") else \
+            '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>'
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
@@ -3579,11 +3659,16 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
+    # The menu's script in an element of its own, and the graph's: an error
+    # anywhere else on the page stops only the script it is in, and the app
+    # still hears what its menu lists.
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS, MENU_JS,
+               GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><script>%s%s%s%s</script></body></html>' % (
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div>%s</body></html>' % (
                 E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
-                RELOAD_JS + PANEL_JS, LAYOUT_JS, JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_JS + MENU_SETTINGS_JS, GRAPH_JS if show_graph else ""))
+                "".join("<script>%s</script>" % js for js in scripts if js)))
 
 
 def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:

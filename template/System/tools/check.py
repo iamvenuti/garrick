@@ -57,6 +57,8 @@ from garrick_lib import (  # noqa: E402
     is_speakable,
     is_webmail,
     fingerprint,
+    garrick_ignores,
+    ignore_parts,
     load_context,
     local_file,
     mail_attachments,
@@ -3055,6 +3057,20 @@ def check_updates(ws: Workspace) -> List[Finding]:
                                "Garrick's newer %s waits to be merged into yours; merge it, then delete the .new "
                                "(say \"update Garrick\")" % path,
                                "An update left a file to merge"))
+    # Garrick's lines in a .gitignore sit between its markers, and an update
+    # replaces them: a line changed there is lost at the next one. A file with
+    # no block yet gets one from the next update, its own lines kept.
+    for path, lines in sorted(garrick_ignores([z.name for z in ws.zones]).items()):
+        try:
+            text = (ws.root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        inside = ignore_parts(text)[1]
+        if inside is not None and [x.rstrip() for x in inside] != lines.rstrip("\n").splitlines():
+            out.append(Finding(WARNING, "updates", path,
+                               "the lines between Garrick's markers differ from what Garrick ships, and the next "
+                               "update puts Garrick's back; move your own lines outside the markers",
+                               "A .gitignore has changes inside Garrick's block"))
     return out
 
 

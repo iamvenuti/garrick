@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- An update offered a `.gitignore` as a `.new` to merge once you had added a line of your own, since it cannot have a local file beside it. Each `.gitignore` Garrick writes now keeps Garrick's lines between two markers, and yours go anywhere outside them. An update replaces only the lines between the markers, and gives a `.gitignore` without them the markers at the top, with every line of yours kept after them. `check.py` warns when the lines between the markers differ from Garrick's.
 - The split broke a fenced code block of yours apart when you had changed a line inside it: your line went to the review section and the rest of the block stayed behind, leaving the local file with a fence that never closed. A code block is now one passage. It moves whole, and one you changed is settled whole, fences included.
 - `check.py` warned that the local files the split starts say the same thing, over the line each one opens with. That line is Garrick's, and the copy check now passes over it.
 

@@ -31,6 +31,11 @@ it (`System/garrick-version.json`), and sorts each into one of these:
   with `--only`.
 - **retired**: a file Garrick wrote that it no longer ships. Never deleted.
 
+A `.gitignore` Garrick writes keeps Garrick's lines between two markers and
+yours outside them. The update replaces only what is between the markers, and
+adds them to a file that has none, keeping every line of yours; it never
+offers a `.new` for one.
+
 The extras a workspace has installed are updated with the rest: the status
 page in `System/status`, the scheduled jobs in `System/jobs`, and desk in
 `System/cmux` with its skill in `System/skills/desk`. Their files are sorted as
@@ -242,6 +247,7 @@ def plan(root, zones=None):
     actions = {kind: [] for kind in KINDS}
     current, kept = [], []
     history = {}        # repository: every path it ever committed, read once, for a stamp with no list
+    ignores = lib.garrick_ignores(zones)
     for path in sorted(set(new) | set(recorded)):
         if path in lib.UNLISTED:
             continue
@@ -249,6 +255,12 @@ def plan(root, zones=None):
         if path not in new:
             if on_disk is not None:
                 actions["retired"].append(path)
+            continue
+        if path in ignores and on_disk is not None:
+            # Garrick's block replaced, and every line outside it kept: never a .new.
+            data = lib.with_ignore_block(on_disk.decode("utf-8", "replace"), ignores[path]).encode("utf-8")
+            new[path] = (data, new[path][1])
+            (current if data == on_disk else actions["replace"]).append(path)
             continue
         target = digest(new[path][0])
         if on_disk is None:

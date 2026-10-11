@@ -73,6 +73,18 @@ Each of Garrick's files says near its top to read the local one next. The local 
 
 Garrick's files leave the local ones to be read by instruction, as they leave `System/rules.md` itself: the root `AGENTS.md`, which both assistants load on their own, names both, and so does each zone's and wiki's `AGENTS.md`, for an assistant that stops at a repository's edge. [Claude Code and Codex](harnesses.md#your-own-instructions-beside-garricks) says why, and what has been tested.
 
+### Your own ignore lines
+
+A `.gitignore` cannot have a local file beside it, so Garrick's lines in each one it writes, at the root, in `Wikis/`, in each zone and in the zone template, sit between two markers:
+
+```
+# >>> Garrick manages the lines below; an update replaces them
+...
+# <<< Garrick
+```
+
+Put your own lines anywhere outside the markers. An update replaces what is between them, never reads the rest, and never leaves a `.new` for the file. A `.gitignore` from before the markers gets the block at the top on its next update, with every line of yours after it; a line exactly like one of Garrick's is dropped, since the block now holds it. `check.py` warns when the lines between the markers differ from Garrick's, since the next update would put Garrick's back.
+
 ### Moving your text out
 
 A workspace from before the split, or one whose instruction file you edited since, has your text mixed into Garrick's. The update lists such a file under *Split* and leaves it as it is. Then:

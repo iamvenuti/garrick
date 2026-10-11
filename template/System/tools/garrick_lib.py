@@ -74,6 +74,12 @@ __all__ = [
     "LOCAL_HEADER",
     "is_instruction_file",
     "local_file",
+    "IGNORE_BEGIN",
+    "IGNORE_END",
+    "garrick_ignores",
+    "ignore_block",
+    "ignore_parts",
+    "with_ignore_block",
     "SKILL_FOLDERS",
     "LOCAL_EMAIL",
     "GitError",
@@ -828,6 +834,73 @@ def local_file(path: str) -> str:
     head, _, name = path.rpartition("/")
     stem = name[:-3] if name.endswith(".md") else name
     return (head + "/" if head else "") + stem + ".local.md"
+
+
+# A .gitignore cannot have a local file beside it, so Garrick's lines sit
+# between two markers and yours go anywhere outside them. An update replaces
+# what is between the markers and never reads the rest.
+IGNORE_BEGIN = "# >>> Garrick manages the lines below; an update replaces them"
+IGNORE_END = "# <<< Garrick"
+
+
+def garrick_ignores(zones) -> Dict[str, str]:
+    """Garrick's lines for the .gitignore of every repository the installer
+    makes, and the zone template's, which a zone added later copies: {path
+    from the top: the lines, without the markers}."""
+    common = (".DS_Store\n._*\n__pycache__/\n"
+              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
+              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+    inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
+    transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
+                   "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
+    generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + common,
+           "Wikis/.gitignore": common + transcripts}
+    for zone in zones:
+        out["Zones/%s/.gitignore" % zone] = common + inbox
+    out["/".join(ZONE_TEMPLATE + (".gitignore",))] = common + inbox
+    return out
+
+
+def ignore_block(lines: str) -> str:
+    """Garrick's lines between the markers, as the installer writes them."""
+    return IGNORE_BEGIN + "\n" + lines.rstrip("\n") + "\n" + IGNORE_END + "\n"
+
+
+def ignore_parts(text: str):
+    """(the lines before Garrick's block, the lines inside it or None when
+    there is no block, the lines after it). A marker with no partner is not a
+    block."""
+    lines = text.splitlines()
+    begin = next((k for k, x in enumerate(lines) if x.strip() == IGNORE_BEGIN), None)
+    end = None if begin is None else next((k for k in range(begin + 1, len(lines)) if lines[k].strip() == IGNORE_END),
+                                          None)
+    if end is None:
+        return lines, None, []
+    return lines[:begin], lines[begin + 1:end], lines[end + 1:]
+
+
+def with_ignore_block(current: str, lines: str) -> str:
+    """`current`, a .gitignore, with Garrick's block holding `lines`. A block
+    already there is replaced where it stands, and nothing outside it changes.
+    A file with no block gets one at the top, and keeps every line of its own
+    after it, except a line exactly like one of Garrick's, which the block now
+    holds, and a lone marker."""
+    before, inside, after = ignore_parts(current)
+    block = ignore_block(lines).splitlines()
+    if inside is not None:
+        out = before + block + after
+    else:
+        garricks = {x for x in block if x.strip()}
+        own = [x for x in before if x not in garricks and x.strip() not in (IGNORE_BEGIN, IGNORE_END)]
+        kept = []
+        for x in own:
+            if x.strip() or (kept and kept[-1].strip()):
+                kept.append(x)                       # one blank line at most, none at the start
+        while kept and not kept[-1].strip():
+            kept.pop()
+        out = block + ([""] + kept if kept else [])
+    return "\n".join(out) + "\n"
 
 
 def fingerprint(path: PathLike) -> str:

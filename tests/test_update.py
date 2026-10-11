@@ -646,6 +646,91 @@ class TestCommandLine(Case):
         self.assertIn("Updated on 6 October 2026 from", r.stdout)
 
 
+class TestIgnoreFiles(Case):
+    """A .gitignore has no local file beside it: Garrick's lines sit between two
+    markers, yours anywhere outside, and an update replaces only the block."""
+
+    ZONE = "Zones/Work/.gitignore"
+
+    def lib(self):
+        return update.install.lib()
+
+    def garricks(self, path):
+        return self.lib().garrick_ignores(update.zones_of(self.root, self.stamp()))[path]
+
+    def findings(self):
+        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
+                            "--json"], capture_output=True, text=True, env=self.env)
+        return [(f["path"], f["message"]) for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"]
+
+    def test_the_installer_writes_the_block(self):
+        for path in (".gitignore", "Wikis/.gitignore", self.ZONE, "System/templates/zone/.gitignore"):
+            text = (self.root / path).read_text()
+            self.assertEqual(self.lib().ignore_block(self.garricks(path)), text, path)
+            self.assertTrue(text.startswith(self.lib().IGNORE_BEGIN + "\n"))
+
+    def test_a_line_of_yours_outside_the_block_survives_an_update(self):
+        mine = "\n# Exports I make by hand.\nexports/\n"
+        work = self.root / "Zones" / "Work"
+        (self.root / self.ZONE).write_text((self.root / self.ZONE).read_text() + mine)
+        self.commit(work, "My ignores")
+        self.assertIn(self.ZONE, self.plan()["current"])            # nothing to offer: the block is Garrick's
+        self.as_if_older(self.ZONE, self.lib().ignore_block(".DS_Store\n") + mine)
+        p = self.plan()
+        self.assertEqual([self.ZONE], p["actions"]["replace"])
+        self.assertEqual([], p["actions"]["merge"])
+        self.apply()
+        want = self.lib().ignore_block(self.garricks(self.ZONE)) + mine
+        self.assertEqual(want, (self.root / self.ZONE).read_text())
+        self.assertFalse((self.root / (self.ZONE + ".new")).exists())
+        self.assertEqual("", self.git(work, "status", "--porcelain"))
+        self.assertEqual(sha(want), self.stamp()["files"][self.ZONE])
+        self.assertNotIn(self.ZONE, [x for k in update.KINDS for x in self.plan()["actions"][k]])
+
+    def test_a_file_without_markers_gets_the_block_with_nothing_lost(self):
+        path = ".gitignore"
+        older = ("# Zones and wikis are their own repositories.\nZones/\nWikis/\nSystem/generated/\n"
+                 ".DS_Store\n\n\n# Birch & Co exports\n*.xlsx.tmp\nzones/\n.DS_Store \n")
+        self.as_if_older(path, older)
+        p = self.plan()
+        self.assertEqual([path], p["actions"]["replace"])
+        self.apply()
+        text = (self.root / path).read_text()
+        block = self.lib().ignore_block(self.garricks(path))
+        self.assertTrue(text.startswith(block))
+        own = text[len(block):]
+        self.assertEqual("\n# Birch & Co exports\n*.xlsx.tmp\nzones/\n.DS_Store \n", own)
+        # Exact copies of Garrick's lines went into the block; one that only looks like one stays yours.
+        self.assertEqual(1, text.splitlines().count("Zones/"))
+        self.assertEqual(1, text.splitlines().count(".DS_Store"))
+        for line in older.splitlines():
+            self.assertIn(line, text.splitlines())
+        self.assertEqual([], [x for k in update.KINDS for x in self.plan()["actions"][k]])
+
+    def test_a_copy_of_garricks_line_outside_an_existing_block_is_left(self):
+        text = (self.root / self.ZONE).read_text() + "Inbox/*\n"
+        self.assertEqual(text, self.lib().with_ignore_block(text, self.garricks(self.ZONE)))
+
+    def test_a_lone_marker_is_not_a_block(self):
+        lib = self.lib()
+        got = lib.with_ignore_block(lib.IGNORE_BEGIN + "\nmine/\n", "Zones/\n")
+        self.assertEqual(lib.ignore_block("Zones/\n") + "\nmine/\n", got)
+
+    def test_a_changed_block_is_found_and_the_update_puts_garricks_back(self):
+        work = self.root / "Zones" / "Work"
+        shipped = (self.root / self.ZONE).read_text()
+        changed = shipped.replace("Inbox/*\n", "Inbox/*\nscratch/\n") + "\nexports/\n"
+        (self.root / self.ZONE).write_text(changed)
+        self.commit(work, "My ignores")
+        found = self.findings()
+        self.assertEqual([self.ZONE], [path for path, _ in found])
+        self.assertIn("between Garrick's markers", found[0][1])
+        self.assertEqual([self.ZONE], self.plan()["actions"]["replace"])
+        self.apply()
+        self.assertEqual(shipped + "\nexports/\n", (self.root / self.ZONE).read_text())
+        self.assertEqual([], self.findings())
+
+
 class ExtrasCase(Case):
     """A workspace with extras copied in, as their pages say. PATH, the app
     folders and the assistants' settings are the test's own, so nothing on

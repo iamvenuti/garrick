@@ -549,6 +549,31 @@ def instruction_files(ws: Workspace) -> List[Path]:
     return [f for f in files if f.is_file()]
 
 
+
+def text_blocks(text: str) -> List[str]:
+    """A Markdown text as its blocks: each bullet or numbered list, table and
+    paragraph, split at blank lines and where one kind gives way to another."""
+    blocks, current, kind = [], [], None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                blocks.append("\n".join(current))
+            current, kind = [], None
+            continue
+        this = "table" if stripped.startswith("|") else "list" if re.match(r"(?:[-*+]|\d+[.)])\s", stripped) \
+            else "heading" if stripped.startswith("#") else "text"
+        if kind == "list" and this == "text" and line[:1].isspace():
+            this = "list"                    # an item carried on to the next line
+        if current and this != kind:
+            blocks.append("\n".join(current))
+            current = []
+        current.append(line)
+        kind = this
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
 def check_instructions(ws: Workspace) -> List[Finding]:
     """An AGENTS.md that grows, a sentence copied between instruction files, or a
     hand-kept list of skills that no longer matches the folder: each one drifts."""
@@ -600,17 +625,26 @@ def check_instructions(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "instructions", names,
                                "the same text in both: \"%s…\"; keep it in one and point from the other" % norm[:60],
                                "Two instruction files say the same thing"))
-    # A file that names several skills names every one of them. Garrick's
-    # file and the local file beside it are read together, so they count as one.
+    # A list of skills names every one of them. A list is several names in
+    # one block (one bullet list, one table, one paragraph); names spread over
+    # separate sentences each point at one procedure, and are pointers.
+    # Garrick's file and the local file beside it are read together.
     skills = {p.parent.name for p in (ws.root / "System" / "skills").glob("*/SKILL.md")}
     for f, text in texts.items():
         if f.name.endswith(".local.md"):
             continue  # read with the file it sits beside
         pair = [g for g in (f, local_beside(ws, f)) if g is not None and g in texts]
-        naming = [g for g in pair if any("`%s`" % s in texts[g] for s in skills)]
-        named = {s for s in skills if any("`%s`" % s in texts[g] for g in pair)}
-        if len(named) >= 3 and named != skills:
-            out.append(Finding(WARNING, "instructions", " and ".join(rel(ws, g) for g in naming),
+        listing = []
+        named = set()
+        for g in pair:
+            for block in text_blocks(texts[g]):
+                in_block = {s for s in skills if "`%s`" % s in block}
+                if len(in_block) >= 3 and g not in listing:
+                    listing.append(g)
+        if listing:                             # a list, and every name the pair gives, wherever it stands
+            named = {s for s in skills if any("`%s`" % s in texts[g] for g in pair)}
+        if named and named != skills:
+            out.append(Finding(WARNING, "instructions", " and ".join(rel(ws, g) for g in listing),
                                "lists skills but not %s; list the folder instead of naming them" % ", ".join(sorted(skills - named)),
                                "An instruction file lists skills that no longer match the folder"))
     # A zone's instructions that name its projects' hub notes name every one

@@ -120,6 +120,23 @@ class TestInstructions(CheckCase):
         write(self.root / "AGENTS.md", "# Workspace\n\nSkills: `threads`, `meetings`, `knowledge`.\n")
         self.assertFinds("instructions", "warning", "not extra", path="AGENTS.md")
 
+    def test_skills_named_in_separate_sentences_are_pointers(self):
+        for name in ("intake", "threads", "setup-sync", "extra"):
+            write(self.root / "System" / "skills" / name / "SKILL.md", "---\nname: %s\n---\n" % name)
+        write(self.root / "System" / "rules.md", "# Rules\n\nThe `intake` skill is the procedure.\n")
+        write(self.root / "System" / "rules.local.md",
+              "# Your rules\n\n## Threads\n\n- Run the `threads` skill to do all of this.\n\n"
+              "## Files\n\n- After any change, run the `setup-sync` skill.\n")
+        hits = [f for f in self.findings("instructions") if "lists skills" in f.message]
+        self.assertEqual([], hits)
+
+    def test_one_bullet_list_of_three_skills_is_a_list(self):
+        for name in ("intake", "threads", "setup-sync", "extra"):
+            write(self.root / "System" / "skills" / name / "SKILL.md", "---\nname: %s\n---\n" % name)
+        write(self.root / "System" / "rules.local.md",
+              "# Your rules\n\n- `intake` for mail\n- `threads` for threads\n- `setup-sync` after a change\n")
+        self.assertFinds("instructions", "warning", "not extra")
+
 
 class TestLocalInstructions(CheckCase):
     """The local file beside each of Garrick's instruction files: the
@@ -170,10 +187,10 @@ class TestLocalInstructions(CheckCase):
         self.point()
         for name in ("threads", "meetings", "knowledge", "extra"):
             write(self.root / "System" / "skills" / name / "SKILL.md", "---\nname: %s\n---\n" % name)
-        write(self.root / "AGENTS.md", "# Workspace\n\nRead `AGENTS.local.md` next. Skills: `threads`.\n")
-        write(self.root / "AGENTS.local.md", "# Mine\n\nAlso `meetings` and `knowledge`.\n")
-        self.assertFinds("instructions", "warning", "not extra", path="AGENTS.md and AGENTS.local.md")
-        write(self.root / "AGENTS.local.md", "# Mine\n\nAlso `meetings`, `knowledge` and `extra`.\n")
+        write(self.root / "AGENTS.md", "# Workspace\n\nRead `AGENTS.local.md` next.\n")
+        write(self.root / "AGENTS.local.md", "# Mine\n\nSkills: `threads`, `meetings` and `knowledge`.\n")
+        self.assertFinds("instructions", "warning", "not extra", path="AGENTS.local.md")
+        write(self.root / "AGENTS.md", "# Workspace\n\nRead `AGENTS.local.md` next. The `extra` skill does the rest.\n")
         self.assertClean("instructions")
 
     def test_a_zone_project_list_in_the_local_file(self):

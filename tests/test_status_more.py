@@ -403,11 +403,44 @@ class TestVaultGraph(StatusCase):
         self.assertNotIn("Brief", names)
         self.assertIn("Pricing", names)
 
-    def test_a_root_vault_counts_for_every_place(self):
-        self.obsidian(self.root, groups=[("[type:meeting]", 0x123456)])
+    def test_a_root_vault_colours_the_zones_and_never_a_wiki(self):
+        self.obsidian(self.root, groups=[("[type:meeting]", 0x123456), ("[type:thread]", 0x654321)])
         data = graph_data(self.page())
         kickoff = next(n for n in data["nodes"] if n["n"] == "Acme kick-off")
-        self.assertEqual("#123456", data["groups"][kickoff["g"]][0])
+        self.assertNotIn("g", kickoff)                                      # a wiki is drawn by its own kinds
+        self.assertEqual("meeting", dict(data["kinds"])[kickoff["k"]])
+        pricing = next(n for n in data["nodes"] if n["n"] == "Pricing")
+        self.assertEqual("#654321", data["groups"][pricing["g"]][0])
+
+    def test_each_wiki_has_its_own_kinds_core_and_label(self):
+        k = self.root / "Wikis" / "Knowledge" / "wiki"
+        write(k / "concepts" / "lane-capacity.md", "# Lane capacity\n\nFrom [[pallet-report]].\n")
+        write(k / "concepts" / "safety-stock.md", "---\ntype: concept\n---\n# Safety stock\n")
+        write(k / "entities" / "fictus-cloud.md", "# Fictus Cloud\n")
+        write(k / "sources" / "pallet-report.md", "---\ntitle: A very long report title about pallets, lanes, freight and the winter that came\n"
+              "type: source\n---\n\nTouches [[lane-capacity]], [[safety-stock]] and [[fictus-cloud]].\n")
+        write(k / "sources" / "odd.md", "---\ntype: summary\n---\n# Odd\n")
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        write(m / "sources" / "260311-stray.md", "---\ntitle: Stray\ntype: entity\n---\n")
+        data = graph_data(self.page())
+        kind = dict(data["kinds"])
+        by = {n.get("N", n["n"]): n for n in data["nodes"]}
+        self.assertEqual("concept", kind[by["lane-capacity"]["k"]])                # by its folder
+        self.assertEqual("concept", kind[by["safety-stock"]["k"]])                 # by its type
+        self.assertEqual("entity", kind[by["fictus-cloud"]["k"]])
+        self.assertEqual("other notes", kind[by["odd"]["k"]])                      # a type the model does not know
+        self.assertEqual("other notes", kind[by["Stray"]["k"]])                    # an entity has no place in Meetings
+        long = by["A very long report title about pallets, lanes, freight and the winter that came"]
+        self.assertEqual("source", kind[long["k"]])
+        self.assertTrue(long["n"].endswith("…") and len(long["n"]) <= 41, long["n"])
+        self.assertEqual(1, by["lane-capacity"]["c"])
+        self.assertEqual(0, long["c"])
+        idx = {t: data["nodes"].index(by[t]) for t in ("lane-capacity", "safety-stock", "fictus-cloud")}
+        pairs = {(a, b): w for a, b, w in data["ce"]}
+        self.assertEqual(1, pairs[tuple(sorted((idx["lane-capacity"], idx["safety-stock"])))])   # one source cites both
+        self.assertEqual({"Meetings": "People", "Knowledge": "Concepts and entities"}, data["cl"])
+        self.assertEqual("all", data["modes"]["Knowledge"])
+        self.assertIn("function modeFor(z){return st.get('garrick-graph-mode-'+z)", status.GRAPH_JS)
 
     def test_any_note_in_a_project_opens_where_its_card_would(self):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Call notes.md", "# Call notes\n")

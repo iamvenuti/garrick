@@ -1414,7 +1414,35 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
 # (`type: email` in the Meetings wiki) has its own kind beside meetings.
 KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("mail", "mail", "#c94f9c"),
-         ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
+         ("person", "person", "#13a38a"), ("source", "source", "#7c9a2d"), ("concept", "concept", "#8c6d1f"),
+         ("entity", "entity", "#4b6584")]
+
+# Each place's kinds come from Garrick's own model of it, and nothing else: a
+# page whose type and folder the model does not know is drawn as other notes.
+# The core view of a place is its hubs: a zone's projects and threads, the
+# people in Meetings, the concepts and entities in Knowledge.
+CORE_LABEL = {"Meetings": "People", "Knowledge": "Concepts and entities"}
+WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
+
+
+def wiki_kind(wiki: str, kind: str, parts: tuple, source_type: str = "source") -> str:
+    if wiki == "Meetings":
+        return kind if kind in ("meeting", "mail", "person") else "note"
+    if kind in (source_type, "source") and (not parts or parts[0] == "sources"):
+        return "source"
+    if kind == "concept" or (parts and parts[0] == "concepts" and kind in ("", "concept")):
+        return "concept"
+    if kind == "entity" or (parts and parts[0] == "entities" and kind in ("", "entity")):
+        return "entity"
+    return "note"
+
+
+def short_label(title: str, limit: int = WIKI_LABEL) -> str:
+    """A title cut at a word to about `limit` characters, with an ellipsis."""
+    if len(title) <= limit:
+        return title
+    cut = title[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-–—")
+    return (cut or title[:limit]) + "…"
 
 
 OTHER = next(c for k, _, c in KINDS if k == "note")    # a note no colour group of its vault takes: "other notes"
@@ -1587,6 +1615,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     by_rel = {r: p for p, r in rel.items()}
     nodes, index = [], {}
     kinds = [k for k, _, _ in KINDS]
+    lib, source_type = workspace_lib(ws), "source"
+    try:
+        if lib is not None and callable(getattr(lib, "knowledge_schema", None)):
+            source_type = lib.knowledge_schema(ws)[0]["source"]["type"]     # a wiki that names its sources otherwise
+    except Exception:
+        pass
     projects = [(place, path.parent.name) for place, root, path in notes
                 if root.parent.name == "Zones" and path.parent.parent == root and path.stem == path.parent.name]
     threads_said = {t.casefold() for z in T.values() for r in z["rows"] + z["parked"] for t in [r["thread"]]}
@@ -1597,11 +1631,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         kind = "mail" if kind in ("email", "mail") else kind
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
-        if kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
+        wiki = root.parent.name if not in_zone else ""
+        if wiki:
+            kind = wiki_kind(wiki, kind, parts, source_type)
+        elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
             kind = "project"
-        elif kind in ("source", "concept", "entity", "summary") or root.parent.name == "Knowledge":
-            kind = "knowledge"
-        elif kind not in kinds:
+        elif kind not in ("project", "thread"):
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
         state = as_text(fm.get("status")).strip().lower()
@@ -1619,12 +1654,16 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
         # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
-        nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
+        title = as_text(fm.get("title")).strip() or path.stem
+        hub = kind in ("project", "thread", "person", "concept", "entity")
+        nodes.append({"n": short_label(title) if wiki else title, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
-                      "c": 1 if kind in ("project", "thread") else 0, "h": 1 if kind == "project" else 0,
+                      "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
+        if wiki and nodes[-1]["n"] != title:
+            nodes[-1]["N"] = title                   # the whole title, for the card and the tooltip
         vault = vault_at[root]
-        if vault is not None and vaults[vault][1]:
+        if vault is not None and vaults[vault][1] and not wiki:     # a wiki is drawn by its kinds, whatever its vault says
             first, gs, _ = vaults[vault]
             rel_v = path.relative_to(vault).as_posix()
             nodes[-1]["g"] = next((first + i for i, (terms, _, _) in enumerate(gs) if any(group_match(t, fm, rel_v) for t in terms)), -1)
@@ -1671,9 +1710,31 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                 edges.add((min(a, b), max(a, b)))
     used = sorted({n["k"] for n in nodes if "g" not in n}
                   | ({kinds.index("note")} if any(n.get("g") == -1 for n in nodes) else set()))
+    # In a wiki's core view the hubs are joined when one page links both: two
+    # people in the same meeting, two concepts cited by the same source. The
+    # third number is how many pages do.
+    wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    neighbours: Dict[int, set] = {}
+    for a, b in edges:
+        neighbours.setdefault(a, set()).add(b)
+        neighbours.setdefault(b, set()).add(a)
+    co: Dict[Tuple[int, int], int] = {}
+    for i, n in enumerate(nodes):
+        if n["z"] not in wikis or n["c"]:
+            continue
+        hubs = sorted(j for j in neighbours.get(i, ()) if nodes[j]["c"] and nodes[j]["z"] == n["z"])
+        for x in range(len(hubs)):
+            for y in range(x + 1, len(hubs)):
+                co[(hubs[x], hubs[y])] = co.get((hubs[x], hubs[y]), 0) + 1
+    counts: Dict[str, int] = {}
+    for n in nodes:
+        counts[n["z"]] = counts.get(n["z"], 0) + 1
     return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS], "other": OTHER,
             "kinds": [[i, KINDS[i][1]] for i in used], "groups": groups,
-            "mode": "all" if len(nodes) <= 150 else "core"}
+            "mode": "all" if len(nodes) <= 150 else "core",
+            "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
+            "cl": {z: CORE_LABEL[z] for z in wikis if z in CORE_LABEL},
+            "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
 
 
 def launch_agents() -> Path:
@@ -2970,7 +3031,7 @@ function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';re
 function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
 /* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project;
    the graph's panel, which floats free of any list, keeps them */
-function head(o,row){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
+function head(o,row){return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
 +line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)
 +(window.GarrickManage?GarrickManage(o):'')}
@@ -3222,7 +3283,7 @@ var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').mat
 var places=[];G.nodes.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
 /* which place the graph shows: the one asked for last, else Work when there is one, else everything */
 var zsel=st.get('garrick-graph-place');if(zsel!=='*'&&places.indexOf(zsel)<0)zsel=places.indexOf('Work')>=0?'Work':'*';
-var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
+function modeFor(z){return st.get('garrick-graph-mode-'+z)||(G.modes&&G.modes[z])||G.mode}var mode=modeFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -3256,12 +3317,12 @@ rest.forEach(function(p,i){perm(o.concat([p]),rest.slice(0,i).concat(rest.slice(
 function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.ax=a[0];n.ay=a[1]})}
 /* parked threads and projects stay off the graph unless asked for, as in the lists */
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)&&(zsel==='*'||n.z===zsel)}
-function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
+function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(mode==='all'?G.edges:G.edges.concat(G.ce||[])).filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
 var drawn={},dg={};V.forEach(function(n){if(n.g>=0)dg[n.g]=1;else drawn[n.g===-1?OTHERK:n.k]=1});
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)});
+document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode);if(b.dataset.m==='core')b.textContent=(G.cl&&G.cl[zsel])||'Projects and threads'});
 var zs=document.querySelector('.gzsel');if(zs)zs.value=zsel;
 var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
 /* Every note pushes every other away, which costs the square of the notes a
@@ -3370,7 +3431,7 @@ if(down){if(Math.hypot(h.x-down.x,h.y-down.y)>4)down.moved=true;
 if(drag&&down.moved){var w=toWorld(h.x,h.y);drag.x=w[0];drag.y=w[1];drag.vx=drag.vy=0;alpha=Math.max(alpha,.2)}
 else if(!drag&&down.moved){auto=false;px=down.px+h.x-down.x;py=down.py+h.y-down.y}return}
 hover=h.n;cv.classList.toggle('hot',!!h.n);
-if(h.n){var n=h.n;cv.dataset.tip=n.n+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
+if(h.n){var n=h.n;cv.dataset.tip=(n.N||n.n)+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
 cv.addEventListener('pointerup',function(){cv.classList.remove('drag');if(!down)return;if(!down.moved){if(down.n)select(down.n);else close()}drag=null;down=null;wake()});
 cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dataset.tip;wake()}});
 cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
@@ -3388,11 +3449,11 @@ pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W
 function close(){sel=null;pop.hidden=true;wake()}
 function glide(tx,ty){var sx=px,sy=py,t0=performance.now();glides++;wake();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g);else glides--})(t0)}
 pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
-var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode',mode)}
+var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode-'+zsel,mode)}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
-var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
+var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);mode=modeFor(zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
+document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode-'+zsel,mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};

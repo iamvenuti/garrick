@@ -64,7 +64,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
 - **Where the desk skill is installed** (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
-- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back. **"What's parked"**: name the parked threads.
+- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting on it. If a heard name is close to two entries, ask. Read through ordinary transcription noise without comment, and never correct the user's spelling back at them.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table.

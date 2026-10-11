@@ -121,8 +121,14 @@ note, and the note's path.
 whether to reopen it. Reopening sets `status: active` and writes a new Resume
 here block above the outcome paragraph.
 
-**If the thread is parked**, say so, give where it stood in one sentence, and
-ask whether to wake it. Waking is the Park section's second half.
+**If the thread is parked**, wake it first: someone who opens a thread means
+to work on it. Waking is the Park section's second half, steps 2 to 5
+(`status: active`, `updated:`, a dated "Woken." entry, a commit). When the
+thread is parked because its project is, wake the project's hub instead, which
+brings back every thread that was live before; say so. Then answer as for any
+live thread, opening with a few words that say what changed: "Pricing was
+parked; it's active again." A question that only looks at a thread ("where
+did Pricing stand", "what's parked") reads it and leaves it parked.
 
 **If X names a zone** ("open Work"), treat it as "what's open in Work".
 

@@ -13,6 +13,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- "Open X" on a parked thread wakes it, as "wake X" does, and says so in a few words before where it stands; before, it asked first, so every session the status page opened on a parked thread stopped on that question. A thread parked with its project wakes the project. Questions that only look at a thread leave it parked. ([#16](https://github.com/iamvenuti/garrick/issues/16))
 - `ingest.py index` rewrote the whole of the Meetings `index.md`, so a table or notes kept there by hand were lost on the next ingest. It now writes only the page table, between `<!-- garrick:index -->` and `<!-- /garrick:index -->`, and keeps the rest. On an index from before the markers it replaces its own Page, Type, Updated table, or adds the block at the end. ([#51](https://github.com/iamvenuti/garrick/issues/51))
 
 ### Fixed

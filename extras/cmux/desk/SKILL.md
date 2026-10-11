@@ -77,7 +77,12 @@ A tab's state is read from its assistant's transcript, never from its title:
 Claude Code ends a turn with a `turn_duration` or `stop_hook_summary` record
 (`local_command` for a slash command), Codex with `task_complete` or
 `turn_aborted` for the same turn. A tab whose transcript is missing or
-unreadable is `?`.
+unreadable is `?`. The exception is `empty`: a Claude Code tab with no
+prompt since it started or was cleared with `/clear`, which has no
+transcript yet and which Claude Code's own session record shows idle. It
+counts as idle with nothing to wrap: `close` and `shutdown` close it
+without a wrap, `close --wrap` refuses it, and it is left out of the
+restore list.
 
 - `close` refuses a tab that is busy or `?`, and closes nothing when it does.
 - `shutdown` refuses while any tab is busy or `?`. With `--yes` it wraps one

@@ -237,6 +237,7 @@ def roster(running_only: bool = True, titles: Optional[dict] = None, timeout: fl
             "cwd": s.get("cwd") or s.get("launch_working_directory"),
             "transcript": s.get("transcript_path"),
             "restorable": s.get("is_restorable"),
+            "pid": s.get("pid"),
             "alive": bool(live),
         })
     if titles is None:
@@ -353,6 +354,35 @@ def turn_state(path, agent: Optional[str] = None, tail: Optional[int] = None) ->
     except (OSError, TypeError, ValueError):
         return "?", 0
     return (state if recognised else "?"), turns
+
+
+# Claude Code's own record of each running session, one file per process.
+CLAUDE_SESSIONS = Path.home() / ".claude" / "sessions"
+
+
+def session_state(s: dict, tail: Optional[int] = None) -> str:
+    """idle | working | empty | ?, for a session in the roster.
+
+    From its transcript, as turn_state reads it. Claude Code writes the
+    transcript only once the first prompt arrives, so a tab just launched,
+    or cleared with /clear, has none. Such a session reads `empty` (no turn
+    yet: nothing to wrap, nothing mid-turn) when Claude Code's own record of
+    that process names the same session as idle and no transcript file is
+    there at all. A transcript that is there but unreadable, or a record
+    that says anything else, stays ?."""
+    path = s.get("transcript")
+    state = turn_state(path, s.get("agent"), tail=tail)[0] if path else "?"
+    if state != "?" or s.get("agent") != "claude" or not s.get("pid") or not s.get("session_id"):
+        return state
+    if path and os.path.lexists(path):
+        return state
+    try:
+        record = json.loads((CLAUDE_SESSIONS / ("%s.json" % int(s["pid"]))).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return state
+    if isinstance(record, dict) and record.get("sessionId") == s["session_id"] and record.get("status") == "idle":
+        return "empty"
+    return state
 
 
 def sessions_by_folder(workspace: Path) -> Dict[str, str]:

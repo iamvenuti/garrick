@@ -536,6 +536,57 @@ class DeskVerbTest(CmuxCase):
             self.assertNotIn("send", self.verbs())
             desk.quit_cmux.assert_not_called()
 
+    def empty(self, sid, folder, status="idle", record_sid=None):
+        """A Claude Code tab with no prompt since it started or was cleared:
+        cmux knows its transcript's path, and no file is there yet."""
+        sessions = self.tmp / "claude-sessions"
+        sessions.mkdir(exist_ok=True)
+        patcher = patch.object(cx, "CLAUDE_SESSIONS", sessions)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        s = self.session(sid, folder, [])
+        Path(s["transcript_path"]).unlink()
+        (sessions / ("%d.json" % s["pid"])).write_text(json.dumps(
+            {"pid": s["pid"], "sessionId": record_sid or sid, "status": status}), encoding="utf-8")
+        return s
+
+    def test_a_tab_with_no_prompt_yet_reads_empty_and_nothing_else_does(self):
+        s = self.empty("a", self.pricing)
+        row = {"session_id": "a", "agent": "claude", "pid": s["pid"], "transcript": s["transcript_path"]}
+        self.assertEqual("empty", cx.session_state(row))
+        self.empty("a", self.pricing, status="busy")
+        self.assertEqual("?", cx.session_state(row))
+        self.empty("a", self.pricing, record_sid="another")
+        self.assertEqual("?", cx.session_state(row))
+        self.empty("a", self.pricing)
+        Path(s["transcript_path"]).write_text("not json\n", encoding="utf-8")   # there, but unreadable
+        self.assertEqual("?", cx.session_state(row))
+        self.assertEqual("?", cx.session_state(dict(row, agent="codex", transcript=str(self.tmp / "none.jsonl"))))
+
+    def test_status_close_and_shutdown_pass_an_empty_tab(self):
+        self.state({"sessions": [self.empty("a", self.pricing)]})
+        code, out, _ = self.run_desk("status")
+        self.assertEqual(0, code)
+        self.assertIn("empty", out)
+        code, _, err = self.run_desk("close", "pricing", "--wrap", "--yes")
+        self.assertEqual(2, code)
+        self.assertIn("nothing to wrap", err)
+        code, out, _ = self.run_desk("shutdown")
+        self.assertEqual(0, code)
+        self.assertIn("0 used today would be wrapped", out)
+        self.assertEqual(0, self.run_desk("close", "pricing", "--yes")[0])
+        self.assertIn("close-surface", self.verbs())
+        self.assertNotIn("send", self.verbs())
+
+    def test_shutdown_quits_over_an_empty_tab_without_wrapping_it(self):
+        self.state({"sessions": [self.empty("a", self.pricing)]})
+        with patch.object(desk, "write_snapshot", return_value=0) as snap:
+            code, _, err = self.run_desk("shutdown", "--yes")
+        self.assertEqual((0, ""), (code, err))
+        self.assertNotIn("send", self.verbs())
+        self.assertEqual([], snap.call_args[0][0])          # nothing to resume tomorrow
+        desk.quit_cmux.assert_called_once()
+
     def test_a_wrap_that_never_finishes_leaves_cmux_running(self):
         self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
         clock = [0.0]

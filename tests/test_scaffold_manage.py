@@ -176,6 +176,61 @@ class TestDelete(ManageCase):
         self.assertNotIn("- [ ] [[Pricing]]", (self.work / "Todo.md").read_text())
 
 
+class TestWhatCannotBeBroughtBack(ManageCase):
+    """A rename or deletion refuses whatever a revert could not restore."""
+
+    def test_ignored_files_and_a_nested_repository_are_refused_and_kept(self):
+        acme = self.work / "Acme"
+        (self.work / ".gitignore").write_text((self.work / ".gitignore").read_text() + "Acme/build/\n")
+        self.commit("ignore build")
+        (acme / "build").mkdir()
+        (acme / "build" / "out.bin").write_bytes(b"x")
+        for args in (["delete", "--zone", "Work", "--project", "Acme", "--confirm", "Acme"],
+                     ["rename", "--zone", "Work", "--project", "Acme", "--to", "Apex"]):
+            r = self.scaffold(*args)
+            self.assertEqual(1, r.returncode, args)
+            self.assertIn("not in the zone's history", r.stderr)
+        self.assertTrue((acme / "build" / "out.bin").exists())
+        (acme / "build" / "out.bin").unlink()
+        (acme / "build").rmdir()
+        repo = acme / "Site"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), env=self.env, check=True)
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--confirm", "Acme")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("repository of its own", r.stderr)
+        self.assertTrue((repo / ".git").is_dir())
+
+    def test_something_staged_elsewhere_is_never_swept_in(self):
+        (self.work / "Birch Sources").mkdir()
+        (self.work / "Birch Sources" / "contract.pdf").write_bytes(b"%PDF staged by hand")
+        self.git("add", "Birch Sources/contract.pdf")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("staged", r.stderr)
+
+    def test_a_thread_of_the_same_name_in_another_project_is_left_alone(self):
+        r = self.scaffold("project", "--zone", "Work", "--name", "Birch", "--party", "birch", "--thread", "Pricing")
+        self.assertEqual(0, r.returncode, r.stderr)
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text().replace("## Inbox\n", "## Inbox\n\n- [ ] [[Birch/Threads/Pricing/Pricing|Pricing]]: Birch's\n", 1))
+        self.commit("Birch")
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--confirm", "Pricing")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Birch's", todo.read_text())                              # another thread's line stays
+        self.assertIn("[[Pricing]]: call Dana", todo.read_text())               # ambiguous now: left, not guessed
+
+    def test_renaming_a_project_leaves_a_thread_that_shares_its_name(self):
+        for project in ("Pallets", "Ledger"):
+            r = self.scaffold("project", "--zone", "Work", "--name", project, "--party", "acme", "--thread", "Pallets")
+            self.assertEqual(0, r.returncode, r.stderr)
+        self.commit("two projects with a Pallets thread")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Pallets", "--to", "Crates")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("[[Ledger/Threads/Pallets/Pallets|Pallets]]", (self.work / "Ledger" / "Ledger.md").read_text())
+        self.assertIn("[[Crates/Threads/Pallets/Pallets|Pallets]]", (self.work / "Crates" / "Crates.md").read_text())
+
+
 class TestFromThePage(ManageCase):
     """The page's buttons run scaffold.py and nothing else."""
 

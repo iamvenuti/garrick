@@ -388,42 +388,74 @@ def mid_turn(root, folder):
 
 
 def zone_notes(zone_dir):
-    """Every .md in the zone, outside .git, archive and the inbox."""
-    for folder, dirs, files in os.walk(zone_dir):
-        dirs[:] = sorted(d for d in dirs if d not in (".git", ".obsidian", ".trash", INBOX))
-        for f in files:
-            if f.endswith(".md"):
-                yield Path(folder) / f
+    """Every note git tracks in the zone: nothing ignored, nothing in a
+    repository of its own inside a project, nothing waiting in the inbox."""
+    listing = git_value(["ls-files", "-z", "--", "*.md"], zone_dir)
+    for name in sorted(n for n in listing.split("\0") if n and not n.startswith(INBOX + "/")):
+        yield zone_dir / name
 
 
-def relink(text, swaps, prefixes, old_name, new_name):
+def preflight(zone_dir, folder, verb):
+    """Refuse a rename or a deletion that git could not put back exactly:
+    a merge or rebase under way, anything already staged (it would go into
+    this commit), or a folder holding files git does not track, ignores, or
+    keeps in a repository of its own, which no revert brings back."""
+    gitdir = zone_dir / ".git"
+    if any((gitdir / m).exists() for m in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD")):
+        raise Refusal(f"{zone_dir.name} is in the middle of a merge or rebase. Finish it, then {verb}.")
+    if git_value(["diff", "--cached", "--name-only"], zone_dir).strip():
+        raise Refusal(f"Something is staged in {zone_dir.name}, and it would go into this commit. Commit or unstage it, then {verb}.")
+    rel = folder.relative_to(zone_dir).as_posix()
+    nested = [Path(d).relative_to(zone_dir).as_posix() for d, dirs, _ in os.walk(folder) if ".git" in dirs or (Path(d) / ".git").is_file()]
+    if nested:
+        raise Refusal(f"{nested[0]} is a repository of its own, which the zone's history cannot bring back. "
+                      f"Move it out of {folder.name} first, then {verb}.")
+    status = git_value(["status", "--porcelain", "--ignored", "--untracked-files=all", "--", rel], zone_dir)
+    loose = [l[3:].strip().strip('"') for l in status.splitlines() if l[:2] in ("!!", "??")]
+    if loose:
+        raise Refusal(f"{loose[0]}{' and %d more' % (len(loose) - 1) if len(loose) > 1 else ''} is in {folder.name} but "
+                      f"not in the zone's history, so nothing could bring it back. Commit it or move it out, then {verb}.")
+
+
+def remove_empty(folder):
+    """The folders git left behind once it removed every file, deepest first."""
+    for d, dirs, files in sorted(os.walk(folder), key=lambda t: -len(Path(t[0]).parts)):
+        if not files and not os.listdir(d):
+            os.rmdir(d)
+
+
+def relink(text, swaps, prefixes, old_name, new_name, heads=("",)):
     """Every [[link]] to the renamed note pointed at its new name, in its
     bare, labelled, heading and path forms: `swaps` are whole targets (old,
     new, without .md), `prefixes` folders a target may run through, for the
-    threads of a renamed project. A label that was the old name follows it."""
+    threads of a renamed project. A path counts only from the zone, written
+    from its top or with one of `heads` before it (`Work/`, `Zones/Work/`):
+    a thread elsewhere that shares a name is another note. A label that was
+    the old name follows it."""
     def one(m):
         target, rest = m.group(1), m.group(2) or ""
         md = target.endswith(".md")
         key = target[:-3] if md else target
         found = None
         for old, new in swaps:
-            if key == old:
-                found = new
-            elif "/" in old and key.endswith("/" + old):
-                found = key[: -len(old)] + new
+            for head in (heads if "/" in old else ("",)):     # a bare name is only ever itself
+                if key == head + old:
+                    found = head + new
+                    break
             if found:
                 break
         for old, new in prefixes if found is None else ():
-            if key.startswith(old + "/"):
-                found = new + key[len(old):]
-            elif ("/" + old + "/") in key:
-                at = key.index("/" + old + "/") + 1
-                found = key[:at] + new + key[at + len(old):]
+            for head in heads:
+                if key.startswith(head + old + "/"):
+                    found = head + new + key[len(head + old):]
+                    break
             if found:
                 break
         if found is None:
             return m.group(0)
-        if rest.endswith("|" + old_name):
+        itself = not any(found.startswith(h + new + "/") for _, new in prefixes for h in heads) or \
+            any(found == h + new for _, new in swaps for h in heads)
+        if itself and rest.endswith("|" + old_name):
             rest = rest[: -len(old_name)] + new_name
         return "[[" + found + (".md" if md else "") + rest + "]]"
     return re.sub(r"\[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]", one, text)
@@ -486,6 +518,7 @@ def cmd_rename(root, args, today):
     others = [n for n in notes if n.stem.lower() == old.lower() and n != note]
     if folder.parent / new != folder and (folder.parent / new).exists() and new.lower() != old.lower():
         raise Refusal(f"{(folder.parent / new).relative_to(root)} already exists.")
+    preflight(zone_dir, folder, "rename")
     dirty = uncommitted(zone_dir, [folder] + notes)
     if dirty:
         raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
@@ -497,37 +530,44 @@ def cmd_rename(root, args, today):
     # Link targets, without .md: the note by its path, and by its name when no other note shares it.
     swaps = [(f"{rel_old}/{old}", f"{rel_new}/{new}")] + ([(old, new)] if not others else [])
     prefixes = [] if is_thread else [(rel_old, rel_new)]
-    # The folder and its note, through git, so history follows.
-    tmp = folder.parent / f".rename-{new}"
-    if new.lower() == old.lower():                         # a change of case alone needs a step between
-        git_ok(["mv", rel_old, tmp.relative_to(zone_dir).as_posix()], zone_dir)
-        git_ok(["mv", tmp.relative_to(zone_dir).as_posix(), rel_new], zone_dir)
-    else:
-        git_ok(["mv", rel_old, rel_new], zone_dir)
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
     moved = zone_dir / rel_new
-    git_ok(["mv", f"{rel_new}/{old}.md", f"{rel_new}/{new}.md"], zone_dir)
-    new_note = moved / f"{new}.md"
-    touched = {new_note}
-    for path in [n for n in zone_notes(zone_dir)]:
-        text = path.read_text(encoding="utf-8")
-        changed = relink(text, swaps, prefixes, old, new)
-        if not is_thread and moved in path.parents:
-            changed = re.sub(r'(?m)^project: "?\[\[%s\]\]"?$' % re.escape(old), f'project: "[[{new}]]"', changed)
-        if path == new_note:
-            changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
-            changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
-            changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
-            changed = dated_entry(changed, f"Renamed from {old}.", today)
-        if changed != text:
-            path.write_text(changed, encoding="utf-8")
-            touched.add(path)
-    git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
+    touched = set()
     what = f"{project_dir.name}, {old}" if is_thread else old
     try:
+        # The folder and its note, through git, so history follows.
+        tmp = folder.parent / f".rename-{new}"
+        if new.lower() == old.lower():                     # a change of case alone needs a step between
+            git_ok(["mv", rel_old, tmp.relative_to(zone_dir).as_posix()], zone_dir)
+            git_ok(["mv", tmp.relative_to(zone_dir).as_posix(), rel_new], zone_dir)
+        else:
+            git_ok(["mv", rel_old, rel_new], zone_dir)
+        git_ok(["mv", f"{rel_new}/{old}.md", f"{rel_new}/{new}.md"], zone_dir)
+        new_note = moved / f"{new}.md"
+        touched.add(new_note)
+        for path in zone_notes(zone_dir):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue                                    # not text it can rewrite; its links, if any, stay
+            changed = relink(text, swaps, prefixes, old, new, heads)
+            if not is_thread and moved in path.parents:
+                changed = re.sub(r'(?m)^project: "?\[\[%s\]\]"?$' % re.escape(old), f'project: "[[{new}]]"', changed)
+            if path == new_note:
+                changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
+                changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
+                changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
+                changed = dated_entry(changed, f"Renamed from {old}.", today)
+            if changed != text:
+                touched.add(path)
+                path.write_text(changed, encoding="utf-8")
+        git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
         git(["commit", "-q", "-m", f"{what}: renamed {new}"], zone_dir)
-    except GitError as exc:
+    except (GitError, Refusal, OSError) as exc:
+        # Everything here was tracked and clean, and nothing was staged before: put back what HEAD holds.
         git_value(["reset", "-q"], zone_dir)
-        shutil.rmtree(moved, ignore_errors=True)
+        if moved.exists() and moved != folder:
+            shutil.rmtree(moved, ignore_errors=True)        # only files git moved: the folder held nothing else
         git_value(["checkout", "HEAD", "--", rel_old] + [str(t.relative_to(zone_dir)) for t in touched
                                                        if moved not in t.parents and t.exists()], zone_dir)
         raise Refusal(f"The rename was not committed, so nothing changed: {' '.join(str(exc).split())}")
@@ -548,17 +588,21 @@ def cmd_rename(root, args, today):
     return "\n".join(said)
 
 
-def open_lines(zone_dir, names):
-    """The open lines of the zone's Todo.md that name one of `names` in a link."""
+def open_lines(zone_dir, paths, bare):
+    """The open lines of the zone's Todo.md that link to one of `paths` (from
+    the zone's top, without .md), or to one of `bare`, names that no other
+    note in the zone has."""
     todo = zone_dir / "Todo.md"
     if not todo.is_file():
         return []
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
     out = []
     for line in todo.read_text(encoding="utf-8").splitlines():
         if not re.match(r"\s*- \[ \]", line):
             continue
-        targets = [t.split("|")[0].split("#")[0] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
-        if any(t in names or t.rsplit("/", 1)[-1] in names for t in targets):
+        targets = [t.split("|")[0].split("#")[0].strip().removesuffix(".md")
+                   for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
+        if any(t in bare or any(t == h + p for h in heads for p in paths) for t in targets):
             out.append(line)
     return out
 
@@ -571,8 +615,10 @@ def cmd_delete(root, args, today):
     files = [Path(d) / f for d, _, fs in os.walk(folder) for f in fs if ".git" not in Path(d).parts]
     threads = children(project_dir / "Threads") if not is_thread else []
     rel = folder.relative_to(zone_dir).as_posix()
-    names = {name, f"{rel}/{name}"} | ({f"{rel}/Threads/{t}/{t}" for t in threads} | set(threads) if not is_thread else set())
-    lines = open_lines(zone_dir, names)
+    paths = {f"{rel}/{name}"} | {f"{rel}/Threads/{t}/{t}" for t in threads}
+    stems = [n.stem.lower() for n in zone_notes(zone_dir)]
+    bare = {n for n in {name} | set(threads) if stems.count(n.lower()) <= 1}
+    lines = open_lines(zone_dir, paths, bare)
     hub = project_dir / f"{project_dir.name}.md"
     hub_line = None
     if is_thread and hub.is_file():
@@ -592,13 +638,15 @@ def cmd_delete(root, args, today):
     if args.confirm != name:
         raise Refusal(f'--confirm must name it exactly: "{name}". Nothing was deleted.')
     todo = zone_dir / "Todo.md"
+    preflight(zone_dir, folder, "delete")
     dirty = uncommitted(zone_dir, [folder] + [p for p in (hub, todo) if p.is_file()])
     if dirty:
         raise Refusal(f"{', '.join(dirty[:3])} has changes not committed. Commit or undo them, then delete.")
     if mid_turn(root, folder):
         raise Refusal(f"A session is mid-turn in {name}. Let it finish, then delete.")
     git_ok(["rm", "-r", "-q", "--", rel], zone_dir)
-    shutil.rmtree(folder, ignore_errors=True)                    # what git did not track, such as an empty folder
+    if folder.exists():
+        remove_empty(folder)                                       # git took every file; only empty folders stay
     touched = []
     if hub_line:
         text = hub.read_text(encoding="utf-8")

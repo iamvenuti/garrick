@@ -103,8 +103,11 @@ One meeting at a time, even when several files are waiting.
    ```sh
    python3 System/skills/meetings/ingest.py land --inbox "Wikis/Meetings/raw/inbox/<file>" --date <YYYY-MM-DD> --title "<short title>"
    ```
-   It refuses a file that is not directly in `raw/inbox/`, a link, and a
-   file that is not `.txt`, `.md` or `.vtt`, and prints the slug
+   It refuses a file that is not directly in `raw/inbox/`, a link, a
+   file that is not `.txt`, `.md` or `.vtt`, and a recording already filed
+   (the same bytes, or the same `source-id` in its frontmatter, as a record
+   in `raw/`), naming the record it matches: tell the user, and leave the
+   copy for them to delete. It prints the slug
    and the moved path (`<YYMMDD-slug>\t<path>`) on success. Use that slug for
    everything below; never rename or re-derive it by hand, so the page and
    its raw record always agree.

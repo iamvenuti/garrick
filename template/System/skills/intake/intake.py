@@ -62,7 +62,7 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
     write_new,
 )
-from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root  # noqa: E402
+from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root, refuse_if_filed, source_id  # noqa: E402
 
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
@@ -337,14 +337,16 @@ def _names(pairs) -> str:
     return ", ".join(n or a for n, a in pairs)
 
 
-def draft_page(title: str, date: str, zone: str, parties: List[str], slug: str, mail: dict, today: str) -> str:
+def draft_page(title: str, date: str, zone: str, parties: List[str], slug: str, mail: dict, today: str,
+               sid: str = "") -> str:
     when = datetime.date.fromisoformat(date)
     sender = _names(mail["from"]) or "an unknown sender"
     lines = ["---", "title: %s" % _yaml(title), "type: email", "date: %s" % date, "zone: %s" % zone,
              "parties: [%s]" % ", ".join(parties), "from: %s" % _yaml(", ".join(_fmt(mail["from"])))]
     lines += _block("to", _fmt(mail["to"]))
     lines += _block("cc", _fmt(mail["cc"]))
-    lines += ["people: []", 'raw: "[[raw/%s]]"' % slug, "created: %s" % today, "updated: %s" % today, "---", ""]
+    lines += ["people: []", 'raw: "[[raw/%s]]"' % slug] + (["source-id: %s" % _yaml(sid)] if sid else [])
+    lines += ["created: %s" % today, "updated: %s" % today, "---", ""]
     lines += ["# %s" % title, "",
               "Mail from %s, %d %s %d." % (sender, when.day, when.strftime("%B"), when.year)
               + (" To %s." % _names(mail["to"]) if mail["to"] else "")
@@ -415,12 +417,13 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     sources = meetings_root(root) / "wiki" / "sources"
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
+    refuse_if_filed(root, path)
     slug = build_slug(date, title, _stems(raw_dir, sources))
     dest = raw_dir / (slug + path.suffix.lower())
     page = sources / (slug + ".md")
     meetings = meetings_root(root)
     today = today or datetime.date.today().isoformat()
-    text = draft_page(title, date, zone, tags, slug, mail, today)
+    text = draft_page(title, date, zone, tags, slug, mail, today, source_id(path))
     with filing(root):
         landing(root, meetings, dest)
         _page_then(root, meetings, page, text, lambda: move_new(root, meetings, path, dest))

@@ -421,6 +421,17 @@ class TestListAndParse(MailCase):
 
 
 class TestFileConversation(MailCase):
+    def test_a_mail_already_filed_is_refused_by_its_message_id(self):
+        first = self.drop("forecast.eml", eml(plain="Figures inside.\n", headers={"Message-ID": "<abc@acmecorp.example>"}))
+        slug, _, page = intake.file_conversation(self.root, first, ["acme"], today="2026-09-29")
+        self.assertEqual("abc@acmecorp.example", lib.parse_frontmatter(page)["source-id"])
+        again = self.drop("forecast2.eml", eml(plain="Figures inside.\n\n-- \nsent from my phone\n",
+                                               headers={"Message-ID": "<ABC@acmecorp.example>"}))
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_conversation(self.root, again, ["acme"])
+        self.assertIn("already filed as " + slug, str(caught.exception))
+        self.assertTrue(again.exists())
+
     def test_moves_the_raw_and_writes_the_page(self):
         data = eml(subject="Re: Fwd: Pallet forecast", plain="Figures inside.\n",
                    attachment=("forecast.csv", b"q,p\n"), cc="Owen Pike <owen.pike@acmecorp.example>")

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- A recording or mail filed twice no longer gets two pages. `ingest.py land` and `intake.py file-conversation` refuse a transcript or mail whose bytes, or whose ID (an `.eml`'s Message-ID, or `source-id`, `message-id` or `recording-id` in a transcript's frontmatter), match a record already in `Wikis/Meetings/raw/`, at any depth, and name that record. A mail page records its Message-ID as `source-id:`. ([#52](https://github.com/iamvenuti/garrick/issues/52))
+
 ### Changed
 
 - `ingest.py index` rewrote the whole of the Meetings `index.md`, so a table or notes kept there by hand were lost on the next ingest. It now writes only the page table, between `<!-- garrick:index -->` and `<!-- /garrick:index -->`, and keeps the rest. On an index from before the markers it replaces its own Page, Type, Updated table, or adds the block at the end. ([#51](https://github.com/iamvenuti/garrick/issues/51))

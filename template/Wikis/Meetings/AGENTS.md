@@ -56,7 +56,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
+A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
 
 ## A person page
 

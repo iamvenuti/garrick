@@ -100,6 +100,27 @@ class LandTest(unittest.TestCase):
         self.assertEqual(dest, self.ws.meetings / "raw" / "260310-acme-kick-off.txt")
         self.assertEqual(dest.read_text(), "Dana: we start Monday.\n")
 
+    def test_a_recording_already_filed_is_refused(self):
+        slug, _ = ingest.land(self.ws.root, self.ws.inbox_file("call.txt"), "2026-03-10", "Acme kick-off")
+        again = self.ws.inbox_file("call (1).txt")                      # the same bytes, fetched twice
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, again, "2026-03-10", "Acme kick-off")
+        self.assertIn("already filed as " + slug, str(caught.exception))
+        self.assertTrue(again.exists())
+
+    def test_the_same_recorder_id_in_other_words_is_refused_too(self):
+        first = self.ws.inbox_file("a.md", "---\nsource-id: rec-4471\n---\n\nDana: Monday.\n")
+        slug, _ = ingest.land(self.ws.root, first, "2026-03-10", "Acme kick-off")
+        nested = self.ws.meetings / "raw" / "2026"
+        nested.mkdir()
+        (self.ws.meetings / "raw" / (slug + ".md")).rename(nested / (slug + ".md"))     # filed in a subfolder
+        again = self.ws.inbox_file("b.md", "---\nsource-id: REC-4471\n---\n\nDana: Monday, reworded.\n")
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, again, "2026-03-11", "Acme again")
+        self.assertIn("2026/" + slug, str(caught.exception))
+        other = self.ws.inbox_file("c.md", "---\nsource-id: rec-9000\n---\n\nDana: Monday, reworded.\n")
+        ingest.land(self.ws.root, other, "2026-03-11", "Acme again")
+
     def test_never_overwrites_a_same_day_meeting(self):
         f1 = self.ws.inbox_file("one.txt")
         slug1, dest1 = ingest.land(self.ws.root, f1, "2026-03-10", "Acme kick-off")

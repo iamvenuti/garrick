@@ -17,6 +17,7 @@ import os
 import plistlib
 import re
 import shutil
+import subprocess
 import sys
 import time
 import unittest
@@ -287,6 +288,61 @@ class TestSpend(StatusCase):
         profile.unlink()
         with self.plists(), mock.patch.object(agent, "PROFILE", profile):
             self.assertIn("headless-settings.json, is missing, does not read or has lost a core entry", attention(self.page()))
+
+
+class TestManageFromThePage(StatusCase):
+    """New project, New thread, Rename and Delete (#36, #37, #38): the page
+    gives each dialog what it needs, and the script stands alone."""
+
+    def setUp(self):
+        super().setUp()
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        shutil.copy(Path(status.__file__).resolve().parents[2] / "template" / "System" / "tools" / "garrick_lib.py",
+                    tools / "garrick_lib.py")
+
+    def test_the_dialogs_data_and_the_cards(self):
+        write(self.root / "Zones" / "Work" / "Todo.md",
+              "# Work\n\n## Inbox\n\n- [ ] [[Pricing]]: call Dana\n- [x] [[Pricing]]: done one\n")
+        html = self.page()
+        data = json.loads(re.search(r'id="manage-data">(.*?)</script>', html, re.S).group(1))
+        self.assertIn("Acme Review", data["zones"]["Work"]["projects"])
+        self.assertIn("acme", [t for t, _ in data["zones"]["Work"]["parties"]])
+        self.assertFalse(data["acting"])
+        pricing = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual(["Work", "Acme Review", "Pricing"], pricing["mg"][:3])
+        self.assertGreaterEqual(pricing["mg"][3], 1)                       # its note, at least
+        self.assertEqual(1, pricing["mg"][4])                                # the open line, not the done one
+        self.assertIn('data-manage="new-project"', html)
+        self.assertIn('data-manage="new-thread"', html)
+        self.assertIn("<script>%s</script>" % status.MANAGE_JS, html)
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
+        self.assertTrue(json.loads(re.search(r'id="manage-data">(.*?)</script>', self.page(), re.S).group(1))["acting"])
+
+    def test_the_script_parses_and_draws_a_cards_buttons(self):
+        if not shutil.which("node"):
+            self.skipTest("Node is not installed")
+        js = """const vm=require("vm");const code=process.argv[1];const added=[];
+const ctx={JSON,String,Date,Math,setTimeout:()=>0,clearTimeout:()=>0,localStorage:{getItem:()=>null,setItem:()=>0,removeItem:()=>0},
+document:{readyState:"complete",getElementById:(id)=>id==="manage-data"?{textContent:'{"zones":{"Work":{"projects":["Acme"],"parties":[["acme","Acme Corp"]]}},"acting":true}'}:null,
+addEventListener:(k,f)=>added.push(k),body:{appendChild:()=>0}}};
+ctx.window={webkit:{messageHandlers:{garrick:{postMessage:()=>0}}}};vm.createContext(ctx);vm.runInContext(code,ctx);
+const t=ctx.window.GarrickManage({mg:["Work","Acme","Pricing",3,1]}),p=ctx.window.GarrickManage({mg:["Work","Acme","",5,2,["Pricing"]]});
+process.stdout.write(JSON.stringify([t,p,ctx.window.GarrickManage({mg:["Work","Acme","Pricing",3,1],held:1}),added]));"""
+        done = subprocess.run(["node", "-e", js, status.MANAGE_JS], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        thread, project, held, added = json.loads(done.stdout)
+        self.assertIn("Rename…", thread)
+        self.assertIn("Delete…", thread)
+        self.assertNotIn("New thread here", thread)
+        self.assertIn("New thread here", project)
+        self.assertEqual("", held)                                          # parked with its project: nothing to do here
+        self.assertIn("click", added)
+
+    def test_undo_wraps_the_hook_park_sets(self):
+        page = self.page()
+        self.assertLess(page.index("window.GarrickActed=function(q,out){if(!out"),
+                        page.index("var prev=window.GarrickActed;window.GarrickActed="))
 
 
 class TestVaultGraph(StatusCase):

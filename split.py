@@ -238,8 +238,7 @@ def starter(path, shipped):
     if local == install.lib().LOCAL_RULES:
         return (update.TEMPLATE / local).read_text(encoding="utf-8")
     title = next((heading_name(x) for x in shipped.splitlines() if x.startswith("# ")), "Instructions")
-    return ("# %s, this workspace's own\n\nAdds to Garrick's `AGENTS.md` beside it and wins where the two differ. "
-            "Garrick never ships or changes this file.\n" % title)
+    return "# %s, this workspace's own\n\n%s\n" % (title, install.lib().LOCAL_HEADER)
 
 
 def section_end(lines, start):

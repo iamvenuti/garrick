@@ -71,6 +71,7 @@ __all__ = [
     "ZONE_TEMPLATE",
     "INSTRUCTION_FILES",
     "LOCAL_RULES",
+    "LOCAL_HEADER",
     "is_instruction_file",
     "local_file",
     "SKILL_FOLDERS",
@@ -802,6 +803,11 @@ def _on(date: object) -> str:
 # has System/rules.local.md, and every AGENTS.md has an AGENTS.local.md.
 INSTRUCTION_FILES = ("AGENTS.md", "System/rules.md", "Wikis/AGENTS.md", "Wikis/*/AGENTS.md", "Zones/*/AGENTS.md")
 LOCAL_RULES = "System/rules.local.md"
+# The line the split opens each AGENTS.local.md it starts with, under its title.
+# Every one carries it, so the check for text copied between instruction files
+# passes over it.
+LOCAL_HEADER = ("Adds to Garrick's `AGENTS.md` beside it and wins where the two differ. "
+                "Garrick never ships or changes this file.")
 
 # Files the installer writes that are the user's from the start: never listed in
 # the stamp, never compared or written by an update.

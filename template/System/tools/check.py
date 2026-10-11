@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
+    LOCAL_HEADER,
     SKILL_FOLDERS,
     VERSION_STAMP,
     MEDIA_EXTS,
@@ -577,13 +578,19 @@ def check_instructions(ws: Workspace) -> List[Finding]:
                                "%d words, over its %d: move what it restates back to the file it points to" % (words, budget),
                                "An instruction file has grown past its budget"))
     # The same sentence in two files, one of them at the root: one is a copy.
-    # Zone and wiki files may share boilerplate, since each stands alone in its own repository.
+    # Zone and wiki files may share boilerplate, since each stands alone in its own repository,
+    # and so may the local files over the line the split opens each one with.
     root_files = {ws.root / p for p in ROOT_INSTRUCTIONS + ROOT_LOCALS + ("Wikis/AGENTS.md", "Wikis/AGENTS.local.md")}
+
+    def copy_norm(line: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"^\s*(?:[-*>]|\d+\.)\s*", "", line)).strip().lower()
+
+    header = copy_norm(LOCAL_HEADER)
     seen: Dict[str, set] = {}
     for f, text in texts.items():
         for line in text.splitlines():
-            norm = re.sub(r"\s+", " ", re.sub(r"^\s*(?:[-*>]|\d+\.)\s*", "", line)).strip().lower()
-            if len(norm) >= COPY_MIN_CHARS and not norm.startswith(("|", "```")):
+            norm = copy_norm(line)
+            if len(norm) >= COPY_MIN_CHARS and not norm.startswith(("|", "```")) and norm != header:
                 seen.setdefault(norm, set()).add(f)
     for norm, where in sorted(seen.items()):
         if len(where) > 1 and where & root_files:

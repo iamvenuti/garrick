@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- `check.py` warned that the local files the split starts say the same thing, over the line each one opens with. That line is Garrick's, and the copy check now passes over it.
+
 ## [0.16.0] - 2026-10-11
 
 Garrick's instruction files stay as it ships them: your own rules and routing live beside them in local files, and an update moves what you had changed there, asking about what it cannot place. Process the Inbox opens even when cmux remembers a session it cannot read, and the Mac app's answers reach you with its window out of sight.

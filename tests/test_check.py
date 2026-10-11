@@ -152,6 +152,20 @@ class TestLocalInstructions(CheckCase):
         write(self.root / "System" / "rules.local.md", "# Your rules\n\n- %s\n" % sentence)
         self.assertFinds("instructions", "warning", "the same text", path="System/rules.local.md and System/rules.md")
 
+    def test_the_line_the_split_opens_each_local_file_with_is_not_a_copy(self):
+        self.point()
+        write(self.meetings / "AGENTS.md", "# Meetings\n\nRead `AGENTS.local.md` beside it next.\n")
+        write(self.root / "AGENTS.local.md", "# Workspace, this workspace's own\n\n%s\n" % check.LOCAL_HEADER)
+        write(self.meetings / "AGENTS.local.md", "# Meetings, this workspace's own\n\n%s\n" % check.LOCAL_HEADER)
+        self.assertEqual([], [f.message for f in self.findings("instructions") if "the same text" in f.message])
+        sentence = "Every meeting page carries its zone and its parties, because those are what the walls read."
+        write(self.meetings / "AGENTS.local.md", "# Meetings, this workspace's own\n\n%s\n\n%s\n"
+              % (check.LOCAL_HEADER, sentence))
+        write(self.root / "AGENTS.local.md", "# Workspace, this workspace's own\n\n%s\n\n%s\n"
+              % (check.LOCAL_HEADER, sentence))
+        [hit] = self.assertFinds("instructions", "warning", "the same text")      # a sentence of the user's still is
+        self.assertIn(sentence[:40].lower(), hit.message)
+
     def test_skills_named_across_a_file_and_its_local_file(self):
         self.point()
         for name in ("threads", "meetings", "knowledge", "extra"):

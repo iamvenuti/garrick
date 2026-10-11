@@ -117,19 +117,20 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def changes(repo: Path, rel: str) -> Set[str]:
-    """`status --porcelain` lines for the Knowledge wiki, as a set to compare."""
-    return {l for l in git(repo, "status", "--porcelain", "--untracked-files=all", "--", rel).stdout.splitlines() if l}
+    """The paths changed in the Knowledge wiki, as git names them, unquoted:
+    `status -z` keeps a space or an accent in a name as it is."""
+    out = git(repo, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", rel).stdout
+    return {entry[3:] for entry in out.split("\0") if len(entry) > 3}
 
 
 def commit(workspace: Path, before: Set[str], top: Path, rel: str, filed: int, skipped: int) -> Optional[str]:
     """Commit what the call wrote in Knowledge, by name. None when done or
     nothing to commit, else why not."""
-    new = sorted(changes(top, rel) - before)
-    paths = [l[3:].strip().strip('"').split(" -> ")[-1] for l in new]
+    paths = sorted(changes(top, rel) - before)
     if not paths:
         return None
-    git(top, "add", "--", *paths)
-    c = git(top, "commit", "-q", "-m", "Knowledge: reading swept; %d filed, %d skipped" % (filed, skipped))
+    git(top, "add", "-A", "--", *paths)
+    c = git(top, "commit", "-q", "-m", "Knowledge: reading swept; %d filed, %d skipped" % (filed, skipped), "--", *paths)
     if c.returncode != 0:
         git(top, "reset", "-q", "--", *paths)
         why = (c.stderr or c.stdout).strip().splitlines()

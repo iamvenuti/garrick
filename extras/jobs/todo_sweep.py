@@ -93,8 +93,12 @@ def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int,
     code, text = agent.run(tier, prompt_for(zone.name, today), allow=["Read", "Grep", "Glob", "Edit"], cwd=workspace)
     found = counts(text) if code == 0 else None
     if found is None:
-        if todo.read_bytes() != before:
-            todo.write_bytes(before)                # half a sweep is put back
+        now = todo.read_bytes()
+        kept = set(now.splitlines())
+        if now != before and all(line in kept for line in before.splitlines()):
+            # Half a sweep only adds lines. Put the list back only when nothing it held was changed
+            # meanwhile, by this call or another session; otherwise leave it for a person to look at.
+            todo.write_bytes(before)
         return code or EXIT_INCOMPLETE, 0, "%s: no complete sweep (exit %d); Todo.md left as it was" % (zone.name, code or EXIT_INCOMPLETE)
     added, folded = found
     script = workspace / "System" / "skills" / "todo" / "todo.py"
@@ -110,9 +114,9 @@ def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int,
     paths = ["Todo.md"] + (["archive"] if (zone / "archive").is_dir() else [])
     if not git(zone, "status", "--porcelain", "--", *paths).stdout.strip():
         return 0, changed, said + "; nothing to commit"
-    git(zone, "add", "--", *paths)
+    git(zone, "add", "-A", "--", *paths)
     c = git(zone, "commit", "-q", "-m", "%s: actions swept; %d added, %d folded, %d expired, %d archived" % (
-        zone.name, added, folded, done.get("expired", 0), done.get("archived", 0)))
+        zone.name, added, folded, done.get("expired", 0), done.get("archived", 0)), "--", *paths)   # these alone
     if c.returncode != 0:
         git(zone, "reset", "-q", "--", *paths)
         why = (c.stderr or c.stdout).strip().splitlines()

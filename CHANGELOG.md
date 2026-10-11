@@ -4,6 +4,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- *Process the Inbox* did nothing when cmux still remembered a session at the workspace root that desk could not read, as an old session in a reused tab: desk refused to type into it and said so where nobody saw it. desk now passes over a tab it cannot read and starts a new one on the prompt; a tab that is mid-turn is still left alone.
+- The Mac app's answer to a button, a menu row or Ask showed only in its window. With the window out of sight it now comes as a notification as well.
+
 ## [0.15.5] - 2026-10-11
 
 With the cmux extra, every way of opening a tab starts its session: Process the Inbox, Ask and the menu's rows as well as the cards. Cards lose the project's note button.

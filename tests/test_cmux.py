@@ -405,6 +405,16 @@ class DeskVerbTest(CmuxCase):
         self.assertIn("mid-turn", err)
         self.assertNotIn("send", self.verbs())
 
+    def test_open_with_a_prompt_passes_over_a_tab_it_cannot_read(self):
+        # A session cmux remembers in the folder, whose state cannot be read
+        # (its transcript says nothing desk knows): a new tab starts on the
+        # prompt, and nothing is typed into the old one.
+        self.state({"sessions": [self.session("a", self.ws, [{"type": "unknown"}])]})
+        code, out, err = self.run_desk("open", str(self.ws), "--prompt", "process the inbox", "--front")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("send", self.verbs())
+        self.assertTrue({"new-surface", "new-workspace"} & set(self.verbs()))
+
     def test_close_refuses_busy_and_unreadable_tabs_and_closes_none(self):
         project = self.work / "Acme Review"
         for rows in (claude_rows(done=False), [{"type": "unknown"}]):

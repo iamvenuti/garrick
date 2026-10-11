@@ -41,6 +41,7 @@ import Carbon.HIToolbox
 import IOKit.pwr_mgt
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 import WebKit
 
 let info = Bundle.main.infoDictionary ?? [:]
@@ -544,6 +545,22 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			(function(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;
 			setTimeout(function(){t.style.opacity=0},4000)})(\(quoted)[0])
 			""")
+		// The toast lives in the window. Asked from the menu, the panel or the
+		// Ask box with the window out of sight, the answer would go unseen, so it
+		// comes as a notification too.
+		if window == nil || !window.isVisible || !NSApp.isActive { notify(text) }
+	}
+
+	func notify(_ text: String) {
+		if checking { return }
+		let center = UNUserNotificationCenter.current()
+		center.requestAuthorization(options: [.alert]) { granted, _ in
+			guard granted else { return }
+			let note = UNMutableNotificationContent()
+			note.title = "Garrick"
+			note.body = text
+			center.add(UNNotificationRequest(identifier: UUID().uuidString, content: note, trigger: nil))
+		}
 	}
 
 	// MARK: the page's buttons

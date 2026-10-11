@@ -488,26 +488,39 @@ def cmd_open(desk: Desk, a) -> None:
 
     existing = [s for s in live_sessions() if s.get("cwd") and Path(s["cwd"]).resolve() == folder]
     if existing and not a.new:
-        s = existing[0]
-        if a.dry_run:
-            print("already open: %s in %s" % (tab_label(s), s.get("workspace_name") or "?"))
+        if not a.prompt:
+            s = existing[0]
+            if a.dry_run:
+                print("already open: %s in %s" % (tab_label(s), s.get("workspace_name") or "?"))
+                return
+            if s.get("surface"):
+                cmux("rpc", "surface.focus", json.dumps({"surface_id": s["surface"]}), check=False)
+            if a.front:
+                bring_forward()
+            print("already open: %s in %s; brought it forward" % (tab_label(s), s.get("workspace_name") or "?"))
             return
-        if s.get("surface"):
-            cmux("rpc", "surface.focus", json.dumps({"surface_id": s["surface"]}), check=False)
-        if a.front:
-            bring_forward()
-        if a.prompt:
-            # Typed into the tab only when its last turn has ended: a busy tab, or
-            # one desk cannot read, would take the text as an answer to something else.
-            state = state_of(s)
-            if state != "idle" or not s.get("surface"):
-                raise DeskError("%s is %s; brought it forward and sent nothing" % (
-                    tab_label(s), "mid-turn" if state == "working" else "in a state desk cannot read"))
+        # A prompt is typed only into a tab whose last turn has ended: a busy
+        # tab would take the text as an answer to something else. A tab desk
+        # cannot read, such as a session cmux remembers but whose transcript
+        # is gone, is passed over, and a new tab starts on the prompt instead.
+        states = [(s, state_of(s)) for s in existing]
+        idle = [s for s, st in states if st == "idle" and s.get("surface")]
+        busy = [s for s, st in states if st == "working"]
+        if idle or busy:
+            s = (idle or busy)[0]
+            if a.dry_run:
+                print("%s: %s in %s" % ("would send to" if idle else "mid-turn, would send nothing to",
+                                        tab_label(s), s.get("workspace_name") or "?"))
+                return
+            if s.get("surface"):
+                cmux("rpc", "surface.focus", json.dumps({"surface_id": s["surface"]}), check=False)
+            if a.front:
+                bring_forward()
+            if not idle:
+                raise DeskError("%s is mid-turn; brought it forward and sent nothing" % tab_label(s))
             send(s["surface"], a.prompt)
             print("sent to %s in %s: %s" % (tab_label(s), s.get("workspace_name") or "?", a.prompt))
             return
-        print("already open: %s in %s; brought it forward" % (tab_label(s), s.get("workspace_name") or "?"))
-        return
 
     name = a.title or (desk.say_place(place) if place["kind"] == "thread" else folder.name or "Workspace")
     command = start_command(agent, name, a.prompt)

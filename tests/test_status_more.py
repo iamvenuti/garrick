@@ -1042,3 +1042,12 @@ class TestHotkeyFields(unittest.TestCase):
         out = self.run_js({"hotkey": "⌥Space"})
         self.assertEqual("none", out["askRow"])
         self.assertEqual("Opens the menu or the panel from any app", out["notes"]["hotkey"])
+
+
+class TestAppNotifies(unittest.TestCase):
+    def test_an_answer_with_the_window_out_of_sight_comes_as_a_notification(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        toast = swift[swift.index("func toast("):swift.index("func notify(")]
+        self.assertIn("!window.isVisible || !NSApp.isActive { notify(text) }", toast)
+        self.assertIn("UNUserNotificationCenter.current()", swift[swift.index("func notify("):])
+

@@ -1302,7 +1302,7 @@ def resume_block(text: str) -> List[str]:
 
 # A Resume here block as the thread template leaves it: its date and table
 # cells still hold the template's <angle-bracket> prompts.
-RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Waiting on|Deadline)\s*\|\s*<")
+RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Keep in mind|Waiting on|Deadline)\s*\|\s*<")
 RESUME_DATE_PROMPT = "**Where it stands, <"
 
 

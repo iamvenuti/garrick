@@ -107,7 +107,8 @@ session touched several, ask which, naming them.
    the working notes, not the dated entries, unless the user asks.
 3. Reply in two sentences: **where it stands**, then **the next action**. Fold
    in who it is waiting on when it is blocked, and the deadline when it is
-   close.
+   close. When **Keep in mind** says more than nothing, add it as a third
+   sentence: it is what the user had in their head when they left.
 4. That thread is now the one in focus for this session: a later "wrap" with no
    name means it.
 
@@ -180,12 +181,22 @@ per wrap: the one named, and nothing else.
    |---|---|
    | Live artifact | <path, relative to the project, and what it is> |
    | Rebuild with | <how to make it again, and from what> |
-   | Next action | <the single next thing, and whose it is> |
+   | Next action | <the single next thing, small enough to start in two minutes, and whose it is> |
+   | Keep in mind | <what is only in your head: a decision half made and why, a doubt; or nothing> |
    | Waiting on | <who, or nobody> |
    | Deadline | <date, and what breaks if it slips; or none> |
    ```
-   Keep all five rows; a row that does not apply says "none" or "nobody". The
-   next action is one action. Anything more goes to `Todo.md` (step 7).
+   Keep all six rows; a row that does not apply says "none" or "nobody". The
+   next action is one action, small enough to start in two minutes: "draft
+   the pricing section" fails, "open the pricing sheet and fill in the
+   tier-two volume" passes. Anything more goes to `Todo.md` (step 7).
+   **Keep in mind** holds what no file can tell a cold resume: the decision
+   half made and which way you were leaning and why, a doubt about a figure,
+   a thing noticed and not yet acted on. Write it from what was said in this
+   session, not from the files; `nothing` is a valid answer, and the usual
+   one for a thread that is simply waiting. When the user is listening, ask
+   for it: "Anything that's only in your head right now?" A block written
+   before this row existed is still whole; the row is added at its next wrap.
    **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
    end the moment it needs a change. Every path and link in the block must lead
    to something that exists now; `check.py` warns about one that does not.

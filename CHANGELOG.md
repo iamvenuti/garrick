@@ -13,6 +13,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- The Resume here block has a sixth row, *Keep in mind*: what only you know, such as a decision half made and which way you leaned, or a doubt about a figure. `nothing` is a valid answer. The next action must be small enough to start in two minutes. The `threads` skill's wrap asks for both and "open X" reads *Keep in mind* back, the `setup` skill's *Fill in my resume points* asks the new question, and `check.py` reports the row while it still holds the template's prompt. A block written before the row existed stays valid. ([#31](https://github.com/iamvenuti/garrick/issues/31))
 - "Open X" on a parked thread wakes it, as "wake X" does, and says so in a few words before where it stands; before, it asked first, so every session the status page opened on a parked thread stopped on that question. A thread parked with its project wakes the project. Questions that only look at a thread leave it parked. ([#16](https://github.com/iamvenuti/garrick/issues/16))
 - `ingest.py index` rewrote the whole of the Meetings `index.md`, so a table or notes kept there by hand were lost on the next ingest. It now writes only the page table, between `<!-- garrick:index -->` and `<!-- /garrick:index -->`, and keeps the rest. On an index from before the markers it replaces its own Page, Type, Updated table, or adds the block at the end. ([#51](https://github.com/iamvenuti/garrick/issues/51))
 

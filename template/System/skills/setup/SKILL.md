@@ -132,12 +132,15 @@ than nothing: it looks like an answer.
 1. **Find them**: `python3 System/tools/check.py --json`, the `resume`
    findings that say "still the template's". One thread at a time, most
    recently changed first.
-2. **Ask four things**, one per turn, in plain words, and skip what the
+2. **Ask five things**, one per turn, in plain words, and skip what the
    user already said:
    - "Where does <Thread> stand?"
-   - "What's the next thing to do on it, and whose is it?"
+   - "What's the next thing to do on it, and whose is it?" If the answer
+     would take more than two minutes to start, ask for the first step of it.
    - "Are you waiting on anyone?"
    - "Is there a deadline?"
+   - "Anything about it that's only in your head?" (the *Keep in mind* row;
+     "nothing" is a fine answer)
    The live artifact and how to rebuild it: read the thread's folder and
    propose them ("the live file looks like `Deliverables/<file>`; right?"),
    rather than asking.

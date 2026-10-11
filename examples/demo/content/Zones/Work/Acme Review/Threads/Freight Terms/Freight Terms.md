@@ -27,6 +27,7 @@ Dana Whitlock, at the [[Meetings/wiki/sources/260902-acme-kick-off|kick-off]]: C
 | Live artifact | `Deliverables/260918 - Freight options brief.md`, the draft brief |
 | Rebuild with | Acme's pallet volumes from `Sources/Acme supplier list.csv`, Cobalt's terms from the renewal call, rate ranges from the Pellow & Strand outlook |
 | Next action | Test the twelve-hundred-pallet commitment against Dana's forecast, then finish the brief; Sam's |
+| Keep in mind | Leaning to a two-year term if Dana's forecast holds; the fuel surcharge in the draft is August's and may have moved |
 | Waiting on | Dana Whitlock for the pallet forecast; Marta Quill for Cobalt's written offer, due 30 September |
 | Deadline | Friday 2 October to Dana; the renewal is 31 October and Cobalt's nine percent applies if nothing is agreed |
 

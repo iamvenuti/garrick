@@ -44,6 +44,7 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
+    CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
     SKILL_FOLDERS,
@@ -178,6 +179,7 @@ class Workspace:
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
+    raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
 
 
 # ---------------------------------------------------------------------------
@@ -746,13 +748,41 @@ def check_placeholders(ws: Workspace) -> List[Finding]:
     return out
 
 
+# What a section the checks cannot read leaves undone, said after its fix.
+CONTEXT_EFFECT = {
+    "people": "; until then the wall check sees no one's name",
+    "parties": "; until then no wall can be checked",
+    "walls": "; until then no wall is checked",
+    "aliases": "; until then no heard name resolves",
+    "zones": "; until then no zone folder is checked against it",
+}
+
+
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
     if not (ws.root / ctx_path).is_file():
         return [Finding(ERROR, "context", ctx_path, "missing; walls and aliases cannot be read", "The context file is missing")]
     parties = ws.context["parties"]
-    if not parties:
+    unread = set()
+    for name, (shown, _) in CONTEXT_TABLES.items():
+        seen = ws.context.get("tables", {}).get(name)
+        if not seen:
+            continue
+        title = name.capitalize()
+        wanted = ", ".join(shown)
+        if seen["text"] and not seen["table"]:
+            unread.add(name)
+            out.append(Finding(ERROR, "context", ctx_path,
+                               "%s is written as prose or a list; the checks cannot read anything in it. "
+                               "Make it a table: %s%s" % (title, wanted, CONTEXT_EFFECT.get(name, "")),
+                               "The %s section of the context file is not a table" % title))
+        elif seen["missing"]:
+            out.append(Finding(WARNING, "context", ctx_path,
+                               "the %s table has no %s column; it needs %s" % (
+                                   title, " or ".join(c.capitalize() for c in seen["missing"]), wanted),
+                               "The %s table is missing a column" % title))
+    if not parties and "parties" not in unread:
         out.append(Finding(WARNING, "context", ctx_path, "the Parties table is empty; no wall can be checked",
                            "The Parties table is empty"))
     for wall in sorted(ws.context["walls"], key=sorted):
@@ -2123,16 +2153,53 @@ def shared_link(ws: Workspace, source: Path) -> Callable[[str], bool]:
     return test
 
 
-def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
-    """The raw transcripts behind a meeting page: the one its `raw` field names,
-    else any file in raw/ with the page's slug. The inbox is not yet filed. In
-    staged mode, a record deleted from disk but still in git counts too."""
+# The fields of a meeting page that name its raw record.
+RAW_FIELDS = ("raw", "transcript")
+
+
+def raw_records(ws: Workspace) -> Dict[str, List[Path]]:
+    """Every file under the Meetings raw/, at any depth, by stem; raw/inbox/
+    is not filed yet. In staged mode, a record deleted from disk but still
+    in git counts too."""
+    if ws.raw_records is not None:
+        return ws.raw_records
     raw = ws.root / "Wikis" / "Meetings" / "raw"
-    stems = {page.stem}
-    for value in as_list(fm.get("raw")):
-        stems.add(Path(value.strip("[]").split("|", 1)[0]).stem)
-    found = {p for p in raw.iterdir() if p.is_file() and p.stem in stems} if raw.is_dir() else set()
-    found |= {p for p in ws.git_view if p.parent == raw and p.stem in stems}
+    inbox = raw / "inbox"
+    found = set()
+    if raw.is_dir():
+        for folder, dirs, files in os.walk(raw):
+            here = Path(folder)
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != inbox)
+            found |= {here / f for f in files if not f.startswith(".")}
+    found |= {p for p in ws.git_view if raw in p.parents and inbox not in p.parents and p != inbox}
+    index: Dict[str, List[Path]] = {}
+    for p in sorted(found):
+        index.setdefault(p.stem, []).append(p)
+    ws.raw_records = index
+    return index
+
+
+def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
+    """The raw records behind a meeting page: what its `raw` (or `transcript`)
+    field links to, at any depth under raw/, else any record there with the
+    page's slug."""
+    raw = ws.root / "Wikis" / "Meetings" / "raw"
+    index = raw_records(ws)
+    found, stems = set(), {page.stem}
+    for key in RAW_FIELDS:
+        for value in as_list(fm.get(key)):
+            target = value.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()
+            if not target:
+                continue
+            stem = Path(target).stem
+            stems.add(stem)
+            if "/" in target:          # a path: the record it names, if there is one
+                tail = Path(target.split("raw/", 1)[-1])
+                found |= {p for p in index.get(stem, []) if p.relative_to(raw).as_posix().endswith(tail.as_posix())
+                          or p.relative_to(raw).with_suffix("").as_posix().endswith(tail.as_posix())}
+    if not found:
+        for stem in stems:
+            found |= set(index.get(stem, []))
     return sorted(found)
 
 
@@ -2503,10 +2570,8 @@ def mail_index(ws: Workspace) -> Dict[Tuple[str, int, str], List[MailRecord]]:
         for raw in meeting_raws(ws, page, fm):
             owner.setdefault(raw, page)
     records: List[MailRecord] = []
-    raw_dir = ws.root / "Wikis" / "Meetings" / "raw"
-    if raw_dir.is_dir():
-        records += [MailRecord(p, owner.get(p)) for p in sorted(raw_dir.iterdir())
-                    if p.is_file() and p.suffix.lower() == ".eml"]
+    records += [MailRecord(p, owner.get(p)) for paths in raw_records(ws).values() for p in paths
+                if p.suffix.lower() == ".eml" and p.is_file()]
     for zone in ws.zones:
         inbox = zone / INBOX
         if inbox.is_dir():

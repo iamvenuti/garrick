@@ -400,6 +400,25 @@ def _table(lines: List[str]) -> List[Dict[str, str]]:
     return rows
 
 
+def _table_header(lines: List[str]) -> Optional[List[str]]:
+    """The lower-case header of the first Markdown table in `lines`, or None."""
+    for line in lines:
+        if line.strip().startswith("|"):
+            return [c.lower() for c in _split_row(line.strip())]
+    return None
+
+
+# The sections of context.md read as tables: the columns each is written
+# with, and the ones the checks cannot do without.
+CONTEXT_TABLES = {
+    "zones": (("Zone", "Holds"), ("zone",)),
+    "parties": (("Party", "What it is", "Zone", "Tag", "Domains"), ("tag",)),
+    "walls": (("Between", "And", "Why"), ()),          # read by position when the names differ
+    "people": (("Name", "Party", "Role"), ("name", "party")),
+    "aliases": (("Heard", "Means"), ("heard", "means")),
+}
+
+
 def _col(row: Dict[str, str], *names: str) -> str:
     for key, value in row.items():
         for n in names:
@@ -425,13 +444,25 @@ def load_context(root: PathLike) -> dict:
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": []}
+    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {}}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ctx
     sections = _sections(text)
+    for name, (_, columns) in CONTEXT_TABLES.items():
+        lines = sections.get(name)
+        if lines is None:
+            continue
+        rows = _table(lines)
+        header = _table_header(lines)
+        ctx["tables"][name] = {
+            "table": header is not None,
+            "text": any(l.strip() for l in lines),
+            "rows": len(rows),
+            "missing": [c for c in columns if header is not None and not any(h.startswith(c) for h in header)],
+        }
 
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
         if addr.lower() not in ctx["me"]:

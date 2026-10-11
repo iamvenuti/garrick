@@ -266,6 +266,35 @@ class TestUnfinishedPages(QuoteCase):
         self.assertEqual(["Zones/Work/Acme Review/Deliverables/260320 - Note.md"], [f.path for f in found])
         self.assertIn("260319-call", found[0].message)
 
+    def _quoted_from(self, record, field, value, slug="260319-call"):
+        write(self.meetings / "raw" / record, "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        page = meeting_page(None, None, "Second call").replace("type: meeting", "type: meeting\n%s: \"%s\"" % (field, value))
+        write(self.meetings / "wiki" / "sources" / (slug + ".md"), page)
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        return self.walls()
+
+    def test_wording_from_a_raw_record_in_a_subfolder(self):
+        found = self._quoted_from("2026/03/260319-call.txt", "raw", "[[raw/2026/03/260319-call.txt]]")
+        self.assertEqual(["Zones/Work/Acme Review/Deliverables/260320 - Note.md"], [f.path for f in found])
+        self.assertIn("260319-call", found[0].message)
+
+    def test_wording_from_a_subfolder_record_found_by_the_slug(self):
+        found = self._quoted_from("calls/260319-call.txt", "title2", "x")
+        self.assertEqual(1, len(found), found)
+
+    def test_a_transcript_field_names_the_record_too(self):
+        found = self._quoted_from("calls/2026-03-19 call with acme.txt", "transcript",
+                                  "[[calls/2026-03-19 call with acme]]", slug="260319-second-call")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("260319-second-call", found[0].message)
+
+    def test_the_inbox_is_still_not_a_record(self):
+        write(self.meetings / "raw" / "inbox" / "260319-call.txt",
+              "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        write(self.meetings / "wiki" / "sources" / "260319-call.md", meeting_page(None, None, "Second call"))
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        self.assertEqual([], [f for f in self.walls() if "260319" in f.message])
+
     def test_linked_and_quoted_is_one_finding(self):
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "[[260318-call]]: " + BRIEF + ".\n")
         found = self.walls()

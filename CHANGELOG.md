@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-10-11
+
+With the cmux extra, every way of opening a tab starts its session: Process the Inbox, Ask and the menu's rows as well as the cards. Cards lose the project's note button.
+
 ### Changed
 
 - With the cmux extra's desk ready (the extra, cmux and the preview `page-actions`), everything Garrick.app opens in cmux goes through desk, so the new tab starts the assistant rather than waiting at a prompt with the phrase on the clipboard. That now covers *Process the Inbox* in the menu and the panel, a tab at the workspace root that starts on "process the inbox"; the words typed in the menu's or panel's field with the preview `ask` off, at the root too; Ask's opens in cmux; and the menu's and panel's rows, all through one rule in the app's `launch`. The page's menu data says `dk` when the desk is ready, and Ask marks its opens the same way. The Obsidian plugin follows the same rule. Without the desk, cmux opens the folder with the phrase on the clipboard, as before.

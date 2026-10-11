@@ -110,6 +110,18 @@ A thread that was just created has no history, so opening it only tells you its 
 
 The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`.
 
+## What a project published
+
+A deck or a workbook that leaves the workspace, copied to a shared cloud folder where colleagues read or edit it, is one row in the project's `Deliverables/published.md`: the date, the file, where it went, who received it, and which copy counts from now on (`share` when colleagues edit it there, `here` when they only read it). The `threads` skill adds the row when a wrap finishes such a deliverable, and asks who edits it next.
+
+```markdown
+| Date | File | Destination | Recipients | Authoritative |
+|---|---|---|---|---|
+| 2026-10-01 | `260930 - Pricing deck.pptx` | `Decks/Pricing deck.pptx` | Dana, Owen | share |
+```
+
+The destination is relative to the folder the hub names in `shared: <link>/<path>`, through a link you make once in the zone's `.shared/` folder (`ln -s "<the provider's folder>" Zones/Work/.shared/team`); never write the provider's own path into a note, since it changes when an account or library is renamed. `<link>:<path>` reaches another linked folder. `python3 System/tools/drift.py` then compares each file with its shared copy and reports only real differences: an Office file is compared by its content, not its bytes, which a shared library rewrites on every upload. A copy kept online only is never downloaded, only reported as unchecked. With `--save` the status page lists what drifted. macOS keeps scheduled jobs out of cloud folders, so run it from a session or the app.
+
 ## The check
 
 For app users, ask “Run the workspace check and explain any findings.” The command below does the same. A clean result covers the implemented checks, not a guarantee against every disclosure; see [coverage and limits](principles.md#what-the-check-covers).

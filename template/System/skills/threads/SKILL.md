@@ -218,6 +218,15 @@ per wrap: the one named, and nothing else.
    finds its lines.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
+   **A deliverable that left the workspace** in this session, copied to a
+   shared folder: ask who edits it next. Colleagues who edit it: the shared
+   copy counts from now on (`share`); nobody, or colleagues who only read
+   it: the copy here does (`here`). Re-read `Deliverables/published.md`
+   (make it with the header row when there is none) and append one row,
+   `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
+   the destination relative to the folder the hub names in `shared:`. Say
+   so in the Live artifact row when the shared copy is the one that counts.
+   `python3 System/tools/drift.py` compares them from then on.
 8. **Set `updated:`** in the note's frontmatter to today.
 9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
    Re-read the hub first; change that one line.

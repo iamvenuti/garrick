@@ -1496,6 +1496,15 @@ def check_deliverables(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "deliverables", rel(ws, path),
                                    "name does not start with its creation date, `YYMMDD - <name>`",
                                    "A deliverable in %s lacks its date" % project.name))
+        # What left the workspace: a row drift.py cannot read is a file nobody watches.
+        ledger = project / "Deliverables" / "published.md"
+        if ledger.is_file():
+            from drift import ledger_rows
+            for line in ledger_rows(ledger)[1]:
+                out.append(Finding(WARNING, "deliverables", rel(ws, ledger),
+                                   "a row does not read as `| YYYY-MM-DD | `file` | `destination` | recipients | "
+                                   "share or here |`, so its file is not watched for drift: %s" % line[:80],
+                                   "A row of what %s published does not read" % project.name))
     return out
 
 

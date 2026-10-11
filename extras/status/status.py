@@ -232,6 +232,26 @@ def workspace_lib(ws: Optional[Path]):
     return _LIBS[ws]
 
 
+DRIFT = ("System", "generated", "drift.json")
+DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missing, here or on the share",
+             "unread": "has a row in published.md that does not read"}
+
+
+def drifted(ws: Path) -> List[str]:
+    """What drift.py last found worth a look, from System/generated/drift.json,
+    which it writes when run from a session or the app: a launchd job may
+    not read a cloud folder, so the page never compares anything itself."""
+    try:
+        data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for f in data.get("files", []) if isinstance(data, dict) else []:
+        if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
+            out.append("%s: %s %s" % (f.get("project", "?"), f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+    return out
+
+
 def workspace_context(ws: Path) -> dict:
     """System/context.md as the workspace's own garrick_lib reads it, or {}."""
     lib = workspace_lib(ws)
@@ -3537,6 +3557,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     notice = release_notice(ws)
     if notice:
         attn.append(("warning", notice[0], notice[1]))
+    for f in drifted(ws):
+        attn.append(("warning", f, "#threads"))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 

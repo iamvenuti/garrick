@@ -355,6 +355,50 @@ class TestUnfinishedPages(QuoteCase):
         self.assertEqual([], self.walls())
 
 
+class TestSplitPages(GapCase):
+    """One record, a page per project: declared with split-with, each page
+    read with its own parties."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.meetings / "raw" / "260310-weekly.txt", "Jo: Acme first. Then Birch.\n")
+
+    def page(self, slug, parties, others):
+        text = meeting_page("Work", parties, slug).replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/260310-weekly]]"' +
+            ("\nsplit-with: [%s]" % ", ".join('"[[%s]]"' % o for o in others) if others is not None else ""))
+        write(self.meetings / "wiki" / "sources" / (slug + ".md"), text)
+
+    def splits(self):
+        return [f for f in self.findings("meetings", "error") if "split-with" in f.message]
+
+    def test_a_two_way_split_that_names_each_other_is_fine(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme"])
+        self.assertEqual([], self.splits())
+
+    def test_a_three_way_split_names_every_other(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch", "260310-weekly-cedar"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme", "260310-weekly-cedar"])
+        self.page("260310-weekly-cedar", "[acme]", ["260310-weekly-acme"])
+        [found] = self.splits()
+        self.assertEqual("Wikis/Meetings/wiki/sources/260310-weekly-cedar.md", found.path)
+        self.assertIn("260310-weekly-birch", found.message)
+
+    def test_a_shared_record_without_split_with_is_reported(self):
+        self.page("260310-weekly-acme", "[acme]", None)
+        self.page("260310-weekly-birch", "[birch]", None)
+        self.assertEqual(2, len(self.splits()))
+
+    def test_each_page_is_walled_by_its_own_parties(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme"])
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "From the call: [[260310-weekly-acme]].\n")
+        self.assertEqual([], [f for f in self.findings("walls") if "Notes.md" in f.path])
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "From the call: [[260310-weekly-birch]].\n")
+        self.assertTrue([f for f in self.findings("walls") if "Notes.md" in f.path])
+
+
 class TestProjectFiles(QuoteCase):
     """A project's own files are its party's material: a brief or a data file
     pasted across a wall is caught as a meeting would be."""

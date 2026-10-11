@@ -437,8 +437,13 @@ class SourceLinkTest(unittest.TestCase):
         (self.ws.root / "Wikis" / ".obsidian").mkdir(parents=True)
         link = ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off", "Acme [kick-off]")
         self.assertEqual("[Acme (kick-off)](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260310-acme-kick-off)", link)
-        code = ingest.main(["--root", str(self.ws.root), "link", "--zone", "Work", "--slug", "260310-acme-kick-off"])
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ingest.main(["--root", str(self.ws.root), "link", "--zone", "Work", "--slug", "260310-acme-kick-off"])
         self.assertEqual(0, code)
+        self.assertEqual("[260310-acme-kick-off](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260310-acme-kick-off)",
+                         out.getvalue().strip())
 
 
 class LogTest(unittest.TestCase):

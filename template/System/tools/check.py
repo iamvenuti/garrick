@@ -1842,8 +1842,42 @@ def note_refs(ws: Workspace, zone: Path) -> List[Finding]:
     return out
 
 
-def check_meetings(ws: Workspace) -> List[Finding]:
+def link_stem(value: str) -> str:
+    """A link's target as a bare name: `[[raw/2026/x.txt|X]]` reads x."""
+    return Path(str(value).strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()).stem
+
+
+def check_splits(ws: Workspace) -> List[Finding]:
+    """Pages that share a raw record are a declared split: each names every
+    other in `split-with:`, so each is read with its own parties and a
+    brief or a wall never takes one for the whole call. Two pages on one
+    record without it are one conversation filed twice, or a split nobody
+    declared."""
     out = []
+    by_raw: Dict[Path, List[Path]] = {}
+    for page, fm in ws.meetings.items():
+        if not any(fm.get(k) for k in RAW_FIELDS):
+            continue                                  # only pages that name their record
+        for raw in meeting_raws(ws, page, fm):
+            by_raw.setdefault(raw, []).append(page)
+    for raw, pages in sorted(by_raw.items()):
+        pages = sorted(set(pages))
+        if len(pages) < 2:
+            continue
+        for page in pages:
+            named = {link_stem(v) for v in as_list(ws.meetings[page].get("split-with"))}
+            missing = [o.stem for o in pages if o != page and o.stem not in named]
+            if missing:
+                out.append(Finding(ERROR, "meetings", rel(ws, page),
+                                   "shares its raw record %s with %s, and its split-with does not name %s; each page of "
+                                   "a split names every other, or the two are one conversation filed twice"
+                                   % (raw.name, ", ".join(o.stem for o in pages if o != page), ", ".join(missing)),
+                                   "Two meeting pages share one record without saying they split it"))
+    return out
+
+
+def check_meetings(ws: Workspace) -> List[Finding]:
+    out = check_splits(ws)
     zone_names = {z.name for z in ws.zones} | set(ws.context["zones"])
     for page, fm in ws.meetings.items():
         r = rel(ws, page)
@@ -2599,13 +2633,15 @@ def mail_index(ws: Workspace) -> Dict[Tuple[str, int, str], List[MailRecord]]:
     .eml in the Meetings raw records, and every one waiting in a zone Inbox."""
     if ws.mail_index is not None:
         return ws.mail_index
-    owner: Dict[Path, Path] = {}
+    owner: Dict[Path, List[Path]] = {}
     for page, fm in ws.meetings.items():
         for raw in meeting_raws(ws, page, fm):
-            owner.setdefault(raw, page)
+            owner.setdefault(raw, []).append(page)
+    # A mail split into a page per project is a record per page: what each
+    # page's project may take from it is read with that page's parties.
     records: List[MailRecord] = []
-    records += [MailRecord(p, owner.get(p)) for paths in raw_records(ws).values() for p in paths
-                if p.suffix.lower() == ".eml" and p.is_file()]
+    records += [MailRecord(p, page) for paths in raw_records(ws).values() for p in paths
+                if p.suffix.lower() == ".eml" and p.is_file() for page in sorted(owner.get(p) or [None], key=str)]
     for zone in ws.zones:
         inbox = zone / INBOX
         if inbox.is_dir():

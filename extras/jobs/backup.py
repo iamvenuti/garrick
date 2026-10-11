@@ -106,6 +106,15 @@ def refused(ws: Path, repo: Path) -> Tuple[List[Tuple[str, str]], Optional[str]]
     return out, None
 
 
+def midway(repo: Path) -> bool:
+    """A merge, rebase or cherry-pick under way, or conflicts unresolved: a
+    commit now would conclude it, conflict markers and all."""
+    gitdir = Path(git(repo, "rev-parse", "--absolute-git-dir").stdout.strip() or repo / ".git")
+    if any((gitdir / m).exists() for m in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD")):
+        return True
+    return bool(git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip())
+
+
 def has_head(repo: Path) -> bool:
     return git(repo, "rev-parse", "-q", "--verify", "HEAD").returncode == 0
 
@@ -122,6 +131,10 @@ def commit(ws: Path, repo: Path, when: str, say) -> Tuple[int, List[str]]:
     held files relative to the workspace)."""
     if not git(repo, "status", "--porcelain").stdout.strip():
         return OK, []
+    if midway(repo):
+        say("%s: in the middle of a merge, rebase or cherry-pick, or with conflicts unresolved; nothing committed. "
+            "Finish it by hand." % rel(ws, repo))
+        return FAILED, []
     git(repo, "add", "-A")
     held: List[str] = []
     for _ in range(5):                     # a file held can be what made another refuse
@@ -132,7 +145,15 @@ def commit(ws: Path, repo: Path, when: str, say) -> Tuple[int, List[str]]:
             return FAILED, held
         if not found:
             break
-        for name, why in found:
+        fresh = [(n, w) for n, w in found if rel(ws, repo / n) not in held]
+        if not fresh:
+            # Refused for files already held: a refusal no unstaging clears, such as a note whose
+            # party changed on disk. The hook would refuse any commit here until it is settled.
+            git(repo, "reset", "-q") if has_head(repo) else git(repo, "rm", "-r", "-q", "--cached", ".")
+            say("%s: nothing committed until %s is settled by hand: %s" % (
+                rel(ws, repo), ", ".join(sorted({n for n, _ in found})), found[0][1]))
+            return HELD, held
+        for name, why in fresh:
             if unstage(repo, name):
                 held.append(rel(ws, repo / name))
                 say("%s: held back %s: %s" % (rel(ws, repo), name, why))

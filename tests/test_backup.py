@@ -140,6 +140,29 @@ class BackupTest(unittest.TestCase):
         self.assertEqual("5 6", plist["EnvironmentVariables"]["GARRICK_QUIET_EXITS"])
         self.assertEqual(2, len(plist["StartCalendarInterval"]))
 
+    def test_a_merge_under_way_is_left_alone(self):
+        self.assertEqual(backup.OK, self.run_backup())
+        (self.work / ".git" / "MERGE_HEAD").write_text(git(self.work, "rev-parse", "HEAD"))
+        write(self.work / "Todo.md", "# Work\n\n<<<<<<< ours\n=======\n>>>>>>> theirs\n")
+        before = git(self.work, "rev-parse", "HEAD")
+        self.assertEqual(backup.FAILED, self.run_backup())
+        self.assertEqual(before, git(self.work, "rev-parse", "HEAD"))
+        self.assertTrue(any("middle of a merge" in line for line in self.said))
+
+    def test_a_refusal_no_unstaging_clears_stops_at_once_and_says_so(self):
+        calls = []
+
+        def refused(ws, repo):
+            calls.append(1)
+            return [("Acme Review/Acme Review.md", "names a different party on disk from the one staged")], None
+        self.assertEqual(backup.OK, self.run_backup())                  # everything else is backed up already
+        write(self.work / "Notes.md", "A note.\n")
+        with mock.patch.object(backup, "refused", side_effect=refused):
+            self.assertEqual(backup.HELD, self.run_backup())
+        self.assertEqual(2, len(calls))                       # held once, then seen to be no progress
+        self.assertTrue(any("settled by hand" in line for line in self.said), self.said)
+        self.assertEqual("", git(self.work, "diff", "--cached", "--name-only").strip())
+
     def test_the_worst_outcome_decides(self):
         self.assertEqual(backup.FAILED, backup.worst([backup.HELD, backup.FAILED, backup.OFFLINE]))
         self.assertEqual(backup.OFFLINE, backup.worst([backup.HELD, backup.OFFLINE, backup.OK]))

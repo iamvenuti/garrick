@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-11
+
+The split keeps code blocks whole, its own header no longer reads as copied text, and each .gitignore gets a block Garrick manages, so your own lines outside it never come back as a .new.
+
 ### Fixed
 
 - An update offered a `.gitignore` as a `.new` to merge once you had added a line of your own, since it cannot have a local file beside it. Each `.gitignore` Garrick writes now keeps Garrick's lines between two markers, and yours go anywhere outside them. An update replaces only the lines between the markers, and gives a `.gitignore` without them the markers at the top, with every line of yours kept after them. `check.py` warns when the lines between the markers differ from Garrick's.

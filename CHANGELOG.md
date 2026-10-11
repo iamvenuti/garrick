@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-10-11
+
+The threads list and its cards say less and line up, Park and Wake show at once, the Mac app opens without a flicker, and it writes down what its menu holds, for a bug no one could reproduce.
+
 ### Added
 
 - Garrick.app writes `garrick-app-menu.json` in the jobs folder each time it fills its menu or its panel: what it had to fill them with, in counts and zone names, the rows it built, and when the page last told it what to list. It is there for a menu that lists less than the page holds. `--check` also prints the page's script errors.

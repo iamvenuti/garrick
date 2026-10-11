@@ -47,6 +47,7 @@ from garrick_lib import (  # noqa: E402
     is_domain,
     is_own_address,
     is_webmail,
+    knowledge_schema,
     landing,
     load_context,
     mail_attachments,
@@ -437,8 +438,31 @@ def reading_slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
 
 
+def _name_part(text: str) -> str:
+    """A piece of a raw file's name, from a title or a publisher: no folder
+    separators or characters a file name cannot hold, spaces kept."""
+    text = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", text or "")
+    return re.sub(r"\s+", " ", text).strip(" .")[:120]
+
+
+def raw_place(kroot: Path, schema: dict, slug: str, ext: str, kind: str, date: str, publisher: str,
+              title: str) -> Path:
+    """Where the original goes, by the wiki's raw pattern."""
+    pattern = schema["raw"]
+    if "{kind}" in pattern:
+        if not kind:
+            raise Refusal("This Knowledge wiki keeps its originals by kind; pass --kind, one of %s."
+                          % ", ".join(schema["kinds"]))
+        if kind not in schema["kinds"]:
+            raise Refusal("%s is not a kind this Knowledge wiki keeps; its kinds are %s." % (kind, ", ".join(schema["kinds"])))
+    values = {"slug": slug, "ext": ext.lstrip("."), "kind": kind, "date": date,
+              "publisher": _name_part(publisher) or "Unknown", "title": _name_part(title) or slug}
+    rel = re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)], pattern)
+    return kroot / rel
+
+
 def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
-                 today: Optional[str] = None) -> Tuple[str, Path, Path]:
+                 today: Optional[str] = None, shelf: str = "") -> Tuple[str, Path, Path]:
     """Freeze an item from a zone's Inbox into `Wikis/Knowledge/raw/` and write a
     draft source page for the knowledge skill to finish. A mail is frozen with
     the reader's own addresses removed (`strip_recipients`); anything else is
@@ -466,11 +490,15 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
     if slug in _stems(raw_dir, sources):
         raise Refusal("%s is already used in Knowledge. If this is a different item, pass --slug with a "
                       "distinguishing word, not a number." % slug)
-    dest = raw_dir / (slug + path.suffix.lower())
+    schema, _ = knowledge_schema(root)
     page = sources / (slug + ".md")
     today = today or datetime.date.today().isoformat()
+    sender = _names(mail["from"]) if mail else ""
+    dest = raw_place(kroot, schema, slug, path.suffix.lower(), shelf, (mail and mail["date"]) or today, sender, title)
+    if dest.exists():
+        raise Refusal("%s is already in Knowledge. If this is a different item, pass --title or --slug with a "
+                      "distinguishing word, not a number." % dest.relative_to(kroot))
     if mail:
-        sender = _names(mail["from"])
         author = _yaml(sender) if sender else "<who wrote or published it>"
         published = mail["date"] or "<YYYY-MM-DD, or YYYY-MM, or YYYY>"
         how = "Arrived by mail%s%s." % (" from %s" % sender if sender else "",
@@ -478,12 +506,16 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
     else:
         author, published = "<who wrote or published it>", "<YYYY-MM-DD, or YYYY-MM, or YYYY>"
         how = "Dropped into the %s inbox as %s." % (zone, path.name)
-    text = "\n".join([
-        "---", "title: %s" % _yaml(title), "type: source", "author: %s" % author, "published: %s" % published,
-        'raw: "[[raw/%s]]"' % slug, "confidence: <high, medium or low>", "created: %s" % today,
-        "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
-        "<A short summary. Every vendor claim attributed to its vendor.>", "",
-        "Touches <the concept and entity pages it speaks to>.", ""])
+    known = {"author": author, "published": published,
+             "raw": '"[[%s]]"' % dest.relative_to(kroot).with_suffix("").as_posix()}
+    fields = ["author", "published", "raw"] + [f for f in schema["source"]["fields"] if f not in ("author", "published", "raw")]
+    text = "\n".join(
+        ["---", "title: %s" % _yaml(title), "type: %s" % schema["source"]["type"]]
+        + ["%s: %s" % (f, known.get(f, "<%s>" % f.replace("-", " "))) for f in fields]
+        + ["confidence: <high, medium or low>", "created: %s" % today,
+           "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
+           "<A short summary. Every vendor claim attributed to its vendor.>", "",
+           "Touches <the concept and entity pages it speaks to>.", ""])
     frozen = None
     if mail:
         own = load_context(root).get("me", [])
@@ -503,6 +535,7 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
         else:
             move_new(root, kroot, path, dest)
     with filing(root):
+        dest.parent.mkdir(parents=True, exist_ok=True)
         landing(root, kroot, dest)
         _page_then(root, kroot, page, text, freeze)
     return slug, dest, page
@@ -747,6 +780,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--file", required=True)
     r.add_argument("--title", default="", help="title of the work (default: the subject, or the file name)")
     r.add_argument("--slug", default="", help="the name in Knowledge (default: from the title)")
+    r.add_argument("--kind", default="", help="where the original goes, when the wiki's schema.json keeps them by kind")
     t = sub.add_parser("file-to-project", help="move a dropped file into a project's Sources/")
     t.add_argument("--file", required=True)
     t.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
@@ -782,7 +816,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                                                  args.today)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-reading":
-            slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today)
+            slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today, args.kind)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-to-project":
             print(rel(file_to_project(root, Path(args.file), args.project, _tags(args.parties), args.name)))

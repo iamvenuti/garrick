@@ -571,6 +571,35 @@ class TestFileReading(MailCase):
         self.assertIn("jo@joexample.example", str(caught.exception))
         self.assertTrue(path.exists())
 
+    def test_a_wiki_that_declares_its_layout_is_filed_by_it(self):
+        write(self.root / "Wikis" / "Knowledge" / "schema.json", json.dumps({
+            "raw": "raw/{kind}/{date} {publisher} - {title}.{ext}", "kinds": ["papers", "articles"],
+            "source": {"type": "reading", "fields": ["author", "published", "raw", "publisher"]},
+            "index": "tables", "log": "section"}))
+        path = self.drop("weekly.eml", eml(**NEWSLETTER))
+        with self.assertRaisesRegex(intake.Refusal, "pass --kind"):
+            intake.file_reading(self.root, path, today="2026-09-29")
+        with self.assertRaisesRegex(intake.Refusal, "not a kind"):
+            intake.file_reading(self.root, path, today="2026-09-29", shelf="books")
+        slug, raw, page = intake.file_reading(self.root, path, today="2026-09-29", shelf="articles")
+        self.assertEqual(self.root / "Wikis" / "Knowledge" / "raw" / "articles" /
+                         "2026-09-28 The Freight Ledger - Freight Ledger Weekly.eml", raw)
+        fm = lib.parse_frontmatter(page)
+        self.assertEqual("reading", fm["type"])
+        self.assertEqual("[[raw/articles/2026-09-28 The Freight Ledger - Freight Ledger Weekly]]", fm["raw"])
+        self.assertEqual("<publisher>", fm["publisher"])
+        warned = [f.path for f in check.run_checks(self.root) if f.check == "knowledge"]
+        self.assertNotIn("Wikis/Knowledge/wiki/sources/%s.md" % slug, warned)          # the draft has every field
+        self.assertIn("Wikis/Knowledge/wiki/sources/supply-chain-report.md", warned)      # an older page does not
+
+    def test_a_schema_that_does_not_read_keeps_garricks_layout_and_says_so(self):
+        write(self.root / "Wikis" / "Knowledge" / "schema.json", json.dumps({"raw": "../elsewhere/{slug}.{ext}", "index": "grid"}))
+        schema, problems = lib.knowledge_schema(self.root)
+        self.assertEqual("raw/{slug}.{ext}", schema["raw"])
+        self.assertEqual(2, len(problems))
+        found = [f for f in check.run_checks(self.root) if f.path == "Wikis/Knowledge/schema.json"]
+        self.assertEqual(2, len(found))
+
     def test_a_dropped_article(self):
         path = self.drop("Lanes in winter.md", "# Lanes in winter\n\nA trade paper's view.\n")
         slug, raw, page = intake.file_reading(self.root, path, today="2026-09-29")

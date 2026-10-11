@@ -161,10 +161,12 @@ project, never here.
    may have ingested something since you last looked. Add a row for the
    source and for any concept or entity page you created, newest first. For a
    page you only touched, update its Updated cell and move its row to its
-   place.
+   place. When the wiki's `schema.json` says `"index": "tables"`, the row
+   goes in the table for its type instead.
 9. **Re-read `wiki/log.md` right before you append.** One line, newest on
    top: what was ingested, its author or vendor, and which concept or entity
-   pages it touches.
+   pages it touches. With `"log": "section"`, a dated `## ` section on top
+   instead, holding the same.
 10. **Commit, in the Wikis repository.** Stage only what this ingest wrote:
     the raw file, the source page, any concept and entity pages touched, the
     index and the log. Never `git add -A`, and never a Meetings file in the

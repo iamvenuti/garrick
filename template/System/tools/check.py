@@ -58,6 +58,7 @@ from garrick_lib import (  # noqa: E402
     is_instruction_file,
     is_speakable,
     is_webmail,
+    knowledge_schema,
     fingerprint,
     garrick_ignores,
     ignore_parts,
@@ -3050,6 +3051,14 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
     raw = kroot / "raw"
     beyond = None
+    schema, problems = knowledge_schema(ws.root)
+    for problem in problems:
+        out.append(Finding(WARNING, "knowledge", "Wikis/Knowledge/schema.json", problem,
+                           "The Knowledge wiki's schema has a problem"))
+    sources = kroot / "wiki" / "sources"
+    stype, sfields = schema["source"]["type"], schema["source"]["fields"]
+    known_types = {stype, "concept", "entity"}
+    declared = (kroot / "schema.json").is_file()      # a wiki that declares its layout is held to it
     for path in walk_files(kroot):
         suffix = path.suffix.lower()
         if suffix not in TEXT_SUFFIXES and suffix != ".eml":
@@ -3059,6 +3068,21 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
             fm = {}
             if suffix == ".md":  # read once; a page too big to scan still has its fields read
                 fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
+            if suffix == ".md" and fm and path.parent == sources and declared:
+                lacking = [f for f in sfields if not as_list(fm.get(f))]
+                if fm.get("type") != stype or lacking:
+                    out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                                       "a source page %s; the wiki's schema asks for `type: %s` and %s" % (
+                                           "has `type: %s`" % fm.get("type") if fm.get("type") != stype
+                                           else "has no %s" % ", ".join("`%s`" % f for f in lacking),
+                                           stype, ", ".join("`%s`" % f for f in sfields)),
+                                       "A Knowledge source page does not follow the wiki's schema"))
+            elif suffix == ".md" and fm.get("type") and fm.get("type") not in known_types \
+                    and kroot / "wiki" in path.parents:
+                out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                                   "`type: %s` is not a kind of page the wiki's schema knows (%s); the graph draws it "
+                                   "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),
+                                   "A Knowledge page has a type the schema does not know"))
             carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
             if carried:
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),

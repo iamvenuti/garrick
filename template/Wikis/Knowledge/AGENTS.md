@@ -28,6 +28,8 @@ updated: YYYY-MM-DD
 ---
 ```
 
+A wiki that grew its own layout declares it in `schema.json` beside this file, and `intake.py`, the `knowledge` skill and `check.py` follow it: where originals go (`"raw": "raw/{kind}/{date} {publisher} - {title}.{ext}"`, with its `"kinds"`), the source page's `"type"` and required `"fields"`, and the index (`"list"` or `"tables"`) and log (`"line"` or `"section"`). Without it, the layout above applies.
+
 ## Rules
 
 - **Freeze first.** Save a web page or document into `raw/` before summarising it, so the source cannot change under you.

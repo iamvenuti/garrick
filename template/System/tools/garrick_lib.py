@@ -31,6 +31,7 @@ import datetime
 import email
 import email.policy
 import errno
+import json
 import os
 import re
 import shutil
@@ -54,6 +55,7 @@ __all__ = [
     "phonetic_key",
     "edit_distance",
     "load_context",
+    "knowledge_schema",
     "walled",
     "workspace_root",
     "link_on_the_way",
@@ -506,6 +508,67 @@ def load_context(root: PathLike) -> dict:
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
     return ctx
+
+
+# How a Knowledge wiki keeps its raw files and source pages, its index and its
+# log: Garrick's layout, unless the wiki declares its own in schema.json.
+KNOWLEDGE_SCHEMA = {
+    "raw": "raw/{slug}.{ext}",          # also {kind}, {date}, {publisher}, {title}
+    "kinds": [],                        # the values {kind} may take, when the pattern has it
+    "source": {"type": "source", "fields": ["author", "published", "raw"]},
+    "index": "list",                    # or "tables": a table per type
+    "log": "line",                      # or "section": a dated section per ingest
+}
+RAW_PLACEHOLDERS = ("slug", "ext", "kind", "date", "publisher", "title")
+
+
+def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
+    """(the schema, what in it could not be read) for the workspace's
+    Knowledge wiki: `Wikis/Knowledge/schema.json` over Garrick's default,
+    key by key. What does not read keeps the default, and says so."""
+    schema = json.loads(json.dumps(KNOWLEDGE_SCHEMA))
+    path = Path(root) / "Wikis" / "Knowledge" / "schema.json"
+    if not path.is_file():
+        return schema, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return schema, ["schema.json does not read as JSON (%s); Garrick's layout applies" % exc]
+    problems = []
+    if not isinstance(data, dict):
+        return schema, ["schema.json is not an object; Garrick's layout applies"]
+    raw = data.get("raw")
+    if raw is not None:
+        names = re.findall(r"\{(\w+)\}", raw) if isinstance(raw, str) else []
+        if not isinstance(raw, str) or not raw.startswith("raw/") or "{ext}" not in raw or ".." in raw \
+                or any(n not in RAW_PLACEHOLDERS for n in names) or not ({"slug", "title"} & set(names)):
+            problems.append("its raw pattern %r must start raw/, end in {ext}, name {slug} or {title}, and use only "
+                            "{%s}" % (raw, "}, {".join(RAW_PLACEHOLDERS)))
+        else:
+            schema["raw"] = raw
+    kinds = data.get("kinds")
+    if kinds is not None:
+        if isinstance(kinds, list) and all(isinstance(k, str) and re.fullmatch(r"[\w -]+", k) for k in kinds):
+            schema["kinds"] = kinds
+        else:
+            problems.append("its kinds must be a list of folder names")
+    if "{kind}" in schema["raw"] and not schema["kinds"]:
+        problems.append("its raw pattern names {kind} but it lists no kinds")
+        schema["raw"] = KNOWLEDGE_SCHEMA["raw"]
+    source = data.get("source")
+    if source is not None:
+        if isinstance(source, dict) and isinstance(source.get("type", "source"), str) and \
+                isinstance(source.get("fields", []), list) and all(isinstance(f, str) for f in source.get("fields", [])):
+            schema["source"] = {"type": source.get("type", "source"), "fields": list(source.get("fields", []))}
+        else:
+            problems.append("its source must say a type and a list of fields")
+    for key, allowed in (("index", ("list", "tables")), ("log", ("line", "section"))):
+        if key in data:
+            if data[key] in allowed:
+                schema[key] = data[key]
+            else:
+                problems.append("its %s must be %s" % (key, " or ".join(allowed)))
+    return schema, problems
 
 
 def walled(context: dict, tag_a: str, tag_b: str) -> bool:

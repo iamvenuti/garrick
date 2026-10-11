@@ -114,7 +114,9 @@ folder that was checked. A link that stays inside that folder is fine.
      ```sh
      python3 System/skills/intake/intake.py file-reading --file "Zones/<Zone>/Inbox/<file>" [--title "<title of the work>"]
      ```
-     It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`: a file
+     It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`, or where the
+     wiki's `schema.json` says (ask which `--kind` when its pattern names
+     one): a file
      untouched, a mail with its recipients taken out first. The recipient
      headers and `Received` lines go (in a mail saved as Markdown or text,
      the recipient keys of its frontmatter and every `To:` and `Cc:` line),

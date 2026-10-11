@@ -389,6 +389,29 @@ class LogTest(unittest.TestCase):
         text = path.read_text()
         self.assertTrue(text.startswith("# Log\n\nOne line per ingest, newest first.\n"))
 
+    def _log(self, text):
+        path = ingest.meetings_root(self.ws.root) / "wiki" / "log.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        ingest.append_log(self.ws.root, "260312-birch-kick-off", "Birch kick-off", "Work", ["birch"],
+                          today="2026-03-12")
+        return path.read_text().splitlines()
+
+    def test_a_log_without_the_header_gets_the_entry_above_its_entries(self):
+        lines = self._log("# Log\n\nWhat was filed, and when.\n\n- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertEqual("What was filed, and when.", lines[2])
+        self.assertIn("260312-birch-kick-off", lines[4])
+        self.assertIn("2026-03-01", lines[5])
+
+    def test_a_log_of_dated_sections_gets_the_entry_above_the_first_section(self):
+        lines = self._log("# Log\n\n## 2026-03-01\n\nFiled the Acme call.\n")
+        self.assertIn("260312-birch-kick-off", lines[2])
+        self.assertEqual("## 2026-03-01", lines[4])
+
+    def test_a_log_with_no_title_or_entries_gets_the_entry_at_the_top(self):
+        lines = self._log("- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertIn("260312-birch-kick-off", lines[0])
+
 
 class CliTest(unittest.TestCase):
     def setUp(self):

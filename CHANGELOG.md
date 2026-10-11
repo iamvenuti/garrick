@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Fixed
 
 - `release.py update` stopped with `CERTIFICATE_VERIFY_FAILED` under python.org's Python on macOS, which has no certificates until *Install Certificates.command* is run, and said nothing about why. It now fetches through `curl`, which trusts the system's certificates, and says so; when that fails too, it says to run `/usr/bin/python3` or *Install Certificates.command*. The update docs say the same. ([#55](https://github.com/iamvenuti/garrick/issues/55))
+- `ingest.py log` added its line at the bottom of a log without Garrick's "One line per ingest" line, in a log that reads newest first. With no such line, it now goes after the title and any text under it, above the first entry or section. ([#53](https://github.com/iamvenuti/garrick/issues/53))
 
 ## [0.16.1] - 2026-10-11
 

@@ -219,6 +219,25 @@ def rebuild_index(root: Path) -> Tuple[Path, int]:
 # --------------------------------------------------------------------------- log
 
 
+def log_head_end(lines: List[str]) -> int:
+    """Where the newest entry goes: after Garrick's "One line per ingest"
+    line, or, in a log written without it, after the title and the text
+    under it, before the first entry or section. Never at the end of a log
+    that has entries, which reads newest first."""
+    for i, line in enumerate(lines):
+        if line.strip().startswith("One line per ingest"):
+            return i + 1
+    i = 0
+    if lines and lines[0].startswith("# "):
+        i = 1
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        if stripped.startswith(("- ", "* ", "#")) or re.match(r"\d+\. ", stripped):
+            break
+        i += 1
+    return i
+
+
 def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optional[Iterable[str]] = None,
                 today: Optional[str] = None) -> Path:
     """Add one line to `wiki/log.md`, above the earlier entries."""
@@ -229,11 +248,7 @@ def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optio
         "# Log\n\nOne line per ingest, newest first.\n"
     )
     lines = text.splitlines()
-    head_end = len(lines)
-    for i, line in enumerate(lines):
-        if line.strip().startswith("One line per ingest"):
-            head_end = i + 1
-            break
+    head_end = log_head_end(lines)
     while head_end < len(lines) and lines[head_end].strip() == "":
         head_end += 1
     head = lines[:head_end]
@@ -241,7 +256,10 @@ def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optio
         head.append("")
     where = ", ".join(p for p in parties if p) or "no parties"
     entry = "- %s: [[wiki/sources/%s|%s]] (%s; %s)" % (today, slug, title, zone or "no zone", where)
-    new_lines = head + [entry] + lines[head_end:]
+    rest = lines[head_end:]
+    if rest and not rest[0].lstrip().startswith("- "):
+        rest = [""] + rest                  # a section or prose below keeps its blank line
+    new_lines = head + [entry] + rest
     with filing(root):
         write_over(root, meetings_root(root), log_path, ("\n".join(new_lines) + "\n").encode("utf-8"))
     return log_path

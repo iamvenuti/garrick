@@ -49,6 +49,7 @@ The header the list keeps.
 ## Done
 
 - [x] [[Pricing]]: old one ✅ 2026-10-01
+    - [ ] a step left open under it
 - [x] [[Freight]]: today's ✅ 2026-10-12
 """
 
@@ -93,7 +94,9 @@ class TodoTest(unittest.TestCase):
         self.assertEqual(1, todo.archive(self.zone, dt.date(2026, 10, 12)))
         self.assertIn("today's ✅ 2026-10-12", self.text())
         self.assertNotIn("old one", self.text())
-        self.assertIn("- [x] [[Pricing]]: old one ✅ 2026-10-01", (self.zone / "archive" / "Todo-2026.md").read_text())
+        archived = (self.zone / "archive" / "Todo-2026.md").read_text()
+        self.assertIn("- [x] [[Pricing]]: old one ✅ 2026-10-01\n    - [ ] a step left open under it", archived)
+        self.assertNotIn("a step left open", self.text())                  # it went with its task
 
     def test_tidy_puts_fields_last_and_the_inbox_in_thread_order(self):
         self.assertGreater(todo.tidy(self.zone), 0)

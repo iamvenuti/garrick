@@ -75,6 +75,19 @@ def sections(lines: List[str]) -> Dict[str, Tuple[int, int]]:
     return out
 
 
+def with_steps(lines: List[str], picked: List[int]) -> List[int]:
+    """The picked task lines and the indented lines under each, its sub-steps
+    and notes, which move with it."""
+    out = set()
+    for i in picked:
+        out.add(i)
+        j = i + 1
+        while j < len(lines) and lines[j][:1] in (" ", "\t") and lines[j].strip():
+            out.add(j)
+            j += 1
+    return sorted(out)
+
+
 def read(zone: Path) -> List[str]:
     return (zone / "Todo.md").read_text(encoding="utf-8").split("\n")
 
@@ -134,7 +147,8 @@ def expire(root: Path, zone: Path, today: datetime.date, days: Optional[int] = N
             gone.append(i)
     gone += [i for i in waiting if lines[i].startswith("- [ ] ") and not CHASE.search(lines[i])]
     if gone:
-        moved = [lines[i] for i in sorted(gone)]
+        gone = with_steps(lines, sorted(gone))
+        moved = [lines[i] for i in gone]
         keep_out(zone, "Todo-expired-%d.md" % today.year, "%s: actions nobody triaged, %d" % (zone.name, today.year),
                  ["<!-- %s -->" % today.isoformat()] + moved)
         lines = [l for i, l in enumerate(lines) if i not in set(gone)]
@@ -159,14 +173,16 @@ def archive(zone: Path, today: datetime.date) -> int:
             gone.append(i)
     if not gone:
         return 0
+    n = len(gone)
     by_year: Dict[int, List[str]] = {}
     for i in gone:
         m = DONE.search(lines[i])
-        by_year.setdefault(int(m.group(1)[:4]) if m else today.year, []).append(lines[i])
+        by_year.setdefault(int(m.group(1)[:4]) if m else today.year, []).extend(lines[j] for j in with_steps(lines, [i]))
+    gone = with_steps(lines, gone)
     for year, moved in sorted(by_year.items()):
         keep_out(zone, "Todo-%d.md" % year, "%s: done, %d" % (zone.name, year), moved)
     write(zone, [l for i, l in enumerate(lines) if i not in set(gone)])
-    return len(gone)
+    return n
 
 
 def tidy(zone: Path) -> int:

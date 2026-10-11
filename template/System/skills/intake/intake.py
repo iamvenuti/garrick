@@ -161,6 +161,8 @@ def skip(root: Path, path: Path, reason: str, today: Optional[str] = None) -> st
     path, where, zone, kind, m = _item(root, path)
     if where not in ("zone", "workspace"):
         raise Refusal("%s is a transcript waiting in the Meetings inbox; a conversation is never skipped." % path.name)
+    if kind == "transcript":
+        raise Refusal("%s is a transcript, a conversation, and a conversation is never skipped." % path.name)
     reason = " ".join((reason or "").split())
     if not reason:
         raise Refusal("Say why it is skipped, in a few words: --reason thin.")

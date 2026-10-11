@@ -1516,6 +1516,7 @@ def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
     keep: List[str] = []
     in_fm = bool(lines) and lines[0].strip() == "---"
     dropping = False
+    in_header, seen_body = True, False       # the body may open with a header block
     for i, line in enumerate(lines):
         if in_fm and i > 0 and line.strip() in ("---", "..."):
             in_fm, dropping = False, False
@@ -1534,7 +1535,7 @@ def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
             keep.append(line)
             continue
         m = _HEADER_LINE_RE.match(line)
-        if m and m.group(1).lower() in ("to", "cc", "bcc", "delivered-to"):
+        if m and in_header and m.group(1).lower() in ("to", "cc", "bcc", "delivered-to"):
             addresses |= {a for _, a in _addresses([m.group(2)])}
             dropping = True
             continue
@@ -1542,6 +1543,15 @@ def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
             addresses |= {a for _, a in _addresses([line.strip()])}
             continue
         dropping = False
+        # A header block opens the body, or follows a forward's marker or a From: line after a
+        # blank; a blank line ends it. A `To:` in the prose is text, and stays.
+        if m and (in_header or m.group(1).lower() == "from"):
+            in_header = True
+        elif _FORWARD_RE.match(line):
+            in_header = True
+        elif not line.strip() or not m:
+            in_header = not line.strip() and not seen_body
+            seen_body = seen_body or bool(line.strip())
         keep.append(line)
     return _replace_addresses("".join(keep), addresses)
 

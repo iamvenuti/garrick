@@ -560,6 +560,14 @@ class TestFileReading(MailCase):
         self.assertIn("From: Jo Example <you@removed.invalid>", frozen)
         self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("knowledge", "inbox")])
 
+    def test_a_to_line_in_the_prose_is_text_and_stays(self):
+        text = ("From: The Freight Ledger <newsletter@freightledger.example>\nTo: jo@joexample.example\n"
+                "Subject: Weekly\n\nThe memo opened like this:\n\nTo: all hauliers, from the board.\n"
+                "  We expect higher rates.\n")
+        out = lib.strip_recipients(text.encode(), ".md").decode()
+        self.assertNotIn("To: jo@", out)
+        self.assertIn("To: all hauliers, from the board.\n  We expect higher rates.", out)
+
     def test_a_mail_it_cannot_strip_is_refused(self):
         ctx = self.root / "System" / "context.md"
         ctx.write_text(ctx.read_text().replace("Jo Example. Independent advisor.\n",

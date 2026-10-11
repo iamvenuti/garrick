@@ -21,7 +21,10 @@ The config is a small JSON file:
 
 Optional keys: "port" (993), "search" (an IMAP search, default "ALL"),
 "mark_read" (false), "copy_to" (a mailbox to copy each saved message to; on
-Gmail that adds a label), "keychain_service" ("garrick-imap"), and "state"
+Gmail that adds a label), "keychain_service" ("garrick-imap"), "reading"
+(false; true for a mailbox kept for newsletters and reports, whose messages
+are saved as `reading-<name>.eml`, for intake to treat as something to read
+and the reading sweep in the jobs extra to file into Knowledge), and "state"
 (where the list of saved messages is kept; default: beside the config, as
 <config name>.state.json).
 
@@ -52,7 +55,9 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-DEFAULTS = {"port": 993, "search": "ALL", "mark_read": False, "copy_to": "", "keychain_service": "garrick-imap"}
+DEFAULTS = {"port": 993, "search": "ALL", "mark_read": False, "copy_to": "", "keychain_service": "garrick-imap",
+            "reading": False}
+READING_PREFIX = "reading-"     # what intake and the reading sweep know an address kept for reading by
 REQUIRED = ("server", "user", "mailbox", "inbox")
 KNOWN = set(REQUIRED) | set(DEFAULTS) | {"state"}
 SECRET_KEYS = {"password", "pass", "passwd", "secret", "token", "app_password"}
@@ -195,7 +200,7 @@ def fetch(cfg: dict, imap_factory: Callable = imaplib.IMAP4_SSL, password: Optio
                 continue
             msg_id = str(email.message_from_bytes(message, policy=email.policy.default).get("Message-ID", "") or "").strip()
             if not (msg_id and msg_id in ids):
-                dest = cfg["inbox"] / file_name(message, uid)
+                dest = cfg["inbox"] / ((READING_PREFIX if cfg.get("reading") else "") + file_name(message, uid))
                 tmp = dest.with_name("." + dest.name + ".part")  # hidden until whole
                 tmp.write_bytes(message)
                 os.replace(str(tmp), str(dest))

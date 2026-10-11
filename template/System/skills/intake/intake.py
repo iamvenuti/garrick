@@ -141,6 +141,32 @@ def _fmt(pairs) -> List[str]:
     return ["%s <%s>" % (n, a) if n else a for n, a in pairs]
 
 
+# What the mail fetcher names a message from an address kept for reading.
+READING_PREFIX = "reading-"
+SKIPPED_LOG = ".skipped.log"
+
+
+def skip(root: Path, path: Path, reason: str, today: Optional[str] = None) -> str:
+    """Take an item out of a zone's Inbox without filing it, because it is too
+    thin to keep: a one-line promotion, an empty notice. It is gone from the
+    Inbox, and one line in the Inbox's .skipped.log, never committed, says
+    what it was and why. Only from a zone's Inbox; never a transcript."""
+    path, where, zone, kind, m = _item(root, path)
+    if where != "zone":
+        raise Refusal("%s is a transcript waiting in the Meetings inbox; a conversation is never skipped." % path.name)
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise Refusal("Say why it is skipped, in a few words: --reason thin.")
+    subject = (m or {}).get("subject") or ""
+    sender = ", ".join(_fmt((m or {}).get("from") or []))
+    today = today or datetime.date.today().isoformat()
+    log = root / "Zones" / zone / INBOX / SKIPPED_LOG
+    with log.open("a", encoding="utf-8") as f:
+        f.write("%s\t%s\t%s\t%s\t%s\n" % (today, path.name, sender, subject, reason[:200]))
+    path.unlink()
+    return "Skipped %s (%s)." % (subject or path.name, reason)
+
+
 def list_items(root: Path) -> List[dict]:
     """Every item waiting, in every inbox: the Meetings inbox first, then each
     zone's, mail and files together, oldest first by the date they were sent
@@ -155,6 +181,8 @@ def list_items(root: Path) -> List[dict]:
         for p in _waiting(zone / INBOX):
             kind, m = kind_of(p, "zone")
             item = {"kind": kind, "zone": zone.name, "file": _rel(root, p), "date": "", "from": "", "subject": ""}
+            if p.name.startswith(READING_PREFIX):
+                item["route"] = "reading"            # fetched from an address kept for reading
             sent = ""
             if m:
                 item.update({"date": m["date"] or "", "from": ", ".join(_fmt(m["from"])), "subject": m["subject"]})
@@ -792,6 +820,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     x.add_argument("--name", default="", help="the attachment's name, as parse lists it")
     x.add_argument("--index", type=int, default=0, help="the attachment's place in the list, from 1")
     x.add_argument("--save-as", default="", help="file name in Sources/ (default: the attachment's)")
+    k = sub.add_parser("skip", help="take an item too thin to keep out of a zone's Inbox, with the reason logged")
+    k.add_argument("--file", required=True)
+    k.add_argument("--reason", required=True, help="why, in a few words: thin, a promotion, a duplicate")
     l = sub.add_parser("learn", help="record that mail from a domain belongs to a party")
     l.add_argument("--domain", required=True)
     l.add_argument("--party", required=True)
@@ -823,6 +854,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "extract-attachment":
             how, dest = extract_attachment(root, args.mail, args.project, args.name, args.index, args.save_as)
             print("%s\t%s" % (how, rel(dest)))
+        elif args.command == "skip":
+            print(skip(root, Path(args.file), args.reason, args.today))
         elif args.command == "learn":
             print("%s\t%s\t%s" % (learn(root, args.domain, args.party), args.domain.strip().lower(), strip_tag(args.party)))
     except Refusal as exc:

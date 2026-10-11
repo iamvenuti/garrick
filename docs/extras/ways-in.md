@@ -68,7 +68,7 @@ If the connector can't give you the raw message, ask for a `.md` file per mail i
    }
    ```
 
-   `mailbox` is a folder, or on Gmail a label. Optional keys: `"mark_read": true` to mark each saved message read, `"copy_to": "Garrick/Fetched"` to copy it to another folder (a second label, on Gmail), `"search"` for an IMAP search other than `ALL`, and `"state"` for where it keeps the list of messages already saved (by default beside the config, as `work-mail.state.json`). One config per zone.
+   `mailbox` is a folder, or on Gmail a label. Optional keys: `"mark_read": true` to mark each saved message read, `"copy_to": "Garrick/Fetched"` to copy it to another folder (a second label, on Gmail), `"search"` for an IMAP search other than `ALL`, and `"state"` for where it keeps the list of messages already saved (by default beside the config, as `work-mail.state.json`). One config per zone. `"reading": true` marks a mailbox kept for newsletters and reports: each message is saved as `reading-<name>.eml`, intake treats it as something to read, and the reading sweep in the [jobs extra](scheduled-jobs.md) files it into Knowledge each night, or skips it when it is too thin to keep. Mail from a party's domain is never filed unattended: it waits for you.
 
 3. **Run it**:
 

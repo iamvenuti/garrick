@@ -114,6 +114,10 @@ folder that was checked. A link that stays inside that folder is fine.
      ```sh
      python3 System/skills/intake/intake.py file-reading --file "Zones/<Zone>/Inbox/<file>" [--title "<title of the work>"]
      ```
+     Something too thin to keep (a one-line promotion, an empty notice) is
+     not filed: `intake.py skip --file "<it>" --reason "<a few words>"` takes
+     it out of the Inbox and logs why in the Inbox's `.skipped.log`. An item
+     named `reading-…` came from an address kept for reading.
      It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`, or where the
      wiki's `schema.json` says (ask which `--kind` when its pattern names
      one): a file

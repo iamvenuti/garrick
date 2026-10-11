@@ -27,6 +27,7 @@ For each repository with changes, it stages everything, runs the wall check on w
 | `whats_open.py` | The example job: a "what's open" brief per zone, written outside the workspace |
 | `launchd/garrick.whats-open.plist` | The example job on a schedule, every morning at 06:30 |
 | `todo_sweep.py`, `launchd/garrick.todo-sweep.plist` | The `todo` skill's sweep each night, one assistant call per zone: actions from the zone's calls and threads into `Todo.md`, then expired, archived, tidied and committed |
+| `reading_sweep.py`, `launchd/garrick.reading-sweep.plist` | What reached an address kept for reading (the [mail fetcher](ways-in.md)'s `"reading": true`), filed into Knowledge or skipped as too thin, one assistant call per zone; mail from a party's domain waits for you |
 | `backup.py`, `launchd/garrick.backup.plist` | The backup: every repository committed and pushed twice a day, holding back what the walls refuse. No assistant |
 
 ### Set it up

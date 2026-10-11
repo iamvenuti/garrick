@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- `release.py update` stopped with `CERTIFICATE_VERIFY_FAILED` under python.org's Python on macOS, which has no certificates until *Install Certificates.command* is run, and said nothing about why. It now fetches through `curl`, which trusts the system's certificates, and says so; when that fails too, it says to run `/usr/bin/python3` or *Install Certificates.command*. The update docs say the same. ([#55](https://github.com/iamvenuti/garrick/issues/55))
+
 ## [0.16.1] - 2026-10-11
 
 The split keeps code blocks whole, its own header no longer reads as copied text, and each .gitignore gets a block Garrick manages, so your own lines outside it never come back as a .new.

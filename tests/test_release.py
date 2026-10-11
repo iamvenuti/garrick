@@ -408,6 +408,40 @@ class TestTheDownload(ReleaseCase):
         self.assertIn("could not be asked", err.getvalue())
         self.assertFalse(self.record.exists())
 
+    def test_a_python_without_certificates_downloads_through_curl_and_says_so(self):
+        import ssl
+        self.net(fail=urllib.error.URLError(ssl.SSLCertVerificationError("unable to get local issuer certificate")))
+        calls = []
+
+        def curl(cmd, **kw):
+            calls.append(cmd)
+            url = cmd[-1]
+            out = latest() if "api.github.com" in url else self.zip
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr=b"")
+
+        real = subprocess.run
+        with mock.patch.object(release.subprocess, "run",
+                               side_effect=lambda cmd, **kw: curl(cmd, **kw) if "curl" in str(cmd[0]) else real(cmd, **kw)), \
+                mock.patch.object(release.shutil, "which", return_value="/usr/bin/curl"):
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                self.assertEqual(0, release.update(self.root))
+        self.assertEqual(2, len(calls))
+        self.assertIn("-fsSL", calls[1])
+        self.assertIn("User-Agent: Garrick/0.15.2", calls[1])
+        self.assertIn("no certificates, so curl fetched", out.getvalue())
+        self.assertEqual(["--update", str(self.root)], json.loads(self.record.read_text())["argv"])
+
+    def test_without_certificates_or_curl_it_says_what_to_do(self):
+        import ssl
+        self.net(fail=urllib.error.URLError(ssl.SSLCertVerificationError("unable to get local issuer certificate")))
+        err = io.StringIO()
+        with mock.patch.object(release.shutil, "which", return_value=None), \
+                mock.patch("sys.stderr", err), mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(1, release.main(["--root", str(self.root), "update", "--tag", "v0.16.0"]))
+        self.assertIn("/usr/bin/python3", err.getvalue())
+        self.assertIn("Install Certificates.command", err.getvalue())
+
     def test_unpack_keeps_modes_and_refuses_paths_and_links(self):
         with tempfile.TemporaryDirectory() as tmp:
             top = release.unpack(self.zip, Path(tmp))

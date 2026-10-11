@@ -24,6 +24,9 @@ downloads that release's source archive from github.com, the repository the
 workspace came from, into a temporary folder outside the workspace, and runs
 that release's own `install.py --update`, which reports first and writes
 nothing without --apply. The folder is removed afterwards.
+When this Python has no certificates (a python.org build before Install
+Certificates.command has run), the same GET is made once more with curl,
+which trusts the system's certificates, and the update says so.
 
 A failed question is silent: the page shows nothing, and the next one comes a
 day later. `check.py --version` never asks; it reads the kept answer.
@@ -37,6 +40,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import stat
 import subprocess
 import sys
@@ -80,16 +84,53 @@ def user_agent(root: Path) -> str:
     return "Garrick/%s" % (workspace_release(root) or "unknown")
 
 
-def fetch(url: str, root: Path, timeout: int, accept: str = "", limit: int = 1024 * 1024) -> bytes:
-    """One GET, with Garrick's User-Agent and nothing about the workspace."""
+NO_CERTIFICATES = ("This Python has no certificates. Run it with /usr/bin/python3, or run Install "
+                   "Certificates.command in its folder under /Applications.")
+
+
+def no_certificates(exc: BaseException) -> bool:
+    """Whether a failure is this Python not trusting any certificate: what a
+    python.org build does until Install Certificates.command has been run."""
+    return isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError) or \
+        isinstance(exc, ssl.SSLCertVerificationError)
+
+
+def fetch(url: str, root: Path, timeout: int, accept: str = "", limit: int = 1024 * 1024, say=None) -> bytes:
+    """One GET, with Garrick's User-Agent and nothing about the workspace.
+    When this Python has no certificates, the GET is made once more with curl,
+    which trusts the system's own, and `say` is told so."""
     headers = {"User-Agent": user_agent(root)}
     if accept:
         headers["Accept"] = accept
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
-        data = r.read(limit + 1)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+            data = r.read(limit + 1)
+    except (OSError, urllib.error.URLError) as exc:
+        if not no_certificates(exc):
+            raise
+        data = fetch_with_curl(url, headers, timeout, limit)
+        if say:
+            say("This Python has no certificates, so curl fetched %s instead." % url)
     if len(data) > limit:
         raise ReleaseError("%s sent more than %d MB; stopped." % (url, limit // (1024 * 1024)))
     return data
+
+
+def fetch_with_curl(url: str, headers: dict, timeout: int, limit: int) -> bytes:
+    """The same GET through curl. Fails with the one line that says what to do."""
+    curl = shutil.which("curl")
+    if not curl:
+        raise ReleaseError(NO_CERTIFICATES)
+    cmd = [curl, "-fsSL", "--proto", "=https", "--max-time", str(timeout), "--max-filesize", str(limit + 1)]
+    for key, value in headers.items():
+        cmd += ["-H", "%s: %s" % (key, value)]
+    try:
+        r = subprocess.run(cmd + [url], capture_output=True, timeout=timeout + 5)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ReleaseError(NO_CERTIFICATES)
+    if r.returncode != 0:
+        raise ReleaseError(NO_CERTIFICATES)
+    return r.stdout
 
 
 def write_cache(root: Path, data: dict) -> None:
@@ -214,7 +255,7 @@ def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_js
         if not as_json:
             print("Downloading Garrick %s from %s ..." % (tag, url), flush=True)
         try:
-            data = fetch(url, root, DOWNLOAD_TIMEOUT, limit=MAX_ARCHIVE)
+            data = fetch(url, root, DOWNLOAD_TIMEOUT, limit=MAX_ARCHIVE, say=None if as_json else print)
         except (OSError, urllib.error.URLError) as exc:
             raise ReleaseError("The download failed: %s." % (getattr(exc, "reason", None) or exc))
         source = unpack(data, tmp)

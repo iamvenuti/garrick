@@ -177,5 +177,70 @@ class TestUnderNode(ActionCase):
         self.assertIn("- [x] Acme Corp: Invoice for September", (self.work / "Todo.md").read_text())
 
 
+# The plugin's launch() alone, with child_process stood in for: what it would
+# run for each message, and nothing run at all.
+ROUTES = textwrap.dedent(r"""
+    const Module = require("module");
+    const fs = require("fs");
+    const [plugin_path, root, out_path] = process.argv.slice(2);
+    const ran = [];
+    const stubs = {
+      obsidian: { Plugin: class {}, ItemView: class {}, PluginSettingTab: class {}, Setting: class {}, Notice: class {}, addIcon: () => {} },
+      electron: { shell: {}, clipboard: { writeText: (t) => ran.push(["clipboard", t]) } },
+      child_process: {
+        execFile: (cmd, args, opts, done) => {
+          const child = { stdin: { end: (s) => ran.push(["stdin", JSON.parse(s)]) } };
+          ran.push(["exec", cmd, args]);
+          return child;
+        },
+        spawn: (cmd, args) => { ran.push(["spawn", cmd, args]); return { on() {}, unref() {} }; },
+      },
+    };
+    const load = Module._load;
+    Module._load = function (req, ...rest) { return stubs[req] || load.call(this, req, ...rest); };
+    const Plugin = require(plugin_path);
+    const p = new Plugin();
+    p.settings = { workspace: root, python: "/usr/bin/python3", script: "", flags: "", hideParked: true };
+    p.rebuild = () => Promise.resolve();
+    const view = { toast: (t) => ran.push(["toast", t]) };
+    const out = {};
+    for (const [name, body] of JSON.parse(process.env.MESSAGES)) {
+      ran.length = 0;
+      p.handle(view, body);
+      out[name] = ran.slice();
+    }
+    fs.writeFileSync(out_path, JSON.stringify(out));
+""")
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestDeskRoute(ActionCase):
+    def test_cmux_goes_through_the_desk_when_the_message_says_it_is_ready(self):
+        pricing = str(self.work / "Acme Review" / "Threads" / "Pricing")
+        messages = [["inbox", {"launch": "cmux", "folder": str(self.root), "phrase": "process the inbox", "dk": 1}],
+                    ["thread", {"launch": "cmux", "folder": pricing, "phrase": "open Pricing", "dk": 1}],
+                    ["plain", {"launch": "cmux", "folder": pricing, "phrase": "open Pricing"}],
+                    ["claude", {"launch": "claude", "folder": str(self.root), "phrase": "process the inbox", "dk": 1}],
+                    ["outside", {"launch": "cmux", "folder": str(self.root.parent), "phrase": "x", "dk": 1}]]
+        write(self.root / "System" / "status" / "page_action.py", "")           # only looked for, never run
+        with tempfile.TemporaryDirectory() as tmp:
+            harness, out = Path(tmp) / "routes.js", Path(tmp) / "out.json"
+            harness.write_text(ROUTES)
+            done = subprocess.run(["node", str(harness), str(PLUGIN / "main.js"), str(self.root), str(out)],
+                                  capture_output=True, text=True, env=dict(os.environ, MESSAGES=json.dumps(messages)), timeout=60)
+            self.assertEqual(0, done.returncode, done.stderr)
+            ran = json.loads(out.read_text())
+        self.assertEqual(["stdin", {"verb": "open", "folder": str(self.root), "prompt": "process the inbox"}], ran["inbox"][-1])
+        self.assertEqual(["stdin", {"verb": "open", "folder": pricing, "prompt": "open Pricing"}], ran["thread"][-1])
+        for name in ("inbox", "thread"):
+            self.assertNotIn("clipboard", [r[0] for r in ran[name]])             # the tab starts on it: nothing to paste
+            self.assertFalse([r for r in ran[name] if r[0] == "exec" and r[1] == "open"])
+        self.assertEqual([["clipboard", "open Pricing"], ["exec", "open", ["-b", "com.cmuxterm.app", pricing]]], ran["plain"])
+        self.assertEqual("open", ran["claude"][0][1])                           # Claude keeps its deep link, with the phrase
+        self.assertIn("q=process%20the%20inbox", ran["claude"][0][2][0])
+        self.assertEqual("toast", ran["outside"][0][0])                          # not in the workspace: nothing runs
+        self.assertEqual(1, len(ran["outside"]))
+
+
 if __name__ == "__main__":
     unittest.main()

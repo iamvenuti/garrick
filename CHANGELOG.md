@@ -15,6 +15,22 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - An update replaces `System/rules.md` and every `AGENTS.md` like the rest of Garrick's files, when you have not changed them. One you changed is listed under *Split* and left as it is, with no `.new` beside it.
 
+### Fixed
+
+- *Process the Inbox* did nothing when cmux still remembered a session at the workspace root that desk could not read, as an old session in a reused tab: desk refused to type into it and said so where nobody saw it. desk now passes over a tab it cannot read and starts a new one on the prompt; a tab that is mid-turn is still left alone.
+- The Mac app's answer to a button, a menu row or Ask showed only in its window. With the window out of sight it now comes as a notification as well.
+
+## [0.15.5] - 2026-10-11
+
+With the cmux extra, every way of opening a tab starts its session: Process the Inbox, Ask and the menu's rows as well as the cards. Cards lose the project's note button.
+
+### Changed
+
+- With the cmux extra's desk ready (the extra, cmux and the preview `page-actions`), everything Garrick.app opens in cmux goes through desk, so the new tab starts the assistant rather than waiting at a prompt with the phrase on the clipboard. That now covers *Process the Inbox* in the menu and the panel, a tab at the workspace root that starts on "process the inbox"; the words typed in the menu's or panel's field with the preview `ask` off, at the root too; Ask's opens in cmux; and the menu's and panel's rows, all through one rule in the app's `launch`. The page's menu data says `dk` when the desk is ready, and Ask marks its opens the same way. The Obsidian plugin follows the same rule. Without the desk, cmux opens the folder with the phrase on the clipboard, as before.
+- `page_action.py`'s `open` also takes `{"folder", "prompt"}`: the workspace root, whose tab starts on the prompt, or a project's or thread's folder, opened as by name. Any other folder, a prompt that starts with `-`, and an empty or overlong one are refused. The log names the folder and cuts the prompt to 60 characters.
+- A thread's card no longer has a button with its project's name that opens the project's note, in the threads list or the graph's panel. *Open* opens the thread; the project's note opens from the project's own row and card.
+>>>>>>> root-tab
+
 ## [0.15.4] - 2026-10-11
 
 The threads list and its cards say less and line up, Park and Wake show at once, the Mac app opens without a flicker, and it writes down what its menu holds, for a bug no one could reproduce.

@@ -76,6 +76,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 try:
     import fcntl
@@ -88,7 +89,7 @@ SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "project", "thread", "key", "date", "target", "job", "launchers", "default")
+LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
@@ -180,9 +181,10 @@ def audit(req, ok: bool, say: str, via: str = "") -> None:
     for k in LOGGED:
         if k in req:
             parts.append("%s=%s" % (k, json.dumps(req[k], ensure_ascii=False)[:120]))
-    text = req.get("text")
-    if isinstance(text, str):
-        parts.append("text=%s" % json.dumps(text[:LOGGED_TEXT] + ("…" if len(text) > LOGGED_TEXT else ""), ensure_ascii=False))
+    for k in ("text", "prompt"):
+        text = req.get(k)
+        if isinstance(text, str):
+            parts.append("%s=%s" % (k, json.dumps(text[:LOGGED_TEXT] + ("…" if len(text) > LOGGED_TEXT else ""), ensure_ascii=False)))
     said = say.replace("\n", " ")
     said = said[:LOGGED_SAY] + ("…" if len(said) > LOGGED_SAY else "")
     line = "%s  %s  ->  %s: %s%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(parts), "ok" if ok else "refused",
@@ -576,12 +578,16 @@ def save_settings(ws: Path, req: dict) -> str:
 # Only with the cmux extra (extras/cmux, beside this folder) and cmux installed.
 # Each runs that extra's desk.py, which reads cmux's socket password itself.
 #   {"verb": "open", "zone", "project", "thread"?}  a tab in that folder, started on "open …"
+#   {"verb": "open", "folder", "prompt"}  the same by the folder's full path, for the app's
+#                          own rows and Ask; or the workspace root, started on the prompt,
+#                          for Process the Inbox and the words typed in the panel's field
 #   {"verb": "close", "zone", "project", "thread"?} its tabs; refused while one is mid-turn
 #   {"verb": "startup"}    start or restore cmux and resume its tabs, detached
 #   {"verb": "shutdown"}   the dry run here, so a busy tab is refused while the page
 #                          watches; the wraps and the quit go on detached
 CMUX_VERBS = ("open", "close", "startup", "shutdown")
 CMUX_EXTRA = Path(__file__).resolve().parent.parent / "cmux"
+PROMPT_MAX = 2000
 
 
 def cmux_desk() -> Path:
@@ -628,8 +634,45 @@ def cmux_folder(ws: Path, req: dict) -> tuple:
     return folder, ", ".join(names)
 
 
+def by_folder(ws: Path, req: dict) -> Optional[str]:
+    """An open by folder: None for the workspace root, whose tab starts on the
+    request's prompt; for a project's or a thread's folder, the request is
+    rewritten in place to name it, as the page's buttons do. Anything else,
+    such as a zone, a wiki or a folder outside the workspace, is refused: a
+    tab there would reach more than one project, or nothing of this one."""
+    given = req.get("folder")
+    if not isinstance(given, str) or not given or not Path(given).is_absolute():
+        raise Refused("not a folder in the workspace")
+    folder = Path(given).resolve()
+    if folder == ws.resolve():
+        prompt = req.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise Refused("the workspace root opens only to do something; say what")
+        prompt = prompt.strip()
+        if len(prompt) > PROMPT_MAX or prompt.startswith("-"):
+            raise Refused("that is not something to start a session on")
+        return prompt
+    try:
+        parts = folder.relative_to((ws / "Zones").resolve()).parts
+    except ValueError:
+        raise Refused("a tab opens only at the workspace root or in a project or thread")
+    if len(parts) == 2:
+        req.update(zone=parts[0], project=parts[1])
+    elif len(parts) == 4 and parts[2] == "Threads":
+        req.update(zone=parts[0], project=parts[1], thread=parts[3])
+    else:
+        raise Refused("a tab opens only at the workspace root or in a project or thread")
+    return None
+
+
 def cmux_act(ws: Path, req: dict) -> str:
     verb = req["verb"]
+    if verb == "open" and "folder" in req:
+        req = dict(req)
+        prompt = by_folder(ws, req)
+        if prompt is not None:
+            said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--front").splitlines()
+            return said[0][:1].upper() + said[0][1:] if said else "Opened the workspace root in cmux"
     if verb == "open":
         folder, name = cmux_folder(ws, req)
         said = run_desk(ws, "open", str(folder), "--prompt", "open " + name, "--front").splitlines()

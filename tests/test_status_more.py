@@ -377,9 +377,10 @@ class TestSessions(StatusCase):
         self.assertEqual(("idle", None), (work["Birch Entry"]["s"], work["Birch Entry"]["t"][0].get("s")))
         self.assertEqual(["Work", "Acme Review", ""], work["Acme Review"]["dk"])           # what the menu's cmux row asks the desk to open
         self.assertEqual(["Work", "Acme Review", "Pricing"], work["Acme Review"]["t"][0]["dk"])
+        self.assertEqual(1, menu["dk"])                                                    # and anything else the app opens in cmux
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn('live: r["s"] as? String', swift)                                   # the app draws the dot
-        self.assertIn('["verb": "open", "zone": dk[0], "project": dk[1]]', swift)          # and opens through the desk
+        self.assertIn('launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)', swift)   # and opens through the desk
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(3, len(state["live"]))          # Pricing's folder, and the two projects' folders above a session
         flags(self.root, **{"menu-bar": True})
@@ -387,7 +388,28 @@ class TestSessions(StatusCase):
             html = self.page()
         self.assertEqual("working", cards(html)[("Acme Review", "Pricing")]["live"])   # the dots need no actions
         self.assertNotIn("dk", cards(html)[("Acme Review", "Pricing")])                 # but the desk's buttons do
+        self.assertNotIn("dk", json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)))
         self.assertNotIn('class="desk-acts', html)
+
+    def test_every_cmux_open_in_the_app_goes_through_the_desk_when_it_is_ready(self):
+        # One rule, in launch(): rows, Process the Inbox, the fields' words and
+        # Ask's opens all pass through it, and none reaches cmux another way.
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        launch = swift[swift.index("func launch(_ app: String"):swift.index("func deskReady()")]
+        rule = launch.index('if app == "cmux" && (desk || deskReady()) {')
+        self.assertLess(rule, launch.index("switch app {"))
+        self.assertIn('act(["verb": "open", "folder": folder.path, "prompt": phrase])', launch[rule:])
+        self.assertIn('(menuState?["data"] as? [String: Any])?["dk"] as? Int == 1', swift)       # the page's word for it
+        self.assertEqual(3, swift.count("openInCmux("))          # itself, launch()'s plain cmux, and a page from before 0.5
+        self.assertEqual(1, swift.count("withApplicationAt: cmux"))
+        for route in ('launch(k, f, phrase: r["w"] ?? "")',                                   # Process the Inbox, the menu's
+                      'self.launch(k, f, phrase: act["w"] ?? "")',                            # and the panel's
+                      'launch(app, workspace.path, phrase: text)',                            # the menu's field, ask off
+                      'self.launch(app, workspace.path, phrase: text)',                       # the panel's field, ask off
+                      'self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil)',   # Ask
+                      'launch(app, folder, phrase: body["phrase"] as? String ?? "", desk: body["dk"] != nil)'):         # the page
+            self.assertIn(route, swift)
+        self.assertNotIn('["verb": "open", "zone"', swift)        # rows open by folder too, through the same rule
 
     def test_the_desks_buttons(self):
         flags(self.root, **{"page-actions": True})
@@ -579,13 +601,22 @@ class TestTheThreadsList(StatusCase):
         self.assertIn('<div class="thread proj"', work)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_a_threads_card_opens_its_projects_note_by_name(self):
-        card = cards(self.page())[("Acme Review", "Pricing")]
+    def test_no_card_has_a_button_for_its_projects_note(self):
+        # A thread's card opens the thread; the project's note is the project row's.
+        html = self.page()
+        card = cards(html)[("Acme Review", "Pricing")]
+        self.assertNotIn("pu", card)
         acts = panel(True, ("acts", card))[0]
-        self.assertNotIn("Open project", acts)
-        self.assertRegex(acts, r'<a class="act pnote" href="file://[^"]*/Acme%20Review/Acme%20Review.md" '
-                               r'title="Open the project\'s note" aria-label="Open the note of the project Acme Review">'
-                               r'<svg[^>]*>.*</svg><span>Acme Review</span></a>')
+        self.assertNotIn("Acme%20Review/Acme%20Review.md", acts)
+        self.assertEqual(1, acts.count('<a class="act"'))                       # Open, and no second link
+        old = dict(card, pu=card["u"].rsplit("/Threads/", 1)[0] + "/Acme%20Review.md")
+        self.assertNotEqual(old["pu"], card["u"])
+        self.assertNotIn("Acme%20Review.md", panel(True, ("acts", old))[0])      # a page built by 0.15.4 still says it
+        for js in (status.PANEL_JS, status.GRAPH_JS):
+            self.assertNotIn("pnote", js)
+            self.assertNotIn("o.pu", js)
+        self.assertNotIn("hubOf", status.GRAPH_JS)
+        self.assertNotIn("pnote", status.CSS)
 
     def test_the_panels_dot_follows_the_name(self):
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
@@ -611,20 +642,11 @@ class TestTheThreadsList(StatusCase):
     def test_a_rows_card_names_no_kind_zone_or_project(self):
         card = cards(self.page())[("Acme Review", "Pricing")]
         row, graph = panel(True, ("head", card, 1), ("head", card))
-        self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the button the project
+        self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the row above the project
         self.assertNotIn('<div class="muted">', row)
         self.assertIn('<span class="chip" style="margin:0 4px 0 0">acme</span>', row)
         self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
         self.assertIn("tc.innerHTML=Panel.head(o,1)+Panel.acts(o)", status.JS)
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_a_project_that_is_its_own_thread_has_no_project_button(self):
-        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")
-        birch = cards(self.page())[("Birch Entry", "Birch Entry")]
-        self.assertEqual("", birch["pu"])                                       # the note Open already opens
-        self.assertNotIn("pnote", panel(True, ("acts", birch))[0])
-        same = dict(birch, pu=birch["u"])                                       # a page built by 0.15.3 says it twice
-        self.assertNotIn("pnote", panel(True, ("acts", same))[0])
 
     def test_the_live_dot_keeps_its_distance(self):
         self.assertIn(".thread .t a+.live{margin-left:.4em}", status.CSS)
@@ -1020,3 +1042,12 @@ class TestHotkeyFields(unittest.TestCase):
         out = self.run_js({"hotkey": "⌥Space"})
         self.assertEqual("none", out["askRow"])
         self.assertEqual("Opens the menu or the panel from any app", out["notes"]["hotkey"])
+
+
+class TestAppNotifies(unittest.TestCase):
+    def test_an_answer_with_the_window_out_of_sight_comes_as_a_notification(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        toast = swift[swift.index("func toast("):swift.index("func notify(")]
+        self.assertIn("!window.isVisible || !NSApp.isActive { notify(text) }", toast)
+        self.assertIn("UNUserNotificationCenter.current()", swift[swift.index("func notify("):])
+

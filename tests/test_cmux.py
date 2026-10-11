@@ -379,6 +379,20 @@ class DeskVerbTest(CmuxCase):
             self.assertIn("holds projects", err)
         self.assertEqual(self.run_desk("open", str(self.ws), "--dry-run")[0], 0)   # the root, by its full path
 
+    def test_open_the_root_by_its_full_path_with_a_prompt(self):
+        # Process the Inbox: a tab at the root, in the neutral workspace, that starts on the phrase.
+        code, out, err = self.run_desk("open", str(self.ws), "--prompt", "process the inbox", "--front")
+        self.assertEqual((code, err), (0, ""))
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-workspace")
+        self.assertEqual(call[call.index("--name") + 1], "System")
+        self.assertEqual(call[call.index("--cwd") + 1], str(self.ws))
+        self.assertEqual(shlex.split(call[call.index("--command") + 1]), ["claude", "-n", self.ws.name, "process the inbox"])
+        self.assertIn("a new workspace, System", out)
+        self.log.unlink()
+        code, _, _ = self.run_desk("open", self.ws.name, "--prompt", "process the inbox")      # never by a heard name
+        self.assertEqual(code, 2)
+        self.assertNotIn("new-workspace", self.verbs())
+
     def test_open_sends_the_prompt_to_an_idle_tab_and_nothing_to_a_busy_one(self):
         self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
         self.assertEqual(self.run_desk("open", "pricing", "--prompt", "open pricing")[0], 0)
@@ -390,6 +404,16 @@ class DeskVerbTest(CmuxCase):
         self.assertEqual(code, 2)
         self.assertIn("mid-turn", err)
         self.assertNotIn("send", self.verbs())
+
+    def test_open_with_a_prompt_passes_over_a_tab_it_cannot_read(self):
+        # A session cmux remembers in the folder, whose state cannot be read
+        # (its transcript says nothing desk knows): a new tab starts on the
+        # prompt, and nothing is typed into the old one.
+        self.state({"sessions": [self.session("a", self.ws, [{"type": "unknown"}])]})
+        code, out, err = self.run_desk("open", str(self.ws), "--prompt", "process the inbox", "--front")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("send", self.verbs())
+        self.assertTrue({"new-surface", "new-workspace"} & set(self.verbs()))
 
     def test_close_refuses_busy_and_unreadable_tabs_and_closes_none(self):
         project = self.work / "Acme Review"
@@ -634,6 +658,49 @@ class PageVerbTest(CmuxCase):
         call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
         self.assertEqual(call[call.index("--working-directory") + 1], str(self.pricing))
         self.assertEqual(shlex.split(call[call.index("--command") + 1])[-1], "open Acme Review, Pricing")
+
+    def test_open_the_root_by_its_folder_starts_on_the_prompt(self):
+        # Process the Inbox, and the words typed in the panel's field: a tab at
+        # the root, in the System workspace, that starts on them.
+        self.state({"workspaces": [{"id": "ws-system", "title": "System"}]})
+        said = self.act({"verb": "open", "folder": str(self.ws), "prompt": "process the inbox"})
+        self.assertTrue(said.startswith("Opened "), said)
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
+        self.assertEqual(call[call.index("--workspace") + 1], "ws-system")
+        self.assertEqual(call[call.index("--working-directory") + 1], str(self.ws))
+        self.assertEqual(shlex.split(call[call.index("--command") + 1]), ["claude", "-n", self.ws.name, "process the inbox"])
+
+    def test_open_the_root_sends_the_prompt_to_its_idle_tab(self):
+        self.state({"sessions": [self.session("r", self.ws, claude_rows())]})
+        self.act({"verb": "open", "folder": str(self.ws), "prompt": "process the inbox"})
+        self.assertIn(["send", "--surface", "r-surface", "--", "process the inbox"], [c["argv"] for c in self.calls()])
+        self.assertNotIn("new-surface", self.verbs())
+
+    def test_open_a_project_or_thread_by_its_folder_is_open_by_name(self):
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}]})
+        said = self.act({"verb": "open", "folder": str(self.pricing), "prompt": "something else entirely"})
+        self.assertTrue(said.startswith("Opened Acme Review, Pricing"), said)
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
+        self.assertEqual(call[call.index("--working-directory") + 1], str(self.pricing))
+        self.assertEqual(shlex.split(call[call.index("--command") + 1])[-1], "open Acme Review, Pricing")
+        self.log.unlink()
+        self.act({"verb": "open", "folder": str(self.work / "Acme Review"), "prompt": "open Acme Review"})
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
+        self.assertEqual(shlex.split(call[call.index("--command") + 1])[-1], "open Acme Review")
+
+    def test_open_by_folder_refuses_anything_but_the_root_a_project_or_a_thread(self):
+        elsewhere = self.tmp / "Elsewhere"
+        elsewhere.mkdir()
+        for folder in (str(self.work), str(self.ws / "Zones"), str(self.ws / "Wikis"), str(self.ws / "System"),
+                       str(self.pricing.parent), str(self.pricing / "Notes"), str(elsewhere), str(self.tmp),
+                       str(self.pricing / ".." / ".." / ".." / ".." / ".." / ".."), "Zones/Work/Acme Review",
+                       str(self.work / "Nothing"), str(self.work / "Acme Review" / "Threads" / "Nothing"), "", None, 3):
+            with self.subTest(folder=folder), self.assertRaises(pa.Refused):
+                self.act({"verb": "open", "folder": folder, "prompt": "process the inbox"})
+        for prompt in (None, "", "   ", 3, "--dangerously-skip-permissions", "x" * (pa.PROMPT_MAX + 1)):
+            with self.subTest(prompt=prompt), self.assertRaises(pa.Refused):
+                self.act({"verb": "open", "folder": str(self.ws), "prompt": prompt})
+        self.assertEqual(self.calls(), [])
 
     def test_open_and_close_refuse_what_is_not_a_project_or_thread(self):
         for req in ({"zone": "Work", "project": "../Personal"}, {"zone": "Work", "project": "Nothing"},

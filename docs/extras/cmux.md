@@ -54,7 +54,21 @@ Run `desk status` to check it can see cmux.
 
 ## From the status page
 
+When desk is asked to open a folder with a prompt and a tab there is idle, the prompt goes to that tab; if it is mid-turn, nothing is sent; if desk cannot read its state, as with a session cmux remembers whose transcript is gone, a new tab starts on the prompt.
+
 With the extra in `System/cmux/`, beside the status page in `System/status/`, the [status page](status-page.md)'s buttons can open and close a thread's tab, and start up or shut down cmux, through `System/status/page_action.py`. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
+
+Once the page says the desk is ready (the extra, cmux, and the preview `page-actions` on), everything in Garrick.app that opens cmux goes through desk, so the tab starts the assistant instead of waiting at a prompt with the phrase on the clipboard:
+
+| Where | What the tab starts on |
+|---|---|
+| *Open in cmux* on a card, in the graph's panel, and a thread's name when cmux is the default | "open Acme Review, Pricing" |
+| A cmux icon in the menu bar menu or the panel, and a row's name when cmux is the default | the same |
+| *Process the Inbox*, in the menu and the panel, when cmux is the assistant | "process the inbox", in a tab at the workspace root |
+| The menu's or the panel's field, with the preview `ask` off and cmux the assistant | the words you typed, at the workspace root |
+| Ask, with the preview `ask` on, opening a project or thread in cmux | "open Acme Review, Pricing" |
+
+A tab at the workspace root goes to the *System* workspace (the `neutral` setting). desk opens the root only when given its full path, so a heard name never lands there. If a tab is already open in that folder, desk brings it forward, and sends the words only when its session is idle. Without the desk, each of these opens the folder in cmux with the phrase on the clipboard, as before. The [Obsidian plugin](status-page.md#in-obsidian) gets the page's buttons the same way.
 
 ## The socket password
 

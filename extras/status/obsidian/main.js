@@ -305,7 +305,7 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		if (body.app) return view.toast("That setting is Garrick.app's own.");
 		if (typeof body.copy === "string" && body.copy) clipboard.writeText(body.copy);
 		if (typeof body.launch === "string" && typeof body.folder === "string") {
-			this.launch(view, body.launch, body.folder, typeof body.phrase === "string" ? body.phrase : "");
+			this.launch(view, body.launch, body.folder, typeof body.phrase === "string" ? body.phrase : "", !!body.dk);
 		} else if (typeof body.cmux === "string") {
 			this.launch(view, "cmux", body.cmux, "");   // a page built before the other apps
 		}
@@ -335,10 +335,13 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	// As Garrick.swift's launch(): Claude gets the phrase typed into a new
 	// session for you to send; Codex and cmux get the folder, and the phrase
 	// goes on the clipboard; Finder shows the folder. Nothing is sent and no
-	// command is typed into a terminal.
-	launch(view, app, p, phrase) {
+	// command is typed into a terminal. cmux with the cmux extra's desk ready
+	// (desk: the message says so) goes through page_action.py instead: a tab
+	// in the folder that starts the assistant on the phrase.
+	launch(view, app, p, phrase, desk) {
 		const folder = this.inWorkspace(view, p);
 		if (!folder) return;
+		if (app === "cmux" && desk) return this.act(view, { verb: "open", folder, prompt: phrase });
 		if (app === "claude") {
 			const url = "claude://code/new?folder=" + encodeURIComponent(folder) + (phrase ? "&q=" + encodeURIComponent(phrase) : "");
 			execFile("open", [url], (err) => { if (err) this.gone(view, "claude"); });

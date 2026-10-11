@@ -2055,16 +2055,14 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     """What a thread's card shows, as JSON for its row: the same fields the
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked (`held` when only because its
-    project is), the name to say, and links: its note's and, for a thread in a
-    project of several, the project's hub note (`pu`), which a project that is
-    its own thread does not repeat; whether the note has a Resume here block
-    (`r`) and how old that block's date is (`rd`). Where an app to open it in is installed (`cmux`, for any
+    project is), the name to say, its note's link; whether the note has a
+    Resume here block (`r`) and how old that block's date is (`rd`). Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
     sessions open), the session's state, and with `drive` (the extra, cmux
     and page-actions) what the desk opens and closes."""
     card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
-            "u": link(r["note"]), "pu": link(r["hub"]) if r["hub"] and r["hub"] != r["note"] else "", "r": 1 if r.get("resume") else 0,
+            "u": link(r["note"]), "r": 1 if r.get("resume") else 0,
             "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
     if cmux:
         card["f"] = str(r["note"].parent)
@@ -2090,7 +2088,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     thread notes is its own thread. With the cmux extra, each row also says
     whether a session is open in it (`s`: "idle", "working" or None; a
     project counts its threads'), and with `drive` what the desk opens
-    (`dk`: zone, project, thread or ""). The app keeps the zone the graph shows;
+    (`dk`: zone, project, thread or ""), and `dk` on the whole menu too: the
+    app then opens anything in cmux through the desk, the workspace root for
+    Process the Inbox and Ask included. The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -2125,7 +2125,10 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
                        for r in sorted(rs, key=lambda r: r["thread"].casefold())]
             projects.append(dict(entry(project, say, hub, [zone, project, ""]), t=threads))
         zones.append({"z": zone, "p": projects})
-    return {"trouble": trouble, "zones": zones}
+    out = {"trouble": trouble, "zones": zones}
+    if drive:
+        out["dk"] = 1
+    return out
 
 
 def menu_settings() -> str:
@@ -2616,8 +2619,6 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop h4,.tcard h4{margin:0 22px 2px 0;font-size:14px;font-weight:640;overflow-wrap:anywhere}.tcard h4{margin-right:0}
 .gpop .x{position:absolute;right:8px;top:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
-.act.pnote{display:inline-flex;align-items:center;gap:4px;max-width:100%}.act.pnote svg{width:12px;height:12px;flex:none}
-.act.pnote span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
 .act[data-k=note]{--ic:var(--icon-note)}.act[data-k=note][href^="obsidian:"]{--ic:var(--icon-obsidian,var(--icon-note))}
@@ -2767,10 +2768,6 @@ function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
 function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
-/* the project's hub note, by the project's name: a thread's card has no other way to it. Only when it is another note
-   than the card's own: a project that is its own thread has Open for that */
-if(o.pu&&o.pu!==o.u)a+='<a class="act pnote" href="'+esc(o.pu)+'" title="Open the project&#39;s note" aria-label="Open the note of the project '+esc(o.p)+'">'
-+'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.2L12.5 4.8v9.7H4z M9 1.7v3.3h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg><span>'+esc(o.p||'Project')+'</span></a>';
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
 /* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
@@ -2792,7 +2789,7 @@ return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
 function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
-/* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, its project button the project;
+/* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project;
    the graph's panel, which floats free of any list, keeps them */
 function head(o,row){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
@@ -3046,8 +3043,8 @@ var places=[];G.nodes.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n
 /* which place the graph shows: the one asked for last, else Work when there is one, else everything */
 var zsel=st.get('garrick-graph-place');if(zsel!=='*'&&places.indexOf(zsel)<0)zsel=places.indexOf('Work')>=0?'Work':'*';
 var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
-var N=G.nodes,hubOf={},seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
-N.forEach(function(n,i){n.i=i;n.adj=[];if(n.h)hubOf[n.z+'/'+n.p]=n});
+var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
+N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
 var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z);n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
 var V=[],E=[],alpha=1,theta=0,phase=0,SWAY=.1,pull=1.4,ticks=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,asp=2,running=false,shown=false,glides=0,last=0,idle=0,C={},bar=wrap.querySelector('.gbar'),top=58;
@@ -3201,8 +3198,8 @@ cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preve
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
 var esc=Panel.esc;
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
-function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;var hub=hubOf[n.z+'/'+n.p];
-var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held,pu:hub&&hub!==n?hub.u:''};
+function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;
+var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
@@ -3410,7 +3407,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         hp = 1 if project in T[zone].get("held", ()) else 0
         c = {"n": project, "kl": "project", "z": zone, "p": "", "t": party, "d": days, "s": hp, "h": 1, "hp": hp,
              "w": project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else "",
-             "u": link(hub) if hub else link(items[0]["note"]), "pu": ""}
+             "u": link(hub) if hub else link(items[0]["note"])}
         if acting and hub:
             c["pp"] = [zone, project]        # what Park and Wake act on: the hub, and with it every thread
         if cmux:

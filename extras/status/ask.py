@@ -46,7 +46,9 @@ JSON (ask-brief.md). Each action is checked against that list, then:
 
     open       comes back to the app as a folder to open, in an app the
                request named or the user's default; an app switched off in
-               Settings is refused, and the app checks it again
+               Settings is refused, and the app checks it again. With the
+               cmux extra's desk ready (`dk`), cmux opens it as a tab that
+               starts the session, as the page's buttons do
     park, wake run through page_action.act(), as the page's buttons do: the
     todo-add   status field or the line, committed in the zone's repository,
                and only with the page's own preview, page-actions, on too
@@ -134,6 +136,19 @@ def page_action():
 
 def flag_on(ws: Path) -> bool:
     return page_action().flag_on(ws, FLAG)
+
+
+def desk_ready(ws: Path) -> bool:
+    """Whether cmux opens through the cmux extra's desk, as status.py's page
+    decides it: page-actions on, the extra beside the page, cmux installed."""
+    pa = page_action()
+    if not pa.flag_on(ws):
+        return False
+    try:
+        pa.cmux_desk()
+    except pa.Refused:
+        return False
+    return True
 
 
 def launcher_on(ws: Path, app: str) -> bool:
@@ -492,6 +507,7 @@ class Asker:
             return off()
         pa = page_action()
         done, launch, ok = [], [], True
+        desk = None
         for a in do:
             try:
                 kind, item = proposal(a, names, self.ws)
@@ -500,6 +516,9 @@ class Asker:
                 ok = False
                 continue
             if kind == "launch":
+                desk = desk_ready(self.ws) if desk is None else desk
+                if desk:
+                    item["dk"] = 1           # the app opens cmux through the desk, the session started
                 launch.append(item)
                 done.append("Opening %s%s" % (item["name"], " in " + item["app"].capitalize() if item["app"] else ""))
                 continue

@@ -562,12 +562,11 @@ class TestThreadCards(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "pu", "r", "rd"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd"}, set(card))
         self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
         self.assertTrue(card["u"].startswith("file://") and card["u"].endswith("/Pricing/Pricing.md"))
-        self.assertTrue(card["pu"].endswith("/Acme%20Review/Acme%20Review.md"))
         self.assertNotIn("private figure", json.dumps(card))
 
     def page(self, **kw):
@@ -577,7 +576,7 @@ class TestThreadCards(StatusCase):
         # The graph panel and the thread card draw their actions from Panel.acts
         # and their heading from Panel.head; neither builds a button of its own.
         self.assertEqual(1, status.PANEL_JS.count("function acts("))
-        for label in (">Open</a>", 'title="Open the project&#39;s note"', "<span>'+esc(o.p||'Project')+'</span></a>", "Copy “", "'open '", "'wake '", "'park '"):
+        for label in (">Open</a>", "Copy “", "'open '", "'wake '", "'park '"):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
             self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o\)")      # a row's card as itself, the graph's as a panel

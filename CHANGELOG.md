@@ -8,6 +8,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - A recording or mail filed twice no longer gets two pages. `ingest.py land` and `intake.py file-conversation` refuse a transcript or mail whose bytes, or whose ID (an `.eml`'s Message-ID, or `source-id`, `message-id` or `recording-id` in a transcript's frontmatter), match a record already in `Wikis/Meetings/raw/`, at any depth, and name that record. A mail page records its Message-ID as `source-id:`. ([#52](https://github.com/iamvenuti/garrick/issues/52))
 - The wall check reaches a git repository inside a project, such as a product's code or a site, which the zone's own hook never saw and which is the one most likely to be pushed somewhere public. `check.py --install-hooks` installs the hook there too, checking staged files on the project's side of the walls, and `check.py` warns about such a repository that has a remote and no hook. ([#43](https://github.com/iamvenuti/garrick/issues/43))
+- A backup job in the jobs extra, `backup.py`, with a launchd example that runs it at 12:30 and 23:30. It commits and pushes every repository of the workspace, holding back only the files the wall check refuses, so one walled note no longer stops a zone from being backed up; one notice names what it held. It never forces, rebases or merges: a remote that moved ahead is reported, and offline it commits and waits. Exit 5 (held back) and 6 (offline) are quiet; offline for more than three days is a failure. ([#44](https://github.com/iamvenuti/garrick/issues/44))
 
 ### Changed
 

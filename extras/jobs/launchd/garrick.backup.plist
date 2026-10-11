@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The backup extra on a schedule: every repository of the workspace committed
+  and pushed at 12:30 and 23:30, holding back only what the wall check
+  refuses. It calls no assistant. Copy it to ~/Library/LaunchAgents/ and edit
+  the copy. If your workspace is not ~/Garrick, replace each
+  /Users/&lt;you&gt;/Garrick with its full path. Then replace every other
+  &lt;you&gt; (written that way because this is XML) with your macOS user name;
+  launchd does not expand ~. Load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.backup.plist
+
+  GARRICK_QUIET_EXITS keeps its two quiet outcomes, 5 (files held back) and
+  6 (offline), from raising a failure notice. PATH must reach git. A push
+  over SSH needs a key the job can use without asking; over HTTPS, a
+  credential helper.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>backup</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/backup.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GARRICK_QUIET_EXITS</key>
+    <string>5 6</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/backup.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/backup.launchd.log</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>12</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>23</integer>
+      <key>Minute</key>
+      <integer>30</integer>
+    </dict>
+  </array>
+</dict>
+</plist>

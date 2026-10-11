@@ -11,6 +11,12 @@ Two kinds of thing can run on a schedule, and they need different amounts of car
 
 On macOS, a launchd agent is the usual way to run something without a terminal open. A plist that runs `/usr/bin/python3 /Users/<you>/Garrick/System/tools/check.py --json` once a day is the smallest version. launchd does not expand `~` or start in your workspace, so every path in the plist is spelled out in full. This is also why the installer refuses a workspace under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library`: macOS stops a scheduled job from reading there. The check fixes nothing on its own; it tells you sooner that something needs fixing. The fetcher, `extras/fetch/imap_fetch.py --config <file>`, runs the same way every few minutes, and only saves mail into a zone's inbox: sorting it still waits for you to say "process the inbox".
 
+### Backing up every repository
+
+A workspace is several repositories (the root, each zone, the wikis), and the one nobody remembered to push is the one that matters. `extras/jobs/backup.py` commits and pushes them all, and calls no assistant. Copied into `System/jobs/` with the rest, it runs through `job.py`, so it has a log, a lock and a watchdog; `launchd/garrick.backup.plist` runs it at 12:30 and 23:30.
+
+For each repository with changes, it stages everything, runs the wall check on what is staged, unstages each file the check refuses, and commits the rest through the repository's own hook. A single walled note never stops a whole zone from being backed up: it stays on disk, uncommitted, and one notice names it, sent again only when the list of held files changes. Then it pushes, never with force, and never after a rebase or a merge: a remote that has moved ahead is left alone, and the run fails so you are told to pull by hand. Offline, it commits and holds every push for the next run. Its exit code is the worst outcome of the run: 0 when everything went, 5 when files were held back, 6 when offline, 1 for a failed commit or push. Set `GARRICK_QUIET_EXITS` to `5 6`, as the plist does, so the two quiet outcomes raise no failure notice; offline for more than three days counts as a failure, so a push that fails for another reason is not quiet forever.
+
 ## An assistant on a schedule
 
 | File in `extras/jobs/` | What it does |
@@ -20,6 +26,7 @@ On macOS, a launchd agent is the usual way to run something without a terminal o
 | `headless-settings.json` | The deny list every unattended Claude call loads |
 | `whats_open.py` | The example job: a "what's open" brief per zone, written outside the workspace |
 | `launchd/garrick.whats-open.plist` | The example job on a schedule, every morning at 06:30 |
+| `backup.py`, `launchd/garrick.backup.plist` | The backup: every repository committed and pushed twice a day, holding back what the walls refuse. No assistant |
 
 ### Set it up
 

@@ -15,7 +15,7 @@ Core never talks to a mail provider and holds no credentials. Everything on this
 | Mail | `Zones/<Zone>/Inbox/`, as a `.eml` file, or saved as `.txt` or `.md` | A conversation in Meetings; something to read in Knowledge; or, for an attachment a project needs, that project's `Sources/`, with the mail itself kept in Meetings |
 | Any other file | `Zones/<Zone>/Inbox/`: a PDF, a document, a spreadsheet, an article | Something to read in Knowledge, or material for a project in its `Sources/` |
 
-The zone is the inbox you put it in. Parties come from the mail domains in the Parties table of `System/context.md`, confirmed by you when they are unclear. Before anything goes into a project, the assistant is instructed to check the declared walls and refuse material from the other side. The [rules and commit checks have limits](../principles.md#what-the-check-covers); review filed material before using it. When it can't tell what something is, whose it is or which project it's for, it asks in one short line. Nothing in an inbox is ever committed.
+The zone is the inbox you put it in, or, with one address for every zone (below), the zone its parties point to, which you confirm. Parties come from the mail domains in the Parties table of `System/context.md`, confirmed by you when they are unclear. Before anything goes into a project, the assistant is instructed to check the declared walls and refuse material from the other side. The [rules and commit checks have limits](../principles.md#what-the-check-covers); review filed material before using it. When it can't tell what something is, whose it is or which project it's for, it asks in one short line. Nothing in an inbox is ever committed.
 
 Recordings have their own page: [a meeting recorder](meeting-recorder.md). The rest of this page is about mail.
 
@@ -69,6 +69,13 @@ If the connector can't give you the raw message, ask for a `.md` file per mail i
    ```
 
    `mailbox` is a folder, or on Gmail a label. Optional keys: `"mark_read": true` to mark each saved message read, `"copy_to": "Garrick/Fetched"` to copy it to another folder (a second label, on Gmail), `"search"` for an IMAP search other than `ALL`, and `"state"` for where it keeps the list of messages already saved (by default beside the config, as `work-mail.state.json`). One config per zone. `"reading": true` marks a mailbox kept for newsletters and reports: each message is saved as `reading-<name>.eml`, intake treats it as something to read, and the reading sweep in the [jobs extra](scheduled-jobs.md) files it into Knowledge each night, or skips it when it is too thin to keep. Mail from a party's domain is never filed unattended: it waits for you.
+
+**One address for every zone.** Instead of an address, a label and a config per zone, you can forward everything to one, and let intake settle the zone when it files. Make the workspace's own `Inbox/` once (`mkdir ~/Garrick/Inbox`; its contents are never committed), and point a config's `"inbox"` at it (`/Users/<you>/Garrick/Inbox`). For each mail there, intake proposes the zone its parties belong to, and asks in one line when they do not settle it: no party on it (mail from personal webmail, or only your own addresses), or parties from two zones. Once you confirm, it moves the mail to that zone's inbox and files it as any other, with the same wall check. A two-address setup:
+
+- `you+garrick@example.com` takes everything you forward or redirect to be captured: conversations, project material, the odd article someone sends you. Intake sorts it into Meetings, a project's `Sources/` or Knowledge, settling the zone and the parties first.
+- `you+knowledge@example.com`, optional, is only for subscribing to newsletters and analyst lists, fetched with `"reading": true`, which go straight to Knowledge. It skips the party question, so only published material belongs there: never forward a private mail to it.
+
+The trade-off: the zone is chosen when the mail is filed, not when it is forwarded, so mail from personal webmail will nearly always prompt a question. Zone inboxes keep working beside it, for anyone who wants the address to decide.
 
 3. **Run it**:
 

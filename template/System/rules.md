@@ -32,7 +32,7 @@ When there are several good ways to do something, name two or three, recommend o
 
 Recordings, mail and files you drop in. Getting them here is fetching, done by hand, by a script or by your assistant's own connector, and it decides nothing. Where each one goes is decided by these rules, one item at a time; the `intake` skill is the procedure.
 
-- **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to. An inbox is never a project, and nothing in one is committed.
+- **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to, or in the workspace's own `Inbox/` when one address serves every zone: there its zone is settled before anything else, from its parties, confirmed. An inbox is never a project, and nothing in one is committed.
 - **A recording is always a conversation**, filed in Meetings.
 - **Mail and files go where they belong:**
   - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;

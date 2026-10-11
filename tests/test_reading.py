@@ -144,5 +144,60 @@ class TestReadingSweep(ReadingCase):
         self.assertEqual("start", git(self.wikis, "log", "-1", "--format=%s").strip())
 
 
+class TestOneAddressForEveryZone(ReadingCase):
+    """Mail forwarded to one address waits in the workspace's Inbox until its
+    zone is settled, then is filed from that zone's inbox as any other."""
+
+    def setUp(self):
+        super().setUp()
+        self.shared = self.root / "Inbox"
+        self.shared.mkdir(exist_ok=True)
+
+    def put(self, name, data):
+        (self.shared / name).write_bytes(data)
+        return self.shared / name
+
+    def test_the_parties_propose_the_zone_and_it_moves_there(self):
+        acme = self.put("acme.eml", eml(plain="Figures.\n"))                        # acmecorp.example: Work
+        item = next(i for i in self.intake.list_items(self.root) if i["file"] == "Inbox/acme.eml")
+        self.assertEqual(("", "Work"), (item["zone"], item["suggested_zone"]))
+        parsed = self.intake.parse(self.root, acme)
+        self.assertEqual("Work", parsed["suggested_zone"]["zone"])
+        with self.assertRaisesRegex(self.intake.Refusal, "move-to-zone"):
+            self.intake.file_conversation(self.root, acme, ["acme"])
+        moved = self.intake.move_to_zone(self.root, acme, "work")
+        self.assertEqual(self.root / "Zones" / "Work" / "Inbox" / "acme.eml", moved)
+        self.assertFalse(acme.exists())
+        slug, _, _ = self.intake.file_conversation(self.root, moved, ["acme"], today="2026-10-12")
+        self.assertTrue(slug)
+
+    def test_webmail_or_no_party_means_asking(self):
+        self.put("friend.eml", eml(sender="A Friend <friend@gmail.com>", plain="Hi.\n"))
+        parsed = self.intake.parse(self.root, self.shared / "friend.eml")
+        self.assertEqual("", parsed["suggested_zone"]["zone"])
+        self.assertTrue(parsed["suggested_zone"]["ask"])
+
+    def test_the_fetcher_takes_the_workspaces_inbox_and_nothing_else(self):
+        fetch = _load("garrick_imap_shared", REPO / "extras" / "fetch" / "imap_fetch.py")
+        for folder, ok in ((self.shared, True), (self.root / "Zones" / "Work" / "Inbox", True),
+                           (self.root / "System", False), (self.root / "Elsewhere" / "Inbox", False)):
+            folder.mkdir(parents=True, exist_ok=True)
+            cfg = Path(self._tmp.name) / "mail.json"
+            cfg.write_text(json.dumps({"server": "imap.example", "user": "jo@example.invalid", "mailbox": "Garrick",
+                                       "inbox": str(folder)}))
+            if ok:
+                self.assertEqual(folder, fetch.load_config(cfg)["inbox"])
+            else:
+                with self.assertRaises(fetch.FetchError):
+                    fetch.load_config(cfg)
+
+    def test_reading_may_go_straight_to_knowledge_and_nothing_else_does(self):
+        path = self.put("weekly.eml", eml(**NEWSLETTER))
+        slug, raw, _ = self.intake.file_reading(self.root, path, today="2026-10-12")
+        self.assertTrue(raw.is_file())
+        with self.assertRaises(self.intake.Refusal):
+            self.intake.move_to_zone(self.root, self.put("x.eml", eml(plain="x\n")), "Nowhere")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2643,8 +2643,7 @@ def mail_index(ws: Workspace) -> Dict[Tuple[str, int, str], List[MailRecord]]:
     records: List[MailRecord] = []
     records += [MailRecord(p, page) for paths in raw_records(ws).values() for p in paths
                 if p.suffix.lower() == ".eml" and p.is_file() for page in sorted(owner.get(p) or [None], key=str)]
-    for zone in ws.zones:
-        inbox = zone / INBOX
+    for inbox in [zone / INBOX for zone in ws.zones] + [ws.root / INBOX]:
         if inbox.is_dir():
             records += [MailRecord(p, None) for p in sorted(inbox.iterdir())
                         if p.is_file() and p.suffix.lower() == ".eml"]
@@ -2887,9 +2886,9 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         except ValueError:
             minbox_rel = None  # the Meetings inbox is in another repository
         for name in names:
-            if top_path in zones and in_inbox(name, (INBOX,)):
+            if (top_path in zones or top_path == ws.root.resolve()) and in_inbox(name, (INBOX,)):
                 out.append(Finding(ERROR, "inbox", rel(ws, top_path / name),
-                                   "is waiting in the inbox to be filed, and never goes into the zone's history; "
+                                   "is waiting in the inbox to be filed, and never goes into any history; "
                                    "unstage it and file it where it belongs",
                                    "A file from the %s inbox was about to be committed" % top_path.name))
                 continue
@@ -2996,6 +2995,16 @@ def check_inbox(ws: Workspace) -> List[Finding]:
                                    "committed into the %s zone's history from its inbox, which is never committed: "
                                    "`git rm --cached` it, then file it where it belongs" % zone.name,
                                    "Something in the %s inbox was committed" % zone.name))
+    shared = ws.root / INBOX               # mail sent to one address for every zone, waiting for its zone
+    if shared.is_dir():
+        inboxes.append((shared, "the workspace's inbox"))
+        if _own_repo(ws.root):
+            listing = _git(["ls-files", "-z", "--", INBOX], ws.root) or ""
+            for name in sorted(n for n in listing.split("\0") if n and Path(n).name != ".gitkeep"):
+                out.append(Finding(ERROR, "inbox", rel(ws, ws.root / name),
+                                   "committed into the workspace's history from its inbox, which is never committed: "
+                                   "`git rm --cached` it, then file it where it belongs",
+                                   "Something in the workspace's inbox was committed"))
     minbox = ws.root.joinpath(*MEETINGS_INBOX)
     if minbox.is_dir():
         inboxes.append((minbox, "the Meetings inbox"))

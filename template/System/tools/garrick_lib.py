@@ -967,7 +967,9 @@ def garrick_ignores(zones) -> Dict[str, str]:
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
-    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + common,
+    shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
+              "Inbox/*\n!Inbox/.gitkeep\n")
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared + common,
            "Wikis/.gitignore": common + transcripts}
     for zone in zones:
         out["Zones/%s/.gitignore" % zone] = common + inbox

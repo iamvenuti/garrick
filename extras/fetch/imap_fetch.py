@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch mail from one IMAP mailbox into one zone's Inbox. An optional extra.
+"""Fetch mail from one IMAP mailbox into one zone's Inbox, or into the
+workspace's own Inbox for one address that serves every zone. An optional extra.
 
 A fetcher writes files into `Zones/<Zone>/Inbox/` and decides nothing. This one
 saves each new message in one mailbox (a folder, or a Gmail label) as a `.eml`
@@ -91,8 +92,10 @@ def load_config(path: Path) -> dict:
         raise FetchError("%s is missing %s." % (path, ", ".join(missing)))
     cfg = dict(DEFAULTS, **raw)
     inbox = Path(str(cfg["inbox"])).expanduser()
-    if inbox.name != "Inbox" or inbox.parent.parent.name != "Zones" or not inbox.is_dir():
-        raise FetchError("%s is not a zone's Inbox folder, Zones/<Zone>/Inbox, that exists." % inbox)
+    shared = inbox.name == "Inbox" and (inbox.parent / "System" / "rules.md").is_file()     # the workspace's own
+    if not inbox.is_dir() or inbox.name != "Inbox" or not (inbox.parent.parent.name == "Zones" or shared):
+        raise FetchError("%s is not a zone's Inbox folder, Zones/<Zone>/Inbox, or the workspace's Inbox, that exists."
+                         % inbox)
     cfg["inbox"] = inbox
     cfg["state"] = Path(str(cfg.get("state") or Path(path).expanduser().with_suffix(".state.json"))).expanduser()
     return cfg

@@ -6,6 +6,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- With the cmux extra's desk ready (the extra, cmux and the preview `page-actions`), everything Garrick.app opens in cmux goes through desk, so the new tab starts the assistant rather than waiting at a prompt with the phrase on the clipboard. That now covers *Process the Inbox* in the menu and the panel, a tab at the workspace root that starts on "process the inbox"; the words typed in the menu's or panel's field with the preview `ask` off, at the root too; Ask's opens in cmux; and the menu's and panel's rows, all through one rule in the app's `launch`. The page's menu data says `dk` when the desk is ready, and Ask marks its opens the same way. The Obsidian plugin follows the same rule. Without the desk, cmux opens the folder with the phrase on the clipboard, as before.
+- `page_action.py`'s `open` also takes `{"folder", "prompt"}`: the workspace root, whose tab starts on the prompt, or a project's or thread's folder, opened as by name. Any other folder, a prompt that starts with `-`, and an empty or overlong one are refused. The log names the folder and cuts the prompt to 60 characters.
 - A thread's card no longer has a button with its project's name that opens the project's note, in the threads list or the graph's panel. *Open* opens the thread; the project's note opens from the project's own row and card.
 
 ## [0.15.4] - 2026-10-11

@@ -377,9 +377,10 @@ class TestSessions(StatusCase):
         self.assertEqual(("idle", None), (work["Birch Entry"]["s"], work["Birch Entry"]["t"][0].get("s")))
         self.assertEqual(["Work", "Acme Review", ""], work["Acme Review"]["dk"])           # what the menu's cmux row asks the desk to open
         self.assertEqual(["Work", "Acme Review", "Pricing"], work["Acme Review"]["t"][0]["dk"])
+        self.assertEqual(1, menu["dk"])                                                    # and anything else the app opens in cmux
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn('live: r["s"] as? String', swift)                                   # the app draws the dot
-        self.assertIn('["verb": "open", "zone": dk[0], "project": dk[1]]', swift)          # and opens through the desk
+        self.assertIn('launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)', swift)   # and opens through the desk
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(3, len(state["live"]))          # Pricing's folder, and the two projects' folders above a session
         flags(self.root, **{"menu-bar": True})
@@ -387,7 +388,28 @@ class TestSessions(StatusCase):
             html = self.page()
         self.assertEqual("working", cards(html)[("Acme Review", "Pricing")]["live"])   # the dots need no actions
         self.assertNotIn("dk", cards(html)[("Acme Review", "Pricing")])                 # but the desk's buttons do
+        self.assertNotIn("dk", json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)))
         self.assertNotIn('class="desk-acts', html)
+
+    def test_every_cmux_open_in_the_app_goes_through_the_desk_when_it_is_ready(self):
+        # One rule, in launch(): rows, Process the Inbox, the fields' words and
+        # Ask's opens all pass through it, and none reaches cmux another way.
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        launch = swift[swift.index("func launch(_ app: String"):swift.index("func deskReady()")]
+        rule = launch.index('if app == "cmux" && (desk || deskReady()) {')
+        self.assertLess(rule, launch.index("switch app {"))
+        self.assertIn('act(["verb": "open", "folder": folder.path, "prompt": phrase])', launch[rule:])
+        self.assertIn('(menuState?["data"] as? [String: Any])?["dk"] as? Int == 1', swift)       # the page's word for it
+        self.assertEqual(3, swift.count("openInCmux("))          # itself, launch()'s plain cmux, and a page from before 0.5
+        self.assertEqual(1, swift.count("withApplicationAt: cmux"))
+        for route in ('launch(k, f, phrase: r["w"] ?? "")',                                   # Process the Inbox, the menu's
+                      'self.launch(k, f, phrase: act["w"] ?? "")',                            # and the panel's
+                      'launch(app, workspace.path, phrase: text)',                            # the menu's field, ask off
+                      'self.launch(app, workspace.path, phrase: text)',                       # the panel's field, ask off
+                      'self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil)',   # Ask
+                      'launch(app, folder, phrase: body["phrase"] as? String ?? "", desk: body["dk"] != nil)'):         # the page
+            self.assertIn(route, swift)
+        self.assertNotIn('["verb": "open", "zone"', swift)        # rows open by folder too, through the same rule
 
     def test_the_desks_buttons(self):
         flags(self.root, **{"page-actions": True})

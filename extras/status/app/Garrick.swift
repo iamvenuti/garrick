@@ -567,7 +567,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			NSPasteboard.general.setString(text, forType: .string)
 		}
 		if let app = body["launch"] as? String, let folder = body["folder"] as? String {
-			launch(app, folder, phrase: body["phrase"] as? String ?? "")
+			launch(app, folder, phrase: body["phrase"] as? String ?? "", desk: body["dk"] != nil)
 		} else if let folder = body["cmux"] as? String {
 			openInCmux(folder)                 // a page built before Open in Claude and Codex
 		}
@@ -595,13 +595,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		NSPasteboard.general.setString(text, forType: .string)
 	}
 
-	// Open a project or thread folder in Claude, Codex or cmux, or show it in Finder. Claude gets the
-	// phrase typed into a new session, for you to send; Codex and cmux get the
-	// folder, and the phrase goes on the clipboard. Nothing is sent and no
+	// Open a project or thread folder, or the workspace root, in Claude, Codex or cmux, or show it
+	// in Finder. Claude gets the phrase typed into a new session, for you to send; Codex and cmux get
+	// the folder, and the phrase goes on the clipboard. Nothing is sent and no
 	// command is typed into a terminal. Says whether anything was opened.
+	// cmux with the cmux extra's desk ready (the page's menu says so, or the
+	// caller's row or Ask's answer does) goes through page_action.py instead:
+	// a tab in that folder that starts the assistant on the phrase, or on
+	// "open X" for a project or thread, as the page's buttons open it.
 	@discardableResult
-	func launch(_ app: String, _ path: String, phrase: String) -> Bool {
+	func launch(_ app: String, _ path: String, phrase: String, desk: Bool = false) -> Bool {
 		guard let folder = inWorkspace(path) else { return false }
+		if app == "cmux" && (desk || deskReady()) {
+			act(["verb": "open", "folder": folder.path, "prompt": phrase])
+			return true
+		}
 		switch app {
 		case "claude":
 			guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) != nil else {
@@ -647,6 +655,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		default:
 			return false
 		}
+	}
+
+	// Whether the page says the desk opens cmux here: the cmux extra, cmux
+	// itself and the preview page-actions, as its menu's `dk` says.
+	func deskReady() -> Bool {
+		(menuState?["data"] as? [String: Any])?["dk"] as? Int == 1
 	}
 
 	// A button that changes something (preview, page-actions): page_action.py,
@@ -1158,13 +1172,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking { return heard.append("menu:" + k) }
 		if k == "note" {
 			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
-		} else if k == "cmux", let dk = a["dk"] as? [String], dk.count == 3 {
-			var request: [String: Any] = ["verb": "open", "zone": dk[0], "project": dk[1]]
-			if !dk[2].isEmpty { request["thread"] = dk[2] }
-			act(request)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
-			launch(k, f, phrase: w.isEmpty ? "" : "open " + w)
+			launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
 		}
 	}
 
@@ -1196,7 +1206,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// row opens the Settings default assistant (Claude, Codex or cmux; the
 	// first of those switched on when the default is the note or Finder) at the
 	// workspace root with "process the inbox", as a thread's row opens with
-	// "open X": Claude gets it typed in, Codex and cmux on the clipboard.
+	// "open X": Claude gets it typed in, Codex on the clipboard, and cmux too
+	// unless the desk is ready, when a tab at the root starts on it.
 	// The assistant a phrase goes to: the default for clicking a thread when it
 	// is Claude, Codex or cmux, else the first of those switched on.
 	func assistant() -> String? {
@@ -1228,7 +1239,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
 		item.attributedTitle = text
 		show(item, symbol("tray.and.arrow.down"))
-		item.toolTip = "Opens \(label(["k": app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		item.toolTip = app == "cmux" && deskReady()
+			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
+			: "Opens \(label(["k": app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
 		return item
 	}
 
@@ -1323,7 +1336,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					ok = false
 					continue
 				}
-				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "") { opened = true }
+				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil) { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok)

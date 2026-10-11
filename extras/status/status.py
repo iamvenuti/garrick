@@ -2088,7 +2088,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     thread notes is its own thread. With the cmux extra, each row also says
     whether a session is open in it (`s`: "idle", "working" or None; a
     project counts its threads'), and with `drive` what the desk opens
-    (`dk`: zone, project, thread or ""). The app keeps the zone the graph shows;
+    (`dk`: zone, project, thread or ""), and `dk` on the whole menu too: the
+    app then opens anything in cmux through the desk, the workspace root for
+    Process the Inbox and Ask included. The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -2123,7 +2125,10 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
                        for r in sorted(rs, key=lambda r: r["thread"].casefold())]
             projects.append(dict(entry(project, say, hub, [zone, project, ""]), t=threads))
         zones.append({"z": zone, "p": projects})
-    return {"trouble": trouble, "zones": zones}
+    out = {"trouble": trouble, "zones": zones}
+    if drive:
+        out["dk"] = 1
+    return out
 
 
 def menu_settings() -> str:

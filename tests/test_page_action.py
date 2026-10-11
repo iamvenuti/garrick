@@ -433,6 +433,13 @@ class TestAudit(ActionCase):
         self.assertNotIn("abc", lines[1])
         self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
 
+    def test_an_open_by_folder_logs_the_folder_and_the_prompt_cut_short(self):
+        pa.audit({"verb": "open", "folder": str(self.root), "prompt": "process the inbox " + "y" * 200}, False, "no")
+        line = self.lines()[-1]
+        self.assertIn('open folder="%s" prompt="process the inbox yyy' % self.root, line)
+        self.assertIn("…\"  ->  refused: no", line)
+        self.assertNotIn("y" * 61, line)
+
     def test_a_log_that_cannot_be_written_stops_nothing(self):
         (self.jobs / "page-actions.log").mkdir(parents=True)          # a folder where the log should be
         done = self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))

@@ -72,7 +72,8 @@ class AskCase(ActionCase):
         super().setUp()
         write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "page-actions": True}))
         self.names = ask.scan(self.root)
-        self._saved = {k: os.environ.get(k) for k in ("GARRICK_HARNESS", "GARRICK_ASK_TIER", "GARRICK_CAP_CALLS_HOUR", "PATH")}
+        self._saved = {k: os.environ.get(k) for k in ("GARRICK_HARNESS", "GARRICK_ASK_TIER", "GARRICK_CAP_CALLS_HOUR", "PATH", "GARRICK_CMUX")}
+        os.environ["GARRICK_CMUX"] = str(self.root / "no-cmux")        # whatever this Mac has: no cmux, so no desk
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -462,6 +463,33 @@ class TestWarmSession(AskCase):
         self.assertEqual("open Pricing", out["launch"][0]["phrase"])
         self.assertIn('"open Pricing"  ->  "Opening Pricing."', (self.jobs / "ask.log").read_text())
         self.assertEqual([], list(self.jobs.glob("*.sock")))                         # stopped, and gone
+
+
+class TestDesk(AskCase):
+    """With the cmux extra's desk ready, an open comes back marked so the app
+    opens cmux through it, the session started, as the page's buttons do."""
+
+    def fake_cmux(self):
+        fake = self.root.parent / "bin" / "cmux"           # only looked for, never run
+        write(fake, "#!/bin/sh\nexit 1\n")
+        fake.chmod(0o755)
+        os.environ["GARRICK_CMUX"] = str(fake)
+
+    def test_ready_needs_the_actions_and_cmux(self):
+        self.assertFalse(ask.desk_ready(self.root))                         # no cmux
+        self.fake_cmux()
+        self.assertTrue(ask.desk_ready(self.root))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        self.assertFalse(ask.desk_ready(self.root))                         # page-actions off
+
+    def test_an_open_carries_the_desk_when_it_is_ready(self):
+        do = [{"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "app": "cmux"},
+              {"verb": "open", "zone": "Work", "project": "Birch Entry"}]
+        self.assertNotIn("dk", ask.Asker(self.root).carry_out("Opening.", do, self.names)["launch"][0])
+        self.fake_cmux()
+        out = ask.Asker(self.root).carry_out("Opening.", do, self.names)
+        self.assertEqual([1, 1], [item["dk"] for item in out["launch"]])
+        self.assertEqual("open Pricing", out["launch"][0]["phrase"])
 
 
 class TestFlag(unittest.TestCase):

@@ -9,7 +9,8 @@ description: >
   "close for the day", "I'm done for today", "finish X", "X is done", "close
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
   parked", "new project X for Acme", "new thread X in Acme", "start a thread
-  on X", "add a zone called X", or "new zone X". Also use at the end of any
+  on X", "rename X to Y", "delete X", "add a zone called X", or "new zone X".
+  Also use at the end of any
   session that produced a decision or a deliverable, so the thread can be
   resumed cold.
 ---
@@ -409,6 +410,65 @@ sentence?" or, on a refusal: "Can't name it Q3 pricing: names can't have
 digits. Autumn pricing?"
 
 Written: the paths created and the commit hash.
+
+## Rename: "rename X to Y"
+
+The scaffolding script renames, so the folder, the note and every link to it
+in the zone move together, in one commit:
+
+```sh
+python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
+```
+
+1. **Resolve X.** If it could be the project or one of its threads, ask which.
+2. **Confirm in one line** before acting: "Rename Acme pricing to Renewal?"
+3. **Run the script.** It refuses a name that cannot be said, that sounds
+   like a sibling or is taken, and a rename while the files it would change
+   have changes not committed, or while a session is mid-turn there; relay
+   the reason as under *New*. It moves the folder and the note with git,
+   renames the title and heading, rewrites every link to it in the zone (the
+   hub's list, `Todo.md`, `project:` frontmatter, the notes between) and adds
+   the dated entry "Renamed from <old>.", all in one commit in the zone. It
+   adds the old name as a heard alias in `System/context.md`: commit that in
+   the workspace root's repository.
+4. **The memory pointer**, if you keep one: point it at the new note.
+5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
+
+Moving a thread to another project or zone is not a rename: it crosses
+parties and walls. Say so, and stop.
+
+Spoken: "Pricing is Renewal now, and its links follow. The old name still
+finds it."
+
+Written: the script's report, and the commit hash.
+
+## Delete: "delete X"
+
+For what should never have existed: a duplicate, a test, a thread opened in
+the wrong project. Real work is finished or parked, never deleted: offer those
+first.
+
+```sh
+python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"]
+python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"] --confirm "<Name>"
+```
+
+1. **Resolve X**, and run the first form: it changes nothing and lists what
+   would go: the folder and its files, the hub's line, the open `Todo.md`
+   lines naming it, and for a project every thread in it.
+2. **Read that back** in three sentences at most, then ask: "Finish it,
+   park it, or delete it?" Act on deletion only on "yes, delete <X>", with
+   the name said again; a plain "yes" is not enough.
+3. **Run the second form.** One commit in the zone; the reply gives the
+   commit to revert. Meetings pages stay.
+4. **The memory pointer**, if you keep one: delete it.
+
+Spoken: "Deleted the test thread and its one open action. Say undo to bring
+it back." On undo, `python3 System/tools/scaffold.py undo --zone <Zone>
+--commit <commit>`, which refuses once anything else has been committed in
+the zone. A rename is undone the same way.
+
+Written: the script's report, and the commit hash.
 
 ## New zone: "add a zone called X", "new zone X"
 

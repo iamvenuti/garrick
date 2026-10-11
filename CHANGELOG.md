@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- A thread's card no longer has a button with its project's name that opens the project's note, in the threads list or the graph's panel. *Open* opens the thread; the project's note opens from the project's own row and card.
+
 ## [0.15.4] - 2026-10-11
 
 The threads list and its cards say less and line up, Park and Wake show at once, the Mac app opens without a flicker, and it writes down what its menu holds, for a bug no one could reproduce.

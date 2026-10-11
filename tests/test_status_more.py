@@ -579,13 +579,22 @@ class TestTheThreadsList(StatusCase):
         self.assertIn('<div class="thread proj"', work)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_a_threads_card_opens_its_projects_note_by_name(self):
-        card = cards(self.page())[("Acme Review", "Pricing")]
+    def test_no_card_has_a_button_for_its_projects_note(self):
+        # A thread's card opens the thread; the project's note is the project row's.
+        html = self.page()
+        card = cards(html)[("Acme Review", "Pricing")]
+        self.assertNotIn("pu", card)
         acts = panel(True, ("acts", card))[0]
-        self.assertNotIn("Open project", acts)
-        self.assertRegex(acts, r'<a class="act pnote" href="file://[^"]*/Acme%20Review/Acme%20Review.md" '
-                               r'title="Open the project\'s note" aria-label="Open the note of the project Acme Review">'
-                               r'<svg[^>]*>.*</svg><span>Acme Review</span></a>')
+        self.assertNotIn("Acme%20Review/Acme%20Review.md", acts)
+        self.assertEqual(1, acts.count('<a class="act"'))                       # Open, and no second link
+        old = dict(card, pu=card["u"].rsplit("/Threads/", 1)[0] + "/Acme%20Review.md")
+        self.assertNotEqual(old["pu"], card["u"])
+        self.assertNotIn("Acme%20Review.md", panel(True, ("acts", old))[0])      # a page built by 0.15.4 still says it
+        for js in (status.PANEL_JS, status.GRAPH_JS):
+            self.assertNotIn("pnote", js)
+            self.assertNotIn("o.pu", js)
+        self.assertNotIn("hubOf", status.GRAPH_JS)
+        self.assertNotIn("pnote", status.CSS)
 
     def test_the_panels_dot_follows_the_name(self):
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
@@ -611,20 +620,11 @@ class TestTheThreadsList(StatusCase):
     def test_a_rows_card_names_no_kind_zone_or_project(self):
         card = cards(self.page())[("Acme Review", "Pricing")]
         row, graph = panel(True, ("head", card, 1), ("head", card))
-        self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the button the project
+        self.assertNotIn("thread · Work · Acme Review", row)                    # the section says the zone, the row above the project
         self.assertNotIn('<div class="muted">', row)
         self.assertIn('<span class="chip" style="margin:0 4px 0 0">acme</span>', row)
         self.assertIn("thread · Work · Acme Review", graph)                     # the graph's panel floats free of any list
         self.assertIn("tc.innerHTML=Panel.head(o,1)+Panel.acts(o)", status.JS)
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_a_project_that_is_its_own_thread_has_no_project_button(self):
-        shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")
-        birch = cards(self.page())[("Birch Entry", "Birch Entry")]
-        self.assertEqual("", birch["pu"])                                       # the note Open already opens
-        self.assertNotIn("pnote", panel(True, ("acts", birch))[0])
-        same = dict(birch, pu=birch["u"])                                       # a page built by 0.15.3 says it twice
-        self.assertNotIn("pnote", panel(True, ("acts", same))[0])
 
     def test_the_live_dot_keeps_its_distance(self):
         self.assertIn(".thread .t a+.live{margin-left:.4em}", status.CSS)

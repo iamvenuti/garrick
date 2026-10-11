@@ -71,9 +71,9 @@ A preview feature may still change. When one is released it is switched on for e
 
 ## Thread cards
 
-Hover a thread in the list, or move to it with the keyboard, and a card opens under it. It shows the thread's name, its party tags, and how long since its note was updated, or that it is parked. It does not repeat the zone, which is the column it sits in, or the project, which has a button of its own. Then come the actions:
+Hover a thread in the list, or move to it with the keyboard, and a card opens under it. It shows the thread's name, its party tags, and how long since its note was updated, or that it is parked. It does not repeat the zone, which is the column it sits in, or the project, which is the row it unfolds from. Then come the actions:
 
-- *Open* opens the thread note. For a thread in a project of several, the project's name beside it, with a note's icon, opens the project's hub note. A project that is its own thread has one note, so its card has *Open* alone.
+- *Open* opens the thread note. The project's own note opens from the project's row and its card.
 - *Copy "open Pricing"* copies the phrase that resumes the thread, in a browser. In the Mac app and in Obsidian, where the buttons below open the thread, it is left out; it stays on a card no app is offered for.
 - *Park*, at the top right beside the thread's name, copies "park Pricing", the phrase that sets it aside; on a parked thread it is *Wake*. With the preview `page-actions` on, in the Mac app, it parks or wakes the thread itself.
 - A project's card has *Park* and *Wake* too, for the whole project: its hub note says `status: parked`, and every thread in it is parked with it, listed under the zone's *Parked* fold and left out of the menu. A thread parked with its project says so on its card, and has no *Park* or *Wake* of its own; wake the project, and each thread is back as it was before. The graph's panel offers the same for a project.

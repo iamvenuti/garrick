@@ -7,8 +7,8 @@ description: >
   hands each one here from the inboxes. Use when the user says "ingest this
   transcript", "file this transcript", "file these notes", "file these as
   notes of a conversation", "import the meeting with X", "log this call",
-  "prep me for X", "brief me for X", "prepare a brief for X", or "who am I
-  meeting with". Also use right after a call ends, once its transcript is in
+  "prep me for X", "brief me for X", "prepare a brief for X", "who am I
+  meeting with", or "lint the meetings". Also use right after a call ends, once its transcript is in
   Wikis/Meetings/raw/inbox/. A request to process the inbox goes to the
   intake skill, which calls this one.
 ---
@@ -412,6 +412,25 @@ the offer: "It's in Supplier Review's deliverables."
 Written: the same opening, then the pages drawn on (as links), the open
 actions from `Todo.md`, and any quoted commitments; when saved, the file's
 path and the commit hash.
+
+## Lint: "lint the meetings", "lint the wikis"
+
+As the `knowledge` skill's *Lint*, for this wiki, and it changes nothing:
+
+1. `python3 System/tools/wiki_lint.py --wiki Meetings`: orphans and links
+   to pages that are not there.
+2. Read the index and a sample of the last three months' pages, one party
+   at a time, for: **contradictions** (two pages about one party stating
+   incompatible facts, such as a figure or a date agreed); **missing
+   pages** (a person named on three or more pages with no person page);
+   **unfinished pages** (no zone or parties, which `check.py` lists too);
+   and **stale positions** (a page's decision a later page about the same
+   party reversed, with nothing on the earlier one saying so).
+3. Write the report as `wiki/lint/<YYYY-MM-DD>.md`, a finding per line
+   with both pages linked and a suggested fix, and commit it alone. It
+   stays in this wiki: never copied into a project, never into Knowledge,
+   since it lines up what several parties said.
+4. "Lint the wikis" runs both, this one and the `knowledge` skill's.
 
 ## Listening mode
 

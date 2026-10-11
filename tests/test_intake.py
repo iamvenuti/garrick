@@ -527,6 +527,39 @@ class TestFileReading(MailCase):
         attached = [p.get_content() for p in m.walk() if p.get_filename() == "rates.csv"]
         self.assertEqual(["lane,rate\njo@joexample.example,1\n"], attached)  # attachments are left as they are
 
+    def test_a_mail_saved_as_markdown_loses_its_reader_too(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("Jo Example. Independent advisor.\n",
+                                               "Jo Example. Independent advisor.\n\nMy addresses: jo@joexample.example\n"))
+        text = "\n".join([
+            "---", "from: The Freight Ledger <newsletter@freightledger.example>",
+            "to: Jo Example <jo+work@joexample.example>", "cc:", "  - jo.alias@joexample.example",
+            "delivered-to: jo+work@joexample.example", "subject: Freight Ledger Weekly", "date: 2026-09-28", "---", "",
+            "Jo, worth a read.", "", "---------- Forwarded message ---------",
+            "From: Jo Example <jo@joexample.example>", "Date: Mon, 28 Sep 2026 09:00", "Subject: Freight Ledger Weekly",
+            "To: Jo Example <jo+work@joexample.example>", "", "Lanes are tight this winter.",
+            "Sent to jo+work@joexample.example", ""])
+        slug, raw, _ = intake.file_reading(self.root, self.drop("weekly.md", text), today="2026-09-29")
+        frozen = raw.read_text()
+        self.assertNotIn("joexample", frozen.lower())
+        self.assertNotIn("delivered-to", frozen.lower())
+        self.assertNotIn("\nto:", frozen.lower())
+        self.assertIn("newsletter@freightledger.example", frozen)
+        self.assertIn("Lanes are tight this winter.", frozen)
+        self.assertIn("From: Jo Example <you@removed.invalid>", frozen)
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("knowledge", "inbox")])
+
+    def test_a_mail_it_cannot_strip_is_refused(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("Jo Example. Independent advisor.\n",
+                                               "Jo Example. Independent advisor.\n\nMy addresses: jo@joexample.example\n"))
+        with mock.patch.object(intake, "strip_recipients", lambda data, *a, **k: data):
+            path = self.drop("weekly.md", "From: newsletter@freightledger.example\nTo: jo@joexample.example\n\nBody.\n")
+            with self.assertRaises(intake.Refusal) as caught:
+                intake.file_reading(self.root, path)
+        self.assertIn("jo@joexample.example", str(caught.exception))
+        self.assertTrue(path.exists())
+
     def test_a_dropped_article(self):
         path = self.drop("Lanes in winter.md", "# Lanes in winter\n\nA trade paper's view.\n")
         slug, raw, page = intake.file_reading(self.root, path, today="2026-09-29")

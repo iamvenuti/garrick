@@ -116,9 +116,12 @@ folder that was checked. A link that stays inside that folder is fine.
      ```
      It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`: a file
      untouched, a mail with its recipients taken out first. The recipient
-     headers and `Received` lines go, and any recipient address in the text
-     becomes `you@removed.invalid`, because Knowledge is read in every zone;
-     attachments stay byte for byte. It writes a draft source page with no
+     headers and `Received` lines go (in a mail saved as Markdown or text,
+     the recipient keys of its frontmatter and every `To:` and `Cc:` line),
+     and any recipient address in the text, or one of yours from
+     `System/context.md`, becomes `you@removed.invalid`, because Knowledge
+     is read in every zone; attachments stay byte for byte. A mail that
+     still names who received it afterwards is refused, not filed. It writes a draft source page with no
      zone and no parties, the author and date filled from the mail where it
      has them, and prints `<slug>\t<raw path>\t<page path>`. Then the
      `knowledge` skill, *Ingest*, from step 4: check the author and date,

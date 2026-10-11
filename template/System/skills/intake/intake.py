@@ -53,6 +53,7 @@ from garrick_lib import (  # noqa: E402
     move_new,
     parse_frontmatter,
     parse_mail,
+    parse_mail_bytes,
     strip_recipients,
     parties_for_domain,
     split_domains,
@@ -480,9 +481,21 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
         "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
         "<A short summary. Every vendor claim attributed to its vendor.>", "",
         "Touches <the concept and entity pages it speaks to>.", ""])
+    frozen = None
+    if mail:
+        own = load_context(root).get("me", [])
+        frozen = strip_recipients(path.read_bytes(), path.suffix, own)
+        left = parse_mail_bytes(frozen, path.suffix)
+        named = [a for _, a in left["to"] + left["cc"] + left["delivered"]]
+        named += [a for a in own if a in frozen.decode("utf-8", errors="replace").lower()]
+        if named:
+            raise Refusal("%s still names who received it (%s) after its recipients were taken out, so it is "
+                          "not filed in Knowledge. Save it as .eml and file that instead." % (
+                              path.name, ", ".join(sorted(set(named)))))
+
     def freeze():
         if mail:
-            write_new(root, kroot, dest, strip_recipients(path.read_bytes()))
+            write_new(root, kroot, dest, frozen)
             path.unlink()
         else:
             move_new(root, kroot, path, dest)

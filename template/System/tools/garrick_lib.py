@@ -40,7 +40,7 @@ import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 PathLike = Union[str, "os.PathLike[str]"]
 
@@ -1412,15 +1412,71 @@ RECIPIENT_HEADERS = ("To", "Cc", "Bcc", "Delivered-To", "X-Original-To", "Envelo
 REMOVED = "you@removed.invalid"
 
 
-def strip_recipients(data: bytes) -> bytes:
+def _replace_addresses(text: str, addresses: Iterable[str]) -> str:
+    for a in sorted(set(addresses), key=len, reverse=True):
+        for form, repl in ((a, REMOVED), (a.replace("@", "%40"), REMOVED.replace("@", "%40"))):
+            text = re.sub(re.escape(form), repl, text, flags=re.IGNORECASE)
+    return text
+
+
+_RECIPIENT_KEY_RE = re.compile(r"^(to|cc|bcc|delivered-to|x-original-to|envelope-to)\s*:", re.I)
+
+
+def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
+    """strip_recipients for a mail saved as text or Markdown: the recipient
+    keys of its frontmatter, every `To:`/`Cc:` line of a header block in the
+    body (its own and each forward's), and each of those addresses, and the
+    reader's own, wherever the text still names them."""
+    lines = text.splitlines(keepends=True)
+    addresses = {a.lower() for a in own if "@" in a}
+    keep: List[str] = []
+    in_fm = bool(lines) and lines[0].strip() == "---"
+    dropping = False
+    for i, line in enumerate(lines):
+        if in_fm and i > 0 and line.strip() in ("---", "..."):
+            in_fm, dropping = False, False
+            keep.append(line)
+            continue
+        if in_fm:
+            if dropping and (line[:1] in (" ", "\t") or line.lstrip().startswith("- ")) and line.strip():
+                addresses |= {a for _, a in _addresses([line.strip().lstrip("- ").strip("'\"")])}
+                continue
+            dropping = False
+            if i > 0 and _RECIPIENT_KEY_RE.match(line):
+                dropping = True
+                value = line.split(":", 1)[1].strip().strip("[]")
+                addresses |= {a for _, a in _addresses([v.strip().strip("'\"") for v in value.split(",")])}
+                continue
+            keep.append(line)
+            continue
+        m = _HEADER_LINE_RE.match(line)
+        if m and m.group(1).lower() in ("to", "cc", "bcc", "delivered-to"):
+            addresses |= {a for _, a in _addresses([m.group(2)])}
+            dropping = True
+            continue
+        if dropping and line[:1] in (" ", "\t") and line.strip() and not _HEADER_LINE_RE.match(line):
+            addresses |= {a for _, a in _addresses([line.strip()])}
+            continue
+        dropping = False
+        keep.append(line)
+    return _replace_addresses("".join(keep), addresses)
+
+
+def strip_recipients(data: bytes, suffix: str = ".eml", own: Iterable[str] = ()) -> bytes:
     """A mail with the reader's own addresses taken out: the recipient headers
     and `Received` lines go, and every recipient address in a text part (an
-    unsubscribe link, a "sent to" footer) becomes you@removed.invalid.
+    unsubscribe link, a "sent to" footer) becomes you@removed.invalid, as
+    does each of `own` (the user's addresses, from context.md), so a
+    forward's `From:` goes too. A mail saved as text or Markdown loses its
+    frontmatter's recipient keys and the `To:` and `Cc:` lines in its body.
     Knowledge is read in every zone, so what is filed there says nothing
     about who received it. Attachments are left byte for byte."""
+    own = [a.lower() for a in own if "@" in a]
+    if suffix.lower() != ".eml":
+        return _strip_text_recipients(data.decode("utf-8", errors="replace"), own).encode("utf-8")
     m = email.message_from_bytes(data, policy=email.policy.default)
     fields = [str(v) for h in RECIPIENT_HEADERS[:-1] for v in (m.get_all(h) or [])]
-    addresses = sorted({a.lower() for _, a in getaddresses(fields) if "@" in a}, key=len, reverse=True)
+    addresses = sorted({a.lower() for _, a in getaddresses(fields) if "@" in a} | set(own), key=len, reverse=True)
     if not addresses and not m.get_all("Received"):
         return data
     for h in RECIPIENT_HEADERS:
@@ -1432,10 +1488,7 @@ def strip_recipients(data: bytes) -> bytes:
             text = part.get_content()
         except (LookupError, UnicodeError):
             continue
-        new = text
-        for a in addresses:
-            for form, repl in ((a, REMOVED), (a.replace("@", "%40"), REMOVED.replace("@", "%40"))):
-                new = re.sub(re.escape(form), repl, new, flags=re.IGNORECASE)
+        new = _replace_addresses(text, addresses)
         if new != text:
             part.set_content(new, subtype=part.get_content_subtype())
     return m.as_bytes()

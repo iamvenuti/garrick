@@ -2955,7 +2955,9 @@ def check_inbox(ws: Workspace) -> List[Finding]:
                             by_size.setdefault(r.stat().st_size, []).append(r)
             data = path.read_bytes()
             # Mail filed as reading is frozen without the reader's addresses, so compare that form too.
-            forms = [data] + ([strip_recipients(data)] if path.suffix.lower() == ".eml" else [])
+            forms = [data]
+            if path.suffix.lower() in (".eml", ".md", ".txt"):
+                forms += [strip_recipients(data, path.suffix), strip_recipients(data, path.suffix, ws.context.get("me", []))]
             twin = next((r for f in forms for r in by_size.get(len(f), []) if r.read_bytes() == f), None)
             if twin is not None:
                 out.append(Finding(WARNING, "inbox", rel(ws, path),

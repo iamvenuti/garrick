@@ -1,6 +1,6 @@
 # Knowledge
 
-Published material you study: reports, papers, articles, vendor documents. None of it carries anyone's confidence, so it can be used in any zone. This file is the schema; it wins over any skill that writes here.
+Published material you study: reports, papers, articles, vendor documents. None of it carries anyone's confidence, so it can be used in any zone. This file is the schema; it wins over any skill that writes here. It is Garrick's, as shipped: this workspace's own additions to it are in `AGENTS.local.md` beside it, when that exists. Read it next; it wins where the two differ.
 
 ## Layout
 

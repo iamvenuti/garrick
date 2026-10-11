@@ -1,6 +1,6 @@
 # {{ZONE}} zone
 
-Part of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. This zone is its own git repository: a commit never spans it and another zone.
+Part of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.
 
 ## Structure
 

@@ -1,6 +1,6 @@
 # Meetings
 
-Every conversation you have, from every zone, in one place: calls and meetings, and the mail you exchange. This file is the schema; it wins over any skill that writes here.
+Every conversation you have, from every zone, in one place: calls and meetings, and the mail you exchange. This file is the schema; it wins over any skill that writes here. It is Garrick's, as shipped: this workspace's own additions to it are in `AGENTS.local.md` beside it, when that exists. Read it next; it wins where the two differ.
 
 ## Layout
 

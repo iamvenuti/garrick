@@ -69,6 +69,10 @@ __all__ = [
     "WALL_HOOK",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
+    "INSTRUCTION_FILES",
+    "LOCAL_RULES",
+    "is_instruction_file",
+    "local_file",
     "SKILL_FOLDERS",
     "LOCAL_EMAIL",
     "GitError",
@@ -792,7 +796,32 @@ def _on(date: object) -> str:
 # then tell a file still as Garrick wrote it, which it may replace, from one the
 # user has changed, which it must leave for a merge. System/context.md holds the
 # user's own answers and is never listed; nor is the stamp itself.
-UNLISTED = ("System/context.md", "/".join(VERSION_STAMP))
+# Garrick's instruction files. An update replaces each one while it is as
+# Garrick shipped it, and the workspace's own rules and routing live in the
+# local file beside it, which Garrick never ships, lists or changes: System/rules.md
+# has System/rules.local.md, and every AGENTS.md has an AGENTS.local.md.
+INSTRUCTION_FILES = ("AGENTS.md", "System/rules.md", "Wikis/AGENTS.md", "Wikis/*/AGENTS.md", "Zones/*/AGENTS.md")
+LOCAL_RULES = "System/rules.local.md"
+
+# Files the installer writes that are the user's from the start: never listed in
+# the stamp, never compared or written by an update.
+UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES)
+
+
+def is_instruction_file(path: str) -> bool:
+    """Whether `path`, from the workspace's top, is one of Garrick's instruction files."""
+    import fnmatch
+    parts = path.split("/")
+    return any(len(parts) == len(p.split("/")) and all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts, p.split("/")))
+               for p in INSTRUCTION_FILES)
+
+
+def local_file(path: str) -> str:
+    """The local file beside one of Garrick's instruction files: where the
+    workspace's own text for it goes. `System/rules.md` -> `System/rules.local.md`."""
+    head, _, name = path.rpartition("/")
+    stem = name[:-3] if name.endswith(".md") else name
+    return (head + "/" if head else "") + stem + ".local.md"
 
 
 def fingerprint(path: PathLike) -> str:

@@ -192,6 +192,10 @@ class TestQuotes(WallCase):
     def test_instruction_files_cross_every_wall(self):
         self.assertSharedCrosses("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md")
 
+    def test_the_local_files_beside_them_cross_every_wall(self):
+        self.assertSharedCrosses("AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md",
+                                 "System/rules.local.md")
+
     def test_other_system_files_exempt_nothing(self):
         # A file dropped into System/ is not one every side reads by design.
         write(self.root / "System" / "notes.md", "Reminder: " + SECRET + ".\n")

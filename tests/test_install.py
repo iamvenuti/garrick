@@ -161,11 +161,21 @@ class InstallTest(unittest.TestCase):
         # Everything the installer wrote, less the user's own answers, the stamp itself and
         # System/generated/, where other tests here build pages.
         on_disk = {p for p in on_disk if not p.startswith("System/generated/")}
-        self.assertEqual(on_disk - {"System/context.md", "System/garrick-version.json"}, set(files))
+        self.assertEqual(on_disk - {"System/context.md", "System/garrick-version.json", "System/rules.local.md"}, set(files))
         for rel, digest in files.items():
             self.assertEqual(hashlib.sha256((self.root / rel).read_bytes()).hexdigest(), digest, rel)
         self.assertIn("Zones/Work/AGENTS.md", files)
         self.assertIn("System/rules.md", files)
+
+    def test_your_rules_start_beside_garricks_and_are_never_listed(self):
+        local = self.root / "System" / "rules.local.md"
+        self.assertTrue(local.read_text().startswith("# Your rules\n"))
+        self.assertNotIn("System/rules.local.md", json.loads((self.root / "System/garrick-version.json").read_text())["files"])
+        self.assertIn("System/rules.local.md", git(self.root, "ls-files"))
+        self.assertIn("`System/rules.local.md`", (self.root / "System/rules.md").read_text())
+        self.assertIn("`AGENTS.local.md`", (self.root / "AGENTS.md").read_text())
+        for path in ("Zones/Work/AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "Wikis/Knowledge/AGENTS.md"):
+            self.assertIn("AGENTS.local.md", (self.root / path).read_text(), path)
 
     def test_the_release_notes_come_with_it(self):
         # The status page shows them from here, so it never fetches anything.

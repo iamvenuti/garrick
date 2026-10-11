@@ -5,6 +5,7 @@
     python3 install.py --update ~/Garrick --apply            do it
     python3 install.py --update ~/Garrick --apply --only System/tools/check.py,System/rules.md
     python3 install.py --update ~/Garrick --json             the same report, for a program
+    python3 install.py --update ~/Garrick --split            move your text out of Garrick's instruction files
 
 Run it from the newer Garrick: a fresh download, or a clone after `git pull`.
 It compares every file Garrick would write today with the one in the
@@ -14,11 +15,16 @@ it (`System/garrick-version.json`), and sorts each into one of these:
 - **replace**: a file still as some Garrick wrote it, with a newer version.
 - **add**: a file new in this Garrick.
 - **merge**: a file you changed that Garrick has changed too. Garrick's version
-  goes beside it as `<name>.new`, and yours stays as it is. `System/rules.md` is
-  always merged, never replaced: it is yours to amend. The `.new` is
+  goes beside it as `<name>.new`, and yours stays as it is. The `.new` is
   committed, so it survives a clean or a clone until you merge it. Once it is
   written the file counts as offered, and is offered again only when a later
   Garrick changes it again.
+- **split**: one of Garrick's instruction files, `System/rules.md` or an
+  `AGENTS.md`, that you changed. Those stay as Garrick ships them, and your
+  own rules and routing go in the local file beside each, `rules.local.md` or
+  `AGENTS.local.md`, which Garrick never ships or changes. The file is left as
+  it is, with no `.new`; `--split` moves your text into the local file (see
+  split.py) and puts Garrick's back.
 - **yours**: a file Garrick only starts, such as a zone's `Todo.md` or a wiki's
   log, that you have since filled in. Never touched, not even with a `.new`.
 - **restore**: a file Garrick ships that you deleted. Put back only when named
@@ -39,7 +45,8 @@ kept outside the workspace.
 Nothing is written without `--apply`, and nothing is ever deleted. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
-`System/context.md` is never read or written. The
+`System/context.md` is never read or written, and neither is a local file
+beside an instruction file, such as `System/rules.local.md`. The
 version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
 changes nothing the second time.
@@ -74,11 +81,9 @@ RELEASE_HASHES = REPO / "release-hashes.json"
 # use them. While untouched they are replaced like any other; once changed they
 # are yours, and an update never offers a .new for them.
 SEEDS = ("Zones/*/Todo.md", "Wikis/*/wiki/index.md", "Wikis/*/wiki/log.md")
-# Files that are yours to amend even when Garrick wrote them: always merged, never replaced.
-NEVER_REPLACE = ("System/rules.md",)
 NEW_SUFFIX = ".new"
 
-KINDS = ("replace", "add", "merge", "yours", "restore", "retired")
+KINDS = ("replace", "add", "merge", "split", "yours", "restore", "retired")
 
 # The extras that live in the workspace, where their pages say to copy them:
 # (name, what it is called, [(folder in Garrick, folder in the workspace,
@@ -254,14 +259,16 @@ def plan(root, zones=None):
         if have == target:
             current.append(path)
             continue
+        instruction = lib.is_instruction_file(path)
         if recorded.get(path) == target:
-            kept.append(path)               # changed by you, and Garrick has nothing newer
+            # changed by you, and Garrick has nothing newer; but Garrick's instruction files stay as shipped
+            (actions["split"] if instruction else kept).append(path)
             continue
         as_written = have == recorded.get(path) or have in known.get(path, ())
-        if path in NEVER_REPLACE:
-            actions["merge"].append(path)
-        elif as_written:
+        if as_written:
             actions["replace"].append(path)
+        elif instruction:
+            actions["split"].append(path)
         elif is_seed(path):
             actions["yours"].append(path)
         else:
@@ -308,6 +315,10 @@ LABELS = {
     "add": ("Add", "file new in this Garrick", "files new in this Garrick"),
     "merge": ("Merge", "file you changed that Garrick has changed too. Garrick's version goes beside it as .new",
               "files you changed that Garrick has changed too. Garrick's version goes beside each as .new"),
+    "split": ("Split", "instruction file of Garrick's that you changed. Left as it is; your text belongs in the "
+                       "local file beside it",
+              "instruction files of Garrick's that you changed. Left as they are; your text belongs in the "
+              "local file beside each"),
     "yours": ("Yours", "file Garrick started and you have filled in since. Left as it is",
               "files Garrick started and you have filled in since. Left as they are"),
     "restore": ("Removed by you", "file Garrick still ships. Put back only if you name it with --only",
@@ -331,12 +342,18 @@ def report(p, applied=None):
         if paths:
             label, one, many = LABELS[kind]
             lines += ["", "%s, %d %s:" % (label, len(paths), one if len(paths) == 1 else many)]
+            if kind == "split":
+                lib = install.lib()
+                lines += ["  %s: yours goes to %s" % (path, lib.local_file(path)) for path in paths]
+                lines.append("  Run the update again with --split to see how your text would move there, "
+                             "and what you would settle.")
+                continue
             lines += ["  " + path for path in paths]
     if p["hooks"]:
         lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check: %s." % (
             len(p["hooks"]), "" if len(p["hooks"]) == 1 else "s", "s" if len(p["hooks"]) == 1 else "",
             ", ".join(p["hooks"]))]
-    if not any(p["actions"][k] for k in ("replace", "add", "merge", "restore")) and not p["hooks"]:
+    if not any(p["actions"][k] for k in ("replace", "add", "merge", "split", "restore")) and not p["hooks"]:
         lines += ["", "Up to date: all %d files Garrick ships are as this Garrick writes them, "
                   "or yours by design." % len(p["files"])]
     else:
@@ -423,6 +440,10 @@ def apply(root, p, only=None, today=None):
         unknown = sorted(picked - listed)
         if unknown:
             raise UpdateError("Not in the update: %s. Name files as the report lists them." % ", ".join(unknown))
+        held = sorted(picked & set(p["actions"]["split"]))
+        if held:
+            raise UpdateError("%s: Garrick's instruction file, changed by you. Move your text out with --split; "
+                              "it puts Garrick's back as shipped." % ", ".join(held))
     todo = []          # (kind, path, where it is written, bytes, mode)
     skipped = []       # (path, reason)
     done = {kind: [] for kind in ("replace", "add", "restore", "merge")}
@@ -922,7 +943,7 @@ def release_hashes(repo=REPO):
                 rel = "System/garrick-changelog.md"
             elif line.startswith(OLD_ZONE_TEMPLATE):
                 rel = None                  # copied into each zone, never to a path of its own
-            elif line.startswith("template/") and line != "template/System/context.md":
+            elif line.startswith("template/") and line[len("template/"):] not in install.lib().UNLISTED:
                 rel = line[len("template/"):]
             elif extra_place(line):
                 rel = extra_place(line)
@@ -972,6 +993,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="make the changes; without it, only say what they would be")
     ap.add_argument("--only", default="", help="comma-separated paths, as the report lists them")
     ap.add_argument("--json", action="store_true", help="the report as JSON")
+    ap.add_argument("--split", action="store_true",
+                    help="move your own text out of Garrick's instruction files, into the local file beside each")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     ap.add_argument("--release-hashes", action="store_true",
                     help="maintainers: rewrite release-hashes.json from this clone's tags")
@@ -987,6 +1010,9 @@ def main(argv=None):
         root = find_workspace(args.workspace)
         p = plan(root)
         only = [x.strip() for x in args.only.split(",") if x.strip()] or None
+        if args.split:
+            import split        # beside this file, from the same Garrick
+            return split.main(root, p, args.apply, only, args.json)
         if not args.apply:
             p["then"] = [what for what, _ in next_steps(root, p)]
             if args.json:

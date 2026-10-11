@@ -365,6 +365,13 @@ class TestTheDownload(ReleaseCase):
         self.assertEqual(["--update", str(self.root), "--apply", "--only", "System/tools/check.py"],
                          json.loads(self.record.read_text())["argv"])
 
+    def test_split_reaches_the_update_even_on_the_release_the_workspace_runs(self):
+        self.net(answers={"https://api.github.com": latest("v0.15.2"),
+                          "https://github.com/iamvenuti/garrick/archive/refs/tags/v0.15.2.zip": self.zip})
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(0, release.main(["--root", str(self.root), "update", "--split"]))
+        self.assertEqual(["--update", str(self.root), "--split"], json.loads(self.record.read_text())["argv"])
+
     def test_the_release_the_workspace_runs_is_not_downloaded_again(self):
         fake = self.net(answers={"https://api.github.com": latest("v0.15.2")})
         out = io.StringIO()

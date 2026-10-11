@@ -121,6 +121,71 @@ class TestInstructions(CheckCase):
         self.assertFinds("instructions", "warning", "not extra", path="AGENTS.md")
 
 
+class TestLocalInstructions(CheckCase):
+    """The local file beside each of Garrick's instruction files: the
+    workspace's own rules and routing, checked like the rest."""
+
+    def point(self):
+        write(self.root / "AGENTS.md", "# Workspace\n\nRead `AGENTS.local.md` and `System/rules.local.md` next.\n")
+        write(self.root / "System" / "rules.md", "# Rules\n\nRead `System/rules.local.md` next.\n")
+
+    def test_a_local_file_needs_a_pointer(self):
+        write(self.root / "System" / "rules.local.md", "# Your rules\n\n- Mine.\n")
+        write(self.root / "AGENTS.local.md", "# Mine\n")
+        hits = self.assertFinds("instructions", "warning", "does not point to it")
+        self.assertEqual({"System/rules.local.md", "AGENTS.local.md"}, {h.path for h in hits})
+        self.point()
+        self.assertClean("instructions")
+
+    def test_local_files_have_the_budget_of_the_file_beside_them(self):
+        self.point()
+        write(self.root / "AGENTS.local.md", "# Mine\n\n" + "word " * 900)
+        self.assertFinds("instructions", "warning", "over its 800", path="AGENTS.local.md")
+        write(self.work / "AGENTS.md", "# Work\n\nRead `AGENTS.local.md` here.\n")
+        write(self.work / "AGENTS.local.md", "# Work, mine\n\n" + "word " * 1100)
+        self.assertFinds("instructions", "warning", "over its 1000", path="Zones/Work/AGENTS.local.md")
+
+    def test_a_sentence_copied_from_garricks_rules(self):
+        self.point()
+        sentence = "Every meeting page carries its zone and its parties, because those are what the walls read."
+        write(self.root / "System" / "rules.md", "# Rules\n\nRead `System/rules.local.md` next.\n\n- %s\n" % sentence)
+        write(self.root / "System" / "rules.local.md", "# Your rules\n\n- %s\n" % sentence)
+        self.assertFinds("instructions", "warning", "the same text", path="System/rules.local.md and System/rules.md")
+
+    def test_skills_named_across_a_file_and_its_local_file(self):
+        self.point()
+        for name in ("threads", "meetings", "knowledge", "extra"):
+            write(self.root / "System" / "skills" / name / "SKILL.md", "---\nname: %s\n---\n" % name)
+        write(self.root / "AGENTS.md", "# Workspace\n\nRead `AGENTS.local.md` next. Skills: `threads`.\n")
+        write(self.root / "AGENTS.local.md", "# Mine\n\nAlso `meetings` and `knowledge`.\n")
+        self.assertFinds("instructions", "warning", "not extra", path="AGENTS.md and AGENTS.local.md")
+        write(self.root / "AGENTS.local.md", "# Mine\n\nAlso `meetings`, `knowledge` and `extra`.\n")
+        self.assertClean("instructions")
+
+    def test_a_zone_project_list_in_the_local_file(self):
+        write(self.work / "AGENTS.md", "# Work\n\nRead `AGENTS.local.md` here.\n")
+        write(self.work / "AGENTS.local.md", "# Work, mine\n\n- `Acme Review/Acme Review.md`\n- `Acme Review/Gone.md`\n")
+        self.assertFinds("instructions", "warning", "not Birch Entry/Birch Entry.md", path="Zones/Work/AGENTS.local.md")
+        self.assertFinds("instructions", "warning", "lists Acme Review/Gone.md", path="Zones/Work/AGENTS.local.md")
+
+    def test_garricks_file_changed_here(self):
+        from garrick_lib import fingerprint
+        self.point()
+        rules = self.root / "System" / "rules.md"
+        write(self.root / "System" / "garrick-version.json",
+              json.dumps({"commit": "abc1234", "files": {"System/rules.md": fingerprint(rules)}}))
+        self.assertClean("instructions")
+        rules.write_text(rules.read_text() + "- A rule of my own.\n")
+        self.assertFinds("instructions", "warning", "differs from what Garrick shipped", path="System/rules.md")
+
+    def test_passages_left_to_settle(self):
+        self.point()
+        write(self.root / "System" / "rules.local.md",
+              "# Your rules\n\n## From your earlier rules.md, to review\n\nIntro.\n\n### 1. Changed, at the top\n\n"
+              "Mine.\n\n### 2. Removed, under Files\n\nGone.\n")
+        self.assertFinds("instructions", "warning", "still holds 2 passages", path="System/rules.local.md")
+
+
 class TestPlaceholders(CheckCase):
     def test_pass_and_templates_ignored(self):
         write(self.root / "System" / "templates" / "_project" / "{{PROJECT}}.md", "zone: {{ZONE}}\n")

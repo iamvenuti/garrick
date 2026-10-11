@@ -199,13 +199,53 @@ class TestSorting(Case):
         self.assertEqual([], [x for k in update.KINDS for x in p["actions"][k]])
         self.assertEqual([path], p["kept"])
 
-    def test_rules_are_always_merged_never_replaced(self):
+    def test_rules_you_never_changed_are_replaced(self):
         path = "System/rules.md"
+        new = (self.root / path).read_bytes()
         self.as_if_older(path, "# Rules, older\n")
-        self.assertEqual([path], self.plan()["actions"]["merge"])
+        self.assertEqual([path], self.plan()["actions"]["replace"])
         self.apply()
-        self.assertEqual("# Rules, older\n", (self.root / path).read_text())
-        self.assertTrue((self.root / (path + ".new")).is_file())
+        self.assertEqual(new, (self.root / path).read_bytes())
+        self.assertFalse((self.root / (path + ".new")).exists())
+
+    def test_an_instruction_file_you_changed_is_split_never_given_a_new(self):
+        rules, zone = "System/rules.md", "Zones/Work/AGENTS.md"
+        self.as_if_older(rules, "# Rules, older\n", "# Rules, older\n- My own rule.\n")
+        self.as_if_older(zone, "# Work, older\n", "# Work, older\nMy own route.\n")
+        p = self.plan()
+        self.assertEqual([rules, zone], p["actions"]["split"])
+        self.assertEqual([], p["actions"]["merge"])
+        text = update.report(p)
+        self.assertIn("System/rules.md: yours goes to System/rules.local.md", text)
+        self.assertIn("Zones/Work/AGENTS.md: yours goes to Zones/Work/AGENTS.local.md", text)
+        self.assertIn("--split", text)
+        self.assertNotIn("Up to date", text)
+        self.apply()
+        self.assertIn("My own rule", (self.root / rules).read_text())
+        self.assertFalse((self.root / (rules + ".new")).exists())
+        self.assertFalse((self.root / (zone + ".new")).exists())
+        with self.assertRaises(update.UpdateError) as caught:
+            self.apply(only=[rules])
+        self.assertIn("--split", str(caught.exception))
+
+    def test_an_instruction_file_you_changed_with_nothing_newer_is_still_split(self):
+        path = "System/rules.md"
+        with (self.root / path).open("a") as f:
+            f.write("- My own rule.\n")
+        self.commit(self.root, "mine")
+        p = self.plan()
+        self.assertEqual([path], p["actions"]["split"])
+        self.assertEqual([], p["kept"])
+
+    def test_a_local_file_is_never_listed_or_touched(self):
+        local = self.root / "System/rules.local.md"
+        self.assertNotIn("System/rules.local.md", self.stamp()["files"])
+        local.write_text("# Your rules\n\n- Mine.\n")
+        (self.root / "AGENTS.local.md").write_text("# Mine\n")
+        self.commit(self.root, "mine")
+        p = self.plan()
+        self.assertEqual([], [x for k in update.KINDS for x in p["actions"][k]])
+        self.assertNotIn("System/rules.local.md", p["files"])
 
     def test_a_filled_in_seed_is_yours_and_an_untouched_one_is_replaced(self):
         work, personal = "Zones/Work/Todo.md", "Zones/Personal/Todo.md"
@@ -397,8 +437,8 @@ class TestSafety(Case):
         self.assertTrue(self.apply()["stamped"])
 
     def test_a_new_that_cannot_be_written_leaves_nothing_behind(self):
-        path = "System/rules.md"
-        self.as_if_older(path, "# Rules, older\n")
+        path = "System/skills/threads/SKILL.md"
+        self.as_if_older(path, "older wording\n", "older wording\nmy own line\n")
         real = os.chmod
 
         def failing(target, mode, *a, **kw):
@@ -410,7 +450,7 @@ class TestSafety(Case):
             result = self.apply()
         self.assertIn(path, [p for p, why in result["skipped"] if "put back" in why])
         self.assertEqual([], result["done"]["merge"])
-        self.assertEqual([], [x.name for x in (self.root / "System").iterdir() if x.name.startswith("rules.md.")])
+        self.assertEqual([], [x.name for x in (self.root / path).parent.iterdir() if x.name.startswith("SKILL.md.")])
         self.assertEqual("", self.git(self.root, "status", "--porcelain"))
 
     def test_an_update_between_copies_with_no_commit_is_recorded(self):
@@ -564,13 +604,14 @@ class TestCommandLine(Case):
                          "Name your workspace, such as ~/Garrick." % self.root, str(caught.exception))
 
     def test_the_check_warns_until_a_new_file_is_merged(self):
-        self.as_if_older("System/rules.md", "# Rules, older\n")
+        path = "System/skills/threads/SKILL.md"
+        self.as_if_older(path, "older wording\n", "older wording\nmy own line\n")
         self.run_update("--apply")
         r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
                             "--json"], capture_output=True, text=True, env=self.env)
         found = [f for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"]
-        self.assertEqual(["System/rules.md.new"], [f["path"] for f in found])
-        (self.root / "System/rules.md.new").unlink()
+        self.assertEqual([path + ".new"], [f["path"] for f in found])
+        (self.root / (path + ".new")).unlink()
         r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
                             "--json"], capture_output=True, text=True, env=self.env)
         self.assertEqual([], [f for f in json.loads(r.stdout)["findings"] if f["check"] == "updates"])

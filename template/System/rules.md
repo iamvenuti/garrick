@@ -1,6 +1,8 @@
 # Rules
 
-How an assistant behaves in this workspace. Harness-neutral: nothing here depends on one model or one tool. Change a rule here and nowhere else.
+How an assistant behaves in this workspace. Harness-neutral: nothing here depends on one model or one tool.
+
+This file is Garrick's, as shipped, and an update replaces it. Read `System/rules.local.md` next, when it exists: it holds this workspace's own rules, adds to these and wins where the two differ. Change a rule there and nowhere else.
 
 ## Autonomy
 
@@ -76,6 +78,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **Reach a cloud-synced folder through a link inside the workspace**, never by its full path (`~/Library/CloudStorage/...`): the provider renames that folder when an account or library is renamed, and every note that wrote it breaks without a sound.
 - **Another session may be working here too.** Re-read a shared file (a `Todo.md`, a wiki index, a hub note) right before you add to it, not once at the start.
 - **Instruction files point, they do not restate.** An `AGENTS.md` routes to the file that owns a fact; it never copies it, holds status, or keeps a hand-written list of projects or skills.
+- **Garrick's instruction files stay as shipped.** This file and every `AGENTS.md` are Garrick's. A rule or a route of the workspace's own goes in the local file beside it, `System/rules.local.md` or an `AGENTS.local.md`, which Garrick never ships or changes. `check.py` warns when one of Garrick's differs from what it shipped.
 - **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud. Rules that only this workspace keeps are switched on in `System/garrick-checks.json`.
 - **Raw is never edited.** Anything in a wiki's `raw/` folder is the record. Summaries go in `wiki/`.
 - **`System/generated/` belongs to the tools**: pages a tool rebuilds, such as the status page. Never edit one, never file anything there, and never commit it. The next build replaces what is there, and `check.py` reports a generated page that is committed.
@@ -87,7 +90,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 
 ## Talking to me
 
-How the assistant talks to the user in the session. Edit to taste.
+How the assistant talks to the user in the session. To change one, or add one, write it under this heading in `System/rules.local.md`.
 
 - No summary at the end of what is already on screen. Do report what the user could not see: files changed, commands run, what failed.
 - When the answer is one lookup away, look it up instead of hedging.

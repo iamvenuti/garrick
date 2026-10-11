@@ -2,6 +2,8 @@
 
 The entry point for any assistant working here, whatever its brand. Read `System/rules.md` and `System/context.md` before anything else. The first says how to behave, the second who is who. Each is the only copy of what it holds.
 
+This file and `System/rules.md` are Garrick's, as shipped, and an update replaces them. The workspace's own routing and rules are in `AGENTS.local.md` here and `System/rules.local.md`: read each straight after the file it sits beside, when it exists. Each adds to that file and wins where the two differ.
+
 `AGENTS.md` is the only instruction file name in this workspace. Never create a `CLAUDE.md` anywhere under this folder: Claude Code stops reading every `AGENTS.md` once one exists.
 
 ## Layout
@@ -33,7 +35,7 @@ Route every question by its subject, not by the folder the session happens to be
 
 `Zones/` and `Wikis/` are separate repositories that the root's `.gitignore` leaves out, so search tools started at the root skip them. Search them by path, naming `Zones/` and `Wikis/` or the zone or wiki concerned. Never search from the root alone.
 
-Every zone and wiki has its own `AGENTS.md`. Read it before working there, even if your assistant did not load it: each zone is its own git repository, and not every assistant looks inside one. It adds to this file and wins where it says so.
+Every zone and wiki has its own `AGENTS.md`, and may have an `AGENTS.local.md` beside it. Read both before working there, even if your assistant did not load them: each zone is its own git repository, and not every assistant looks inside one. They add to this file and win where they say so.
 
 ## Skills
 
@@ -41,4 +43,4 @@ Every zone and wiki has its own `AGENTS.md`. Read it before working there, even 
 
 ## What this file is not
 
-It routes and points. It holds no status, no copy of another file, and no hand-kept list of projects or skills: those go stale here while the real ones move on. `System/tools/check.py` warns when it grows or copies.
+It routes and points. It holds no status, no copy of another file, and no hand-kept list of projects or skills: those go stale here while the real ones move on. The same holds for `AGENTS.local.md`. `System/tools/check.py` warns when either grows or copies, and when this file no longer matches what Garrick shipped.

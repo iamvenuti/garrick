@@ -52,10 +52,12 @@ from garrick_lib import (  # noqa: E402
     has_wall_hook,
     install_wall_hook,
     is_domain,
+    is_instruction_file,
     is_speakable,
     is_webmail,
     fingerprint,
     load_context,
+    local_file,
     mail_attachments,
     parse_frontmatter,
     parse_frontmatter_text,
@@ -515,18 +517,32 @@ def check_claude_md(ws: Workspace) -> List[Finding]:
 # Instruction files route and point; they do not restate. Past a budget, an
 # AGENTS.md is carrying something that belongs in the file it points to.
 ROOT_INSTRUCTIONS = ("AGENTS.md", "System/rules.md", "System/context.md")
+# The workspace's own text for the root ones, beside Garrick's (see local_file).
+ROOT_LOCALS = ("AGENTS.local.md", "System/rules.local.md")
 WORD_BUDGET_ROOT = 800
 WORD_BUDGET_OTHER = 1000
 COPY_MIN_CHARS = 80
+# The heading under which the update's split leaves what it could not place.
+SPLIT_REVIEW_RE = re.compile(r"^## From your earlier .+, to review\s*$")
+
+
+def local_beside(ws: Workspace, path: Path) -> Optional[Path]:
+    """The local file beside one of Garrick's instruction files, or None for
+    any other file."""
+    r = rel(ws, path)
+    return ws.root / local_file(r) if is_instruction_file(r) else None
 
 
 def instruction_files(ws: Workspace) -> List[Path]:
+    """Every instruction file there is: Garrick's, the context, and the local
+    file beside each of Garrick's."""
     files = [ws.root / p for p in ROOT_INSTRUCTIONS]
     files += [z / "AGENTS.md" for z in ws.zones]
     files += [ws.root / "Wikis" / "AGENTS.md"]
     wikis = ws.root / "Wikis"
     if wikis.is_dir():
         files += sorted(w / "AGENTS.md" for w in wikis.iterdir() if w.is_dir() and not w.name.startswith("."))
+    files += [local for local in (local_beside(ws, f) for f in list(files)) if local is not None]
     return [f for f in files if f.is_file()]
 
 
@@ -549,7 +565,7 @@ def check_instructions(ws: Workspace) -> List[Finding]:
     texts = {f: f.read_text(encoding="utf-8", errors="replace") for f in files}
     budgets = ws.settings.get("word-budgets", {})
     for f, text in texts.items():
-        if f.name != "AGENTS.md":
+        if f.name not in ("AGENTS.md", "AGENTS.local.md"):
             continue
         budget = WORD_BUDGET_ROOT if f.parent == ws.root else WORD_BUDGET_OTHER
         wanted = budgets.get("root" if f.parent == ws.root else "other")
@@ -562,7 +578,7 @@ def check_instructions(ws: Workspace) -> List[Finding]:
                                "An instruction file has grown past its budget"))
     # The same sentence in two files, one of them at the root: one is a copy.
     # Zone and wiki files may share boilerplate, since each stands alone in its own repository.
-    root_files = {ws.root / p for p in ROOT_INSTRUCTIONS} | {ws.root / "Wikis" / "AGENTS.md"}
+    root_files = {ws.root / p for p in ROOT_INSTRUCTIONS + ROOT_LOCALS + ("Wikis/AGENTS.md", "Wikis/AGENTS.local.md")}
     seen: Dict[str, set] = {}
     for f, text in texts.items():
         for line in text.splitlines():
@@ -575,37 +591,90 @@ def check_instructions(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "instructions", names,
                                "the same text in both: \"%s…\"; keep it in one and point from the other" % norm[:60],
                                "Two instruction files say the same thing"))
-    # A file that names several skills names every one of them.
+    # A file that names several skills names every one of them. Garrick's
+    # file and the local file beside it are read together, so they count as one.
     skills = {p.parent.name for p in (ws.root / "System" / "skills").glob("*/SKILL.md")}
     for f, text in texts.items():
-        named = {s for s in skills if "`%s`" % s in text}
+        if f.name.endswith(".local.md"):
+            continue  # read with the file it sits beside
+        pair = [g for g in (f, local_beside(ws, f)) if g is not None and g in texts]
+        naming = [g for g in pair if any("`%s`" % s in texts[g] for s in skills)]
+        named = {s for s in skills if any("`%s`" % s in texts[g] for g in pair)}
         if len(named) >= 3 and named != skills:
-            out.append(Finding(WARNING, "instructions", rel(ws, f),
+            out.append(Finding(WARNING, "instructions", " and ".join(rel(ws, g) for g in naming),
                                "lists skills but not %s; list the folder instead of naming them" % ", ".join(sorted(skills - named)),
                                "An instruction file lists skills that no longer match the folder"))
-    # A zone's AGENTS.md that names its projects' hub notes names every one
-    # of them, and only notes that exist.
+    # A zone's instructions that name its projects' hub notes name every one
+    # of them, and only notes that exist: its AGENTS.md and AGENTS.local.md together.
     for zone in ws.zones:
-        f = zone / "AGENTS.md"
-        text = texts.get(f)
-        if not text:
+        pair = [g for g in (zone / "AGENTS.md", zone / "AGENTS.local.md") if texts.get(g)]
+        if not pair:
             continue
         projects = [p.name for p in project_dirs(zone) if (p / (p.name + ".md")).is_file()]
-        listed = re.findall(r"`([^`/]+)/[^`]*\.md`", text)
+        listed = [name for g in pair for name in re.findall(r"`([^`/]+)/[^`]*\.md`", texts[g])]
         if not any(name in projects for name in listed):
             continue  # this zone keeps no list of its projects
+        lister = next(g for g in reversed(pair) if any(n in projects for n in re.findall(r"`([^`/]+)/[^`]*\.md`", texts[g])))
         for name in projects:
             if name not in listed:
-                out.append(Finding(WARNING, "instructions", rel(ws, f),
+                out.append(Finding(WARNING, "instructions", rel(ws, lister),
                                    "lists project hub notes but not %s/%s.md; list the folder instead of naming them" % (name, name),
                                    "The %s instructions list projects that no longer match the folder" % zone.name))
-        for m in re.finditer(r"`([^`/]+/[^`]*\.md)`", text):
-            path = m.group(1)
-            if path.split("/")[0] in {"..", "System", "Zones", "Wikis"} | {z.name for z in ws.zones}:
-                continue  # a path from another folder, not one of this zone's notes
-            if not (zone / path).exists():
-                out.append(Finding(WARNING, "instructions", rel(ws, f), "lists %s, which does not exist" % path,
-                                   "The %s instructions name a note that is not there" % zone.name))
+        for f in pair:
+            for m in re.finditer(r"`([^`/]+/[^`]*\.md)`", texts[f]):
+                path = m.group(1)
+                if path.split("/")[0] in {"..", "System", "Zones", "Wikis"} | {z.name for z in ws.zones}:
+                    continue  # a path from another folder, not one of this zone's notes
+                if not (zone / path).exists():
+                    out.append(Finding(WARNING, "instructions", rel(ws, f), "lists %s, which does not exist" % path,
+                                       "The %s instructions name a note that is not there" % zone.name))
+    out += split_findings(ws, texts)
+    return out
+
+
+def split_findings(ws: Workspace, texts: Dict[Path, str]) -> List[Finding]:
+    """Garrick's instruction files stay as shipped, and the workspace's own
+    text lives in the local file beside each. One that differs from what
+    Garrick shipped, a local file Garrick's file does not point to, and
+    passages a split left to settle."""
+    out = []
+    files = read_version(ws.root).get("files")
+    for f, text in texts.items():
+        local = local_beside(ws, f)
+        if local is None:
+            continue
+        r = rel(ws, f)
+        want = files.get(r) if isinstance(files, dict) else None
+        if isinstance(want, str):
+            try:
+                changed = fingerprint(f) != want
+            except OSError:
+                changed = False
+            if changed:
+                out.append(Finding(WARNING, "instructions", r,
+                                   "differs from what Garrick shipped; Garrick's instruction files stay as shipped, so "
+                                   "put your own text in %s. The update's split moves it there and puts Garrick's "
+                                   "back (say \"update Garrick\")" % rel(ws, local),
+                                   "One of Garrick's instruction files was changed here"))
+        if local in texts and local.name not in text:
+            out.append(Finding(WARNING, "instructions", rel(ws, local),
+                               "%s does not point to it, so an assistant may never read it; update Garrick, "
+                               "whose %s does" % (r, f.name),
+                               "A local instruction file is not pointed to"))
+    for f, text in texts.items():
+        if not f.name.endswith(".local.md"):
+            continue
+        lines = text.splitlines()
+        at = next((i for i, line in enumerate(lines) if SPLIT_REVIEW_RE.match(line)), None)
+        if at is None:
+            continue
+        end = next((i for i in range(at + 1, len(lines)) if re.match(r"^#{1,2} ", lines[i])), len(lines))
+        n = sum(1 for line in lines[at + 1:end] if re.match(r"^### \d+\. ", line))
+        out.append(Finding(WARNING, "instructions", rel(ws, f),
+                           "still holds %s from the split to settle, under \"%s\"; take them one at a time with "
+                           "your assistant (say \"finish the update\")" % (
+                               "%d passage%s" % (n, "" if n == 1 else "s") if n else "passages", lines[at][3:].strip()),
+                           "The split left passages to settle"))
     return out
 
 
@@ -839,7 +908,8 @@ def check_skills(ws: Workspace) -> List[Finding]:
                                "The two assistants see different skills"))
     retired = {k: v for k, v in ws.settings.get("retired-skills", {}).items() if isinstance(v, str)}
     if retired:
-        live = [ws.root / p for p in ROOT_INSTRUCTIONS] + [z / "AGENTS.md" for z in ws.zones]
+        live = [ws.root / p for p in ROOT_INSTRUCTIONS + ROOT_LOCALS] + [z / n for z in ws.zones
+                                                                           for n in ("AGENTS.md", "AGENTS.local.md")]
         for sub in ("skills", "templates", "tools"):
             live += [p for p in walk_files(ws.root / "System" / sub) if p.suffix in (".md", ".py", ".sh")]
         texts = [(p, read_text(p) or "") for p in live if p.is_file()]
@@ -1572,7 +1642,7 @@ def wiki_name_links(ws: Workspace) -> List[Finding]:
     index = PathIndex(ws, [p for v in both.values() for p in v])
     names = {name for _, name in both}
     others = [p for p in ws.wiki_files if "raw" not in Path(rel(ws, p)).parts[:3] and p != registry / "index.md"]
-    others += [ws.root / p for p in ROOT_INSTRUCTIONS if (ws.root / p).is_file()]
+    others += [ws.root / p for p in ROOT_INSTRUCTIONS + ROOT_LOCALS if (ws.root / p).is_file()]
     others += [p for project, _ in ws.projects if in_system(ws, project)
                for p in live_files(project) if p.suffix.lower() == ".md"]
     scanned = list(zone_notes(ws)) + [(p, read_text(p) or "") for p in others]
@@ -1978,7 +2048,9 @@ class QuoteIndex:
 # "System/ and whatever is in it": an interview record, a page a tool rebuilds
 # into System/generated/ or a note dropped into System/ can carry what one
 # party said, and would then exempt whatever it repeats from the wall check.
-SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md")
+# The local file beside an instruction file is read with it, by every side.
+SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
+                "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md")
 SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Knowledge")
 
 

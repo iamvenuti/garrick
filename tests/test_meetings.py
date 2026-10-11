@@ -364,6 +364,40 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertIn("| Page | Type | Updated |", path.read_text())
 
+    def _page(self):
+        fixtures.write(self.ws.meetings / "wiki" / "sources" / "260310-acme-kickoff.md",
+                        fixtures.meeting_page("Work", "[acme]", "Acme kick-off"))
+
+    def test_what_it_did_not_write_is_kept(self):
+        index = self.ws.meetings / "wiki" / "index.md"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("# Index\n\nKept by hand: held recordings.\n\n| Recording | Why held |\n|---|---|\n"
+                         "| 260301 | waiting on consent |\n\nEvery page, newest first.\n\n"
+                         "| Page | Type | Updated |\n|---|---|---|\n| [[old\\|Old]] | meeting | 2026-01-01 |\n\n"
+                         "## Coverage\n\nNotes at the bottom.\n")
+        self._page()
+        ingest.rebuild_index(self.ws.root)
+        first = index.read_text()
+        for kept in ("Kept by hand: held recordings.", "| 260301 | waiting on consent |", "## Coverage",
+                     "Notes at the bottom."):
+            self.assertIn(kept, first)
+        self.assertNotIn("[[old", first)
+        self.assertEqual(1, first.count(ingest.INDEX_START))
+        self.assertLess(first.index(ingest.INDEX_END), first.index("## Coverage"))
+        self.assertIn("Acme kick-off", first)
+        ingest.rebuild_index(self.ws.root)
+        self.assertEqual(first, index.read_text())          # a second run changes nothing
+
+    def test_an_index_with_no_table_of_garricks_gets_the_block_at_the_end(self):
+        index = self.ws.meetings / "wiki" / "index.md"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("# My index\n\n| Domain | Pages |\n|---|---|\n| customer | 3 |\n")
+        self._page()
+        ingest.rebuild_index(self.ws.root)
+        text = index.read_text()
+        self.assertTrue(text.startswith("# My index\n\n| Domain | Pages |\n|---|---|\n| customer | 3 |\n\n"))
+        self.assertTrue(text.rstrip().endswith(ingest.INDEX_END))
+
 
 class LogTest(unittest.TestCase):
     def setUp(self):

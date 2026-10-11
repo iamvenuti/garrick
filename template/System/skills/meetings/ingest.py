@@ -199,8 +199,40 @@ def _page_row(root: Path, path: Path) -> Tuple[str, str, str]:
     return updated, title, "| [[%s\\|%s]] | %s | %s |" % (rel, title, ptype, updated)
 
 
+# The part of index.md the command writes; everything outside is the user's.
+INDEX_START, INDEX_END = "<!-- garrick:index -->", "<!-- /garrick:index -->"
+INDEX_HEADER = "| Page | Type | Updated |"
+
+
+def merge_index(old: Optional[str], table: List[str]) -> str:
+    """index.md with `table` between Garrick's markers and the rest kept.
+    Without markers, the table Garrick wrote before them (the one headed
+    Page, Type, Updated) is replaced; with neither, the block is added at
+    the end. A file that does not exist yet gets Garrick's title too."""
+    block = [INDEX_START] + table + [INDEX_END]
+    if old is None:
+        return "\n".join(["# Index", "", "Every page, newest first.", ""] + block) + "\n"
+    lines = old.splitlines()
+    marks = [l.strip() for l in lines]
+    if INDEX_START in marks and INDEX_END in marks[marks.index(INDEX_START):]:
+        start = marks.index(INDEX_START)
+        end = start + marks[start:].index(INDEX_END) + 1
+    elif INDEX_HEADER in marks:
+        start = end = marks.index(INDEX_HEADER)
+        while end < len(lines) and marks[end].startswith("|"):
+            end += 1
+    else:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        start = end = len(lines) + 1
+        lines.append("")
+    return "\n".join(lines[:start] + block + lines[end:]) + "\n"
+
+
 def rebuild_index(root: Path) -> Tuple[Path, int]:
-    """Rewrite `wiki/index.md` from every page's own frontmatter, newest first."""
+    """Rewrite the page table in `wiki/index.md` from every page's own
+    frontmatter, newest first, between Garrick's markers. Whatever else the
+    file holds, a coverage table or notes at the top, is kept as it is."""
     meetings = meetings_root(root)
     pages: List[Path] = []
     for folder in (meetings / "wiki" / "sources", meetings / "wiki" / "people"):
@@ -208,11 +240,11 @@ def rebuild_index(root: Path) -> Tuple[Path, int]:
             pages += sorted(p for p in folder.glob("*.md"))
     rows = [_page_row(root, p) for p in pages]
     rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
-    lines = ["# Index", "", "Every page, newest first.", "", "| Page | Type | Updated |", "|---|---|---|"]
-    lines += [r[2] for r in rows]
+    table = [INDEX_HEADER, "|---|---|---|"] + [r[2] for r in rows]
     index_path = meetings / "wiki" / "index.md"
     with filing(root):
-        write_over(root, meetings, index_path, ("\n".join(lines) + "\n").encode("utf-8"))
+        old = index_path.read_text(encoding="utf-8") if index_path.is_file() else None
+        write_over(root, meetings, index_path, merge_index(old, table).encode("utf-8"))
     return index_path, len(rows)
 
 

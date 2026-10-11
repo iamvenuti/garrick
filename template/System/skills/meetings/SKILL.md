@@ -135,6 +135,9 @@ One meeting at a time, even when several files are waiting.
    python3 System/skills/meetings/ingest.py index
    python3 System/skills/meetings/ingest.py log --slug <slug> --title "<short title>" --zone <zone> --parties <tag>,<tag>
    ```
+   `index` writes only the page table between its two markers
+   (`<!-- garrick:index -->`); anything else in `index.md`, such as a table
+   kept by hand, stays as it is.
 8. **Actions the user owes go to that zone's `Todo.md`**, not the meeting
    page. Re-read it right before appending (another session may be writing
    to it too), then append under `## Inbox`:

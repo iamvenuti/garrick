@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- `ingest.py index` rewrote the whole of the Meetings `index.md`, so a table or notes kept there by hand were lost on the next ingest. It now writes only the page table, between `<!-- garrick:index -->` and `<!-- /garrick:index -->`, and keeps the rest. On an index from before the markers it replaces its own Page, Type, Updated table, or adds the block at the end. ([#51](https://github.com/iamvenuti/garrick/issues/51))
+
 ### Fixed
 
 - `release.py update` stopped with `CERTIFICATE_VERIFY_FAILED` under python.org's Python on macOS, which has no certificates until *Install Certificates.command* is run, and said nothing about why. It now fetches through `curl`, which trusts the system's certificates, and says so; when that fails too, it says to run `/usr/bin/python3` or *Install Certificates.command*. The update docs say the same. ([#55](https://github.com/iamvenuti/garrick/issues/55))

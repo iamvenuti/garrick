@@ -147,6 +147,12 @@ One meeting at a time, even when several files are waiting.
    ```markdown
    - [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>
    ```
+   The source is the meeting page as this prints it: `[[<slug>]]`, or an
+   `obsidian://` link when the zone and the wikis are Obsidian vaults of
+   their own, where a wikilink would point nowhere:
+   ```sh
+   python3 System/skills/meetings/ingest.py link --zone <Zone> --slug <slug> --title "<short title>"
+   ```
    The format is the list's own, in its header: the thread first, the
    meeting page as its source, the dates last as Obsidian Tasks writes them
    (`📅` due; `#waiting` and `⏳` the day to chase, for something the user

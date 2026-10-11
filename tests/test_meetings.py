@@ -420,6 +420,27 @@ class IndexTest(unittest.TestCase):
         self.assertTrue(text.rstrip().endswith(ingest.INDEX_END))
 
 
+class SourceLinkTest(unittest.TestCase):
+    def setUp(self):
+        self.ws = TempWorkspace()
+
+    def tearDown(self):
+        self.ws.close()
+
+    def test_a_wikilink_when_one_vault_holds_both_or_neither_is_one(self):
+        self.assertEqual("[[260310-acme-kick-off]]", ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off"))
+        (self.ws.root / ".obsidian").mkdir()
+        self.assertEqual("[[260310-acme-kick-off]]", ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off"))
+
+    def test_an_obsidian_link_when_the_zone_and_the_wikis_are_vaults_of_their_own(self):
+        (self.ws.root / "Zones" / "Work" / ".obsidian").mkdir(parents=True)
+        (self.ws.root / "Wikis" / ".obsidian").mkdir(parents=True)
+        link = ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off", "Acme [kick-off]")
+        self.assertEqual("[Acme (kick-off)](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260310-acme-kick-off)", link)
+        code = ingest.main(["--root", str(self.ws.root), "link", "--zone", "Work", "--slug", "260310-acme-kick-off"])
+        self.assertEqual(0, code)
+
+
 class LogTest(unittest.TestCase):
     def setUp(self):
         self.ws = TempWorkspace()

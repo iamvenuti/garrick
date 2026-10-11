@@ -1023,7 +1023,7 @@ class TestJobs(StatusCase):
 
     def test_day_that_ended_failed_is_red(self):
         self.heartbeat(0)
-        t = self.now.timestamp() - 2 * 86400
+        t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
         (self.jobs / "brief.log").write_text(
             "===== %s  brief  exit 0  (30s) =====\n\n===== %s  brief  exit 4  (5s) =====\n\n" % (stamp(t), stamp(t + 600)))
         html = self.page()
@@ -1032,7 +1032,7 @@ class TestJobs(StatusCase):
 
     def test_day_that_recovered_is_amber(self):
         self.heartbeat(0)
-        t = self.now.timestamp() - 2 * 86400
+        t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
         (self.jobs / "brief.log").write_text(
             "===== %s  brief  exit 4  (5s) =====\n\n===== %s  brief  exit 0  (30s) =====\n\n===== %s  brief  exit 0  (30s) =====\n\n"
             % (stamp(t), stamp(t + 600), stamp(t + 1200)))

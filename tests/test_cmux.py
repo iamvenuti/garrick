@@ -719,7 +719,25 @@ class PageVerbTest(CmuxCase):
         call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
         self.assertEqual(call[call.index("--workspace") + 1], "ws-system")
         self.assertEqual(call[call.index("--working-directory") + 1], str(self.ws))
-        self.assertEqual(shlex.split(call[call.index("--command") + 1]), ["claude", "-n", self.ws.name, "process the inbox"])
+        self.assertEqual(shlex.split(call[call.index("--command") + 1]), ["claude", "-n", "Inbox", "process the inbox"])
+
+    def test_a_question_at_the_root_is_named_by_its_first_words(self):
+        self.state({"workspaces": [{"id": "ws-system", "title": "System"}]})
+        self.act({"verb": "open", "folder": str(self.ws), "prompt": "what do I owe Birch this week?"})
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
+        self.assertEqual(shlex.split(call[call.index("--command") + 1])[:3], ["claude", "-n", "What do I owe"])
+        self.assertEqual("Inbox", pa.root_title("Process the inbox."))
+        self.assertEqual("Ask", pa.root_title("?!"))
+
+    def test_the_root_without_a_title_is_the_workspace_not_its_folder(self):
+        renamed = self.tmp / "Garrick"
+        self.ws.rename(renamed)
+        self.ws = renamed
+        os.environ["GARRICK_WORKSPACE"] = str(renamed)
+        code, _, err = self.run_desk("open", str(renamed), "--prompt", "hello")
+        self.assertEqual((code, err), (0, ""))
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] in ("new-workspace", "new-surface"))
+        self.assertEqual(shlex.split(call[call.index("--command") + 1])[:3], ["claude", "-n", "Workspace"])
 
     def test_open_the_root_sends_the_prompt_to_its_idle_tab(self):
         self.state({"sessions": [self.session("r", self.ws, claude_rows())]})

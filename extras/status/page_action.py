@@ -665,13 +665,30 @@ def by_folder(ws: Path, req: dict) -> Optional[str]:
     return None
 
 
+# What a tab opened at the workspace root is called, by what it starts on.
+# Anything else at the root is a question asked of Garrick, named by its
+# first words, so two of them are told apart and "close the X tab" has an X.
+ROOT_TITLES = {"process the inbox": "Inbox"}
+ROOT_TITLE_WORDS = 4
+
+
+def root_title(prompt: str) -> str:
+    known = ROOT_TITLES.get(re.sub(r"\s+", " ", prompt).strip().lower().rstrip(".!?"))
+    if known:
+        return known
+    words = re.findall(r"[\w'’-]+", prompt)[:ROOT_TITLE_WORDS]
+    title = " ".join(words).strip("-'’ ")
+    return (title[:1].upper() + title[1:]) if title else "Ask"
+
+
 def cmux_act(ws: Path, req: dict) -> str:
     verb = req["verb"]
     if verb == "open" and "folder" in req:
         req = dict(req)
         prompt = by_folder(ws, req)
         if prompt is not None:
-            said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--front").splitlines()
+            said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--title", root_title(prompt),
+                            "--front").splitlines()
             return said[0][:1].upper() + said[0][1:] if said else "Opened the workspace root in cmux"
     if verb == "open":
         folder, name = cmux_folder(ws, req)

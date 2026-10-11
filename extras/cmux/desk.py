@@ -528,7 +528,9 @@ def cmd_open(desk: Desk, a) -> None:
             print("sent to %s in %s: %s" % (tab_label(s), s.get("workspace_name") or "?", a.prompt))
             return
 
-    name = a.title or (desk.say_place(place) if place["kind"] == "thread" else folder.name or "Workspace")
+    at_root = Path(folder).resolve() == desk.ws.resolve()
+    name = a.title or ("Workspace" if at_root else desk.say_place(place) if place["kind"] == "thread"
+                       else folder.name or "Workspace")
     command = start_command(agent, name, a.prompt)
     target = a.target or desk.workspace_for(place["zone"] if not at_root else "root")
     if a.dry_run:

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The todo sweep for the Work zone, every night at 05:45: the actions the
+  week's calls and threads hold, swept into Todo.md, then expired, archived
+  and tidied, and committed in the zone. Copy it to ~/Library/LaunchAgents/ and edit the copy.
+  If your workspace is not ~/Garrick, replace each /Users/&lt;you&gt;/Garrick
+  with its full path. Then replace every other &lt;you&gt; (written that way
+  because this is XML) with your macOS user name; launchd does not expand ~.
+  Load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.todo-sweep.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.todo-sweep`.
+  PATH must include the folder your assistant's command is installed in.
+  To be told when it fails, add GARRICK_NOTIFY (1, for a macOS notification)
+  or GARRICK_NOTIFY_CMD (a command given a title and a message) to
+  EnvironmentVariables; see docs/extras/scheduled-jobs.md for the others.
+  Whatever job.py cannot write to its own log, such as the error from a path
+  left wrong, goes to todo-sweep.launchd.log in the jobs' log folder.
+  launchd does not create that folder: run the job once by hand first.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.todo-sweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>todo-sweep</string>
+    <string>--agent</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/todo_sweep.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--zone</string>
+    <string>Work</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GARRICK_HARNESS</key>
+    <string>claude</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/todo-sweep.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/todo-sweep.launchd.log</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>45</integer>
+  </dict>
+</dict>
+</plist>

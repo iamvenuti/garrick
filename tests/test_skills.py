@@ -73,7 +73,7 @@ class SkillsTest(unittest.TestCase):
         return sorted(p.parent for p in SKILLS.glob("*/SKILL.md"))
 
     def test_the_skills(self):
-        self.assertEqual(["intake", "interview", "knowledge", "meetings", "setup", "threads", "update"],
+        self.assertEqual(["intake", "interview", "knowledge", "meetings", "setup", "threads", "todo", "update"],
                          [p.name for p in self.skills()])
 
     def test_every_skill_names_itself(self):

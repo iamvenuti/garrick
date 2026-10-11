@@ -7,7 +7,7 @@ Instructions for any assistant working on this repository. This is the source of
 | Path | Holds |
 |---|---|
 | `template/` | The workspace a user gets. Copied, then filled in by the installer |
-| `template/System/rules.md` | How an assistant behaves in an installed workspace. The only copy |
+| `template/System/rules.md` | How an assistant behaves in an installed workspace. Garrick's only copy; a workspace's own rules go in `System/rules.local.md`, which the installer starts from `template/System/rules.local.md` and never lists or updates |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
 | `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
 | `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `release.py`, the one tool that reaches the network, only when asked or switched on |
@@ -15,6 +15,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
 | `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace; `System/tools/release.py update` downloads a release and runs it. Updates the extras a workspace has copied in, too |
+| `split.py` | `install.py --update --split`: moves a workspace's own text out of Garrick's instruction files, `System/rules.md` and each `AGENTS.md`, into the local file beside each (`rules.local.md`, `AGENTS.local.md`), and puts Garrick's back as shipped |
 | `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. After tagging a release, run `python3 update.py --release-hashes` and commit the result; a test fails until you do |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |

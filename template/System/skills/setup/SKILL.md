@@ -7,8 +7,8 @@ description: >
   points of the projects already here. Use when the user says "set up
   Garrick", "first run", "get me started", "check my setup", "what do you
   know about my setup", "I've installed Obsidian" (or cmux, or another
-  assistant), or "fill in my resume points", and when the check reports a
-  thread with no real resume point yet.
+  assistant), "fill in my resume points", "add a rule", or "make that a
+  rule", and when the check reports a thread with no real resume point yet.
 ---
 
 # Setup
@@ -29,6 +29,8 @@ mode* in the `threads` skill describes.
 | What this Mac has | `python3 System/tools/probe.py`. Read-only; sends nothing |
 | How the user works, written by this skill | `System/setup.md` |
 | Who the user is and who they deal with | `System/context.md`, the `interview` skill's job, not this one's |
+| The user's own rules, which win over Garrick's | `System/rules.local.md` |
+| A zone's or a wiki's own routing | `AGENTS.local.md`, beside its `AGENTS.md` |
 | Resume points not filled in yet | `python3 System/tools/check.py --json`, findings in the `resume` check that say "still the template's" |
 
 ## "Set up Garrick"
@@ -98,6 +100,28 @@ mode* in the `threads` skill describes.
      fill them in? It takes a minute each."
    - Otherwise: "You're set up. Say 'what's open' to see your work."
 
+## "Add a rule", "make that a rule"
+
+A rule of the user's own, such as "always answer in Italian" or "never book
+a meeting before ten", goes in `System/rules.local.md`, never in
+`System/rules.md`: that file and every `AGENTS.md` are Garrick's, and an
+update replaces them as shipped. The local file adds to Garrick's and wins
+where the two differ.
+
+1. **Say the rule back** in one sentence, in the user's words, and where it
+   goes: "I'll add: answer in Italian, under Talking to me. Right?"
+2. **On a yes, write it.** Re-read `System/rules.local.md`, then add the rule
+   as one line under the heading it would have in `System/rules.md`, such as
+   `## Talking to me` or `## Autonomy`, adding the heading when the file
+   lacks it. A rule that overrides one of Garrick's names it: "Instead of
+   Garrick's twenty-minute estimates: give a range." If the file is missing,
+   start it with `# Your rules` and one line saying it adds to `rules.md`.
+3. **Routing for one zone or wiki**, such as "questions about invoices go to
+   the Money project", goes in that folder's `AGENTS.local.md` instead, made
+   the same way, and pointed to by the `AGENTS.md` beside it already.
+4. **Commit it alone** in the repository that holds it:
+   `git add -- System/rules.local.md && git commit -m "Rules: <the rule, short>"`.
+
 ## "Fill in my resume points"
 
 A thread made from the template, or brought in from another folder, starts
@@ -131,6 +155,8 @@ than nothing: it looks like an answer.
   Say what it would take and leave it.
 - Never write the user's work, parties or anything said in confidence into
   `System/setup.md`.
+- Never edit `System/rules.md` or an `AGENTS.md`: the user's rules and
+  routing go in the `.local.md` file beside it.
 - Never change a git setting, a resume point or any other file without the
   yes this skill asks for.
 - Never send anything off the machine. The probe and this skill only look.

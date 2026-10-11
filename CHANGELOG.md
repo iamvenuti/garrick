@@ -4,6 +4,17 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Your own rules and routing live in a local file beside each of Garrick's instruction files: `System/rules.local.md` beside `System/rules.md`, and `AGENTS.local.md` beside any `AGENTS.md`. Garrick never ships, lists or changes them. Each of Garrick's files tells the assistant to read its local file next, and the local file wins where the two differ. The installer starts `System/rules.local.md` with a heading and no rules.
+- `install.py --update --split`, and `release.py update --split`, move your own text out of an instruction file of Garrick's into the local file beside it and put Garrick's back as shipped. It finds the Garrick version your file grew from in its history, moves what you added under the same heading, and lists each passage where you changed or removed Garrick's text, for you to settle one at a time; those wait in the local file under *From your earlier rules.md, to review*. Report first, `--apply` to write, nothing of yours lost.
+- The `setup` skill writes a rule of your own into `System/rules.local.md` when you say "add a rule", and the `interview` skill proposes the ones it hears.
+- `check.py` warns when one of Garrick's instruction files differs from what Garrick shipped, when a local file is not pointed to by the file beside it, and while a split leaves passages to settle. Each `AGENTS.local.md` has the word budget of its `AGENTS.md`, and the copy and skill-list checks read a Garrick file and its local file together.
+
+### Changed
+
+- An update replaces `System/rules.md` and every `AGENTS.md` like the rest of Garrick's files, when you have not changed them. One you changed is listed under *Split* and left as it is, with no `.new` beside it.
+
 ## [0.15.4] - 2026-10-11
 
 The threads list and its cards say less and line up, Park and Wake show at once, the Mac app opens without a flicker, and it writes down what its menu holds, for a bug no one could reproduce.

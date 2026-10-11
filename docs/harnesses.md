@@ -10,6 +10,12 @@ Every repository the installer creates, the root, `Wikis/`, and each zone, gets 
 
 Claude Code reads `AGENTS.md` natively from version 2.1.277. The Code tab of the Claude desktop app runs the same Claude Code, bundled inside the app, and reads the same `AGENTS.md`, skills and settings: on version 2.1.284 it loaded the workspace's `AGENTS.md`, found all four skills, and answered "what's open" from the demo. Choose **Local** and the workspace folder itself; [First steps](first-steps.md) has the settings. Codex reads `AGENTS.md` files too, but only from the git repository root down to the folder a session opens in. It won't walk up past a repository boundary to find one. The Codex mode of the ChatGPT desktop app runs the same Codex, bundled inside the app: on version 0.159.2, opened on the demo workspace, it loaded the root `AGENTS.md` and found all four skills. Five skills ship now; both runs predate the fifth. Open the workspace folder itself as the project's source folder, on **This computer**; [First steps](first-steps.md#using-codex-instead) has the settings.
 
+## Your own instructions beside Garrick's
+
+Garrick's instruction files stay as it ships them, and your own rules and routing go in the local file beside each: `System/rules.local.md`, and an `AGENTS.local.md` beside an `AGENTS.md` ([Updating](updating.md#your-rules-and-garricks) has why). Neither assistant knows those names. They reach the assistant the way `System/rules.md` itself does: an `AGENTS.md` the assistant loads on its own tells it to read them. The root `AGENTS.md` names both of the root's, each zone's and wiki's `AGENTS.md` names the root's and its own, and `System/rules.md` names `rules.local.md` again at its top. Each says the local file adds to its Garrick file and wins where the two differ.
+
+Claude Code's `@path` imports would load a file without being asked, but not here. Claude Code 2.1.296 resolved an import written in `AGENTS.md` only when the file sat inside the folder the session was opened in. From a zone or a project folder, every import of a root file counts as external: a session started with `claude -p` drops it, and an interactive one asks for approval in each new folder. Codex reads `AGENTS.md` as plain text and has no imports at all. So Garrick writes the pointer as an instruction, which both assistants read the same way.
+
 ## What has been tested
 
 Both assistants read the same files, but that alone does not show they do the same things with them. This table records what has been checked in each one, with the version it was checked on. A row reading *not yet tested* has not been.
@@ -17,6 +23,7 @@ Both assistants read the same files, but that alone does not show they do the sa
 | Capability | Claude Code | Codex |
 |---|---|---|
 | Reads the workspace's `AGENTS.md` | Natively from 2.1.277. The desktop app's Code tab, 2.1.284, loaded it on the demo | The ChatGPT app's Codex mode, 0.159.2, loaded the root `AGENTS.md` on the demo |
+| Reads the local files beside Garrick's | 2.1.296, a session opened in a zone and one at the root of a fresh install: both applied a rule from `System/rules.local.md` and one from the zone's `AGENTS.local.md` to a note they were asked to write | 0.162.0-alpha.2, at the root, followed the root `AGENTS.md` to both of the root's local files, though a global instruction file on the test machine sent it to look for them in another folder. In a zone, asked for a one-line note, it read no instruction file but the zone's `AGENTS.md`: neither `System/rules.md` nor a local file. Not yet tested on a larger task |
 | Finds the skills | 2.1.284 found the four skills then shipped; not yet rechecked with five | 0.159.2 found the four skills then shipped; not yet rechecked with five |
 | Picks up a thread cold, in a fresh session | 2.1.284 answered "what's open" from the demo. Resuming a thread wrapped by the other assistant: not yet tested | Not yet tested |
 | First-session approvals, on a clean account | Not yet tested | Not yet tested |

@@ -53,11 +53,44 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 | Replace | A file still exactly as some Garrick wrote it, with a newer version | Replaces it |
 | Add | A file new in this Garrick | Adds it |
 | Merge | A file you changed that Garrick has changed too | Writes Garrick's version beside it as `<name>.new` and commits it. Yours is not touched |
+| Split | One of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that you changed | Nothing, and no `.new`. Your text belongs in the local file beside it: `--split` moves it there, below |
 | Yours | A starting file you have filled in since, such as a zone's `Todo.md` or a wiki's log | Nothing, now or later |
 | Removed by you | A file Garrick still ships that you deleted | Nothing, unless you name it with `--only` |
 | Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone |
 
-A file you changed that Garrick hasn't changed stays as you left it and isn't listed. `System/rules.md` is always merged and never replaced, even if you never edited it, because it decides how your assistant behaves and you should see each change to it. `System/context.md`, your own answers, is never read or written.
+A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written, and neither is a local file beside an instruction file, such as `System/rules.local.md`.
+
+## Your rules, and Garrick's
+
+`System/rules.md` and every `AGENTS.md`, at the root, in each zone and in each wiki, are Garrick's. An update replaces them as it replaces Garrick's code, and the `update` skill tells you what changed in the rules, one line per rule. Your own rules and routing go in the local file beside each, which no update writes:
+
+| Garrick's | Yours |
+|---|---|
+| `System/rules.md` | `System/rules.local.md`, which the installer starts with a heading and no rules |
+| `AGENTS.md`, in the root, a zone or a wiki | `AGENTS.local.md` beside it, made when you first need it |
+
+Each of Garrick's files says near its top to read the local one next. The local one adds to it, and wins where the two differ: to change one of Garrick's rules, write your own under the same heading in `rules.local.md`. Say "add a rule" and the `setup` skill writes it there for you.
+
+Garrick's files leave the local ones to be read by instruction, as they leave `System/rules.md` itself: the root `AGENTS.md`, which both assistants load on their own, names both, and so does each zone's and wiki's `AGENTS.md`, for an assistant that stops at a repository's edge. [Claude Code and Codex](harnesses.md#your-own-instructions-beside-garricks) says why, and what has been tested.
+
+### Moving your text out
+
+A workspace from before the split, or one whose instruction file you edited since, has your text mixed into Garrick's. The update lists such a file under *Split* and leaves it as it is. Then:
+
+```sh
+python3 System/tools/release.py update --split            # what would move; changes nothing
+python3 System/tools/release.py update --split --apply    # do it
+```
+
+Or, from a newer Garrick you downloaded, `python3 <the newer Garrick>/install.py --update . --split`, with `--apply` and `--only` as for an update. Or say "split my rules".
+
+For each file it finds the Garrick version your file grew from in its git history, or in the history of a `.new` beside it, and compares the three. Then:
+
+- Garrick's file is written as this Garrick ships it. A change Garrick made since, to a passage you left alone, is simply taken.
+- A passage you added moves into the local file, under the heading it sat under, which is added when the local file lacks it.
+- A passage where you changed or removed Garrick's own text cannot move on its own. The report lists each one, numbered, with both wordings, for you to settle one at a time. Your wording goes into the local file under *From your earlier rules.md, to review* (or *AGENTS.md*), where it still holds until you settle it, and Garrick's is named there by its opening words. Keep yours, take Garrick's or write it afresh; the `update` skill goes through them with you. `check.py` warns until that section is gone.
+
+Nothing you wrote is lost: every line of your file that is not Garrick's ends up in the local file, and one that cannot be placed under a heading goes under the review heading as it is. When no Garrick version is in the file's history, as in a workspace laid out before it took Garrick's files, all that differs from this Garrick's counts as yours, and the report says so. A `.new` an earlier update left beside the file is removed in the same commit, since Garrick's file is as shipped now. Each repository gets one commit, which `git revert` undoes.
 
 ## Extras
 
@@ -88,6 +121,8 @@ python3 System/tools/release.py update --apply --only "System/tools/check.py,Sys
 ```
 
 ## Merging a `.new` file
+
+An instruction file of Garrick's never gets one: see [Your rules, and Garrick's](#your-rules-and-garricks).
 
 Say "merge the update" to your assistant. The `update` skill finds the version Garrick wrote before, merges your changes and Garrick's together with git, shows you what Garrick changed, and asks you about any passage you both changed. Until you merge, the check warns that a `.new` file is waiting.
 

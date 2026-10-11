@@ -3,11 +3,14 @@ name: update
 description: >
   Bring the workspace up to a newer Garrick without losing what the user
   changed, extras included, and merge the files an update leaves beside
-  theirs as `.new`. Use when the user says "update Garrick", "update the
-  workspace", "what would an update change?", "is my Garrick up to date?",
-  "is there a newer Garrick?", "tell me when a new Garrick is out", "merge
-  the update", or "finish the update", and when `System/tools/check.py` or
-  the status page says a newer Garrick is out or an update waits to be merged.
+  theirs as `.new`, and move the user's own text out of Garrick's
+  instruction files into the local file beside each. Use when the user says
+  "update Garrick", "update the workspace", "what would an update change?",
+  "is my Garrick up to date?", "is there a newer Garrick?", "tell me when a
+  new Garrick is out", "merge the update", "finish the update", or "split my
+  rules", and when `System/tools/check.py` or the status page says a newer
+  Garrick is out, an update waits to be merged, or an instruction file
+  differs from what Garrick shipped.
 ---
 
 # Update
@@ -21,6 +24,12 @@ same for the extras the workspace has copied in (the status page, the
 scheduled jobs, desk), then rebuilds the Mac app, refreshes the Obsidian
 plugin and points the `desk` link where they need it. This skill runs that
 command, says what it found, and merges the `.new` files with the user.
+
+Garrick's instruction files, `System/rules.md` and every `AGENTS.md`, are
+different: they stay exactly as Garrick ships them, and the workspace's own
+rules and routing live in the local file beside each, `System/rules.local.md`
+and `AGENTS.local.md`, which no update touches. One the user changed gets no
+`.new`; the update's split moves their text out and puts Garrick's back.
 
 `System/tools/release.py` is the one tool here that reaches the network. It
 asks GitHub for the newest release, and `update` downloads that release into
@@ -40,6 +49,7 @@ the workspace.
 | The release notice, on or off | `System/garrick-settings.json`, `"release-notice"` |
 | What GitHub last said, never committed | `System/generated/garrick-release.json` |
 | A file waiting to be merged | `<the file>.new`, beside it |
+| The user's own rules and routing, never touched by an update | `System/rules.local.md`, and `AGENTS.local.md` beside an `AGENTS.md` |
 | The user's own answers, never touched by an update | `System/context.md` |
 
 ## "Is my Garrick up to date?"
@@ -80,6 +90,8 @@ the same line.
    - *Add*: new in this Garrick, or missing from an extra the user has.
    - *Merge*: changed on both sides. Garrick's version goes beside the file
      as `.new`; the file itself is not touched.
+   - *Split*: one of Garrick's instruction files that the user changed. Left
+     as it is, with no `.new`, until the split below moves their text out.
    - *Yours*: a starting file the user has filled in, such as a `Todo.md`.
      Left alone for good.
    - *Removed by you*: put back only if the user names it.
@@ -100,7 +112,13 @@ the same line.
    short, the steps it took after the files included. If it skipped a file
    because of changes not committed, say which and stop: those changes are
    the user's or another session's, and are never committed for them.
+   When it replaced `System/rules.md` or an `AGENTS.md`, say what changed
+   in it, one line per rule, from `git show --format= <the commit it printed>
+   -- System/rules.md` in the repository that holds it: it is how the
+   assistant behaves.
 4. **Merge the `.new` files**, next section, now or whenever the user wants.
+5. **Split the instruction files** the report listed under *Split*, in the
+   section after that, now or whenever the user wants.
 
 **From a Garrick the user has already**, an unzipped download or a clone
 after `git pull`, or for a workspace with no `release.py`: ask where it is
@@ -141,9 +159,7 @@ Do one file at a time, and never more than the user has agreed to.
    ```
    Exit code 0 means no conflict.
 3. **Show the user what Garrick changed**, not the whole file: one line per
-   change, from the difference between `.base` and `.new`. For
-   `System/rules.md` read each changed rule aloud or in full: it is how their
-   assistant behaves.
+   change, from the difference between `.base` and `.new`.
 4. **Resolve each conflict with the user.** A conflict is a passage both
    sides changed. Offer the two versions and a suggestion; the user decides.
    Never resolve one silently in Garrick's favour.
@@ -159,10 +175,56 @@ If the file has no commit by Garrick (a workspace older than its history),
 there is no base: show the differences between the file and `.new` and merge
 by hand with the user.
 
+## Split an instruction file
+
+The user's text in `System/rules.md` or an `AGENTS.md` moves to the local
+file beside it, and Garrick's file goes back to exactly as shipped. Do it
+after the update itself, so the split compares with the newest Garrick.
+
+1. **Ask what would move**, with the same release as the update:
+   ```sh
+   python3 System/tools/release.py update --tag v0.16.0 --split
+   ```
+   Or `python3 "<newer Garrick>/install.py" --update . --split`. For each
+   file it names the base, the Garrick version the file grew from; the
+   passages the user added, which move under the same heading in the local
+   file; and, numbered, the passages where the user changed or removed
+   Garrick's own text. Those cannot move on their own. `--json` gives the
+   same, for going through them.
+2. **Say it back short.** Spoken: "Your rules had four lines of your own;
+   they move to your rules file. Two passages to settle: you changed
+   Garrick's line on what needs asking, and removed the one on estimates.
+   Split?"
+3. **Apply it on a yes**, with `--apply`, or for one file with
+   `--apply --only System/rules.md`. Each repository gets one commit; a
+   `.new` an earlier update left beside the file goes in it too, since
+   Garrick's file is as shipped now. Every line of the user's that is not
+   Garrick's ends up in the local file: what was not placed under a
+   heading waits under *From your earlier <name>, to review*, and holds
+   until it is settled.
+4. **Settle the passages one at a time**, never more than one per turn, in
+   the order the review section numbers them. Read Garrick's line from its
+   file, by the opening words the passage quotes, and the user's version;
+   recommend one, and let the user decide:
+   - *Keep theirs*: move their text under its heading above the review
+     section, and say in it what it replaces: "Instead of Garrick's ..."
+   - *Take Garrick's*: delete the passage.
+   - *Removed* passages: to keep Garrick's line out, write in the local file
+     that it does not hold here, in the user's words; to accept it, delete
+     the passage.
+   After each, commit the local file alone: `Rules: settled <what, short>`.
+   When none is left, delete the review heading and its paragraph, and
+   commit. The check warns until then.
+
+Never put the user's text back into Garrick's file, and never edit Garrick's
+file to settle a passage: the local file wins where the two differ.
+
 ## Never
 
 - Never edit `System/context.md` or the version stamp by hand. Only the
   update command writes the stamp.
+- Never merge the user's text into `System/rules.md` or an `AGENTS.md`:
+  it goes in the local file beside it.
 - Never delete a file the update calls retired, or put back one the user
   removed, without being asked.
 - Never edit a `.new` file: the update committed it as Garrick wrote it. Never

@@ -31,7 +31,8 @@ AGENTS.md               entry point for any assistant
 .claude/skills          link to System/skills, for Claude Code
 .agents/skills          link to System/skills, for Codex
 System/
-  rules.md              how the assistant behaves (the only copy)
+  rules.md              how the assistant behaves: Garrick's, replaced by each update
+  rules.local.md        your own rules, which win over Garrick's; no update touches it
   context.md            who you are and who you deal with, filled in from your answers
   templates/            the zone, project and thread templates scaffold.py copies
   tools/                scaffold.py, check.py, probe.py, release.py, and garrick_lib.py, which they share
@@ -120,7 +121,8 @@ python3 System/tools/check.py
 Tests the workspace against every rule a machine can check:
 
 - a `CLAUDE.md` in or above the workspace, which stops Claude Code reading `AGENTS.md`;
-- a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder (warnings);
+- a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` or `AGENTS.local.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder, counting Garrick's file and the local one beside it together (warnings);
+- one of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that differs from what Garrick shipped: your own text belongs in the local file beside it. Also a local file Garrick's does not point to yet, and passages an update's split left to settle (warnings);
 - installer placeholders left unfilled (files git ignores are skipped);
 - a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);
 - a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
@@ -177,7 +179,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `parent-links`: zones where every note in a project, other than its hub, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
 - `note-links`: zones where hub and thread notes name another note as a wikilink, never as a path in backticks, which draws no link in the graph.
 - `todo-labels`: zones where every open action in `Todo.md` opens with its thread's link.
-- `word-budgets`: the most words the root `AGENTS.md` (`root`) and the others (`other`) may hold; 800 and 1000 otherwise.
+- `word-budgets`: the most words the root `AGENTS.md` (`root`) and the others (`other`) may hold; 800 and 1000 otherwise. Each `AGENTS.local.md` has the same budget as the `AGENTS.md` beside it, counted on its own.
 - `retired-skills`: a skill you retired, and the one that does its job now. The check reports the old one if its folder comes back, a link to it stays, or an instruction still names it.
 - `raw-accepted`: a raw record you changed on purpose, and the commit of that change. Only a later change is reported.
 - `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.

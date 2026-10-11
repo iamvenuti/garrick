@@ -128,7 +128,11 @@ end of the record under `## Proposal`, then show it.
    Advice only: nothing is connected or moved.
 7. **Recurring work** from question 3 that could later run on a schedule.
    Advice only.
-8. **What I still don't know**: every gap, as a short list. This is the part
+8. **Rules of the user's own** heard on the way, such as "never send
+   anything before I've read it twice": each as one line for
+   `System/rules.local.md`, under the heading it would have in
+   `System/rules.md`.
+9. **What I still don't know**: every gap, as a short list. This is the part
    the user most needs to read.
 
 A zone the answers need but the workspace does not have: propose it, with
@@ -147,7 +151,7 @@ path.
 The user may accept all of it, part of it, or change it first. Apply only what
 was accepted, in this order. Every commit stages its files by name, never
 `git add -A`: the record waits unfinished in the root's repository until
-step 6, and another session may have changes of its own in any repository.
+step 7, and another session may have changes of its own in any repository.
 
 1. **Zones**, if the proposal adds any, one at a time through the `threads`
    skill's *New zone* procedure, before anything names them.
@@ -172,10 +176,14 @@ step 6, and another session may have changes of its own in any repository.
    git -C "Zones/<Zone>" add -- Todo.md
    git -C "Zones/<Zone>" commit -m "Interview: open actions"
    ```
-5. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
+5. **Rules**, if the proposal has any: re-read `System/rules.local.md`, add
+   each under its heading, and commit it alone in the workspace root's
+   repository, as the `setup` skill's *Add a rule* says. Never into
+   `System/rules.md`, which is Garrick's.
+6. **Run the check**: `python3 System/tools/check.py`. Explain any problem in
    plain words. The threads just made start with the template's resume
    points: offer the `setup` skill's *Fill in my resume points* for them.
-6. **Close the record**: add `## Set up` with what was created and the commit
+7. **Close the record**: add `## Set up` with what was created and the commit
    hashes, then commit it on its own in the workspace root's repository:
    ```sh
    git add -- "System/interviews/YYMMDD - <Topic>.md"

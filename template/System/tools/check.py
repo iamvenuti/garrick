@@ -2258,28 +2258,38 @@ def raw_records(ws: Workspace) -> Dict[str, List[Path]]:
 
 
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
-    """The raw records behind a meeting page: what its `raw` (or `transcript`)
-    field links to, at any depth under raw/, else any record there with the
-    page's slug."""
+    """The raw records behind a meeting page. A `raw` (or `transcript`) link
+    with a path names one record exactly, at any depth under raw/, with or
+    without its extension. A bare name, and the page's own slug, find the
+    records of that name directly in raw/, and only when there are none
+    there, in its subfolders: a record in a subfolder is never claimed by a
+    page whose link names another."""
     raw = ws.root / "Wikis" / "Meetings" / "raw"
     index = raw_records(ws)
-    found, stems = set(), {page.stem}
+    found, stems = set(), set()
+    linked = False
     for key in RAW_FIELDS:
         for value in as_list(fm.get(key)):
             target = value.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()
             if not target:
                 continue
-            stem = Path(target).stem
-            stems.add(stem)
-            if "/" in target:          # a path: the record it names, if there is one
-                tail = Path(target.split("raw/", 1)[-1])
-                found |= {p for p in index.get(stem, []) if p.relative_to(raw).as_posix().endswith(tail.as_posix())
-                          or p.relative_to(raw).with_suffix("").as_posix().endswith(tail.as_posix())}
-    if not found:
-        for stem in stems:
-            found |= set(index.get(stem, []))
+            linked = True
+            tail = target.split("raw/", 1)[1] if target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")) else target
+            if "/" in tail or target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")):
+                exact = {p for p in index.get(Path(tail).stem, []) if p.relative_to(raw).as_posix() in
+                         (tail, Path(tail).with_suffix("").as_posix()) or p.relative_to(raw).with_suffix("").as_posix() == tail}
+                found |= exact
+                if not exact and "/" not in tail:
+                    stems.add(Path(tail).stem)
+            else:
+                stems.add(Path(tail).stem)
+    if not linked:
+        stems.add(page.stem)
+    for stem in stems:
+        candidates = index.get(stem, [])
+        top = [p for p in candidates if p.parent == raw]
+        found |= set(top or candidates)
     return sorted(found)
-
 
 def finished(fm: dict) -> bool:
     """A meeting page with both of the fields the walls read."""

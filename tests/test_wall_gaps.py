@@ -335,6 +335,18 @@ class TestUnfinishedPages(QuoteCase):
         self.assertEqual(1, len(found), found)
         self.assertIn("260319-second-call", found[0].message)
 
+    def test_a_record_of_the_same_name_elsewhere_lends_no_owner(self):
+        write(self.meetings / "raw" / "260319-call.txt", "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        write(self.meetings / "raw" / "2026" / "260319-call.txt", "Theo: our launch is in May.\n")
+        write(self.meetings / "wiki" / "sources" / "260319-call.md", meeting_page("Work", "[birch]", "Birch call").replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/260319-call]]"'))
+        write(self.meetings / "wiki" / "sources" / "260319-call-acme.md", meeting_page("Work", "[acme]", "Acme call").replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/2026/260319-call]]"'))
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        found = [f for f in self.walls() if "Note.md" in f.path]
+        self.assertEqual(1, len(found), found)
+        self.assertIn("wall stands between", found[0].message)
+
     def test_the_inbox_is_still_not_a_record(self):
         write(self.meetings / "raw" / "inbox" / "260319-call.txt",
               "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")

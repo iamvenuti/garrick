@@ -18,7 +18,8 @@ most of the time a full check takes on a large workspace. `--walls-only` runs
 the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and
 prints one line per wall broken: it is what each zone's pre-commit hook runs.
-`--install-hooks` writes that hook into every zone's repository.
+`--install-hooks` writes that hook into every zone's repository, and into
+every git repository inside a project.
 
 Standard library only, Python 3.9 or later.
 """
@@ -901,6 +902,30 @@ def hooks_elsewhere(repo: Path) -> Optional[Tuple[str, Path]]:
     return value, where
 
 
+def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
+    """(repository, its project, the project's hub frontmatter) for every git
+    repository inside a project: a product's code, a site, a book. Each is
+    found at its top; nothing below one is looked in."""
+    out = []
+    for project, pfm in ws.projects:
+        for folder, dirs, _ in os.walk(project):
+            here = Path(folder)
+            keep = []
+            for d in sorted(dirs):
+                if d in SKIP_DIRS or d.startswith("."):
+                    continue
+                if (here / d / ".git").exists():
+                    out.append((here / d, project, pfm))
+                else:
+                    keep.append(d)
+            dirs[:] = keep
+    return out
+
+
+def has_remote(repo: Path) -> bool:
+    return bool((_git(["remote"], repo) or "").strip())
+
+
 def check_hooks(ws: Workspace) -> List[Finding]:
     """A zone's wall check sits in its own .git/hooks, and git runs the hooks
     there only while `core.hooksPath` is unset or names that folder. Set
@@ -928,6 +953,15 @@ def check_hooks(ws: Workspace) -> List[Finding]:
                            "run `git config core.hooksPath .git/hooks` in %s" % (value, what, rel(ws, repo)),
                            ("Git skips the wall check in the %s zone" % repo.name) if is_zone
                            else "Git skips the hooks of the %s repository" % repo.name))
+    # A repository inside a project is the likeliest to be pushed somewhere
+    # public, and the zone's hook never sees its commits.
+    for repo, project, _ in project_repos(ws):
+        if not (repo / ".git").is_dir() or has_wall_hook(repo) or not has_remote(repo):
+            continue
+        out.append(Finding(WARNING, "hooks", rel(ws, repo),
+                           "a repository inside %s, with a remote, and no wall check before its commits; "
+                           "run `python3 System/tools/check.py --install-hooks`" % project.name,
+                           "A repository inside %s pushes without a wall check" % project.name))
     return out
 
 
@@ -3287,6 +3321,9 @@ def report_staged(findings: List[Finding]) -> str:
 
 
 def install_hooks(root: Path) -> int:
+    """The wall check in every zone's repository, and in every repository
+    inside a project, which checks its staged files against the walls of the
+    project's party, as a zone's does."""
     ws = discover(root)
     code = 0
     for zone in ws.zones:
@@ -3295,6 +3332,14 @@ def install_hooks(root: Path) -> int:
             print("%s: wall check installed at %s" % (zone.name, rel(ws, hook)))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (zone.name, exc), file=sys.stderr)
+            code = 1
+    for repo, project, pfm in project_repos(ws):
+        parties = ", ".join(strip_tag(t) for t in as_list(pfm.get("party"))) or "no party"
+        try:
+            hook = install_wall_hook(repo, nested=True)
+            print("%s: wall check installed at %s, on %s's side" % (rel(ws, repo), rel(ws, hook), parties))
+        except (FileExistsError, FileNotFoundError) as exc:
+            print("%s: %s" % (rel(ws, repo), exc), file=sys.stderr)
             code = 1
     return code
 
@@ -3317,7 +3362,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
-                        help="install the pre-commit wall check in every zone's repository")
+                        help="install the pre-commit wall check in every zone's repository, and in each repository inside a project")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
     args = parser.parse_args(argv)

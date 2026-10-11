@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -140,6 +141,52 @@ class TestHooksPath(GapCase):
         self.assertClean("hooks")
         (shared / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
         self.assertEqual(["Zones/Work"], [f.path for f in self.findings("hooks")])
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestProjectRepositories(GapCase):
+    """A git repository inside a project, often pushed somewhere public, gets
+    the wall check too, on its project's side of the walls."""
+
+    def setUp(self):
+        super().setUp()
+        env = mock.patch.dict(os.environ, NO_USER_GIT)
+        env.start()
+        self.addCleanup(env.stop)
+        tools = Path(check.__file__).resolve().parent
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        for name in ("check.py", "garrick_lib.py"):              # what the hook looks up for
+            shutil.copy(tools / name, self.root / "System" / "tools" / name)
+        self.site = self.acme / "Site"
+        self.site.mkdir()
+        git(self.site, "init", "-q")
+        git(self.site, "config", "user.email", "jo@example.invalid")
+        git(self.site, "config", "user.name", "Jo")
+        write(self.meetings / "wiki" / "sources" / "260312-birch-call.md", meeting_page("Work", "[birch]", "Birch call"))
+
+    def commit(self, name, text):
+        write(self.site / name, text)
+        git(self.site, "add", name)
+        return subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(self.site), capture_output=True, text=True)
+
+    def test_without_a_remote_nothing_is_said(self):
+        self.assertEqual([], [f for f in self.findings("hooks") if "Site" in f.path])
+
+    def test_a_remote_and_no_hook_is_a_warning(self):
+        git(self.site, "remote", "add", "origin", "https://example.invalid/site.git")
+        [found] = [f for f in self.findings("hooks") if "Site" in f.path]
+        self.assertIn("--install-hooks", found.message)
+        self.assertIn("Acme Review", found.message)
+
+    def test_install_hooks_reaches_it_and_its_commits_are_checked(self):
+        git(self.site, "remote", "add", "origin", "https://example.invalid/site.git")
+        with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            check.install_hooks(self.root)
+        self.assertEqual([], [f for f in self.findings("hooks") if "Site" in f.path])
+        self.assertEqual(0, self.commit("index.md", "# Acme site\n\nAbout us.\n").returncode)
+        refused = self.commit("notes.md", "Background: [[260312-birch-call]]\n")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("Commit refused", refused.stderr + refused.stdout)
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")

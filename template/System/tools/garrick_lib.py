@@ -67,6 +67,7 @@ __all__ = [
     "has_wall_hook",
     "hooks_path",
     "WALL_HOOK",
+    "WALL_HOOK_NESTED",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
     "INSTRUCTION_FILES",
@@ -712,6 +713,22 @@ exec python3 "$check" --staged --walls-only
 """ % WALL_HOOK_MARK
 
 
+# A repository inside a project (a product's code, a site, a book) sits at
+# any depth below its zone, so its hook looks upward for the workspace.
+WALL_HOOK_NESTED = """#!/bin/sh
+# %s: refuse a commit that would carry walled material out of this project's own repository.
+# Installed by Garrick in a repository inside a project. The deliberate override, only when you mean it: git commit --no-verify
+dir="$(git rev-parse --show-toplevel)"
+while [ "$dir" != "/" ] && [ ! -f "$dir/System/tools/check.py" ]; do dir="$(dirname "$dir")"; done
+check="$dir/System/tools/check.py"
+if [ ! -f "$check" ]; then
+  echo "Commit refused: the wall check is missing; no System/tools/check.py above this repository. Put it back, or commit with --no-verify if you mean to skip it." >&2
+  exit 1
+fi
+exec python3 "$check" --root "$dir" --staged --walls-only
+""" % WALL_HOOK_MARK
+
+
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
     git_dir = Path(zone) / ".git"
     return git_dir / "hooks" if git_dir.is_dir() else None
@@ -729,8 +746,9 @@ def has_wall_hook(zone: PathLike) -> bool:
         return False
 
 
-def install_wall_hook(zone: PathLike) -> Path:
-    """Write the pre-commit wall check into a zone's repository and return its path.
+def install_wall_hook(zone: PathLike, nested: bool = False) -> Path:
+    """Write the pre-commit wall check into a zone's repository, or with
+    `nested` into a repository inside a project, and return its path.
 
     Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
     and (FileNotFoundError) a zone whose `.git` is not a folder."""
@@ -742,9 +760,9 @@ def install_wall_hook(zone: PathLike) -> Path:
         existing = hook.read_text(encoding="utf-8", errors="replace")
         if WALL_HOOK_MARK not in existing:
             raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
-                                  "python3 ../../System/tools/check.py --staged --walls-only" % zone)
+                                  "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(WALL_HOOK, encoding="utf-8")
+    hook.write_text(WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
     hook.chmod(0o755)
     return hook
 

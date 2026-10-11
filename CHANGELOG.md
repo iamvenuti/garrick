@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Added
 
 - A recording or mail filed twice no longer gets two pages. `ingest.py land` and `intake.py file-conversation` refuse a transcript or mail whose bytes, or whose ID (an `.eml`'s Message-ID, or `source-id`, `message-id` or `recording-id` in a transcript's frontmatter), match a record already in `Wikis/Meetings/raw/`, at any depth, and name that record. A mail page records its Message-ID as `source-id:`. ([#52](https://github.com/iamvenuti/garrick/issues/52))
+- The wall check reaches a git repository inside a project, such as a product's code or a site, which the zone's own hook never saw and which is the one most likely to be pushed somewhere public. `check.py --install-hooks` installs the hook there too, checking staged files on the project's side of the walls, and `check.py` warns about such a repository that has a remote and no hook. ([#43](https://github.com/iamvenuti/garrick/issues/43))
 
 ### Changed
 

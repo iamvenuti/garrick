@@ -1171,3 +1171,55 @@ class TestAppNotifies(unittest.TestCase):
         self.assertIn("!window.isVisible || !NSApp.isActive { notify(text) }", toast)
         self.assertIn("UNUserNotificationCenter.current()", swift[swift.index("func notify("):])
 
+
+
+GRAPH_HARNESS = r"""
+const vm = require("vm");
+const [js, data, asks] = JSON.parse(process.argv[1]);
+// Everything the graph reaches for on a canvas, a window or a page answers with this, and nothing happens.
+const any = new Proxy(function () {}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "length" ? 0 : any,
+                                        apply: () => any, construct: () => any });
+const ctx = { JSON, String, Array, Object, Math, Date, localStorage: { getItem: () => null, setItem: () => {} },
+              document: new Proxy({}, { get: (t, k) => k === "getElementById" ? (id) => id === "graph-data" ? { textContent: data } : any
+                                                       : k === "querySelectorAll" ? () => [] : any }),
+              Panel: any, requestAnimationFrame: () => 0, setTimeout: () => 0, addEventListener: () => {},
+              matchMedia: () => ({ matches: true }), IntersectionObserver: any, ResizeObserver: any, MutationObserver: any,
+              getComputedStyle: () => any, location: any, navigator: any, innerWidth: 800, innerHeight: 600, devicePixelRatio: 1 };
+ctx.window = ctx;
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+process.stdout.write(JSON.stringify(asks.map((u) => ctx.window.GarrickGraph.focus(u))));
+"""
+
+
+class TestRowsLightTheGraph(StatusCase):
+    """#62: hovering a project or thread row lights its node in the graph, as hovering the node does."""
+
+    def test_a_row_and_its_node_share_the_link(self):
+        html = self.page()
+        nodes = {n["u"]: n for n in graph_data(html)["nodes"]}
+        for (project, thread), card in cards(html).items():
+            self.assertEqual(thread, nodes[card["u"]]["n"])                               # a thread row: its note
+        for project, card in project_cards(html).items():
+            self.assertTrue(nodes[card["u"]]["h"], project)                              # a project row: its hub
+
+    def test_rows_reach_the_graph_only_through_its_one_way_in(self):
+        self.assertIn("row.addEventListener('mouseenter',function(){light(row);", status.JS)
+        self.assertIn("row.addEventListener('mouseleave',function(){dark();tLater()});", status.JS)
+        self.assertIn("row.addEventListener('focusin',function(){light(row);", status.JS)
+        self.assertIn("tc.hidden=true;dark()}", status.JS)                               # the card closing puts it back
+        self.assertIn("var g=window.GarrickGraph,o;if(!g)return;", status.JS)            # no graph, nothing to light
+        self.assertNotIn("window.GarrickGraph={", self.page(show_graph=False))         # with --no-graph, no way in
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_only_a_node_the_graph_shows_is_lit(self):
+        work = self.root / "Zones" / "Work"
+        write(work / "Acme Review" / "Threads" / "Renewal" / "Renewal.md", thread_note("Acme Review", "Renewal", "acme", status="parked"))
+        html = self.page()
+        data = re.search(r'<script type="application/json" id="graph-data">(.*?)</script>', html, re.S).group(1)
+        nodes = {n["n"]: n["u"] for n in graph_data(html)["nodes"]}
+        asks = [nodes["Pricing"], nodes["Renewal"], "file:///nowhere.md", None]
+        done = subprocess.run(["node", "-e", GRAPH_HARNESS, json.dumps([status.GRAPH_JS, data, asks])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual([True, False, False, False], json.loads(done.stdout))            # a parked thread stays off the graph

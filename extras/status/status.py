@@ -3173,12 +3173,15 @@ tc.style.left=Math.max(8,x)+'px';tc.style.top=Math.max(8,y)+'px'}
 function tOpen(row){clearTimeout(tHide);clearTimeout(tShow);if(tRow!==row){var o;try{o=JSON.parse(row.dataset.card)}catch(x){return}
 if(tRow)tRow.classList.remove('on');tRow=row;row.classList.add('on');tc.innerHTML=Panel.head(o,1)+Panel.acts(o);tc.setAttribute('aria-label',o.n);
 row.parentNode.insertBefore(tc,row.nextSibling)}tc.hidden=false;tPlace()}
-function tClose(){clearTimeout(tShow);clearTimeout(tHide);if(tRow)tRow.classList.remove('on');tRow=null;tc.hidden=true}
+function tClose(){clearTimeout(tShow);clearTimeout(tHide);if(tRow)tRow.classList.remove('on');tRow=null;tc.hidden=true;dark()}
 function tLater(){clearTimeout(tShow);clearTimeout(tHide);tHide=setTimeout(tClose,220)}
+/* the row's node in the graph, lit while the row is hovered or has the focus (#62); GarrickGraph is there only with the graph */
+function light(row){var g=window.GarrickGraph,o;if(!g)return;try{o=JSON.parse(row.dataset.card)}catch(x){return}g.focus(o.u)}
+function dark(){if(window.GarrickGraph)GarrickGraph.focus(null)}
 function bindRow(row){
-row.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow);if(tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
-row.addEventListener('mouseleave',tLater);
-row.addEventListener('focusin',function(){if(tQuiet){tQuiet=false;return}tOpen(row)});
+row.addEventListener('mouseenter',function(){light(row);clearTimeout(tHide);clearTimeout(tShow);if(tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
+row.addEventListener('mouseleave',function(){dark();tLater()});
+row.addEventListener('focusin',function(){light(row);if(tQuiet){tQuiet=false;return}tOpen(row)});
 row.addEventListener('click',function(e){if(e.target.closest('a,button'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})}
 document.querySelectorAll('.thread[data-card]').forEach(bindRow);
 tc.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow)});tc.addEventListener('mouseleave',tLater);
@@ -3472,6 +3475,11 @@ hover=h.n;cv.classList.toggle('hot',!!h.n);
 if(h.n){var n=h.n;cv.dataset.tip=(n.N||n.n)+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
 cv.addEventListener('pointerup',function(){cv.classList.remove('drag');if(!down)return;if(!down.moved){if(down.n)select(down.n);else close()}drag=null;down=null;wake()});
 cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dataset.tip;wake()}});
+/* A row in the threads list lights its node as hovering the node does (#62): found by its note's link among the
+   nodes shown, so a node the graph does not show is left alone; nothing is selected, centred or zoomed. */
+var lit=null;
+window.GarrickGraph={focus:function(u){if(down)return false;if(!u){if(lit&&hover===lit)hover=null;lit=null;wake();return false}
+var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true}};
 cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});

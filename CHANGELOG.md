@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Hovering a project or thread row on the status page, or moving to it with the keyboard, lights its node in the graph the way hovering the node does: its links stay at full strength, the rest fades and the sway stops, with nothing selected, centred or zoomed. Leaving the row, or its card closing, puts the graph back. A node the graph is not showing is left alone. The graph offers one way in, `GarrickGraph.focus()`, absent with `--no-graph`. ([#62](https://github.com/iamvenuti/garrick/issues/62))
+
 ## [0.21.0] - 2026-10-12
 
 The status page's Todo tab, its buttons that act and its menu bar are out of preview: on for everyone, with nothing to switch on.

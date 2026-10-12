@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-12
+
+One press of the Ask hotkey can now open the Ask box and start dictating into it, through macOS Dictation or the key your own dictation app listens for.
+
 ### Added
 
 - Settings › Menu bar › *Then start dictation*: once the Ask box has opened, Garrick can start dictating into it, so one press of the Ask hotkey opens the box and starts listening (preview `ask`). The choices are macOS Dictation, which needs no permission, or a press of the key another dictation app starts on: Fn, Fn twice, or a recorded shortcut, which needs the Accessibility permission. The key is pressed only when the box opens, never on a box already open, so an app that toggles is not stopped by a second press. See [Dictating into the Ask box](docs/extras/status-page.md#dictating-into-the-ask-box). ([#35](https://github.com/iamvenuti/garrick/issues/35))
@@ -605,7 +609,19 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/iamvenuti/garrick/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/iamvenuti/garrick/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/iamvenuti/garrick/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/iamvenuti/garrick/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/iamvenuti/garrick/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/iamvenuti/garrick/compare/v0.15.5...v0.16.0
+[0.15.5]: https://github.com/iamvenuti/garrick/compare/v0.15.4...v0.15.5
+[0.15.4]: https://github.com/iamvenuti/garrick/compare/v0.15.3...v0.15.4
+[0.15.3]: https://github.com/iamvenuti/garrick/compare/v0.15.2...v0.15.3
+[0.15.2]: https://github.com/iamvenuti/garrick/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/iamvenuti/garrick/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/iamvenuti/garrick/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/iamvenuti/garrick/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/iamvenuti/garrick/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/iamvenuti/garrick/compare/v0.12.0...v0.12.1

@@ -1636,7 +1636,7 @@ class TestApp(unittest.TestCase):
             self.assertNotIn(name, report)                                                 # never a project's or thread's name, link or folder
         self.assertIn(".count, \"rows\": rows", report.replace("\n", " ").replace("\t", ""))  # the query's length, not its words
         self.assertIn('menuHeard = (Date(), data != nil, (data?["zones"] as? [Any])?.count ?? -1, (menuHeard?.count ?? 0) + 1)', swift)
-        self.assertIn("guard checking else { pageLoaded = Date(); return }", swift)
+        self.assertIn("guard checking else {\n\t\t\tpageLoaded = Date()\n", swift)                 # and Settings asked for (#34)
         self.assertIn("window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:", swift)
         self.assertIn('print("page errors: ', swift)                                        # --check says them too
 

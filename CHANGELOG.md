@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Settings › Menu bar › *Then start dictation*: once the Ask box has opened, Garrick can start dictating into it, so one press of the Ask hotkey opens the box and starts listening (preview `ask`). The choices are macOS Dictation, which needs no permission, or a press of the key another dictation app starts on: Fn, Fn twice, or a recorded shortcut, which needs the Accessibility permission. The key is pressed only when the box opens, never on a box already open, so an app that toggles is not stopped by a second press. See [Dictating into the Ask box](docs/extras/status-page.md#dictating-into-the-ask-box). ([#35](https://github.com/iamvenuti/garrick/issues/35))
+
 ## [0.19.0] - 2026-10-12
 
 The nightly todo sweep can send each zone a morning digest through the notifier you already use, routed by zone, and a workspace chooses whether the sweep writes a chase date on what others owe it.

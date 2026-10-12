@@ -1532,7 +1532,8 @@ class TestApp(unittest.TestCase):
         swift = (self.APP / "Garrick.swift").read_text()
         self.assertIn("statusItem == nil }", swift)                           # with the icon, closing the window keeps the app
         self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
-        self.assertNotIn("AXIsProcessTrusted", swift)
+        dictation = swift[swift.index("	// MARK: dictation (preview ask)"):swift.index("	// File › Ask Garrick… is there only")]
+        self.assertEqual(swift.count("AXIsProcessTrusted"), dictation.count("AXIsProcessTrusted"))   # asked for only to press a dictation key
         self.assertIn("SMAppService.mainApp", swift)                          # open at login, as a login item
         self.assertIn("final class RowView: NSView", swift)                   # a row is clicked and opens a submenu
         self.assertIn("override func mouseUp(with event: NSEvent)", swift)
@@ -1541,6 +1542,21 @@ class TestApp(unittest.TestCase):
         self.assertIn("if !window.isVisible { showWindow() }", swift)          # never an app with nothing to click
         self.assertIn("NSColor.labelColor.setFill()", swift)                 # the mark in the menu bar's own colours
         self.assertIn("NSAppearance.currentDrawing()", swift)
+
+    def test_the_ask_box_can_start_dictation(self):
+        swift = (self.APP / "Garrick.swift").read_text()
+        show = swift[swift.index("	@objc func showAsk("):swift.index("	// MARK: dictation (preview ask)")]
+        self.assertIn("let opening = !(p.isVisible && p.isKeyWindow)", show)   # a second press never stops a tool that toggles
+        self.assertLess(show.index("p.makeFirstResponder(askField)"), show.index("if opening { startDictation() }"))   # the field first
+        start = swift[swift.index("	func startDictation()"):swift.index("	func setDictation(")]
+        self.assertIn('if checking { return heard.append("dictation:" + mode.rawValue) }', start)   # --check presses nothing
+        self.assertIn('NSApp.sendAction(Selector(("startDictation:")), to: NSApp, from: nil)', start)   # macOS Dictation needs no key
+        self.assertIn("guard self?.askPanel?.isKeyWindow == true else { return }", start)   # the box gone, nothing is pressed
+        fn = swift[swift.index("func tapFn()"):swift.index("func press(_ spec:")]
+        for part in ("virtualKey: 63", "e.type = .flagsChanged", ".maskSecondaryFn", "e.post(tap: .cghidEventTap)", "now() + 0.08"):
+            self.assertIn(part, fn)                                          # Fn as the probes on #35 found a tool hears it
+        # A tool that pastes its transcript with ⌘V reaches the field only through Edit › Paste.
+        self.assertIn('item("Paste", #selector(NSText.paste(_:)), "v")', swift[swift.index('sub("Edit", ['):])
 
     def test_the_panel(self):
         swift = (self.APP / "Garrick.swift").read_text()

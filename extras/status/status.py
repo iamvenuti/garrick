@@ -1215,26 +1215,38 @@ MENU_SETTINGS_JS = r"""
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
-var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app, with the preview ask on'};
-function note(which,s){var n=document.getElementById(which==='hotkey'?'menu-hotkey-note':'menu-askkey-note');if(n)n.textContent=s||NOTE[which]}
+var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app, with the preview ask on',
+dictationkey:'Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys'};
+var dict=document.getElementById('menu-dictation'),dkey=document.getElementById('menu-dictkey'),FIELD={hotkey:'menu-hotkey',askhotkey:'menu-askkey',dictationkey:'menu-dictkey'};
+/* what the box does once it opens, said under the choice */
+var DICT={off:'Once the Ask box opens, start dictation in it too',macos:'Starts macOS Dictation in the box, with no permission needed',
+key:'Pressed for your dictation tool once the box has the cursor. Needs the Accessibility permission. A tool that listens only while its key is held cannot be started this way'};
+function note(which,s){var n=document.getElementById(FIELD[which]+'-note');if(n)n.textContent=s||NOTE[which]}
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
 /* an app built before the panel says no style, and its row stays hidden; one built before the Ask hotkey, that row */
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
 if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
 var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
+/* an app built before #35 says no dictation, and both its rows stay hidden */
+if(dict){var m=a.dictation||'off',dn=document.getElementById('menu-dictation-note');dict.closest('.launcher-row').style.display='dictation' in a?'':'none';
+dict.value=m;if(dn)dn.textContent=said.dictation||DICT[m]||DICT.key;
+if(dkey){dkey.closest('.launcher-row').style.display='dictation' in a&&m==='key'?'':'none';dkey.value=a.dictationkey||'';note('dictationkey',said.dictationkey)}}
 if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
 window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 /* the app's settings: kept by the app, so a change here does not rebuild the page */
 function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
+if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
 login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
 function name(e){var c=e.code;if(/^Key[A-Z]$/.test(c))return c.slice(3);if(/^Digit\d$/.test(c))return c.slice(5);if(/^F\d{1,2}$/.test(c))return c;
 return{Space:'Space',Minus:'-',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Backquote:'`'}[c]||null}
 /* A field records the keys pressed in it. While it has the focus the app lets go of
    its own hot keys, so a key it holds, ⌘G say, reaches the field; the app takes them
-   back when the field loses it. One key never serves both: said under the field. */
+   back when the field loses it. One key never serves both: said under the field.
+   The dictation shortcut is pressed by the app, not held by it, so macOS's rule on
+   ⌥ does not apply to it, and it may be neither of the hotkeys. */
 function recorder(el,which,other){if(!el)return;var o=function(v){var q={};q[which]=v;host.postMessage({app:q})};
 el.addEventListener('focus',function(){host.postMessage({app:{recording:true}})});
 el.addEventListener('blur',function(){host.postMessage({app:{recording:false}})});
@@ -1244,14 +1256,16 @@ if((e.key==='Backspace'||e.key==='Delete')&&!(e.metaKey||e.ctrlKey||e.altKey)){o
 var n=name(e);if(!n)return;
 function no(s){note(which,s);say(s)}
 if(!(e.metaKey||e.ctrlKey||e.altKey)&&!/^F\d/.test(n)){no('Use ⌘, ⌃ or ⌥ with the key.');return}
-if(e.altKey&&!e.metaKey&&!e.ctrlKey){no('Since macOS 15, a shortcut with only ⌥ or ⌥⇧ never reaches an app: add ⌘ or ⌃.');return}
+if(which!=='dictationkey'&&e.altKey&&!e.metaKey&&!e.ctrlKey){no('Since macOS 15, a shortcut with only ⌥ or ⌥⇧ never reaches an app: add ⌘ or ⌃.');return}
 var mods=MOD.filter(function(m){return e[m[0]]}),label=mods.map(function(m){return m[1]}).join('')+n;
-var a=window.GarrickApp||{},taken=other&&other.value===label&&!(which==='hotkey'&&a.askdefault);
-if(taken){no(label+' is already the '+(which==='hotkey'?'Ask':"menu's")+' hotkey. Clear it there, or pick another.');return}
+if(which==='dictationkey'){if((key&&key.value===label)||(ask&&ask.value===label)){no(label+" is already a hotkey of Garrick's. Pick your dictation tool's key.");return}}
+else{var a=window.GarrickApp||{},taken=other&&other.value===label&&!(which==='hotkey'&&a.askdefault);
+if(taken){no(label+' is already the '+(which==='hotkey'?'Ask':"menu's")+' hotkey. Clear it there, or pick another.');return}}
 o({code:e.code,mods:mods.map(function(m){return m[2]}),label:label})})}
-recorder(key,'hotkey',ask);recorder(ask,'askhotkey',key);
+recorder(key,'hotkey',ask);recorder(ask,'askhotkey',key);recorder(dkey,'dictationkey',null);
 document.getElementById('menu-hotkey-clear').onclick=function(){host.postMessage({app:{hotkey:null}})};
 var ac=document.getElementById('menu-askkey-clear');if(ac)ac.onclick=function(){host.postMessage({app:{askhotkey:null}})};
+var dc=document.getElementById('menu-dictkey-clear');if(dc)dc.onclick=function(){host.postMessage({app:{dictationkey:null}})};
 })();
 """
 
@@ -2396,8 +2410,9 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
 def menu_settings() -> str:
     """Settings › Menu bar (preview, menu-bar), shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
-    shortcut that opens either, and the one that opens the Ask box (preview
-    ask). The app keeps them all, so they hold when the window is closed."""
+    shortcut that opens either, the one that opens the Ask box (preview
+    ask), and the dictation the box starts once it opens. The app keeps
+    them all, so they hold when the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">A menu of the live '
             'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
             'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.</p>'
@@ -2416,7 +2431,15 @@ def menu_settings() -> str:
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-askkey"><span>Ask hotkey<small id="menu-askkey-note">'
             'Opens the Ask box from any app, with the preview ask on</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
-            '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div></section>')
+            '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictation"><span>Then start dictation'
+            '<small id="menu-dictation-note">Once the Ask box opens, start dictation in it too</small></span></label>'
+            '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
+            '<option value="fn">Press Fn</option><option value="fn2">Press Fn twice</option><option value="key">Press a shortcut</option></select></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictkey"><span>Dictation shortcut'
+            '<small id="menu-dictkey-note">Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys</small></span></label>'
+            '<span class="hotkey"><input type="text" id="menu-dictkey" readonly placeholder="Click, then press keys" aria-label="Dictation shortcut">'
+            '<button class="act" type="button" id="menu-dictkey-clear">Clear</button></span></div></section>')
 
 
 def copy(label: str, text: str, say: str) -> str:

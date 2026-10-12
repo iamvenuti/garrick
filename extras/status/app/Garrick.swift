@@ -31,7 +31,9 @@
 //     box the Ask hotkey opens from any app (⌘G until Settings sets another),
 //     answer a request in plain words through
 //     ask.py, beside status.py, and run what it proposes; off, a field opens
-//     the default assistant with the words.
+//     the default assistant with the words. Once the box has opened, it can
+//     start dictation (Settings › Then start dictation): macOS's own, or
+//     another tool's, by pressing its key;
 // Each time it fills the menu or the panel it leaves garrick-app-menu.json in
 // the jobs folder: what it had to fill them with, in counts and zone names.
 // Nothing here changes a file in the workspace, as nothing on the page does,
@@ -73,6 +75,13 @@ let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "wi
 // one for none, or, never set, ⌘G, unless ⌘G is the menu's hotkey.
 let kAskHotkey = "askHotkey"
 let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]
+// What the Ask box does once it has opened with the cursor in its field
+// (Settings › Then start dictation): nothing; macOS Dictation; or the key another
+// dictation tool listens for, Fn once, Fn twice, or a shortcut recorded as the
+// hotkeys are. Only a key needs the Accessibility permission, to post the press.
+let kDictation = "askDictation", kDictationKey = "askDictationKey"
+enum Dictation: String { case off, macos, fn, fn2, key }
+func savedDictation() -> Dictation { defaults.string(forKey: kDictation).flatMap(Dictation.init) ?? .off }
 // The panel's projects whose threads you unfolded, by row: every other one starts folded.
 let kPanelOpen = "panelUnfolded"
 // Where the menu shows: unset or "icon" in the menu bar, or a panel from an edge.
@@ -746,7 +755,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return ["menubar": defaults.bool(forKey: kMenuBar), "style": savedEdge()?.rawValue ?? "icon", "login": login,
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
 		        "askhotkey": askSpec()?["label"] as? String ?? "",
-		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid]
+		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid,
+		        "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
 	}
 
 	func appJSON() -> String {
@@ -826,6 +836,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if let key = request["hotkey"] { setKey(kHotkey, "hotkey", key as? [String: Any]) }
 		if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }
+		if let mode = request["dictation"] as? String { setDictation(Dictation(rawValue: mode) ?? .off) }
+		if let key = request["dictationkey"] { setDictationKey(key as? [String: Any]) }
 		pushAppState()
 	}
 
@@ -1404,12 +1416,68 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askPanel = p
 		}
 		guard let p = askPanel else { return }
+		let opening = !(p.isVisible && p.isKeyWindow)   // pressed again on an open box, it starts nothing a second time
 		if !p.isVisible, let screen = NSScreen.main?.visibleFrame {
 			p.setFrameOrigin(NSPoint(x: screen.midX - p.frame.width / 2, y: screen.maxY - screen.height / 4 - p.frame.height))
 		}
 		p.makeKeyAndOrderFront(nil)
 		p.makeFirstResponder(askField)
 		askCall(["warm"]) { _ in }      // the session starts while the request is typed
+		if opening { startDictation() }
+	}
+
+	// MARK: dictation (preview ask)
+	// Started once the box has opened with the cursor in its field, so the words
+	// land there, and only then: a second press of the Ask hotkey on an open box
+	// would stop a tool that toggles. macOS Dictation starts through the action
+	// behind Edit › Start Dictation, which needs nothing; another tool through its
+	// own key, posted where the keyboard's own events come in, which needs the
+	// Accessibility permission. Stopping it is the tool's, as is where it pastes:
+	// a tool that pastes with ⌘V reaches the field through Edit › Paste.
+	func startDictation() {
+		let mode = savedDictation()
+		guard mode != .off else { return }
+		if checking { return heard.append("dictation:" + mode.rawValue) }
+		if mode != .macos && !AXIsProcessTrusted() {
+			return toast("Garrick cannot press your dictation key: allow it in System Settings › Privacy & Security › Accessibility.")
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+			guard self?.askPanel?.isKeyWindow == true else { return }   // closed meanwhile: the words would go elsewhere
+			switch mode {
+			case .macos: NSApp.sendAction(Selector(("startDictation:")), to: NSApp, from: nil)
+			case .fn: tapFn()
+			case .fn2: tapFn(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { tapFn() }
+			case .key: if let spec = defaults.dictionary(forKey: kDictationKey) { press(spec) }
+			case .off: break
+			}
+		}
+	}
+
+	// A choice from Settings: kept, and for a key, the permission asked for at
+	// once, so macOS's prompt comes while you are looking at the setting.
+	func setDictation(_ mode: Dictation) {
+		defaults.set(mode.rawValue, forKey: kDictation)
+		keySaid["dictation"] = nil
+		switch mode {
+		case .off: toast("The Ask box starts no dictation.")
+		case .macos: toast("The Ask box starts macOS Dictation when it opens.")
+		case .fn, .fn2, .key:
+			let trusted = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+			if !trusted { keySaid["dictation"] = "Allow Garrick in System Settings › Privacy & Security › Accessibility, so it can press the key." }
+			toast(keySaid["dictation"] ?? "The Ask box presses your dictation key when it opens.")
+		}
+	}
+
+	// A key the Ask hotkey or the menu's would answer is refused: pressed, it would open the box again or the menu.
+	func setDictationKey(_ spec: [String: Any]?) {
+		let label = spec?["label"] as? String ?? "That"
+		if let spec, sameKey(spec, askSpec()) || sameKey(spec, defaults.dictionary(forKey: kHotkey)) {
+			keySaid["dictationkey"] = "\(label) is already a hotkey of Garrick's. Pick your dictation tool's key."
+			return toast(keySaid["dictationkey"]!)
+		}
+		keySaid["dictationkey"] = nil
+		if let spec { defaults.set(spec, forKey: kDictationKey) } else { defaults.removeObject(forKey: kDictationKey) }
+		toast(spec == nil ? "No dictation key." : "The Ask box presses \(label) when it opens.")
 	}
 
 	// An answer, a question back or a refusal stays in the box to be read or
@@ -1772,6 +1840,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				} else {
 					print("menu: none")
 				}
+				self.startDictation()      // what the Ask box would start, heard rather than pressed
 				print("heard: \(self.heard)")
 				print("page errors: \(self.pageErrors.count)" + self.pageErrors.map { " line \($0["line"] ?? "?"): \($0["msg"] ?? "")" }.joined(separator: ";"))
 				exit(0)
@@ -1848,6 +1917,41 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
 		])
 		return bar
+	}
+}
+
+// Fn as the keyboard sends it: not a key going down and up, but the Fn flag set
+// on key code 63 and cleared 80 ms later. Posted at the HID tap, so a tool that
+// watches the keyboard sees it as it sees the real key.
+func tapFn() {
+	func flags(_ down: Bool) {
+		guard let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 63, keyDown: down) else { return }
+		e.type = .flagsChanged
+		e.flags = down ? .maskSecondaryFn : []
+		e.post(tap: .cghidEventTap)
+	}
+	flags(true)
+	DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { flags(false) }
+}
+
+// A recorded shortcut, pressed and let go with its modifiers held, at the same tap.
+func press(_ spec: [String: Any]) {
+	guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return }
+	var mods: CGEventFlags = []
+	for m in spec["mods"] as? [String] ?? [] {
+		switch m {
+		case "cmd": mods.insert(.maskCommand)
+		case "alt": mods.insert(.maskAlternate)
+		case "ctrl": mods.insert(.maskControl)
+		case "shift": mods.insert(.maskShift)
+		default: break
+		}
+	}
+	let source = CGEventSource(stateID: .hidSystemState)
+	for down in [true, false] {
+		guard let e = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(vk), keyDown: down) else { return }
+		e.flags = mods
+		e.post(tap: .cghidEventTap)
 	}
 }
 

@@ -1100,10 +1100,14 @@ vm.runInContext(js, ctx);
 for (const [id, type, e] of steps) {
   const ev = Object.assign({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
                              preventDefault() {}, stopPropagation() {} }, e || {});
+  if (e && "value" in e) el(id).value = e.value;
   el(id).fire(type, ev);
 }
-process.stdout.write(JSON.stringify({ posted, notes: { hotkey: el("menu-hotkey-note").textContent, askhotkey: el("menu-askkey-note").textContent },
-                                     askRow: el("menu-askkey-row").style.display, ask: el("menu-askkey").value }));
+process.stdout.write(JSON.stringify({ posted, notes: { hotkey: el("menu-hotkey-note").textContent, askhotkey: el("menu-askkey-note").textContent,
+                                                       dictation: el("menu-dictation-note").textContent, dictationkey: el("menu-dictkey-note").textContent },
+                                     askRow: el("menu-askkey-row").style.display, ask: el("menu-askkey").value,
+                                     dictRow: el("menu-dictation-row").style.display, dictKeyRow: el("menu-dictkey-row").style.display,
+                                     dictation: el("menu-dictation").value, dictkey: el("menu-dictkey").value }));
 """
 
 
@@ -1156,6 +1160,32 @@ class TestHotkeyFields(unittest.TestCase):
         out = self.run_js({"hotkey": "⌥Space"})
         self.assertEqual("none", out["askRow"])
         self.assertEqual("Opens the menu or the panel from any app", out["notes"]["hotkey"])
+        self.assertEqual(("none", "none"), (out["dictRow"], out["dictKeyRow"]))   # nor the dictation rows, from an app before #35
+
+    def test_the_ask_box_starts_dictation_as_chosen(self):
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "dictation": "off", "dictationkey": ""},
+                          ("menu-dictation", "change", {"value": "fn"}))
+        self.assertEqual([{"app": {"dictation": "fn"}}], out["posted"])
+        self.assertEqual(("", "none"), (out["dictRow"], out["dictKeyRow"]))   # the shortcut field only for a shortcut
+        self.assertEqual("Once the Ask box opens, start dictation in it too", out["notes"]["dictation"])
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "dictation": "fn2", "dictationkey": ""})
+        self.assertIn("Needs the Accessibility permission", out["notes"]["dictation"])
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "dictation": "macos", "dictationkey": "",
+                           "said": {"dictation": "Allow Garrick in System Settings"}})
+        self.assertEqual(("macos", "Allow Garrick in System Settings"), (out["dictation"], out["notes"]["dictation"]))   # the app's word wins
+
+    def test_the_dictation_shortcut_is_pressed_not_held(self):
+        app = {"hotkey": "⌃Space", "askhotkey": "⌘G", "dictation": "key", "dictationkey": ""}
+        out = self.run_js(app, ("menu-dictkey", "keydown", {"key": " ", "code": "Space", "altKey": True}))
+        self.assertEqual("", out["dictKeyRow"])
+        self.assertEqual([{"app": {"dictationkey": {"code": "Space", "mods": ["alt"], "label": "⌥Space"}}}], out["posted"])   # ⌥ alone is fine to press
+        out = self.run_js(app, ("menu-dictkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}),
+                          ("menu-dictkey", "keydown", {"key": " ", "code": "Space", "ctrlKey": True}),
+                          ("menu-dictkey", "keydown", {"key": "d", "code": "KeyD"}))
+        self.assertEqual([], out["posted"])                                       # neither hotkey, and not a bare letter
+        self.assertEqual("Use ⌘, ⌃ or ⌥ with the key.", out["notes"]["dictationkey"])
+        out = self.run_js(app, ("menu-dictkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}))
+        self.assertEqual("⌘G is already a hotkey of Garrick's. Pick your dictation tool's key.", out["notes"]["dictationkey"])
 
 
 class TestAppNotifies(unittest.TestCase):

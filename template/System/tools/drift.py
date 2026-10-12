@@ -230,6 +230,8 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
         return "drifted", "the bytes differ"
     if b.startswith(OLE) or a.startswith(OLE):
         return "encrypted", "one copy is saved with a password, so its content cannot be compared"
+    if not a or not b:
+        return "drifted", "the %s copy is empty" % ("shared" if a else "project's")
     if not (a.startswith(ZIP) and b.startswith(ZIP)):
         return "encrypted", ("the %s copy is not an Office file as Office saves one; a rights-management service may "
                              "have encrypted it in place" % ("shared" if a.startswith(ZIP) else "project's"))

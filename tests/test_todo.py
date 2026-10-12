@@ -151,6 +151,27 @@ class TodoTest(unittest.TestCase):
         self.assertEqual("- [ ] [[Freight]]: a new one", todo.oldest(self.zone, day + dt.timedelta(days=3), 10)[-1])
         self.assertEqual(2, len(todo.oldest(self.zone, day, 2)))
 
+    def test_the_digest_reads_the_list_as_a_person_would(self):
+        today = dt.date(2026, 10, 21)
+        write(self.zone / "archive" / "Todo-expired-2026.md", "# Work\n\n<!-- 2026-10-20 -->\n- [ ] old\n<!-- 2026-10-21 -->\n- [ ] gone today\n")
+        text = todo.digest(self.zone, today)
+        self.assertTrue(text.startswith("Todo · Work"))
+        self.assertIn("Overdue · 2\n- Pricing: draft the memo (7d late)\n- Freight: book the call (1d late)", text)
+        self.assertIn("Due today · 1\n- Pricing: check the tier against Birch's", text)
+        self.assertIn("Chase, they owe you · 1\n- Pricing: Dana's volumes", text)
+        self.assertIn("Inbox · 4 untriaged", text)
+        self.assertNotIn("oldest three", text)                              # ten or fewer: the count says enough
+        self.assertIn("Expired today · 1", text)
+        self.assertIn("2 undated · 1 waiting with no chase date", text)
+        self.assertNotIn("[[", text)
+        self.assertNotIn("#waiting", text)
+
+    def test_the_chase_days_are_the_zones_or_seven(self):
+        self.assertEqual(7, todo.chase_days(self.root, "Work"))
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-chase-days": {"Work": 0}}))
+        self.assertEqual(0, todo.chase_days(self.root, "Work"))
+        self.assertEqual(7, todo.chase_days(self.root, "Personal"))
+
     def test_all_from_the_command_line(self):
         import io
         from contextlib import redirect_stdout
@@ -226,6 +247,26 @@ class SweepJobTest(unittest.TestCase):
         self.assertEqual(self.job.EXIT_INCOMPLETE, code)
         self.assertEqual(LIST, self.text())
         self.assertEqual("", self.git("status", "--porcelain").strip())
+
+    def test_the_prompt_follows_the_chase_days(self):
+        self.assertIn("7 days from today when the source gives none", self.job.prompt_for("Work", "2026-10-12"))
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-chase-days": 0}))
+        with self.fake("ADDED 1 FOLDED 0\n" + self.job.SENTINEL + "\n"):
+            self.job.sweep_zone(self.root, self.zone, "sonnet", "2026-10-12")
+        self.assertIn("only when the source gives one: never one of your own", self.prompts[0])
+
+    def test_the_digest_goes_through_the_notifier_from_the_zone_even_when_the_sweep_failed(self):
+        import os
+        out = Path(self._tmp.name) / "notices.txt"
+        notifier = Path(self._tmp.name) / "notify.sh"
+        notifier.write_text('printf "%s|%s|%s|%s\\n---\\n" "$GARRICK_NOTIFY_KIND" "$GARRICK_ZONE" "$PWD" "$2" >> "' + str(out) + '"\n')
+        with self.mock.patch.dict(os.environ, {"GARRICK_NOTIFY_CMD": "/bin/sh %s" % notifier}):
+            with self.fake("I got halfway.", edit=False):
+                code = self.job.main(["--workspace", str(self.root), "--zone", "Work", "--digest"])
+        self.assertEqual(self.job.EXIT_INCOMPLETE, code)
+        notice = out.read_text()
+        self.assertTrue(notice.startswith("digest|Work|%s|The sweep did not finish this morning" % self.zone.resolve()), notice)
+        self.assertIn("Todo · Work", notice)
 
     def text(self):
         return (self.zone / "Todo.md").read_text()

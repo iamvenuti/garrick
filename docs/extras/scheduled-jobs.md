@@ -26,7 +26,7 @@ For each repository with changes, it stages everything, runs the wall check on w
 | `headless-settings.json` | The deny list every unattended Claude call loads |
 | `whats_open.py` | The example job: a "what's open" brief per zone, written outside the workspace |
 | `launchd/garrick.whats-open.plist` | The example job on a schedule, every morning at 06:30 |
-| `todo_sweep.py`, `launchd/garrick.todo-sweep.plist` | The `todo` skill's sweep each night, one assistant call per zone: actions from the zone's calls and threads into `Todo.md`, then expired, archived, tidied and committed |
+| `todo_sweep.py`, `launchd/garrick.todo-sweep.plist` | The `todo` skill's sweep each night, one assistant call per zone: actions from the zone's calls and threads into `Todo.md`, then expired, archived, tidied and committed; with `--digest`, a morning summary per zone through the notifier, which runs in the zone's folder with `GARRICK_ZONE` set |
 | `reading_sweep.py`, `launchd/garrick.reading-sweep.plist` | What reached an address kept for reading (the [mail fetcher](ways-in.md)'s `"reading": true`), filed into Knowledge or skipped as too thin, one assistant call per zone; mail from a party's domain waits for you |
 | `backup.py`, `launchd/garrick.backup.plist` | The backup: every repository committed and pushed twice a day, holding back what the walls refuse. No assistant |
 
@@ -128,7 +128,7 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 `job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is up to you, and it can be both:
 
 - `GARRICK_NOTIFY=1` raises a macOS notification.
-- `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message. Its environment also holds `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle` or `message`), `GARRICK_JOB` and `GARRICK_EXIT`. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
+- `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message. Its environment also holds `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle`, `message`, or `digest` for the todo sweep's morning summary), `GARRICK_JOB` and `GARRICK_EXIT`. A notice about one zone, such as a digest, runs it in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so it can send each zone somewhere of its own. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
 
 A notifier for a chat app or a mail relay is a few lines. This one appends to a file instead, which is enough to see the shape:
 

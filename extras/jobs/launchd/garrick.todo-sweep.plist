@@ -16,6 +16,9 @@
   To be told when it fails, add GARRICK_NOTIFY (1, for a macOS notification)
   or GARRICK_NOTIFY_CMD (a command given a title and a message) to
   EnvironmentVariables; see docs/extras/scheduled-jobs.md for the others.
+  With a notifier set, --digest below sends each zone's morning summary
+  too, from the notifier's run in that zone's folder; remove it for none.
+  Add a second zone with another pair of --zone lines.
   Whatever job.py cannot write to its own log, such as the error from a path
   left wrong, goes to todo-sweep.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.
@@ -39,6 +42,7 @@
     <string>/Users/&lt;you&gt;/Garrick</string>
     <string>--zone</string>
     <string>Work</string>
+    <string>--digest</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

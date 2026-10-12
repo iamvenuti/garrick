@@ -504,11 +504,14 @@ def watchdog(cmd: List[str], timeout: float, cwd: Path, env: dict, log,
     return code, None
 
 
-def notify(kind: str, title: str, message: str, log=None, job: str = "", code: Optional[int] = None) -> bool:
+def notify(kind: str, title: str, message: str, log=None, job: str = "", code: Optional[int] = None,
+           zone: Optional[Path] = None) -> bool:
     """Send a notice to wherever the settings say: a macOS notification with
     GARRICK_NOTIFY=1, and the command in GARRICK_NOTIFY_CMD, run as
-    `<command> <title> <message>`. A notifier that fails costs a line in the
-    log, never the run. True when there was somewhere to send it."""
+    `<command> <title> <message>`. A notice about one zone runs the command in
+    that zone's folder, with GARRICK_ZONE and GARRICK_ZONE_DIR set, so it can
+    send each zone somewhere of its own. A notifier that fails costs a line in
+    the log, never the run. True when there was somewhere to send it."""
     sent = False
     if os.environ.get("GARRICK_NOTIFY") == "1" and sys.platform == "darwin":
         script = ['-e', 'on run argv',
@@ -521,9 +524,12 @@ def notify(kind: str, title: str, message: str, log=None, job: str = "", code: O
         sent = True
         env = dict(os.environ, GARRICK_NOTIFY_KIND=kind, GARRICK_JOB=job or os.environ.get("GARRICK_JOB", ""),
                    GARRICK_EXIT="" if code is None else str(code))
+        if zone is not None:
+            env.update(GARRICK_ZONE=zone.name, GARRICK_ZONE_DIR=str(zone))
         try:
             proc = subprocess.run(shlex.split(command) + [title, message], env=env, capture_output=True, text=True,
-                                  stdin=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT)
+                                  stdin=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT,
+                                  cwd=str(zone) if zone is not None else None)
             problem = "exited %d" % proc.returncode if proc.returncode else ""
             output = (proc.stdout + proc.stderr).strip()
         except (OSError, ValueError) as exc:

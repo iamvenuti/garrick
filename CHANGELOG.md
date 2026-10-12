@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-12
+
+You can make, rename and delete projects and threads from the status page or by voice, and one forwarding address can serve every zone. New nightly jobs keep the Todo lists short, file what you read and back up every repository. The wikis get a lint, one call can become a page per project, and Knowledge can declare its own layout. The wall check reaches a repository inside a project, a recording or mail is never filed twice, and Garrick tells you when the shared copy of something you published has changed.
+
 ### Added
 
 - What a project published, and whether the shared copy has drifted from it. Each file that leaves the workspace is a row in the project's `Deliverables/published.md`: date, file, destination, recipients, and which copy counts. The `threads` skill's wrap adds the row and asks who edits the file next. The hub names its shared folder as `shared: <link>/<path>`, through a link in the zone's `.shared/`. `System/tools/drift.py` compares each file with its shared copy: an Office file by its content, ignoring what a shared library stamps into it and what Office rewrites on a save; an online-only copy is never downloaded; a copy with a password is reported apart. With `--save` the status page's *Needs attention* lists what drifted, and `check.py` warns about a row it cannot read. ([#50](https://github.com/iamvenuti/garrick/issues/50))

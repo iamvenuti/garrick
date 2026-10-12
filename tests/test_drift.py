@@ -96,6 +96,10 @@ class DriftTest(unittest.TestCase):
             self.assertEqual("unchecked", self.one()["state"])                    # never downloaded
         target.write_bytes(drift.OLE + b"\0" * 600)
         self.assertEqual("encrypted", self.one()["state"])
+        target.write_bytes(b"XYZ" + b"\0" * 600)                                 # encrypted in place by a rights service
+        found = self.one()
+        self.assertEqual("encrypted", found["state"])
+        self.assertIn("rights-management", found["say"])
         target.unlink()
         self.assertEqual("missing", self.one()["state"])
 

@@ -43,7 +43,9 @@ its relationships as a set of what points to what, and its XML in canonical
 form, leaving out the provider's own parts (customXml/, and the properties
 in docProps/, which record who saved it when). A copy the provider keeps
 online only, with no bytes on this Mac, is never downloaded: it is reported
-as unchecked. An Office file saved with a password is reported apart.
+as unchecked. An Office file saved with a password, or one a
+rights-management service encrypted in place (neither a zip nor a password
+file), is reported apart, as encrypted.
 
 macOS keeps a scheduled job out of ~/Library/CloudStorage, so this runs
 from a session or the app, never from launchd. It changes nothing but
@@ -77,6 +79,7 @@ LINKS = ".shared"
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
 PROVIDER = re.compile(r"^(?:customXml/|docProps/|\[trash\]/)", re.I)   # the provider's parts, and what Excel leaves after a save
 OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"          # an encrypted Office file is an OLE container, not a zip
+ZIP = b"PK\x03\x04"                                 # how Office saves .docx, .xlsx and .pptx
 ROW = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|([^|]*)\|\s*(share|here)\b([^|]*)\|\s*$", re.I)
 HISTORY = re.compile(r"^\|\s*(withdrawn|replaced|sent)\s+(\d{4}-\d{2}-\d{2})\s*\|", re.I)
 HEADER = re.compile(r"^\|\s*Date\s*\|", re.I)
@@ -227,6 +230,9 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
         return "drifted", "the bytes differ"
     if b.startswith(OLE) or a.startswith(OLE):
         return "encrypted", "one copy is saved with a password, so its content cannot be compared"
+    if not (a.startswith(ZIP) and b.startswith(ZIP)):
+        return "encrypted", ("the %s copy is not an Office file as Office saves one; a rights-management service may "
+                             "have encrypted it in place" % ("shared" if a.startswith(ZIP) else "project's"))
     try:
         fa, fb = office_form(a), office_form(b)
     except Exception as exc:      # a half-synced or damaged file: zip, zlib, EOF and parse errors alike

@@ -7,7 +7,6 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Added
 
 - `drift.py` says when a sync conflict leaves a second copy beside something you published. It reads only the names under each folder a ledger uses, never the files, so nothing is downloaded: `conflicted copy` or a `-conflict` suffix is reported anywhere there, and a numbered copy such as `Terms (1).docx` only beside a published file, since elsewhere that shape is mostly downloads. The status page lists each under *Needs attention*. ([#60](https://github.com/iamvenuti/garrick/issues/60))
-
 - The Inbox of a `Todo.md` can be kept in the order a Tasks query sorted by description shows it: `"todo-inbox-order": "thread"` in `System/garrick-checks.json`, for every zone or one per zone, sorts the lines by the name of the thread each opens with (the alias after `|` when there is one), lines with no thread last. `first-seen`, the order until now, stays the default. `todo.py oldest --zone <Zone> [--count N]` prints the open Inbox lines first seen longest ago, the next to expire, for a digest to name. ([#61](https://github.com/iamvenuti/garrick/issues/61))
 
 ### Changed

@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Added
 
+- *Settings…* in the status page app's menu bar menu, after *Open Garrick*, and a cog between the mark and the power button in the panel's footer. Either brings the window forward with Settings open, as ⌘, does, whether or not the window was open; a page still loading opens Settings once it has loaded. ([#34](https://github.com/iamvenuti/garrick/issues/34))
 - Hovering a project or thread row on the status page, or moving to it with the keyboard, lights its node in the graph the way hovering the node does: its links stay at full strength, the rest fades and the sway stops, with nothing selected, centred or zoomed. Leaving the row, or its card closing, puts the graph back. A node the graph is not showing is left alone. The graph offers one way in, `GarrickGraph.focus()`, absent with `--no-graph`. ([#62](https://github.com/iamvenuti/garrick/issues/62))
 
 ## [0.21.0] - 2026-10-12

@@ -389,6 +389,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var menuState: [String: Any]?     // what the page last said the menu lists
 	var menuHeard: (at: Date, data: Bool, zones: Int, count: Int)?   // when the page last said it, with rows or not, and how often since launch
 	var pageLoaded: Date?             // when the page last finished loading
+	var settingsAsked: Date?          // Settings asked for from the menu or the panel, opened at the next load within a minute
 	var pageErrors: [[String: Any]] = []   // the page's script errors since, where and of what kind
 	let launched = Date()
 	var again = false                 // a rebuild asked for during one: one more after it
@@ -479,6 +480,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		window.makeKeyAndOrderFront(nil)
 		NSApp.activate(ignoringOtherApps: true)
 		defaults.set(true, forKey: kWindowShown)
+	}
+
+	// Settings from the menu or the panel (#34): the window forward, as Open
+	// Garrick brings it, then Settings, as ⌘, opens it. A page not loaded yet, or
+	// reloaded by the rebuild that coming forward can start, opens it once loaded.
+	@objc func showSettings(_ sender: Any? = nil) {
+		showWindow()
+		settingsAsked = Date()
+		if pageLoaded != nil && !web.isLoading { openSettings(nil) }
 	}
 
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
@@ -1076,6 +1086,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		show(open, mark(16))
 		open.target = self
 		menu.addItem(open)
+		let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: "")
+		show(settings, symbol("gearshape"))
+		settings.target = self
+		menu.addItem(settings)
 		let quit = NSMenuItem(title: "Quit Garrick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
 		show(quit, symbol("power"))
 		menu.addItem(quit)
@@ -1307,6 +1321,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.display = defaults.bool(forKey: kAwakeDisplay)
 		m.pickAwake = { [weak self] tag in self?.pickAwake(tag: tag) }
 		m.openApp = { [weak self] in self?.showWindow() }
+		m.openSettings = { [weak self] in self?.showSettings() }
 		// A question typed in the panel's field. With the preview ask on, ask.py
 		// answers it in the panel and acts on it. Off, the assistant opens at the
 		// workspace root with it, as Process the Inbox opens with its phrase.
@@ -1787,7 +1802,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The stored key alternates, so a second --check shows whether the first
 	// one's write survived the quit.
 	func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
-		guard checking else { pageLoaded = Date(); return }
+		guard checking else {
+			pageLoaded = Date()
+			if let asked = settingsAsked {
+				settingsAsked = nil
+				if -asked.timeIntervalSinceNow < 60 { openSettings(nil) }
+			}
+			return
+		}
 		web.evaluateJavaScript("""
 			(function(){var k='garrick-app-check',p=null;
 			try{p=localStorage.getItem(k);if(p)localStorage.removeItem(k);else localStorage.setItem(k,String(Date.now()))}catch(e){p='error: '+e}
@@ -2007,6 +2029,7 @@ final class PanelModel: ObservableObject {
 	@Published var typing = 0                // bumped when the hotkey opens it, to put the cursor in the filter
 	var pickAwake: (Int) -> Void = { _ in }
 	var openApp: () -> Void = {}
+	var openSettings: () -> Void = {}
 	var ask: ((String) -> Void)?
 	@Published var askVia = ""               // the assistant a question opens in, by name
 	@Published var answersHere = false       // preview ask: the panel answers, and stays
@@ -2249,6 +2272,8 @@ struct PanelView: View {
 					Image(nsImage: model.mark).resizable().frame(width: 15, height: 15)
 				}
 				.help("Open Garrick")
+				Button { model.perform(model.openSettings) } label: { Image(systemName: "gearshape") }
+					.help("Settings")
 				Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
 					.help("Quit Garrick")
 			}

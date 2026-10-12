@@ -1223,3 +1223,29 @@ class TestRowsLightTheGraph(StatusCase):
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual([True, False, False, False], json.loads(done.stdout))            # a parked thread stays off the graph
+
+
+class TestSettingsFromTheMenu(unittest.TestCase):
+    """#34: Settings… in the menu bar menu and a cog in the panel's footer, between Open Garrick and Quit."""
+
+    swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def test_the_menu_and_the_panel_match(self):
+        s = self.swift
+        menu = s[s.index('let open = NSMenuItem(title: "Open Garrick"'):s.index('menu.addItem(quit)')]
+        self.assertLess(menu.index('"Open Garrick"'), menu.index('"Settings…", action: #selector(showSettings(_:))'))
+        self.assertLess(menu.index('"Settings…"'), menu.index('"Quit Garrick"'))
+        self.assertIn('show(settings, symbol("gearshape"))', menu)
+        foot = s[s.index('.help("Open Garrick")'):s.index('.help("Quit Garrick")')]
+        self.assertIn('Button { model.perform(model.openSettings) } label: { Image(systemName: "gearshape") }', foot)
+        self.assertIn('.help("Settings")', foot)
+        self.assertIn("m.openSettings = { [weak self] in self?.showSettings() }", s)
+
+    def test_the_click_is_never_lost(self):
+        s = self.swift
+        show = s[s.index("@objc func showSettings("):s.index("// Left in the Dock for days")]
+        self.assertLess(show.index("showWindow()"), show.index("openSettings(nil)"))           # the window first, as Open Garrick
+        self.assertIn("if pageLoaded != nil && !web.isLoading { openSettings(nil) }", show)
+        loaded = s[s.index("func webView(_ webView: WKWebView, didFinish"):]
+        self.assertIn("if -asked.timeIntervalSinceNow < 60 { openSettings(nil) }", loaded[:600])   # a page loading opens it when it has
+        self.assertIn("window.StatusSettings && window.StatusSettings.open()", s)              # the same as ⌘,

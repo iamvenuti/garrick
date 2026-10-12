@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-12
+
+Settings is one click from the status app's menu bar and panel, a row in the threads list lights its node in the graph, and cmux gets a sidebar that lists each workspace's tabs by thread.
+
 ### Added
 
 - A cmux sidebar, `extras/cmux/garrick-sidebar.js`: each cmux workspace by name with its unread count, its tabs under it named by their thread rather than a path or the program in them, a dot per tab (blue working, orange unread, grey otherwise), and Garrick's mark on top, which opens the status page. Click a workspace to select it, a tab to focus it. Written from cmux's published sidebar API, with nothing from its templates. See [A sidebar](docs/extras/cmux.md#a-sidebar). ([#22](https://github.com/iamvenuti/garrick/issues/22))
@@ -623,7 +627,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/iamvenuti/garrick/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/iamvenuti/garrick/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iamvenuti/garrick/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/iamvenuti/garrick/compare/v0.18.0...v0.19.0

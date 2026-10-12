@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-12
+
+The nightly todo sweep can send each zone a morning digest through the notifier you already use, routed by zone, and a workspace chooses whether the sweep writes a chase date on what others owe it.
+
 ### Added
 
 - A morning digest of each zone's `Todo.md`. `todo.py digest --zone <Zone>` prints it in plain text: what is overdue, due today and come due to chase, the Inbox with its three oldest lines when it holds more than ten, what expired today, and how many lines carry no date. `todo_sweep.py --digest` sends it once per zone through the jobs' notifier, also on a morning the sweep failed, then saying so; the job's example plist turns it on. A notice about one zone runs `GARRICK_NOTIFY_CMD` in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so a notifier can send each zone somewhere of its own. ([#65](https://github.com/iamvenuti/garrick/issues/65))

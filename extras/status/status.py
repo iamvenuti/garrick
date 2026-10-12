@@ -248,7 +248,8 @@ def drifted(ws: Path) -> List[str]:
     out = []
     for f in data.get("files", []) if isinstance(data, dict) else []:
         if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
-            out.append("%s: %s %s" % (f.get("project", "?"), f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+            where = f.get("project", "?") + (", " + f["thread"] if f.get("thread") else "")
+            out.append("%s: %s %s" % (where, f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
     return out
 
 

@@ -19,7 +19,19 @@ hub's key names its folder the same way, `<link>/<path>`, through a link in
 `Zones/<Zone>/.shared/`: never by the provider's own path, which changes
 when an account or library is renamed. `Authoritative` says which copy wins
 from now on: `share` when colleagues edit it there, `here` when they only
-read it.
+read it. Only its first word is read, so a note may follow: `share,
+colleagues edit the wording there`.
+
+A row stays as the record of what left. When a copy is taken off the share,
+or a newer version takes its place, its date cell becomes `withdrawn
+YYYY-MM-DD` or `replaced YYYY-MM-DD`, the day it happened; a copy sent by
+mail rather than placed on a share is `sent YYYY-MM-DD`. Such a row is
+history: read, never compared. Only the table whose first column is `Date`
+is the ledger; another table in the same file is left alone.
+
+A thread-first project (`layout: thread-first` on its hub) keeps one ledger
+per thread, `Threads/<Thread>/Deliverables/published.md`, its files under
+that thread's `Deliverables/`. Both places are read in every project.
 
 Drift is a real difference. A file is compared byte for byte, except an
 Office file (.docx, .xlsx, .pptx), which a shared library rewrites on every
@@ -60,32 +72,55 @@ from garrick_lib import parse_frontmatter, workspace_root  # noqa: E402
 LEDGER = ("Deliverables", "published.md")
 LINKS = ".shared"
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
-PROVIDER = re.compile(r"^(?:customXml/|docProps/)", re.I)
+PROVIDER = re.compile(r"^(?:customXml/|docProps/|\[trash\]/)", re.I)   # the provider's parts, and what Excel leaves after a save
 OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"          # an encrypted Office file is an OLE container, not a zip
-ROW = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|([^|]*)\|\s*(\w+)\s*\|\s*$")
+ROW = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|([^|]*)\|\s*(share|here)\b([^|]*)\|\s*$", re.I)
+HISTORY = re.compile(r"^\|\s*(withdrawn|replaced|sent)\s+(\d{4}-\d{2}-\d{2})\s*\|", re.I)
+HEADER = re.compile(r"^\|\s*Date\s*\|", re.I)
+RULE = re.compile(r"^\|[\s:|-]+\|$")
 SAVED = ("System", "generated", "drift.json")
+HISTORY_WORDS = ("withdrawn", "replaced", "sent")
 
 
 # --------------------------------------------------------------------------- the ledger
 
 
 def ledger_rows(path: Path) -> Tuple[List[dict], List[str]]:
-    """(rows, lines that look like rows but do not read) of a published.md."""
+    """(rows, lines that look like rows but do not read) of a published.md.
+    Only the table under a `| Date |` header is read; a history row comes
+    back with `history` set to its word and is never compared."""
     rows, bad = [], []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return rows, bad
+    headed = any(HEADER.match(line.strip()) for line in lines)
+    in_ledger = not headed                           # with no `| Date |` header, every table is read, as before
     for line in lines:
         s = line.strip()
-        if not s.startswith("|") or re.match(r"^\|\s*(?:Date|-{3})", s, re.I):
+        if not s.startswith("|"):
+            in_ledger = not headed                   # a table ends at its first line that is not a row
+            continue
+        if HEADER.match(s):
+            in_ledger = True
+            continue
+        if not in_ledger or RULE.match(s):
+            continue
+        h = HISTORY.match(s)
+        if h:
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            rows.append({"date": h.group(2), "history": h.group(1).lower(), "file": cells[1].strip("`") if len(cells) > 1 else "",
+                         "destination": cells[2].strip("`") if len(cells) > 2 else "",
+                         "recipients": cells[3] if len(cells) > 3 else "",
+                         "authoritative": cells[4].split(None, 1)[0].strip(",;.:").lower() if len(cells) > 4 and cells[4] else ""})
             continue
         m = ROW.match(s)
         if not m:
             bad.append(s)
             continue
         rows.append({"date": m.group(1), "file": m.group(2), "destination": m.group(3),
-                     "recipients": m.group(4).strip(), "authoritative": m.group(5).lower()})
+                     "recipients": m.group(4).strip(), "authoritative": m.group(5).lower(),
+                     "note": m.group(6).strip(" ,;:—–-")})
     return rows, bad
 
 
@@ -203,30 +238,46 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
 # --------------------------------------------------------------------------- the workspace
 
 
+def _visible(folder: Path) -> List[Path]:
+    return sorted(p for p in (folder.iterdir() if folder.is_dir() else []) if p.is_dir() and not p.name.startswith((".", "_")))
+
+
+def ledgers(project: Path) -> List[Tuple[Optional[str], Path]]:
+    """(thread or None, its Deliverables/ folder) for every ledger of a
+    project: its own, and one per thread, as a thread-first project keeps them."""
+    out = [(None, project / LEDGER[0])] + [(t.name, t / LEDGER[0]) for t in _visible(project / "Threads")]
+    return [(t, d) for t, d in out if (d / LEDGER[1]).is_file()]
+
+
 def projects(root: Path):
-    zones = root / "Zones"
-    for zone in sorted(z for z in (zones.iterdir() if zones.is_dir() else []) if z.is_dir() and not z.name.startswith((".", "_"))):
-        for project in sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
-            if project.joinpath(*LEDGER).is_file():
-                yield zone, project
+    for zone in _visible(root / "Zones"):
+        for project in _visible(zone):
+            for thread, folder in ledgers(project):
+                yield zone, project, thread, folder
 
 
 def survey(root: Path) -> List[dict]:
     out = []
-    for zone, project in projects(root):
+    for zone, project, thread, folder in projects(root):
         hub = project / (project.name + ".md")
         value = parse_frontmatter(hub).get("shared") if hub.is_file() else None
         hub_shared = shared_root(zone, value) if value else None
-        rows, bad = ledger_rows(project.joinpath(*LEDGER))
+        rows, bad = ledger_rows(folder / LEDGER[1])
+        where = {"zone": zone.name, "project": project.name}
+        if thread:
+            where["thread"] = thread
         for line in bad:
-            out.append({"zone": zone.name, "project": project.name, "state": "unread", "file": "",
-                        "say": "a row of published.md does not read as Date | `file` | `destination` | recipients | "
-                               "authoritative: %s" % line[:80]})
+            out.append(dict(where, state="unread", file="",
+                            say="a row of published.md does not read as Date | `file` | `destination` | recipients | "
+                                "share or here: %s" % line[:80]))
         for row in rows:
-            ours = project / "Deliverables" / row["file"]
+            if row.get("history"):
+                out.append(dict(where, file=row["file"], destination=row["destination"], date=row["date"],
+                                state=row["history"], say=""))
+                continue
+            ours = folder / row["file"]
             if row["file"].startswith(("/", "~")) or ".." in Path(row["file"]).parts:
-                out.append({"zone": zone.name, "project": project.name, "file": row["file"], "state": "unread",
-                            "say": "the file must be a path under Deliverables/"})
+                out.append(dict(where, file=row["file"], state="unread", say="the file must be a path under Deliverables/"))
                 continue
             theirs = destination(zone, hub_shared, row["destination"])
             if theirs is None:
@@ -235,9 +286,8 @@ def survey(root: Path) -> List[dict]:
                                            else "no link %s in %s/%s/" % (row["destination"].split(":")[0], zone.name, LINKS))
             else:
                 state, say = compare(ours, theirs)
-            out.append({"zone": zone.name, "project": project.name, "file": row["file"],
-                        "destination": row["destination"], "authoritative": row["authoritative"],
-                        "date": row["date"], "state": state, "say": say})
+            out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
+                            date=row["date"], state=state, say=say))
     return out
 
 
@@ -266,7 +316,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not found:
             print("No project has published anything yet.")
         for f in found:
-            print("%s, %s: %s%s%s" % (f["zone"], f["project"], f["file"] or "published.md",
+            if f["state"] in HISTORY_WORDS:
+                continue                                 # the record of what left, not something to look at
+            print("%s, %s: %s%s%s" % (f["zone"], f["project"] + (", " + f["thread"] if f.get("thread") else ""),
+                                      f["file"] or "published.md",
                                       ": " + f["state"] if f["state"] != "same" else ": the same",
                                       " (%s)" % f["say"] if f["say"] else ""))
     return 1 if any(f["state"] in ("drifted", "missing", "unread") for f in found) else 0

@@ -26,7 +26,7 @@ to that, and never against it.
 | What | Where |
 |---|---|
 | The list, per zone | `Zones/<Zone>/Todo.md` |
-| When each Inbox line was first seen | `Zones/<Zone>/.todo-seen.json`, never committed |
+| When each Inbox and Waiting on line was first seen | `Zones/<Zone>/.todo-seen.json`, never committed |
 | What expired, still open | `Zones/<Zone>/archive/Todo-expired-<YYYY>.md` |
 | What was done | `Zones/<Zone>/archive/Todo-<YYYY>.md` |
 | The script for the steps that need no reading | `System/skills/todo/todo.py` |

@@ -4,7 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The published ledger keeps its history. A row whose date cell reads `withdrawn YYYY-MM-DD` (the copy came off the share) or `replaced YYYY-MM-DD` (a newer one took its place) stays as the record of what left, and `drift.py` reads it without comparing it; so does `sent YYYY-MM-DD`, a file sent by mail rather than placed on a share. The `threads` skill's wrap writes such a row instead of deleting one. The last cell is read by its first word, `share` or `here`, so a clause may follow: `share, Dana edits the wording there`. Only the table under a `| Date |` header is the ledger, so another table in the same file is left alone. A thread-first project keeps one ledger per thread, `Threads/<Thread>/Deliverables/published.md`; `drift.py`, `check.py` and the status page read it. ([#57](https://github.com/iamvenuti/garrick/issues/57))
+- Each zone's `.gitignore` block lists `.shared/`, so the links to shared folders, which hold the provider's own path on this machine, stay out of the zone's history. ([#57](https://github.com/iamvenuti/garrick/issues/57))
+
 ### Fixed
+
+- A workbook re-saved on a share could read as drifted when nothing in it had changed: Excel leaves `[trash]/` parts behind after an incremental save, and `drift.py` compared them as content. They are now left out with the provider's own parts. ([#57](https://github.com/iamvenuti/garrick/issues/57))
 
 - `todo.py expire` moved a `## Waiting on` line with no `⏳` to the expired archive the night it was written, however new, so a line written there by hand was gone the next morning. Waiting on lines are now recorded in `.todo-seen.json` as Inbox lines are, and one with no day to chase expires only after the zone's days, 14 by default. ([#56](https://github.com/iamvenuti/garrick/issues/56))
 

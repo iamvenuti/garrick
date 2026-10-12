@@ -224,9 +224,19 @@ per wrap: the one named, and nothing else.
    it: the copy here does (`here`). Re-read `Deliverables/published.md`
    (make it with the header row when there is none) and append one row,
    `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
-   the destination relative to the folder the hub names in `shared:`. Say
+   the destination relative to the folder the hub names in `shared:`. A
+   clause may follow `share` or `here`, such as who edits it there. Say
    so in the Live artifact row when the shared copy is the one that counts.
-   `python3 System/tools/drift.py` compares them from then on.
+   `python3 System/tools/drift.py` compares them from then on. In a
+   thread-first project the ledger is the thread's own,
+   `Threads/<Thread>/Deliverables/published.md`.
+   **A copy that stopped counting** in this session is never deleted from the
+   ledger: the row is the record of what left. Change its date cell to
+   `withdrawn YYYY-MM-DD` when the copy came off the share, or `replaced
+   YYYY-MM-DD` when a newer one took its place, the day it happened, and add
+   the newer one's row beside it. A file sent by mail rather than placed on
+   a share gets a row too, dated `sent YYYY-MM-DD`. drift.py reads such a
+   row and never compares it.
 8. **Set `updated:`** in the note's frontmatter to today.
 9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
    Re-read the hub first; change that one line.

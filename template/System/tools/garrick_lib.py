@@ -963,7 +963,8 @@ def garrick_ignores(zones) -> Dict[str, str]:
               "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
               "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
     inbox = ("# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
-             "# When each Inbox line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n")
+             "# When each Inbox and Waiting on line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n"
+             "# Links to shared cloud folders carry the provider's own path, which is this machine's alone.\n.shared/\n")
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"

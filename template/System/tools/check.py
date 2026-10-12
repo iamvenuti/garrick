@@ -1609,14 +1609,27 @@ def inbox_count(text: str) -> int:
     return n
 
 
+def system_threads(ws: Workspace) -> set:
+    """The hub and thread note names, lower-cased, of every project kept in
+    System/. Such a project has no Todo.md of its own: its actions live in a
+    zone's, opening with its thread's link."""
+    out = set()
+    for project, _ in ws.projects:
+        if in_system(ws, project):
+            out.add(project.name.lower())
+            out.update(t.name.lower() for t in visible_dirs(project / "Threads") if (t / (t.name + ".md")).is_file())
+    return out
+
+
 def check_todo(ws: Workspace) -> List[Finding]:
     """Each zone's Todo.md: an open action that opens with a thread's link
-    leads to a live note; its dates come last, where Obsidian Tasks reads them;
-    the Inbox does not grow by more than INBOX_GROWTH in a week. In a zone the
-    check settings name under `todo-labels`, every open action opens with
-    its thread's link."""
+    leads to a live note, in the zone or a project in System/; its dates come
+    last, where Obsidian Tasks reads them; the Inbox does not grow by more
+    than INBOX_GROWTH in a week. In a zone the check settings name under
+    `todo-labels`, every open action opens with its thread's link."""
     out = []
     strict = set(setting_zones(ws, "todo-labels"))
+    system = system_threads(ws)
     for zone in ws.zones:
         todo = zone / "Todo.md"
         text = read_text(todo) if todo.is_file() else None
@@ -1624,7 +1637,7 @@ def check_todo(ws: Workspace) -> List[Finding]:
             continue
         r = rel(ws, todo)
         open_lines = [l for l in text.splitlines() if l.startswith("- [ ] ")]
-        stems = {p.stem.lower() for p, _ in zone_notes(ws, zone)}
+        stems = {p.stem.lower() for p, _ in zone_notes(ws, zone)} | system
         broken, unlabelled = set(), 0
         for line in open_lines:
             m = TODO_LABEL_RE.match(line)

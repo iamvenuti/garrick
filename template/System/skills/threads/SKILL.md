@@ -215,7 +215,9 @@ per wrap: the one named, and nothing else.
    header gives, the dates last. Open the line with this thread's link, or
    its path, `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`, when another
    project has a thread of the same name: that is how a later wrap or finish
-   finds its lines.
+   finds its lines. A project in `System/` has no list of its own: its
+   actions go in the `Todo.md` of the zone the user works from most, as the
+   `todo` skill says.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
    **A deliverable that left the workspace** in this session, copied to a

@@ -58,7 +58,7 @@ When desk is asked to open a folder with a prompt and a tab there is idle, the p
 
 With the extra in `System/cmux/`, beside the status page in `System/status/`, the [status page](status-page.md)'s buttons can open and close a thread's tab, and start up or shut down cmux, through `System/status/page_action.py`. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
 
-Once the page says the desk is ready (the extra, cmux, and the preview `page-actions` on), everything in Garrick.app that opens cmux goes through desk, so the tab starts the assistant instead of waiting at a prompt with the phrase on the clipboard:
+Once the page says the desk is ready (the extra and cmux), everything in Garrick.app that opens cmux goes through desk, so the tab starts the assistant instead of waiting at a prompt with the phrase on the clipboard:
 
 | Where | What the tab starts on |
 |---|---|

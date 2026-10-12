@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""page_action.py: what the status page's action buttons do. A preview feature,
-`page-actions`, off until the workspace switches it on.
+"""page_action.py: what the status page's action buttons do.
 
     echo '{"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "…"}' | \\
         python3 page_action.py --workspace ~/Garrick
@@ -61,10 +60,7 @@ can run at once. Each takes a lock on the zone first (page-action-<zone>.lock
 in the jobs folder) and holds it from reading the note to committing it; a
 second request waits for the first. The rekey map has a lock of its own.
 
-The actions are a preview: every verb but `settings` is refused unless
-System/garrick-flags.json switches `page-actions` on, read at each request,
-so a page built while it was on stops acting once it is off. The cmux verbs
-also need the cmux extra and cmux itself.
+The cmux verbs need the cmux extra and cmux itself.
 
 Every request, done or refused, is one line in page-actions.log in the jobs
 folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
@@ -110,7 +106,6 @@ LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
-FLAG = "page-actions"
 # Seconds: git's whole share of one commit (add, commit and its hooks), then
 # how long a request waits for another on the same zone. Together they stay
 # under the two minutes the Obsidian plugin gives a request.
@@ -139,7 +134,7 @@ def jobs_dir() -> Path:
     return Path.home() / ".local" / "state" / "garrick-jobs"
 
 
-def flag_on(ws: Path, name: str = FLAG) -> bool:
+def flag_on(ws: Path, name: str) -> bool:
     """A preview feature switched on in System/garrick-flags.json, read as
     status.py's preview_flags() reads it: only a JSON true counts."""
     try:
@@ -813,12 +808,9 @@ def commit_new(zone: Path, folder: Path, message: str) -> None:
 
 
 def act(ws: Path, req, today=None) -> str:
-    """Carry out one request, or raise Refused. Every verb but settings needs
-    the page-actions flag, read now rather than when the page was built."""
+    """Carry out one request, or raise Refused."""
     if not isinstance(req, dict) or req.get("verb") not in VERBS + CMUX_VERBS:
         raise Refused("unknown action")
-    if req["verb"] != "settings" and not flag_on(ws):
-        raise Refused("actions are a preview feature, and they are off; switch on %s in System/garrick-flags.json" % FLAG)
     if req["verb"] in CMUX_VERBS:
         cmux_desk()                 # the cmux extra and cmux itself, before anything else
         return cmux_act(ws, req)

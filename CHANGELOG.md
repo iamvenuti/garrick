@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The status page's Todo tab, its buttons that act and its menu bar are released, on for everyone with no flag. The page has a Todo tab whenever a zone has a `Todo.md`, and each zone's line on the Overview opens it. In Garrick.app and in Obsidian, the buttons tick, date and add lines, park and wake, make, rename and delete projects and threads, and run a job, each through `page_action.py` as before; in a browser they still copy. With the cmux extra and cmux, *Open in cmux*, *Close session*, *Start up* and *Shut down* go through the desk. Settings › Menu bar is always there, with the icon off until you switch it on. Ask's park, wake and add need only the preview `ask`. `todo-list`, `page-actions` and `menu-bar` left in `System/garrick-flags.json` change nothing, and Settings lists the two previews left, `effort` and `ask`.
+
 ## [0.20.0] - 2026-10-12
 
 One press of the Ask hotkey can now open the Ask box and start dictating into it, through macOS Dictation or the key your own dictation app listens for.

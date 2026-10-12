@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Is an assistant mid-turn right now? Garrick.app's *Keep awake › While an
-agent is working* runs this once a minute (preview: menu-bar).
+agent is working* runs this once a minute.
 
     python3 agents_working.py [--verbose]
 

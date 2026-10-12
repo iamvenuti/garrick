@@ -160,7 +160,7 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp", "dk"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertNotIn("Decisions.", html)
 
     def test_mail_pages_have_a_kind_of_their_own(self):
@@ -257,7 +257,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(7, html.count("</script>"))          # the graph's data, the state the page waits for, the dialogs' data, the page's, the dialogs', the menu's, the graph's
+        self.assertEqual(8, html.count("</script>"))          # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the page's, the dialogs', the menu's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -335,7 +335,8 @@ class TestTabs(StatusCase):
     def test_the_default_split(self):
         self.job(0)
         html = self.page()
-        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="status">Status', html)
+        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)
+        self.assertIn('</button><button type="button" role="tab" data-tab="status">Status', html)
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
@@ -382,7 +383,7 @@ class TestTabs(StatusCase):
         self.assertIn("header.bar{position:sticky;top:0", status.BAR_CSS)
         for t in ("auto", "light", "dark"):                                  # icons, each named
             self.assertRegex(bar, r'<button type="button" data-t="%s" title="[^"]+" aria-label="Theme: [^"]+"><svg' % t)
-        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
         self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', dialog)   # hidden cards are listed in Settings
         self.assertIn("'<p class=\"hint\">Hidden cards</p>", status.LAYOUT_JS)
         self.assertIn("var u=e.target.closest('.unhide')", status.LAYOUT_JS)       # and shown again from there
@@ -403,7 +404,7 @@ class TestLayout(StatusCase):
         self.assertIn('data-slot="top"', html)
         self.assertGreaterEqual(html.count('class="grip"'), 6)
         self.assertIn('id="reset-view"', html)
-        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
         self.assertIn('id="reset-view"', dialog)                               # Reset view lives in Settings
         self.assertIn("k!=='garrick-launchers'", status.LAYOUT_JS)             # and keeps the launcher choices
 
@@ -562,7 +563,7 @@ class TestThreadCards(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg", "pa", "dk"}, set(card))
         self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
@@ -627,7 +628,7 @@ class TestSettings(StatusCase):
 
     def dialog(self):
         html = self.page()
-        return html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        return html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
 
     def stamp(self):
         (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
@@ -706,7 +707,7 @@ class TestLaunchers(StatusCase):
         html = self.page(launchers=("claude", "cmux"))
         self.assertIn('data-launchers="claude,cmux"', html)
         self.assertIn('"f":', htmllib.unescape(html))                   # cards carry their folder
-        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>")]
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
         self.assertIn('data-launcher="codex" disabled', dialog)          # not installed: shown, greyed
         self.assertNotIn('data-launcher="claude" disabled', dialog)
         self.assertNotIn('"f":', htmllib.unescape(self.page()))          # nothing to open it in, no folder
@@ -719,7 +720,7 @@ class TestLaunchers(StatusCase):
 
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
-        dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>")]
+        dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
         self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
         self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
@@ -771,7 +772,8 @@ class TestReleaseNotes(StatusCase):
 
 
 class TestPreviewFeatures(StatusCase):
-    """Features in Garrick's source but not yet released: off unless the workspace switches them on."""
+    """The Todo list, the buttons that act and the menu bar, previews once and on with no flag now;
+    the features still in preview stay off unless the workspace switches them on."""
 
     def todo(self):
         write(self.root / "Zones" / "Work" / "Todo.md",
@@ -780,31 +782,37 @@ class TestPreviewFeatures(StatusCase):
               "- [ ] [[Market Sizing]]: Numbers from Birch #waiting ⏳ 2999-02-01\n\n## Done\n\n- [x] Old one ✅ 2000-01-01\n")
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "- [ ] Check the clause\n")
 
-    def on(self, value=True):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": value}))
-
-    def test_off_unless_switched_on(self):
-        self.todo()
+    def test_the_previews_left(self):
         html = self.page()
-        self.assertNotIn('id="todolist"', html)
-        self.assertRegex(html, r'Todo list</b><span class="chip">off</span>')
-        for broken in ("{not json", json.dumps(["todo-list"]), json.dumps({"todo-list": "yes"})):
+        self.assertEqual(["Effort", "Ask"], re.findall(r'<div class="flagrow"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertIn('<code>{"effort": true}</code>', html)
+        for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
-            self.assertNotIn('id="todolist"', self.page())
+            self.assertFalse(status.preview_flags(self.root)["effort"])
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"effort": True}))
+        self.assertRegex(self.page(), r'Effort</b><span class="chip on">on</span>')
+
+    def test_a_released_flag_left_behind_changes_nothing(self):
+        self.todo()
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": False, "page-actions": False, "menu-bar": False}))
+        html = self.page()
+        for gone in ("Todo list</b>", "Actions</b>", "Menu bar</b>"):
+            self.assertNotIn(gone, html)
+        self.assertIn('id="todolist"', html)
+        self.assertIn('<button class="tick" type="button"', html)
+        self.assertIsNotNone(self.menu(html))
 
     def test_the_todo_list(self):
         self.todo()
-        self.on()
         html = self.page()
         self.assertIn('id="todolist"', html)
-        self.assertRegex(html, r'Todo list</b><span class="chip on">on</span>')
         self.assertIn('href="#todolist"', html)                                   # in the sidebar too
         card = html[html.index('id="todolist"'):]
         self.assertNotIn("&lt;action&gt;", card)                                  # the template's placeholder
         self.assertNotIn("Old one", card)                                         # ticked
         order = [card.index(t) for t in ("Book the room", "Send the revised terms", "Numbers from Birch", "Check the clause")]
         self.assertEqual(sorted(order), order)                                    # by section, then A-Z by thread
-        self.assertIn('<span class="tdate overdue">Due Mon 3 Jan</span>', card)
+        self.assertIn('<button class="tdate overdue" type="button" title="Set the date">Due Mon 3 Jan</button>', card)
         self.assertIn("Chase", card)
         for group in ("Inbox", "Waiting on", "In thread notes"):
             self.assertIn('<span class="tname">%s</span>' % group, card)
@@ -814,8 +822,6 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_todo_list_is_a_tab(self):
         self.todo()
-        self.assertNotIn('data-tab="todo"', self.page())                      # no Todo list, no Todo tab
-        self.on()
         html = self.page()
         self.assertIn('<button type="button" role="tab" data-tab="todo">Todo<span class="n">', html)
         over, todo = html.index('id="tab-overview"'), html.index('id="tab-todo" hidden')
@@ -824,11 +830,8 @@ class TestPreviewFeatures(StatusCase):
         self.assertLess(todo, html.index('id="todolist"'))                    # the list sits in its own tab
         self.assertIn("StatusTab(sec.id.slice(4))", status.JS)                  # a link opens the tab its target is in
 
-    def test_add_a_line_only_with_actions(self):
+    def test_add_a_line(self):
         self.todo()
-        self.on()
-        self.assertNotIn('id="tadd"', self.page())
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": True, "page-actions": True}))
         html = self.page()
         self.assertIn('<button type="button" class="act primary tadd-open" data-zone="Work"', html)
         self.assertIn('<button type="button" class="act primary tadd-open" data-zone="Personal"', html)   # an empty list takes a line too
@@ -842,16 +845,9 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("window.TaddOpen=function(z)", status.TADD_JS)
         self.assertIn(".nohost .tadd-open{display:none}", status.CSS)             # a browser cannot act
 
-    def test_actions_only_when_switched_on(self):
+    def test_actions(self):
         self.todo()
-        self.on()
         html = self.page()
-        self.assertNotIn('data-act=', html.split("<script>")[0])
-        self.assertNotIn('class="tick"', html.split("<script>")[0])
-        self.assertNotIn('"pa":', htmllib.unescape(html))
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"todo-list": True, "page-actions": True}))
-        html = self.page()
-        self.assertRegex(html, r'Actions</b><span class="chip on">on</span>')
         rows = re.findall(r'<div class="trow[^"]*" data-z="([^"]*)" data-f="([^"]*)" data-k="([^"]*)"', html)
         self.assertTrue(rows)
         self.assertTrue(all(z == "Work" and re.fullmatch(r"[0-9a-f]{16}", k) for z, _, k in rows))     # what a button sends back
@@ -871,15 +867,10 @@ class TestPreviewFeatures(StatusCase):
         m = re.search(r'<script type="application/json" id="menu-data">(.*?)</script>', html, re.S)
         return json.loads(m.group(1)) if m else None
 
-    def test_the_menu_bar_only_when_switched_on(self):
+    def test_the_menu_bar(self):
         html = self.page()
-        self.assertIsNone(self.menu(html))                                  # the app takes its icon away
-        self.assertNotIn('id="menu-settings"', html)
-        self.assertRegex(html, r'Menu bar</b><span class="chip">off</span>')
-        self.assertIn("host.postMessage({menu:data&&", status.MENU_JS)       # it still tells the app there is none
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
-        html = self.page()
-        self.assertRegex(html, r'Menu bar</b><span class="chip on">on</span>')
+        self.assertIsNotNone(self.menu(html))
+        self.assertIn("host.postMessage({menu:data&&", status.MENU_JS)       # a page with none takes the icon away
         self.assertIn('<section class="setsec apponly" id="menu-settings" hidden>', html)   # until the app answers
         self.assertIn("if(!host||!box)return;box.hidden=false", status.MENU_SETTINGS_JS)
         for control in ('id="menu-show"', 'id="menu-style"', 'id="menu-login"', 'id="menu-hotkey"'):   # the four settings
@@ -890,7 +881,6 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn(".nohost .apponly{display:none}", status.SETTINGS_CSS)   # a browser has no menu bar to offer
 
     def test_what_the_menu_lists(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
         work = self.root / "Zones" / "Work"
         write(work / "Acme Review" / "Threads" / "Renewal" / "Renewal.md", thread_note("Acme Review", "Renewal", "acme", status="parked"))
         write(work / "Solo" / "Solo.md", project_hub("Work", "Solo", "acme"))
@@ -903,20 +893,19 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual(["Acme Review", "Birch Entry", "Solo"], list(projects))           # projects first, by name
         acme = projects["Acme Review"]
         self.assertEqual(["Pricing"], [t["n"] for t in acme["t"]])                          # parked threads stay out
-        self.assertEqual({"n", "w", "u", "t"}, set(acme))                                   # names and links, no figures
+        self.assertEqual({"n", "w", "u", "t", "dk"}, set(acme))                             # names and links, no figures
         self.assertIn("Acme%20Review", acme["u"])                                           # the project's own hub
         self.assertEqual("Acme Review", acme["w"])
         self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
         self.assertEqual("Solo", projects["Solo"]["w"])
         pricing = acme["t"][0]
-        self.assertEqual({"n", "w", "u"}, set(pricing))
+        self.assertEqual({"n", "w", "u", "dk"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
         self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])
 
     def test_the_menu_offers_the_inbox(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         write(self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "call.txt", "A: hello\n")
         intake = self.menu(self.page(launchers=("claude",)))["intake"]
@@ -927,7 +916,6 @@ class TestPreviewFeatures(StatusCase):
     def test_the_menus_script_stands_alone(self):
         # In a script element of its own, an error anywhere else on the page
         # cannot keep the app from hearing what its menu lists.
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"menu-bar": True}))
         html = self.page()
         self.assertIn("<script>%s</script>" % status.MENU_JS, html)
         self.assertEqual(1, html.count(status.MENU_JS))
@@ -1369,10 +1357,11 @@ class TestOpenActions(StatusCase):
         html = self.page()
         start = html.index('id="todo"')
         block = html[start:html.index("</details>", start)]
+        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open the list</a>', block)
         url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
-        self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open</a>' % url, block)
+        self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
         vault = self.page(vault="My Work")
-        self.assertIn("file=Zones/Work/Todo\" title=\"Open Work/Todo.md\">Open</a>", vault)
+        self.assertIn("file=Zones/Work/Todo\" title=\"Open Work/Todo.md\">Open Todo.md</a>", vault)
 
     def test_no_todo_no_open_actions(self):
         self.assertIn('class="top" style="--tiles:4"', self.page())

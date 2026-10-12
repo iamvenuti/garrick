@@ -16,7 +16,7 @@
 //     show as the icons its menu bar draws, where a browser shows words;
 //   - every link the page holds (a note in Obsidian, a file, the web) goes to
 //     the app macOS uses for it;
-//   - with the preview menu-bar on, an icon in the menu bar listing the live
+//   - an icon in the menu bar listing the live
 //     threads of the zone the graph shows, each opening a session, with a red
 //     dot when the Status tab has one, and Keep awake: for a time, until
 //     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
@@ -37,7 +37,7 @@
 // Each time it fills the menu or the panel it leaves garrick-app-menu.json in
 // the jobs folder: what it had to fill them with, in counts and zone names.
 // Nothing here changes a file in the workspace, as nothing on the page does,
-// except through page_action.py (preview page-actions) and ask.py (preview ask).
+// except through page_action.py and ask.py (preview ask).
 import AppKit
 import Carbon.HIToolbox
 import IOKit.pwr_mgt
@@ -684,12 +684,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Whether the page says the desk opens cmux here: the cmux extra, cmux
-	// itself and the preview page-actions, as its menu's `dk` says.
+	// itself, as its menu's `dk` says.
 	func deskReady() -> Bool {
 		(menuState?["data"] as? [String: Any])?["dk"] as? Int == 1
 	}
 
-	// A button that changes something (preview, page-actions): page_action.py,
+	// A button that changes something: page_action.py,
 	// beside status.py, does it and commits it, and says what it did. The app
 	// only passes the request on; the script checks every part of it.
 	func act(_ request: [String: Any]) {
@@ -745,7 +745,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return true
 	}
 
-	// MARK: the menu bar (preview, menu-bar)
+	// MARK: the menu bar
 
 	// Settings › Menu bar shows the app's own values: they are put in the page
 	// before it runs, and again whenever one changes.
@@ -1955,7 +1955,7 @@ func press(_ spec: [String: Any]) {
 	}
 }
 
-// MARK: the panel (preview, menu-bar)
+// MARK: the panel
 // The menu as a panel that slides out from the left or right edge of the
 // screen, or down from under the notch. It holds the same rows as the menu and
 // runs them the same way; StatusApp.fillPanel fills it from the page's menu.

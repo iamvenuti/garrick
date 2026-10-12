@@ -45,9 +45,9 @@ on in Settings, where one of them can also be what clicking a thread's name
 does; `--no-cmux` leaves cmux out. A zone with no Todo.md gets no Open
 actions, and a workspace with none gets no card for them.
 
-Preview features (FLAGS) stay off until System/garrick-flags.json switches
-them on: the Todo tab, and the buttons that act, which page_action.py beside
-this file carries out for the Mac app. With the cmux extra beside this folder
+The buttons that act are carried out by page_action.py beside this file, for
+the Mac app and the Obsidian plugin. Preview features (FLAGS) stay off until
+System/garrick-flags.json switches them on. With the cmux extra beside this folder
 (../cmux/cmuxlib.py), the page shows which projects and threads have a
 session open, and its buttons can drive the desk. `--settle` lets a burst of
 build requests make one page; `--also` and `--moved` reach effort.py.
@@ -516,19 +516,12 @@ def todo(ws: Path) -> Dict[str, dict]:
 
 # ---- preview features: in Garrick's source, not yet released. Each is off
 # unless the workspace switches it on in System/garrick-flags.json, as
-# {"todo-list": true}. A workspace that runs Garrick's main as its own switches
+# {"effort": true}. A workspace that runs Garrick's main as its own switches
 # on what it is trying out; a release switches a feature on for everyone and
 # drops its flag. Settings lists them, and which are on.
 FLAGS = {
-    "todo-list": ("Todo list", "Every open action in the zones, with its thread, its section of Todo.md and its dates, "
-                  "in a card of its own."),
-    "page-actions": ("Actions", "In the Garrick app: tick and date a line of the Todo list, and park or wake a thread "
-                     "from its card. Each changes one line or one status field and commits it, as the skills do."),
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
-    "menu-bar": ("Menu bar", "In the Garrick app: an icon in the menu bar with the live projects and threads of the zone the "
-                 "graph shows, each opening as its card does, and a red dot when something failed; or the same list in a panel "
-                 "that slides out from a screen edge or from under the notch. Switched on in the app's Settings."),
     "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
             "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
 }
@@ -920,8 +913,8 @@ background:var(--ink);color:var(--surface);font-size:13px;padding:7px 8px 7px 14
 
 # Making, renaming and deleting projects and threads (#36, #37, #38): its own
 # script, so an error here leaves the rest of the page working; the card's
-# head asks window.GarrickManage only when this loaded. In the app with
-# page-actions on, a dialog's request goes to page_action.py, which runs
+# head asks window.GarrickManage only when this loaded. In the app, a
+# dialog's request goes to page_action.py, which runs
 # scaffold.py; anywhere else the dialog copies the phrase to say instead.
 MANAGE_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,D={zones:{},acting:false};
@@ -1037,8 +1030,8 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 """
 
 
-# The Todo tab (preview, todo-list): one zone at a time, a filter, a sort,
-# and with page-actions in the app, the tick, the date menu and the pending
+# The Todo tab: one zone at a time, a filter, a sort,
+# and in the app, the tick, the date menu and the pending
 # row of a line being added. Shared with any page that carries the tab.
 TODO_CSS = r"""
 .todotab .tbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:14px}
@@ -1188,9 +1181,9 @@ setTimeout(function(){if(host)host.postMessage({rebuild:true});else location.rel
 """
 
 
-# Preview, menu-bar. Inside Garrick.app the page hands the app what
-# its menu bar icon lists: the build's own rows (#menu-data, absent with the
-# flag off, which takes the icon away), with the zone the graph shows and the
+# The menu bar. Inside Garrick.app the page hands the app what
+# its menu bar icon lists: the build's own rows (#menu-data, whose absence
+# takes the icon away), with the zone the graph shows and the
 # app a thread opens in, both kept in this window's storage. It sends them at
 # load and after any change, so the menu follows the graph's drop-down and
 # Settings. Settings › Menu bar is the app's, not the page's: the app puts
@@ -2294,8 +2287,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     project is), the name to say, its note's link; whether the note has a
     Resume here block (`r`) and how old that block's date is (`rd`). Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
-    sessions open), the session's state, and with `drive` (the extra, cmux
-    and page-actions) what the desk opens and closes."""
+    sessions open), the session's state, and with `drive` (the extra and
+    cmux) what the desk opens and closes."""
     card = {"n": r["thread"], "kl": "thread", "z": r["zone"], "p": r["project"], "t": r["party"], "d": days,
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
             "u": link(r["note"]), "r": 1 if r.get("resume") else 0,
@@ -2356,7 +2349,7 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
 
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
               desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
-    """What the app's menu bar icon lists (preview, menu-bar): per zone, its
+    """What the app's menu bar icon lists: per zone, its
     live projects by name, each with its live threads by name, and whether
     the Status tab carries its red dot. A project or thread gives its name,
     the name to say, its note's link and, where an app can open it, its
@@ -2408,7 +2401,7 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
 
 
 def menu_settings() -> str:
-    """Settings › Menu bar (preview, menu-bar), shown in Garrick.app
+    """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
     shortcut that opens either, the one that opens the Ask box (preview
     ask), and the dictation the box starts once it opens. The app keeps
@@ -2584,7 +2577,7 @@ def preview_section(flags: Dict[str, bool]) -> str:
                    % (E(FLAGS[k][0]), " on" if on else "", "on" if on else "off", E(FLAGS[k][1])) for k, on in flags.items())
     return ('<section class="setsec"><h3>Preview features</h3>%s<p class="hint">In Garrick&#39;s source but not yet released, '
             'so they may still change. Switch one on in <code>System/garrick-flags.json</code>, for example '
-            '<code>{"todo-list": true}</code>, and rebuild the page.</p></section>' % rows)
+            '<code>{"effort": true}</code>, and rebuild the page.</p></section>' % rows)
 
 
 VIEW = ('<section class="setsec"><h3>View</h3><p class="hint">Cards dragged or hidden, folds, the graph&#39;s view and the open tab '
@@ -2605,7 +2598,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s</dialog>'
-            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + (menu_settings() if preview_flags(ws)["menu-bar"] else ""),
+            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + menu_settings(),
                VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
@@ -3062,7 +3055,7 @@ return'<button class="act pflip" type="button" data-act="'+esc(JSON.stringify(q)
 +'" data-say="'+(s?'Waking ':'Parking ')+esc(o.n)+'…"'+(o.h?' title="'+(s?'Wake':'Park')+' the project and every thread in it"':'')+'>'+(s?'Wake':'Park')+'</button>'}
 function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="button" data-act="'+desk(o,'close')+'"'+(o.f?' data-expect="'+esc('none:'+o.f)+'"':'')
 +' data-say="Closing the session…">Close session</button>':''}
-/* Park or Wake, beside the name: it acts in the app with page-actions on, and copies the phrase anywhere else;
+/* Park or Wake, beside the name: it acts in the app, and copies the phrase anywhere else;
    with a session open, Close session sits beside it */
 function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
 function pflip(o){if(o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
@@ -3110,7 +3103,7 @@ if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.write
 var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
-/* An action (preview, page-actions; the desk's): the app runs page_action.py, then rebuilds the page.
+/* An action (the page's or the desk's): the app runs page_action.py, then rebuilds the page.
    One with data-confirm asks for a second click within four seconds; one with data-expect
    keeps the page rebuilding until what it asked for shows (RELOAD_JS). */
 var x=t.closest('button[data-act]');if(x){if(!host)return;var r;try{r=JSON.parse(x.dataset.act)}catch(err){return}
@@ -3122,7 +3115,7 @@ var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launc
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
 var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){say(b.dataset.say)},function(){say(b.dataset.copy)})});
-/* The Todo list's + button (page-actions, in the app): Garrick's dialog opens on
+/* The Todo list's + button (in the app): Garrick's dialog opens on
    that zone, and the app runs page_action.py with the request, then rebuilds. */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.tadd-open[data-zone]');if(a&&window.TaddOpen)TaddOpen(a.dataset.zone)});
 window.TaddSend=function(z,target,date,text){if(!host)return;host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}});
@@ -3595,14 +3588,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
     flags_on = preview_flags(ws)
-    acting = flags_on["page-actions"]
-    lists = todo_list(ws, link, now.date()) if flags_on["todo-list"] else []
+    acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
+    lists = todo_list(ws, link, now.date())
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
     # move between the work and the machinery, the cards are open on the page,
     # and the Status tab's own figures say whether anything needs attention.
-    # With the cmux extra, cmux, and page-actions on, the desk's buttons: Open
+    # With the cmux extra and cmux, the desk's buttons: Open
     # in cmux and Close session on cards, Start up and Shut down here, in the app only.
     DK = S is not None and acting and desk_ready()
     desk_acts = ('<span class="desk-acts apponly"><button class="act" type="button" data-act="%s" data-expect="live:" data-say="Starting up…">Start up</button>'
@@ -3931,13 +3924,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
-    menu = ""
-    if flags_on["menu-bar"]:
-        md = menu_data(T, names, link, cmux, trouble, S, DK)
-        if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
-            md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
-                            "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
-        menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
+    md = menu_data(T, names, link, cmux, trouble, S, DK)
+    if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
+        md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
+                        "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
+    menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}

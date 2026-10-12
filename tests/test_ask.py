@@ -70,7 +70,7 @@ FAKE_CLAUDE = textwrap.dedent("""\
 class AskCase(ActionCase):
     def setUp(self):
         super().setUp()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "page-actions": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
         self.names = ask.scan(self.root)
         self._saved = {k: os.environ.get(k) for k in ("GARRICK_HARNESS", "GARRICK_ASK_TIER", "GARRICK_CAP_CALLS_HOUR", "PATH", "GARRICK_CMUX")}
         os.environ["GARRICK_CMUX"] = str(self.root / "no-cmux")        # whatever this Mac has: no cmux, so no desk
@@ -225,18 +225,17 @@ class TestCarryOut(AskCase):
         self.assertIn("preview feature, and it is off", out["say"])
         self.assertEqual([], session.seen)
 
-    def test_actions_need_the_page_actions_flag_too(self):
+    def test_actions_need_only_the_ask_flag(self):
         write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
         session = FakeSession(json.dumps({"say": "Parked.", "do": [
             {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
             {"verb": "open", "zone": "Work", "project": "Acme Review"}]}))
         out = ask.Asker(self.root, session).ask("park Pricing, then open Acme")
-        self.assertEqual(["Refused: actions are a preview feature, and they are off; switch on page-actions in "
-                          "System/garrick-flags.json", "Opening Acme Review"], out["done"])
-        self.assertIn("\nstatus: active\n", self.thread.read_text())
+        self.assertEqual(["Acme Review, Pricing is parked", "Opening Acme Review"], out["done"])
+        self.assertIn("\nstatus: parked\n", self.thread.read_text())
 
     def test_the_ask_flag_switched_off_mid_turn(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({}))
         out = ask.Asker(self.root).carry_out("Parked.", [{"verb": "park", "zone": "Work", "project": "Acme Review",
                                                           "thread": "Pricing"}], self.names)
         self.assertFalse(out["ok"])
@@ -475,12 +474,12 @@ class TestDesk(AskCase):
         fake.chmod(0o755)
         os.environ["GARRICK_CMUX"] = str(fake)
 
-    def test_ready_needs_the_actions_and_cmux(self):
+    def test_ready_needs_cmux(self):
         self.assertFalse(ask.desk_ready(self.root))                         # no cmux
         self.fake_cmux()
         self.assertTrue(ask.desk_ready(self.root))
         write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
-        self.assertFalse(ask.desk_ready(self.root))                         # page-actions off
+        self.assertTrue(ask.desk_ready(self.root))                          # the actions need no flag of their own
 
     def test_an_open_carries_the_desk_when_it_is_ready(self):
         do = [{"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "app": "cmux"},

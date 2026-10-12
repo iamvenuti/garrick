@@ -17,8 +17,7 @@
 //     message out through the console, marked with a random word, so nothing
 //     else the page logs is taken for one. The plugin answers as the app does:
 //     Copy, Rebuild, the ways to open a thread (Finder, cmux, Codex, Claude),
-//     and page_action.py for a button that changes something (preview
-//     page-actions), then a toast on the page, the reply handed to the page
+//     and page_action.py for a button that changes something, then a toast on the page, the reply handed to the page
 //     (window.GarrickActed, which shows a park or a wake at once) and a rebuild;
 //   - every link on the page: a note in this vault opens in a new tab here,
 //     anything else goes to macOS, as from a browser;
@@ -373,7 +372,7 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		});
 	}
 
-	// A button that changes something (preview page-actions): page_action.py,
+	// A button that changes something: page_action.py,
 	// beside status.py, checks it, does it and commits it, and says what it did.
 	act(view, request) {
 		const script = path.join(path.dirname(this.script()), "page_action.py");

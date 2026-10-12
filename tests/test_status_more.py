@@ -52,8 +52,7 @@ class TestTodoTab(StatusCase):
               "- [x] Sent the brief ✅ 2026-03-11\n- [x] An old one ✅ 2026-03-01\n")
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "- [ ] Check the clause\n")
 
-    def tab(self, **on):
-        flags(self.root, **dict({"todo-list": True}, **on))
+    def tab(self):
         html = self.page()
         start = html.index('id="todolist"')
         return html, html[start:html.index("</section>", start)]
@@ -78,9 +77,6 @@ class TestTodoTab(StatusCase):
         done = tab[tab.index("Done today"):]
         self.assertIn("Sent the brief", done)
         self.assertNotIn("An old one", tab)
-        self.assertNotIn('class="tick"', tab)                     # read-only without page-actions
-        _, tab = self.tab(**{"page-actions": True})
-        done = tab[tab.index("Done today"):]
         self.assertRegex(done, r'<div class="trow done[ "]')
         self.assertIn('aria-label="Reopen: Sent the brief"', done)
         self.assertIn("send(d?'todo-done':'todo-undo',r)", status.TODO_JS)
@@ -105,7 +101,7 @@ class TestTodoTab(StatusCase):
         self.assertIn("r.classList.add('pending')", status.TODO_JS)             # its key changes: no second click before the rebuild
         self.assertIn("window.TodoPending=function(z,target,date,text)", status.TODO_JS)
         self.assertIn("if(window.TodoPending)TodoPending(z,target,date,text)", status.JS)
-        _, tab = self.tab(**{"page-actions": True})
+        _, tab = self.tab()
         self.assertIn('<button class="tdate overdue" type="button"', tab)
         self.assertIn("＋ date", tab)
 
@@ -308,7 +304,7 @@ class TestManageFromThePage(StatusCase):
         data = json.loads(re.search(r'id="manage-data">(.*?)</script>', html, re.S).group(1))
         self.assertIn("Acme Review", data["zones"]["Work"]["projects"])
         self.assertIn("acme", [t for t, _ in data["zones"]["Work"]["parties"]])
-        self.assertFalse(data["acting"])
+        self.assertTrue(data["acting"])
         pricing = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review", "Pricing"], pricing["mg"][:3])
         self.assertGreaterEqual(pricing["mg"][3], 1)                       # its note, at least
@@ -316,8 +312,6 @@ class TestManageFromThePage(StatusCase):
         self.assertIn('data-manage="new-project"', html)
         self.assertIn('data-manage="new-thread"', html)
         self.assertIn("<script>%s</script>" % status.MANAGE_JS, html)
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
-        self.assertTrue(json.loads(re.search(r'id="manage-data">(.*?)</script>', self.page(), re.S).group(1))["acting"])
 
     def test_the_script_parses_and_draws_a_cards_buttons(self):
         if not shutil.which("node"):
@@ -477,7 +471,6 @@ class TestSessions(StatusCase):
         self.assertNotIn('"dk"', htmllib.unescape(html))
 
     def test_dots_on_rows_cards_and_the_menu(self):
-        flags(self.root, **{"menu-bar": True, "page-actions": True})
         with self.lib():
             html = self.page()
         self.assertIn('<span class="live working" title="A session is open in it, working">', html)
@@ -497,13 +490,6 @@ class TestSessions(StatusCase):
         self.assertIn('launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)', swift)   # and opens through the desk
         state = json.loads(re.search(r'id="state-data">(.*?)</script>', html, re.S).group(1))
         self.assertEqual(3, len(state["live"]))          # Pricing's folder, and the two projects' folders above a session
-        flags(self.root, **{"menu-bar": True})
-        with self.lib():
-            html = self.page()
-        self.assertEqual("working", cards(html)[("Acme Review", "Pricing")]["live"])   # the dots need no actions
-        self.assertNotIn("dk", cards(html)[("Acme Review", "Pricing")])                 # but the desk's buttons do
-        self.assertNotIn("dk", json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)))
-        self.assertNotIn('class="desk-acts', html)
 
     def test_every_cmux_open_in_the_app_goes_through_the_desk_when_it_is_ready(self):
         # One rule, in launch(): rows, Process the Inbox, the fields' words and
@@ -526,7 +512,6 @@ class TestSessions(StatusCase):
         self.assertNotIn('["verb": "open", "zone"', swift)        # rows open by folder too, through the same rule
 
     def test_the_desks_buttons(self):
-        flags(self.root, **{"page-actions": True})
         with self.lib():
             html = self.page()
         self.assertIn('data-act="{&quot;verb&quot;: &quot;startup&quot;}"', html)
@@ -541,7 +526,6 @@ class TestSessions(StatusCase):
         self.assertIn("if(x.dataset.confirm&&!x.classList.contains('armed'))", status.JS)
 
     def test_a_library_that_fails_shows_nothing_open(self):
-        flags(self.root, **{"page-actions": True})
         with self.lib("def sessions_by_folder(ws):\n    raise RuntimeError('no socket')\n"):           # no installed(): taken at its word
             self.assertEqual({}, status.sessions(self.root))
             html = self.page()
@@ -658,7 +642,6 @@ class TestParkAProject(StatusCase):
         hub.write_text(hub.read_text().replace("status: active", "status: parked"))
 
     def test_its_threads_are_parked_with_it(self):
-        flags(self.root, **{"page-actions": True, "menu-bar": True})
         html = self.page()
         pricing = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual((1, 1), (pricing["s"], pricing["held"]))
@@ -680,14 +663,8 @@ class TestParkAProject(StatusCase):
         self.assertNotIn("pa", nodes["Pricing"])
         self.assertEqual(0, nodes["Birch Entry"]["hp"])
 
-    def test_without_actions_nothing_to_send(self):
-        html = self.page()
-        self.assertNotIn("pp", project_cards(html)["Acme Review"])
-        self.assertEqual(1, project_cards(html)["Acme Review"]["hp"])
-
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_cards_buttons(self):
-        flags(self.root, **{"page-actions": True})
         html = self.page()
         acme, birch = project_cards(html)["Acme Review"], project_cards(html)["Birch Entry"]
         pricing = cards(html)[("Acme Review", "Pricing")]
@@ -974,7 +951,6 @@ class TestParkLandsAtOnce(StatusCase):
 
     def setUp(self):
         super().setUp()
-        flags(self.root, **{"page-actions": True})
         shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry" / "Threads")    # its own thread
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Renewal" / "Renewal.md",
               thread_note("Acme Review", "Renewal", "acme"))

@@ -236,7 +236,6 @@ class TestFromThePage(ManageCase):
 
     def setUp(self):
         super().setUp()
-        (self.root / "System" / "garrick-flags.json").write_text('{"page-actions": true}')
         os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
 
     def act(self, **req):

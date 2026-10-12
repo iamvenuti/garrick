@@ -53,7 +53,6 @@ class ActionCase(unittest.TestCase):
         self._env = os.environ.get("GARRICK_JOBS_DIR")
         os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)
         build_workspace(self.root)
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook
         git(self.work, "init", "-q")
@@ -447,32 +446,18 @@ class TestAudit(ActionCase):
 
 
 class TestFlag(ActionCase):
-    """The page-actions flag is read at each request, not when the page was built."""
+    """The actions were a preview, `page-actions`; released, they need no flag."""
 
-    def test_off_refuses_all_but_settings(self):
+    def test_a_leftover_flag_changes_nothing(self):
         write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": False}))
-        before = (self.work / "Todo.md").read_bytes()
-        for req in ({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")},
-                    {"verb": "todo-add", "zone": "Work", "text": "Book the room"},
-                    {"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
-                    {"verb": "run", "job": "whats-open"}):
-            with self.assertRaisesRegex(pa.Refused, "preview feature, and they are off", msg=req):
-                pa.act(self.root, req, today=TODAY)
-        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
-        self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
-        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note"]))
-        os.remove(self.root / "System" / "garrick-flags.json")                       # no flags at all: off
-        with self.assertRaisesRegex(pa.Refused, "they are off"):
-            self.act(verb="todo-add", zone="Work", text="Book the room")
+        self.assertEqual("Added to Inbox: Book the room", self.act(verb="todo-add", zone="Work", text="Book the room"))
+        (self.root / "System" / "garrick-flags.json").unlink()                        # no flags at all
+        self.assertTrue(self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Invoice")).startswith("Done: "))
 
-    def test_cmux_verbs_need_the_flag_and_the_desk(self):
+    def test_cmux_verbs_need_the_desk(self):
         real = pa.CMUX_EXTRA
         pa.CMUX_EXTRA = Path(self._tmp.name) / "no-cmux-extra"       # never the real desk
         try:
-            write(self.root / "System" / "garrick-flags.json", json.dumps({}))
-            with self.assertRaisesRegex(pa.Refused, "they are off"):
-                pa.act(self.root, {"verb": "startup"})
-            write(self.root / "System" / "garrick-flags.json", json.dumps({"page-actions": True}))
             for verb in ("open", "close", "startup", "shutdown"):
                 with self.assertRaisesRegex(pa.Refused, "need the cmux extra", msg=verb):
                     pa.act(self.root, {"verb": verb, "zone": "Nowhere", "project": "Acme Review"})

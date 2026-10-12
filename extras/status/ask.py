@@ -50,8 +50,7 @@ JSON (ask-brief.md). Each action is checked against that list, then:
                cmux extra's desk ready (`dk`), cmux opens it as a tab that
                starts the session, as the page's buttons do
     park, wake run through page_action.act(), as the page's buttons do: the
-    todo-add   status field or the line, committed in the zone's repository,
-               and only with the page's own preview, page-actions, on too
+    todo-add   status field or the line, committed in the zone's repository
 
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
 is carried into the next request as `<last-results>`. One line per request
@@ -140,10 +139,8 @@ def flag_on(ws: Path) -> bool:
 
 def desk_ready(ws: Path) -> bool:
     """Whether cmux opens through the cmux extra's desk, as status.py's page
-    decides it: page-actions on, the extra beside the page, cmux installed."""
+    decides it: the extra beside the page, cmux installed."""
     pa = page_action()
-    if not pa.flag_on(ws):
-        return False
     try:
         pa.cmux_desk()
     except pa.Refused:

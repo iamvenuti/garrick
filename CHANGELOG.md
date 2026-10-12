@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-12
+
+The ledger of what a project published now keeps its history: a copy withdrawn, replaced or sent by mail stays on record without being watched, a note may follow `share` or `here`, and a thread-first project keeps one ledger per thread. The drift check follows a destination written as a folder and a file kept outside `Deliverables/`, reports a copy a rights service encrypted in place apart from real drift, and says when a sync conflict leaves a second copy beside something you published. On the Todo list, a Waiting on line waits its days before it expires, and the Inbox can follow thread names as a Tasks query does.
+
 ### Added
 
 - `drift.py` says when a sync conflict leaves a second copy beside something you published. It reads only the names under each folder a ledger uses, never the files, so nothing is downloaded: `conflicted copy` or a `-conflict` suffix is reported anywhere there, and a numbered copy such as `Terms (1).docx` only beside a published file, since elsewhere that shape is mostly downloads. The status page lists each under *Needs attention*. ([#60](https://github.com/iamvenuti/garrick/issues/60))

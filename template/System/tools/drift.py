@@ -12,9 +12,12 @@ cloud folder, is one row in its project's `Deliverables/published.md`:
     |---|---|---|---|---|
     | 2026-10-01 | `260930 - Pricing deck.pptx` | `Decks/Pricing deck.pptx` | Dana, Owen | share |
 
-`File` is the project's copy, under `Deliverables/`. `Destination` is the
-shared copy, relative to the folder the hub names in its `shared:` key, or
-`<link>:<path>` for another folder linked under the zone's `.shared/`. The
+`File` is the project's copy, a path under `Deliverables/`, or from the
+project's own folder when it is kept elsewhere (`Threads/Pricing/Working/
+Rates.xlsx`). `Destination` is the shared copy, relative to the folder the
+hub names in its `shared:` key, or `<link>:<path>` for another folder linked
+under the zone's `.shared/`; a destination that is a folder (`Decks/`) holds
+a copy with the file's own name. The
 hub's key names its folder the same way, `<link>/<path>`, through a link in
 `Zones/<Zone>/.shared/`: never by the provider's own path, which changes
 when an account or library is renamed. `Authoritative` says which copy wins
@@ -275,16 +278,21 @@ def survey(root: Path) -> List[dict]:
                 out.append(dict(where, file=row["file"], destination=row["destination"], date=row["date"],
                                 state=row["history"], say=""))
                 continue
-            ours = folder / row["file"]
             if row["file"].startswith(("/", "~")) or ".." in Path(row["file"]).parts:
-                out.append(dict(where, file=row["file"], state="unread", say="the file must be a path under Deliverables/"))
+                out.append(dict(where, file=row["file"], state="unread",
+                                say="the file must be a path under Deliverables/, or from the %s's folder" % ("thread" if thread else "project")))
                 continue
+            ours = folder / row["file"]
+            if not ours.exists() and (folder.parent / row["file"]).exists():
+                ours = folder.parent / row["file"]           # kept outside Deliverables/, named from the project's (or thread's) folder
             theirs = destination(zone, hub_shared, row["destination"])
             if theirs is None:
                 state, say = "unchecked", ("the hub names no shared folder, `shared:`, through a link in %s/%s/"
                                            % (zone.name, LINKS) if ":" not in row["destination"]
                                            else "no link %s in %s/%s/" % (row["destination"].split(":")[0], zone.name, LINKS))
             else:
+                if row["destination"].endswith(("/", ":")) or theirs.is_dir():
+                    theirs = theirs / Path(row["file"]).name    # a folder: the copy there keeps the file's name
                 state, say = compare(ours, theirs)
             out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
                             date=row["date"], state=state, say=say))

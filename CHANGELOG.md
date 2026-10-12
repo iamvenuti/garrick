@@ -11,6 +11,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- `drift.py` took a destination written as a folder (`Contracts/`, or a `<link>:` with nothing after it) for the shared file itself, and since a folder has no blocks on disk, reported every such row as online only. A folder now holds a copy with the file's own name. A deliverable kept outside `Deliverables/`, such as one built in a thread's working folder, can be named by its path from the project's folder; `..` is still refused. ([#58](https://github.com/iamvenuti/garrick/issues/58))
 - A workbook re-saved on a share could read as drifted when nothing in it had changed: Excel leaves `[trash]/` parts behind after an incremental save, and `drift.py` compared them as content. They are now left out with the provider's own parts. ([#57](https://github.com/iamvenuti/garrick/issues/57))
 
 - `todo.py expire` moved a `## Waiting on` line with no `⏳` to the expired archive the night it was written, however new, so a line written there by hand was gone the next morning. Waiting on lines are now recorded in `.todo-seen.json` as Inbox lines are, and one with no day to chase expires only after the zone's days, 14 by default. ([#56](https://github.com/iamvenuti/garrick/issues/56))

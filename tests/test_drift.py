@@ -189,6 +189,27 @@ class DriftTest(unittest.TestCase):
         self.assertIn(".shared/", lines["Zones/Work/.gitignore"].splitlines())
         self.assertIn(".shared/", lines["/".join(garrick_lib.ZONE_TEMPLATE + (".gitignore",))].splitlines())
 
+    def test_a_destination_folder_holds_a_copy_with_the_files_name(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        (self.share / "Acme" / "Contracts").mkdir()
+        (self.share / "Acme" / "Contracts" / "260930 - Terms.docx").write_bytes(docx())
+        for dest in ("`Contracts/`", "`Contracts`", "`team:Acme/Contracts/`"):
+            ledger.write_text(ledger.read_text().split("| 2026-10-01")[0]
+                              + "| 2026-10-01 | `260930 - Terms.docx` | %s | Dana | share |\n" % dest)
+            self.assertEqual("same", self.one()["state"], dest)
+
+    def test_a_file_may_be_named_from_the_projects_folder(self):
+        working = self.acme / "Threads" / "Pricing" / "Shared Notes"
+        working.mkdir(parents=True)
+        (working / "261001 - Rates.csv").write_bytes(b"rates")
+        (self.share / "Acme" / "Rates.csv").write_bytes(b"rates")
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("`260930 - Terms.docx` | `Terms.docx`",
+                                                     "`Threads/Pricing/Shared Notes/261001 - Rates.csv` | `Rates.csv`"))
+        self.assertEqual("same", self.one()["state"])
+        ledger.write_text(ledger.read_text().replace("`Threads/Pricing", "`../Acme Review/Threads/Pricing"))
+        self.assertEqual("unread", self.one()["state"])                         # never out of the project
+
     def test_the_status_page_lists_what_drifted(self):
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
         import status

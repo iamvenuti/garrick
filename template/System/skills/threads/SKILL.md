@@ -224,8 +224,10 @@ per wrap: the one named, and nothing else.
    it: the copy here does (`here`). Re-read `Deliverables/published.md`
    (make it with the header row when there is none) and append one row,
    `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
-   the destination relative to the folder the hub names in `shared:`. A
-   clause may follow `share` or `here`, such as who edits it there. Say
+   the destination relative to the folder the hub names in `shared:`, or the
+   folder it went into (`Decks/`) when it kept its name. The file is a path
+   under `Deliverables/`, or from the project's folder when it lives
+   elsewhere. A clause may follow `share` or `here`, such as who edits it there. Say
    so in the Live artifact row when the shared copy is the one that counts.
    `python3 System/tools/drift.py` compares them from then on. In a
    thread-first project the ledger is the thread's own,

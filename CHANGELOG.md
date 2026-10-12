@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Added
 
+- A cmux sidebar, `extras/cmux/garrick-sidebar.js`: each cmux workspace by name with its unread count, its tabs under it named by their thread rather than a path or the program in them, a dot per tab (blue working, orange unread, grey otherwise), and Garrick's mark on top, which opens the status page. Click a workspace to select it, a tab to focus it. Written from cmux's published sidebar API, with nothing from its templates. See [A sidebar](docs/extras/cmux.md#a-sidebar). ([#22](https://github.com/iamvenuti/garrick/issues/22))
 - *Settings…* in the status page app's menu bar menu, after *Open Garrick*, and a cog between the mark and the power button in the panel's footer. Either brings the window forward with Settings open, as ⌘, does, whether or not the window was open; a page still loading opens Settings once it has loaded. ([#34](https://github.com/iamvenuti/garrick/issues/34))
 - Hovering a project or thread row on the status page, or moving to it with the keyboard, lights its node in the graph the way hovering the node does: its links stay at full strength, the rest fades and the sway stops, with nothing selected, centred or zoomed. Leaving the row, or its card closing, puts the graph back. A node the graph is not showing is left alone. The graph offers one way in, `GarrickGraph.focus()`, absent with `--no-graph`. ([#62](https://github.com/iamvenuti/garrick/issues/62))
 

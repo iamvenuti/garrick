@@ -102,9 +102,23 @@ cmux can restore its tabs after a restart, but the assistant does not always com
 
 Whatever came back, "open [thread]" rebuilds the context from the thread's resume point, so a fresh session loses nothing the work depends on.
 
+## A sidebar
+
+cmux's own sidebar describes each workspace by its git branch and each tab by its full path. In a Garrick workspace the branch is almost always `main`, and the paths are long. `extras/cmux/garrick-sidebar.js` replaces it with what you want to see: each cmux workspace by name with its unread count, and under it one line per tab, named by its thread. A tab titled by a path, or by the program in it (Claude Code, Codex, a shell), shows the last part of its folder instead, which is the thread's name for a tab desk opened. Each tab's dot is blue while its agent is working, orange when it has an unread notification, and grey otherwise. A finished turn alone does not colour it. Click a workspace to select it, or a tab to focus it. Garrick's mark sits on top, and clicking it opens the status page, if one has been built.
+
+To use it:
+
+```sh
+mkdir -p ~/.config/cmux/sidebars
+ln -s /path/to/garrick/extras/cmux/garrick-sidebar.js ~/.config/cmux/sidebars/garrick.js
+cmux sidebar select garrick
+```
+
+`cmux sidebar validate garrick` checks it. Right-click the sidebar button to switch back to cmux's own, which can still drag workspaces into another order; this one cannot yet. The sidebar reads only what cmux tells it about its own workspaces and tabs: it has no access to files, so it does not read thread notes, and the mark opens the status page by its usual path, `System/generated/status.html` in the workspace one of your tabs is in. It is drawn in the mark's dark-ground colours, since cmux does not tell a sidebar whether it is light or dark. The installer does not add it, as with every extra, and an update does not touch it: link it to a Garrick you keep updated, or copy it again after an update.
+
 ## Take it out
 
-Delete `System/cmux`, `System/skills/desk`, the `desk` link and `System/desk.json`, and switch the socket back as above. Nothing else in the workspace refers to them.
+Delete `System/cmux`, `System/skills/desk`, the `desk` link and `System/desk.json`, and switch the socket back as above. Nothing else in the workspace refers to them. If you use the sidebar, run `cmux sidebar select` for another one, or right-click the sidebar button, and delete `~/.config/cmux/sidebars/garrick.js`.
 
 ## What you lose without it
 

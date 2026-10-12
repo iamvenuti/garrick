@@ -4,12 +4,30 @@
     python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden"
     python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme --thread "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
+    python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
+    python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
+    python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
+    python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
 
 A zone is made the way the installer makes one: its own folder and git repository
 with a first commit, its inbox, the skill links and the wall check, and a row in
 System/context.md, which is left for you to commit. A project always starts with its
-first thread. A thread inherits its project's party. On success prints what it made in
-lines that can be read aloud; on refusal, one line saying why, and exits 1.
+first thread. A thread inherits its project's party. `--check` applies every refusal
+and makes nothing, so a form can check a name as it is typed.
+
+`rename` moves the folder and its note with git, renames the note's title and
+heading, and points every link to it in the zone at the new name: the hub's
+list, the Todo.md lines that open with it, `project:` frontmatter, the notes
+between. One commit in the zone, with a dated entry "Renamed from <old>."; the
+old name becomes a heard alias in context.md, left for you to commit. The
+Meetings wiki is listed, never edited. `delete` without `--confirm` only says
+what would go; with it, the folder, the hub's line and the open Todo.md lines
+naming it go in one commit, which `undo` reverts while it is still the zone's
+last commit. Both refuse while what they
+would change has changes not committed, or a cmux tab is mid-turn in it.
+
+On success prints what it did in lines that can be read aloud; on refusal, one
+line saying why, and exits 1.
 """
 
 import argparse
@@ -284,6 +302,8 @@ def cmd_project(root, args, today):
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
+    if getattr(args, "check", False):
+        return f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."
     values = {"ZONE": zone_dir.name, "PROJECT": name, "THREAD": thread, "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "project", target, values)
     make_thread(root, target, thread, party, today)
@@ -302,9 +322,377 @@ def cmd_thread(root, args, today):
         raise Refusal(f"{project_dir.name} has no party in its hub note, so a thread cannot inherit one.")
     party = check_party(root, party)
     name = args.name.strip()
+    if getattr(args, "check", False):
+        check_name(name, children(project_dir / "Threads"), "thread", project_dir.name)
+        if (project_dir / "Threads" / name).exists():
+            raise Refusal(f"{(project_dir / 'Threads' / name).relative_to(root)} already exists.")
+        return f"{name} will do as a thread in {project_dir.name}."
     make_thread(root, project_dir, name, party, today)
     link_thread_in_hub(hub, name, today)
     return f"Created thread {name} in {project_dir.name}."
+
+
+# --------------------------------------------------------------------------- rename and delete
+
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+
+
+def git_ok(args, cwd):
+    try:
+        return git(args, cwd)
+    except GitError as exc:
+        raise Refusal(" ".join(str(exc).split()))
+
+
+def target_of(root, args):
+    """(zone folder, project folder, thread folder or None, the note) for the
+    project or thread the arguments name."""
+    zone_dir = find_zone(root, args.zone)
+    if not (zone_dir / ".git").exists():
+        raise Refusal(f"{zone_dir.name} is not a git repository, so the change could not be committed or undone.")
+    project_dir = find_child(zone_dir, args.project, "project")
+    if args.thread:
+        thread_dir = find_child(project_dir / "Threads", args.thread, "thread")
+        note = thread_dir / f"{thread_dir.name}.md"
+    else:
+        thread_dir, note = None, project_dir / f"{project_dir.name}.md"
+    if not note.is_file():
+        raise Refusal(f"{note.relative_to(root)} is missing, so {note.stem} is not a project or thread scaffold made.")
+    return zone_dir, project_dir, thread_dir, note
+
+
+def uncommitted(zone_dir, paths):
+    """The paths, relative to the zone, among `paths` that git reports as changed."""
+    rels = [str(p.relative_to(zone_dir)) for p in paths]
+    out = git_value(["status", "--porcelain", "--untracked-files=all", "--"] + rels, zone_dir)
+    return [line[3:].strip().strip('"') for line in out.splitlines() if line.strip()]
+
+
+def mid_turn(root, folder):
+    """Whether a cmux tab is mid-turn in the folder, when the cmux extra is
+    installed beside the workspace's tools; False when nobody can say."""
+    lib = root / "System" / "cmux" / "cmuxlib.py"
+    if not lib.is_file():
+        return False
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_scaffold_cmuxlib", str(lib))
+        cx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cx)
+        folder = folder.resolve()
+        return any(state == "working" and (Path(f) == folder or folder in Path(f).parents)
+                   for f, state in cx.sessions_by_folder(root).items())
+    except Exception:
+        return False
+
+
+def zone_notes(zone_dir):
+    """Every note git tracks in the zone: nothing ignored, nothing in a
+    repository of its own inside a project, nothing waiting in the inbox."""
+    listing = git_value(["ls-files", "-z", "--", "*.md"], zone_dir)
+    for name in sorted(n for n in listing.split("\0") if n and not n.startswith(INBOX + "/")):
+        yield zone_dir / name
+
+
+def preflight(zone_dir, folder, verb):
+    """Refuse a rename or a deletion that git could not put back exactly:
+    a merge or rebase under way, anything already staged (it would go into
+    this commit), or a folder holding files git does not track, ignores, or
+    keeps in a repository of its own, which no revert brings back."""
+    gitdir = zone_dir / ".git"
+    if any((gitdir / m).exists() for m in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD")):
+        raise Refusal(f"{zone_dir.name} is in the middle of a merge or rebase. Finish it, then {verb}.")
+    if git_value(["diff", "--cached", "--name-only"], zone_dir).strip():
+        raise Refusal(f"Something is staged in {zone_dir.name}, and it would go into this commit. Commit or unstage it, then {verb}.")
+    rel = folder.relative_to(zone_dir).as_posix()
+    nested = [Path(d).relative_to(zone_dir).as_posix() for d, dirs, _ in os.walk(folder) if ".git" in dirs or (Path(d) / ".git").is_file()]
+    if nested:
+        raise Refusal(f"{nested[0]} is a repository of its own, which the zone's history cannot bring back. "
+                      f"Move it out of {folder.name} first, then {verb}.")
+    status = git_value(["status", "--porcelain", "--ignored", "--untracked-files=all", "--", rel], zone_dir)
+    loose = [l[3:].strip().strip('"') for l in status.splitlines() if l[:2] in ("!!", "??")]
+    if loose:
+        raise Refusal(f"{loose[0]}{' and %d more' % (len(loose) - 1) if len(loose) > 1 else ''} is in {folder.name} but "
+                      f"not in the zone's history, so nothing could bring it back. Commit it or move it out, then {verb}.")
+
+
+def remove_empty(folder):
+    """The folders git left behind once it removed every file, deepest first."""
+    for d, dirs, files in sorted(os.walk(folder), key=lambda t: -len(Path(t[0]).parts)):
+        if not files and not os.listdir(d):
+            os.rmdir(d)
+
+
+def relink(text, swaps, prefixes, old_name, new_name, heads=("",)):
+    """Every [[link]] to the renamed note pointed at its new name, in its
+    bare, labelled, heading and path forms: `swaps` are whole targets (old,
+    new, without .md), `prefixes` folders a target may run through, for the
+    threads of a renamed project. A path counts only from the zone, written
+    from its top or with one of `heads` before it (`Work/`, `Zones/Work/`):
+    a thread elsewhere that shares a name is another note. A label that was
+    the old name follows it."""
+    def one(m):
+        target, rest = m.group(1), m.group(2) or ""
+        md = target.endswith(".md")
+        key = target[:-3] if md else target
+        found = None
+        for old, new in swaps:
+            for head in (heads if "/" in old else ("",)):     # a bare name is only ever itself
+                if key == head + old:
+                    found = head + new
+                    break
+            if found:
+                break
+        for old, new in prefixes if found is None else ():
+            for head in heads:
+                if key.startswith(head + old + "/"):
+                    found = head + new + key[len(head + old):]
+                    break
+            if found:
+                break
+        if found is None:
+            return m.group(0)
+        itself = not any(found.startswith(h + new + "/") for _, new in prefixes for h in heads) or \
+            any(found == h + new for _, new in swaps for h in heads)
+        if itself and rest.endswith("|" + old_name):
+            rest = rest[: -len(old_name)] + new_name
+        return "[[" + found + (".md" if md else "") + rest + "]]"
+    return re.sub(r"\[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]", one, text)
+
+
+def dated_entry(text, line, today):
+    """`line` as today's dated entry, newest first, below the Resume here
+    block's rule, as the threads skill writes one."""
+    d = datetime.date.fromisoformat(today)
+    entry = f"**{d.day} {MONTHS[d.month - 1]} {d.year}.** {line}"
+    resume = text.find("### Resume here")
+    rule = text.find("\n---\n", resume) if resume >= 0 else -1
+    play = re.search(r"(?m)^## State of play[ \t]*\n", text) if rule < 0 else None
+    at = rule + 5 if rule >= 0 else play.end() if play else -1
+    if at < 0:
+        return text.rstrip("\n") + "\n\n" + entry + "\n"
+    lead = re.match(r"\n*(?:<Dated entries[^\n]*>\n)?\n*", text[at:])
+    at += lead.end()
+    return text[:at] + entry + "\n\n" + text[at:]
+
+
+def add_alias(root, heard, means):
+    """The old name as a heard form of the new one, in context.md's Aliases
+    table, so "Pricing" still finds "Renewal" for a while. False when the
+    table is missing or already has it."""
+    path = root / "System" / "context.md"
+    if not path.is_file() or heard.lower() in load_context(root).get("aliases", {}):
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## aliases"), None)
+    if start is None:
+        return False
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+    if len(rows) < 2:
+        return False
+    lines.insert(rows[-1] + 1, table_row([heard.lower(), means]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def cmd_rename(root, args, today):
+    zone_dir, project_dir, thread_dir, note = target_of(root, args)
+    new = args.to.strip()
+    is_thread = thread_dir is not None
+    folder = thread_dir if is_thread else project_dir
+    old = folder.name
+    kind = "thread" if is_thread else "project"
+    siblings = [c for c in children(folder.parent) if c != old]
+    if new == old:
+        raise Refusal(f"{old} is already called {new}.")
+    if new.lower() == old.lower():
+        siblings = [c for c in siblings if c.lower() != new.lower()]
+    check_name(new, siblings, kind, project_dir.name if is_thread else zone_dir.name)
+    if not is_thread and new.lower() == INBOX.lower():
+        raise Refusal(f"{INBOX} is where {zone_dir.name}'s mail and files wait to be filed. Pick another name.")
+    if getattr(args, "check", False):
+        return f"{new} will do as the {kind}'s new name."
+    notes = list(zone_notes(zone_dir))
+    others = [n for n in notes if n.stem.lower() == old.lower() and n != note]
+    if folder.parent / new != folder and (folder.parent / new).exists() and new.lower() != old.lower():
+        raise Refusal(f"{(folder.parent / new).relative_to(root)} already exists.")
+    preflight(zone_dir, folder, "rename")
+    dirty = uncommitted(zone_dir, [folder] + notes)
+    if dirty:
+        raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
+                      f"Commit or undo them, then rename.")
+    if mid_turn(root, folder):
+        raise Refusal(f"A session is mid-turn in {old}. Let it finish, then rename.")
+    rel_old = folder.relative_to(zone_dir).as_posix()
+    rel_new = (folder.parent / new).relative_to(zone_dir).as_posix()
+    # Link targets, without .md: the note by its path, and by its name when no other note shares it.
+    swaps = [(f"{rel_old}/{old}", f"{rel_new}/{new}")] + ([(old, new)] if not others else [])
+    prefixes = [] if is_thread else [(rel_old, rel_new)]
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
+    moved = zone_dir / rel_new
+    touched = set()
+    what = f"{project_dir.name}, {old}" if is_thread else old
+    try:
+        # The folder and its note, through git, so history follows.
+        tmp = folder.parent / f".rename-{new}"
+        if new.lower() == old.lower():                     # a change of case alone needs a step between
+            git_ok(["mv", rel_old, tmp.relative_to(zone_dir).as_posix()], zone_dir)
+            git_ok(["mv", tmp.relative_to(zone_dir).as_posix(), rel_new], zone_dir)
+        else:
+            git_ok(["mv", rel_old, rel_new], zone_dir)
+        git_ok(["mv", f"{rel_new}/{old}.md", f"{rel_new}/{new}.md"], zone_dir)
+        new_note = moved / f"{new}.md"
+        touched.add(new_note)
+        for path in zone_notes(zone_dir):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue                                    # not text it can rewrite; its links, if any, stay
+            changed = relink(text, swaps, prefixes, old, new, heads)
+            if not is_thread and moved in path.parents:
+                changed = re.sub(r'(?m)^project: "?\[\[%s\]\]"?$' % re.escape(old), f'project: "[[{new}]]"', changed)
+            if path == new_note:
+                changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
+                changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
+                changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
+                changed = dated_entry(changed, f"Renamed from {old}.", today)
+            if changed != text:
+                touched.add(path)
+                path.write_text(changed, encoding="utf-8")
+        git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
+        git(["commit", "-q", "-m", f"{what}: renamed {new}"], zone_dir)
+    except (GitError, Refusal, OSError) as exc:
+        # Everything here was tracked and clean, and nothing was staged before: put back what HEAD holds.
+        git_value(["reset", "-q"], zone_dir)
+        if moved.exists() and moved != folder:
+            shutil.rmtree(moved, ignore_errors=True)        # only files git moved: the folder held nothing else
+        git_value(["checkout", "HEAD", "--", rel_old] + [str(t.relative_to(zone_dir)) for t in touched
+                                                       if moved not in t.parents and t.exists()], zone_dir)
+        raise Refusal(f"The rename was not committed, so nothing changed: {' '.join(str(exc).split())}")
+    said = [f"Renamed the {kind} {old} to {new} in {zone_dir.name}, and every link to it in the zone, in one commit."]
+    if others:
+        said.append(f"Links written [[{old}]] were left alone: another note in {zone_dir.name} has that name too.")
+    if add_alias(root, old, new):
+        said.append(f'Added "{old}" as a heard name for {new} in System/context.md; commit it in the workspace root.')
+    meetings = root / "Wikis" / "Meetings" / "wiki"
+    mentions = sorted(p.relative_to(root).as_posix() for p in meetings.rglob("*.md")
+                      if re.search(r"\[\[[^\]]*\b%s\b" % re.escape(old), p.read_text(encoding="utf-8", errors="replace"))) \
+        if meetings.is_dir() else []
+    if mentions:
+        said.append(f"Left as they are, in the Meetings wiki: {', '.join(mentions[:5])}"
+                    f"{' and %d more' % (len(mentions) - 5) if len(mentions) > 5 else ''}.")
+    said.append("If your assistant keeps a memory pointer to it, point it at the new name. For the status page's "
+                f'effort history, build it with --moved "Zones/{zone_dir.name}/{rel_old}=Zones/{zone_dir.name}/{rel_new}".')
+    return "\n".join(said)
+
+
+def open_lines(zone_dir, paths, bare):
+    """The open lines of the zone's Todo.md that link to one of `paths` (from
+    the zone's top, without .md), or to one of `bare`, names that no other
+    note in the zone has."""
+    todo = zone_dir / "Todo.md"
+    if not todo.is_file():
+        return []
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
+    out = []
+    for line in todo.read_text(encoding="utf-8").splitlines():
+        if not re.match(r"\s*- \[ \]", line):
+            continue
+        targets = [t.split("|")[0].split("#")[0].strip().removesuffix(".md")
+                   for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
+        if any(t in bare or any(t == h + p for h in heads for p in paths) for t in targets):
+            out.append(line)
+    return out
+
+
+def cmd_delete(root, args, today):
+    zone_dir, project_dir, thread_dir, note = target_of(root, args)
+    is_thread = thread_dir is not None
+    folder = thread_dir if is_thread else project_dir
+    name = folder.name
+    files = [Path(d) / f for d, _, fs in os.walk(folder) for f in fs if ".git" not in Path(d).parts]
+    threads = children(project_dir / "Threads") if not is_thread else []
+    rel = folder.relative_to(zone_dir).as_posix()
+    paths = {f"{rel}/{name}"} | {f"{rel}/Threads/{t}/{t}" for t in threads}
+    stems = [n.stem.lower() for n in zone_notes(zone_dir)]
+    bare = {n for n in {name} | set(threads) if stems.count(n.lower()) <= 1}
+    lines = open_lines(zone_dir, paths, bare)
+    hub = project_dir / f"{project_dir.name}.md"
+    hub_line = None
+    if is_thread and hub.is_file():
+        hub_line = next((l for l in hub.read_text(encoding="utf-8").splitlines()
+                         if re.search(r"\[\[%s/Threads/%s/%s(\|[^\]]*)?\]\]" % tuple(map(re.escape, (project_dir.name, name, name))), l)), None)
+    what = f"{project_dir.name}, {name}" if is_thread else name
+    plan = [f"Deleting {what} would remove {rel}/ ({len(files)} file{'s' if len(files) != 1 else ''})"
+            + (f", with its threads {', '.join(threads)}" if threads else "")
+            + (", its line in the hub" if hub_line else "")
+            + (f", and {len(lines)} open line{'s' if len(lines) != 1 else ''} in Todo.md" if lines else "") + "."]
+    plan += [f"  {l.strip()}" for l in lines]
+    plan.append("Meetings pages stay, and the zone's history keeps it all: a revert brings it back. "
+                "To set it aside instead, park it; to close it with a record, finish it.")
+    if args.confirm is None:
+        plan.append(f'Nothing was deleted. To delete it, run again with --confirm "{name}".')
+        return "\n".join(plan)
+    if args.confirm != name:
+        raise Refusal(f'--confirm must name it exactly: "{name}". Nothing was deleted.')
+    todo = zone_dir / "Todo.md"
+    preflight(zone_dir, folder, "delete")
+    dirty = uncommitted(zone_dir, [folder] + [p for p in (hub, todo) if p.is_file()])
+    if dirty:
+        raise Refusal(f"{', '.join(dirty[:3])} has changes not committed. Commit or undo them, then delete.")
+    if mid_turn(root, folder):
+        raise Refusal(f"A session is mid-turn in {name}. Let it finish, then delete.")
+    git_ok(["rm", "-r", "-q", "--", rel], zone_dir)
+    if folder.exists():
+        remove_empty(folder)                                       # git took every file; only empty folders stay
+    touched = []
+    if hub_line:
+        text = hub.read_text(encoding="utf-8")
+        hub.write_text(text.replace(hub_line + "\n", "", 1), encoding="utf-8")
+        touched.append(hub)
+    if lines:
+        text = todo.read_text(encoding="utf-8").splitlines(keepends=True)
+        gone = set(lines)
+        todo.write_text("".join(l for l in text if l.rstrip("\n") not in gone), encoding="utf-8")
+        touched.append(todo)
+    if touched:
+        git_ok(["add", "--"] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
+    body = "\n".join(["Removed:"] + [f"- {rel}/ ({len(files)} files)"] + (["- the hub's line"] if hub_line else [])
+                     + [f"- {l.strip()}" for l in lines])
+    try:
+        git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}"], zone_dir)
+    except GitError as exc:
+        git_value(["reset", "-q"], zone_dir)
+        git_value(["checkout", "HEAD", "--", rel] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
+        raise Refusal(f"The deletion was not committed, so nothing changed: {' '.join(str(exc).split())}")
+    commit = git_value(["rev-parse", "--short", "HEAD"], zone_dir).strip()
+    said = [f"Deleted {what} in commit {commit}."]
+    said += [f"  removed: {l.strip()}" for l in lines]
+    said.append(f"To bring it back: scaffold.py undo --zone {zone_dir.name} --commit {commit}. If your assistant "
+                "keeps a memory pointer to it, delete that too.")
+    return "\n".join(said)
+
+
+def cmd_undo(root, args, today):
+    """Revert a rename or a deletion this script committed, while it is still
+    the zone's last commit: anything committed since might depend on it."""
+    zone_dir = find_zone(root, args.zone)
+    head = git_value(["rev-parse", "HEAD"], zone_dir).strip()
+    wanted = git_value(["rev-parse", "--verify", "-q", args.commit + "^{commit}"], zone_dir).strip()
+    if not wanted:
+        raise Refusal(f"{zone_dir.name} has no commit {args.commit}.")
+    if wanted != head:
+        raise Refusal(f"{args.commit} is no longer the last commit in {zone_dir.name}, so it is not undone here. "
+                      "Ask for it to be reverted by hand.")
+    subject = git_value(["log", "-1", "--format=%s"], zone_dir).strip()
+    if not re.search(r": (deleted|renamed .+)$", subject):
+        raise Refusal(f"{args.commit} is not a rename or a deletion: {subject}")
+    if git_value(["status", "--porcelain", "--untracked-files=no"], zone_dir).strip():
+        raise Refusal(f"{zone_dir.name} has changes not committed. Commit or undo them first.")
+    git_ok(["revert", "--no-edit", head], zone_dir)
+    return f"Undone: {subject}."
 
 
 def main(argv=None):
@@ -324,6 +712,22 @@ def main(argv=None):
     t.add_argument("--zone", required=True)
     t.add_argument("--project", required=True)
     t.add_argument("--name", required=True)
+    r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")
+    r.add_argument("--zone", required=True)
+    r.add_argument("--project", required=True)
+    r.add_argument("--thread", help="the thread to rename; without it, the project")
+    r.add_argument("--to", required=True, help="the new name")
+    d = sub.add_parser("delete", help="delete a project or a thread; without --confirm, only say what would go")
+    d.add_argument("--zone", required=True)
+    d.add_argument("--project", required=True)
+    d.add_argument("--thread", help="the thread to delete; without it, the whole project")
+    d.add_argument("--confirm", help="the name of what is deleted, typed again")
+    u = sub.add_parser("undo", help="revert a rename or a deletion, while it is the zone's last commit")
+    u.add_argument("--zone", required=True)
+    u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
+    for each in (p, t, r):
+        each.add_argument("--check", action="store_true",
+                          help="say whether the name would do, and make nothing")
     args = ap.parse_args(argv)
 
     try:
@@ -334,7 +738,8 @@ def main(argv=None):
         if not (root / "System" / "templates").is_dir():
             raise Refusal(f"{root} is not an installed workspace: System/templates is missing.")
         today = args.today or datetime.date.today().isoformat()
-        run = {"zone": cmd_zone, "project": cmd_project, "thread": cmd_thread}[args.command]
+        run = {"zone": cmd_zone, "project": cmd_project, "thread": cmd_thread, "rename": cmd_rename,
+               "delete": cmd_delete, "undo": cmd_undo}[args.command]
         print(run(root, args, today))
     except Refusal as exc:
         print(exc, file=sys.stderr)

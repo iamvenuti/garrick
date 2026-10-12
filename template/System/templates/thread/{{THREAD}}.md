@@ -26,7 +26,8 @@ updated: {{DATE}}
 |---|---|
 | Live artifact | <path, and what it is> |
 | Rebuild with | <how to make it again, and from what> |
-| Next action | <the single next thing, and whose it is> |
+| Next action | <the single next thing, small enough to start in two minutes, and whose it is> |
+| Keep in mind | <what is only in your head: a decision half made and why, a doubt; or nothing> |
 | Waiting on | <who, or nobody> |
 | Deadline | <date, and what breaks if it slips; or none> |
 

@@ -31,6 +31,7 @@ import datetime
 import email
 import email.policy
 import errno
+import json
 import os
 import re
 import shutil
@@ -40,7 +41,7 @@ import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 PathLike = Union[str, "os.PathLike[str]"]
 
@@ -54,6 +55,7 @@ __all__ = [
     "phonetic_key",
     "edit_distance",
     "load_context",
+    "knowledge_schema",
     "walled",
     "workspace_root",
     "link_on_the_way",
@@ -67,6 +69,7 @@ __all__ = [
     "has_wall_hook",
     "hooks_path",
     "WALL_HOOK",
+    "WALL_HOOK_NESTED",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
     "INSTRUCTION_FILES",
@@ -400,6 +403,25 @@ def _table(lines: List[str]) -> List[Dict[str, str]]:
     return rows
 
 
+def _table_header(lines: List[str]) -> Optional[List[str]]:
+    """The lower-case header of the first Markdown table in `lines`, or None."""
+    for line in lines:
+        if line.strip().startswith("|"):
+            return [c.lower() for c in _split_row(line.strip())]
+    return None
+
+
+# The sections of context.md read as tables: the columns each is written
+# with, and the ones the checks cannot do without.
+CONTEXT_TABLES = {
+    "zones": (("Zone", "Holds"), ("zone",)),
+    "parties": (("Party", "What it is", "Zone", "Tag", "Domains"), ("tag",)),
+    "walls": (("Between", "And", "Why"), ()),          # read by position when the names differ
+    "people": (("Name", "Party", "Role"), ("name", "party")),
+    "aliases": (("Heard", "Means"), ("heard", "means")),
+}
+
+
 def _col(row: Dict[str, str], *names: str) -> str:
     for key, value in row.items():
         for n in names:
@@ -425,13 +447,25 @@ def load_context(root: PathLike) -> dict:
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": []}
+    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {}}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ctx
     sections = _sections(text)
+    for name, (_, columns) in CONTEXT_TABLES.items():
+        lines = sections.get(name)
+        if lines is None:
+            continue
+        rows = _table(lines)
+        header = _table_header(lines)
+        ctx["tables"][name] = {
+            "table": header is not None,
+            "text": any(l.strip() for l in lines),
+            "rows": len(rows),
+            "missing": [c for c in columns if header is not None and not any(h.startswith(c) for h in header)],
+        }
 
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
         if addr.lower() not in ctx["me"]:
@@ -474,6 +508,67 @@ def load_context(root: PathLike) -> dict:
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
     return ctx
+
+
+# How a Knowledge wiki keeps its raw files and source pages, its index and its
+# log: Garrick's layout, unless the wiki declares its own in schema.json.
+KNOWLEDGE_SCHEMA = {
+    "raw": "raw/{slug}.{ext}",          # also {kind}, {date}, {publisher}, {title}
+    "kinds": [],                        # the values {kind} may take, when the pattern has it
+    "source": {"type": "source", "fields": ["author", "published", "raw"]},
+    "index": "list",                    # or "tables": a table per type
+    "log": "line",                      # or "section": a dated section per ingest
+}
+RAW_PLACEHOLDERS = ("slug", "ext", "kind", "date", "publisher", "title")
+
+
+def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
+    """(the schema, what in it could not be read) for the workspace's
+    Knowledge wiki: `Wikis/Knowledge/schema.json` over Garrick's default,
+    key by key. What does not read keeps the default, and says so."""
+    schema = json.loads(json.dumps(KNOWLEDGE_SCHEMA))
+    path = Path(root) / "Wikis" / "Knowledge" / "schema.json"
+    if not path.is_file():
+        return schema, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return schema, ["schema.json does not read as JSON (%s); Garrick's layout applies" % exc]
+    problems = []
+    if not isinstance(data, dict):
+        return schema, ["schema.json is not an object; Garrick's layout applies"]
+    raw = data.get("raw")
+    if raw is not None:
+        names = re.findall(r"\{(\w+)\}", raw) if isinstance(raw, str) else []
+        if not isinstance(raw, str) or not raw.startswith("raw/") or "{ext}" not in raw or ".." in raw \
+                or any(n not in RAW_PLACEHOLDERS for n in names) or not ({"slug", "title"} & set(names)):
+            problems.append("its raw pattern %r must start raw/, end in {ext}, name {slug} or {title}, and use only "
+                            "{%s}" % (raw, "}, {".join(RAW_PLACEHOLDERS)))
+        else:
+            schema["raw"] = raw
+    kinds = data.get("kinds")
+    if kinds is not None:
+        if isinstance(kinds, list) and all(isinstance(k, str) and re.fullmatch(r"[\w -]+", k) for k in kinds):
+            schema["kinds"] = kinds
+        else:
+            problems.append("its kinds must be a list of folder names")
+    if "{kind}" in schema["raw"] and not schema["kinds"]:
+        problems.append("its raw pattern names {kind} but it lists no kinds")
+        schema["raw"] = KNOWLEDGE_SCHEMA["raw"]
+    source = data.get("source")
+    if source is not None:
+        if isinstance(source, dict) and isinstance(source.get("type", "source"), str) and \
+                isinstance(source.get("fields", []), list) and all(isinstance(f, str) for f in source.get("fields", [])):
+            schema["source"] = {"type": source.get("type", "source"), "fields": list(source.get("fields", []))}
+        else:
+            problems.append("its source must say a type and a list of fields")
+    for key, allowed in (("index", ("list", "tables")), ("log", ("line", "section"))):
+        if key in data:
+            if data[key] in allowed:
+                schema[key] = data[key]
+            else:
+                problems.append("its %s must be %s" % (key, " or ".join(allowed)))
+    return schema, problems
 
 
 def walled(context: dict, tag_a: str, tag_b: str) -> bool:
@@ -681,6 +776,22 @@ exec python3 "$check" --staged --walls-only
 """ % WALL_HOOK_MARK
 
 
+# A repository inside a project (a product's code, a site, a book) sits at
+# any depth below its zone, so its hook looks upward for the workspace.
+WALL_HOOK_NESTED = """#!/bin/sh
+# %s: refuse a commit that would carry walled material out of this project's own repository.
+# Installed by Garrick in a repository inside a project. The deliberate override, only when you mean it: git commit --no-verify
+dir="$(git rev-parse --show-toplevel)"
+while [ "$dir" != "/" ] && [ ! -f "$dir/System/tools/check.py" ]; do dir="$(dirname "$dir")"; done
+check="$dir/System/tools/check.py"
+if [ ! -f "$check" ]; then
+  echo "Commit refused: the wall check is missing; no System/tools/check.py above this repository. Put it back, or commit with --no-verify if you mean to skip it." >&2
+  exit 1
+fi
+exec python3 "$check" --root "$dir" --staged --walls-only
+""" % WALL_HOOK_MARK
+
+
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
     git_dir = Path(zone) / ".git"
     return git_dir / "hooks" if git_dir.is_dir() else None
@@ -698,8 +809,9 @@ def has_wall_hook(zone: PathLike) -> bool:
         return False
 
 
-def install_wall_hook(zone: PathLike) -> Path:
-    """Write the pre-commit wall check into a zone's repository and return its path.
+def install_wall_hook(zone: PathLike, nested: bool = False) -> Path:
+    """Write the pre-commit wall check into a zone's repository, or with
+    `nested` into a repository inside a project, and return its path.
 
     Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
     and (FileNotFoundError) a zone whose `.git` is not a folder."""
@@ -711,9 +823,9 @@ def install_wall_hook(zone: PathLike) -> Path:
         existing = hook.read_text(encoding="utf-8", errors="replace")
         if WALL_HOOK_MARK not in existing:
             raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
-                                  "python3 ../../System/tools/check.py --staged --walls-only" % zone)
+                                  "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(WALL_HOOK, encoding="utf-8")
+    hook.write_text(WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
     hook.chmod(0o755)
     return hook
 
@@ -850,11 +962,14 @@ def garrick_ignores(zones) -> Dict[str, str]:
     common = (".DS_Store\n._*\n__pycache__/\n"
               "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
               "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
-    inbox = "# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
+    inbox = ("# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
+             "# When each Inbox line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n")
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
-    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + common,
+    shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
+              "Inbox/*\n!Inbox/.gitkeep\n")
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared + common,
            "Wikis/.gitignore": common + transcripts}
     for zone in zones:
         out["Zones/%s/.gitignore" % zone] = common + inbox
@@ -1381,15 +1496,81 @@ RECIPIENT_HEADERS = ("To", "Cc", "Bcc", "Delivered-To", "X-Original-To", "Envelo
 REMOVED = "you@removed.invalid"
 
 
-def strip_recipients(data: bytes) -> bytes:
+def _replace_addresses(text: str, addresses: Iterable[str]) -> str:
+    for a in sorted(set(addresses), key=len, reverse=True):
+        for form, repl in ((a, REMOVED), (a.replace("@", "%40"), REMOVED.replace("@", "%40"))):
+            text = re.sub(re.escape(form), repl, text, flags=re.IGNORECASE)
+    return text
+
+
+_RECIPIENT_KEY_RE = re.compile(r"^(to|cc|bcc|delivered-to|x-original-to|envelope-to)\s*:", re.I)
+
+
+def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
+    """strip_recipients for a mail saved as text or Markdown: the recipient
+    keys of its frontmatter, every `To:`/`Cc:` line of a header block in the
+    body (its own and each forward's), and each of those addresses, and the
+    reader's own, wherever the text still names them."""
+    lines = text.splitlines(keepends=True)
+    addresses = {a.lower() for a in own if "@" in a}
+    keep: List[str] = []
+    in_fm = bool(lines) and lines[0].strip() == "---"
+    dropping = False
+    in_header, seen_body = True, False       # the body may open with a header block
+    for i, line in enumerate(lines):
+        if in_fm and i > 0 and line.strip() in ("---", "..."):
+            in_fm, dropping = False, False
+            keep.append(line)
+            continue
+        if in_fm:
+            if dropping and (line[:1] in (" ", "\t") or line.lstrip().startswith("- ")) and line.strip():
+                addresses |= {a for _, a in _addresses([line.strip().lstrip("- ").strip("'\"")])}
+                continue
+            dropping = False
+            if i > 0 and _RECIPIENT_KEY_RE.match(line):
+                dropping = True
+                value = line.split(":", 1)[1].strip().strip("[]")
+                addresses |= {a for _, a in _addresses([v.strip().strip("'\"") for v in value.split(",")])}
+                continue
+            keep.append(line)
+            continue
+        m = _HEADER_LINE_RE.match(line)
+        if m and in_header and m.group(1).lower() in ("to", "cc", "bcc", "delivered-to"):
+            addresses |= {a for _, a in _addresses([m.group(2)])}
+            dropping = True
+            continue
+        if dropping and line[:1] in (" ", "\t") and line.strip() and not _HEADER_LINE_RE.match(line):
+            addresses |= {a for _, a in _addresses([line.strip()])}
+            continue
+        dropping = False
+        # A header block opens the body, or follows a forward's marker or a From: line after a
+        # blank; a blank line ends it. A `To:` in the prose is text, and stays.
+        if m and (in_header or m.group(1).lower() == "from"):
+            in_header = True
+        elif _FORWARD_RE.match(line):
+            in_header = True
+        elif not line.strip() or not m:
+            in_header = not line.strip() and not seen_body
+            seen_body = seen_body or bool(line.strip())
+        keep.append(line)
+    return _replace_addresses("".join(keep), addresses)
+
+
+def strip_recipients(data: bytes, suffix: str = ".eml", own: Iterable[str] = ()) -> bytes:
     """A mail with the reader's own addresses taken out: the recipient headers
     and `Received` lines go, and every recipient address in a text part (an
-    unsubscribe link, a "sent to" footer) becomes you@removed.invalid.
+    unsubscribe link, a "sent to" footer) becomes you@removed.invalid, as
+    does each of `own` (the user's addresses, from context.md), so a
+    forward's `From:` goes too. A mail saved as text or Markdown loses its
+    frontmatter's recipient keys and the `To:` and `Cc:` lines in its body.
     Knowledge is read in every zone, so what is filed there says nothing
     about who received it. Attachments are left byte for byte."""
+    own = [a.lower() for a in own if "@" in a]
+    if suffix.lower() != ".eml":
+        return _strip_text_recipients(data.decode("utf-8", errors="replace"), own).encode("utf-8")
     m = email.message_from_bytes(data, policy=email.policy.default)
     fields = [str(v) for h in RECIPIENT_HEADERS[:-1] for v in (m.get_all(h) or [])]
-    addresses = sorted({a.lower() for _, a in getaddresses(fields) if "@" in a}, key=len, reverse=True)
+    addresses = sorted({a.lower() for _, a in getaddresses(fields) if "@" in a} | set(own), key=len, reverse=True)
     if not addresses and not m.get_all("Received"):
         return data
     for h in RECIPIENT_HEADERS:
@@ -1401,10 +1582,7 @@ def strip_recipients(data: bytes) -> bytes:
             text = part.get_content()
         except (LookupError, UnicodeError):
             continue
-        new = text
-        for a in addresses:
-            for form, repl in ((a, REMOVED), (a.replace("@", "%40"), REMOVED.replace("@", "%40"))):
-                new = re.sub(re.escape(form), repl, new, flags=re.IGNORECASE)
+        new = _replace_addresses(text, addresses)
         if new != text:
             part.set_content(new, subtype=part.get_content_subtype())
     return m.as_bytes()

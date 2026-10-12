@@ -47,12 +47,14 @@ from garrick_lib import (  # noqa: E402
     is_domain,
     is_own_address,
     is_webmail,
+    knowledge_schema,
     landing,
     load_context,
     mail_attachments,
     move_new,
     parse_frontmatter,
     parse_mail,
+    parse_mail_bytes,
     strip_recipients,
     parties_for_domain,
     split_domains,
@@ -61,7 +63,7 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
     write_new,
 )
-from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root  # noqa: E402
+from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root, refuse_if_filed, source_id  # noqa: E402
 
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
@@ -83,16 +85,20 @@ def _rel(root: Path, path: Path) -> str:
 
 def place_of(root: Path, path: Path) -> Tuple[str, str]:
     """("meetings", "") for the Meetings inbox, ("zone", <Zone>) for a zone's
-    Inbox. Refuses a file anywhere else: only an inbox is waiting to be filed."""
+    Inbox, ("workspace", "") for the workspace's own Inbox, where mail sent to
+    one address for every zone waits for its zone. Refuses a file anywhere
+    else: only an inbox is waiting to be filed."""
     try:
         parts = path.resolve().relative_to(root.resolve()).parts
     except ValueError:
         parts = ()
     if len(parts) == 4 and parts[0] == "Zones" and parts[2] == INBOX and not parts[1].startswith((".", "_")):
         return "zone", parts[1]
+    if len(parts) == 2 and parts[0] == INBOX:
+        return "workspace", ""
     if len(parts) == 5 and parts[:4] == ("Wikis", "Meetings", "raw", "inbox"):
         return "meetings", ""
-    raise Refusal("%s is not in an inbox: Zones/<Zone>/%s/ or Wikis/Meetings/raw/inbox/." % (path.name, INBOX))
+    raise Refusal("%s is not in an inbox: %s/, Zones/<Zone>/%s/ or Wikis/Meetings/raw/inbox/." % (path.name, INBOX, INBOX))
 
 
 def _parse_quietly(path: Path) -> Optional[dict]:
@@ -139,6 +145,37 @@ def _fmt(pairs) -> List[str]:
     return ["%s <%s>" % (n, a) if n else a for n, a in pairs]
 
 
+FIRST_ZONE = ("%s waits in the workspace's Inbox, which belongs to no zone. Settle its zone with the user first, "
+              "then move it there with move-to-zone and file it from that zone's inbox.")
+
+# What the mail fetcher names a message from an address kept for reading.
+READING_PREFIX = "reading-"
+SKIPPED_LOG = ".skipped.log"
+
+
+def skip(root: Path, path: Path, reason: str, today: Optional[str] = None) -> str:
+    """Take an item out of a zone's Inbox without filing it, because it is too
+    thin to keep: a one-line promotion, an empty notice. It is gone from the
+    Inbox, and one line in the Inbox's .skipped.log, never committed, says
+    what it was and why. Only from a zone's Inbox; never a transcript."""
+    path, where, zone, kind, m = _item(root, path)
+    if where not in ("zone", "workspace"):
+        raise Refusal("%s is a transcript waiting in the Meetings inbox; a conversation is never skipped." % path.name)
+    if kind == "transcript":
+        raise Refusal("%s is a transcript, a conversation, and a conversation is never skipped." % path.name)
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise Refusal("Say why it is skipped, in a few words: --reason thin.")
+    subject = (m or {}).get("subject") or ""
+    sender = ", ".join(_fmt((m or {}).get("from") or []))
+    today = today or datetime.date.today().isoformat()
+    log = (root / "Zones" / zone if zone else root) / INBOX / SKIPPED_LOG
+    with log.open("a", encoding="utf-8") as f:
+        f.write("%s\t%s\t%s\t%s\t%s\n" % (today, path.name, sender, subject, reason[:200]))
+    path.unlink()
+    return "Skipped %s (%s)." % (subject or path.name, reason)
+
+
 def list_items(root: Path) -> List[dict]:
     """Every item waiting, in every inbox: the Meetings inbox first, then each
     zone's, mail and files together, oldest first by the date they were sent
@@ -149,10 +186,23 @@ def list_items(root: Path) -> List[dict]:
         kind, _ = kind_of(p, "meetings")
         out.append({"kind": kind, "zone": "", "file": _rel(root, p), "date": "", "from": "", "subject": ""})
     rest = []
+    ctx = None
+    for p in _waiting(root / INBOX):
+        kind, m = kind_of(p, "workspace")
+        item = {"kind": kind, "zone": "", "file": _rel(root, p), "date": "", "from": "", "subject": ""}
+        if p.name.startswith(READING_PREFIX):
+            item["route"] = "reading"
+        if m:
+            ctx = ctx or load_context(root)
+            item.update({"date": m["date"] or "", "from": ", ".join(_fmt(m["from"])), "subject": m["subject"],
+                         "suggested_zone": zone_for(ctx, suggest(ctx, "", m))[0]})
+        rest.append(((m or {}).get("sent") or "9999", "", p.name, item))
     for zone in _zones(root):
         for p in _waiting(zone / INBOX):
             kind, m = kind_of(p, "zone")
             item = {"kind": kind, "zone": zone.name, "file": _rel(root, p), "date": "", "from": "", "subject": ""}
+            if p.name.startswith(READING_PREFIX):
+                item["route"] = "reading"            # fetched from an address kept for reading
             sent = ""
             if m:
                 item.update({"date": m["date"] or "", "from": ", ".join(_fmt(m["from"])), "subject": m["subject"]})
@@ -250,6 +300,38 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
             "sender_webmail": bool(sender_domains) and all(is_webmail(d) for d in sender_domains)}
 
 
+def zone_for(ctx: dict, hint: dict) -> Tuple[str, str]:
+    """(the zone a mail's parties point to, or "", and when "", why to ask),
+    for mail sent to one address for every zone. The parties must all belong
+    to one zone; none found, or parties from two zones, means asking."""
+    zones = sorted({(ctx["parties"].get(t, {}).get("zone") or "").strip() for t in hint.get("parties", [])} - {""})
+    if len(zones) == 1 and not hint.get("ask"):
+        return zones[0], ""
+    if len(zones) > 1:
+        return "", "Its parties belong to %s." % " and ".join(zones)
+    return "", (hint.get("ask") or ["Nothing on it says which zone."])[0]
+
+
+def move_to_zone(root: Path, path: Path, zone: str) -> Path:
+    """Move an item from the workspace's Inbox into a zone's, once the user
+    has said which zone, so it is filed from there as any other. Never
+    overwrites."""
+    path, where, _, _, _ = _item(root, path)
+    if where != "workspace":
+        raise Refusal("%s is already in a zone's inbox, or in Meetings'; it moves only out of the workspace's %s/."
+                      % (path.name, INBOX))
+    match = [z for z in _zones(root) if z.name.lower() == (zone or "").strip().lower()]
+    if not match:
+        raise Refusal("There is no zone called %s. The zones are %s." % (zone, ", ".join(z.name for z in _zones(root))))
+    dest = match[0] / INBOX / path.name
+    if dest.exists():
+        raise Refusal("%s already has a %s in its inbox; nothing was moved." % (match[0].name, path.name))
+    dest.parent.mkdir(exist_ok=True)
+    landing(root, match[0] / INBOX, dest)
+    path.replace(dest)
+    return dest
+
+
 # --------------------------------------------------------------------------- parse
 
 
@@ -313,6 +395,8 @@ def parse(root: Path, path: Path) -> dict:
         "mailing_list": m.get("mailing_list", False),
         "attachments": m["attachments"],
         "suggested": suggest(load_context(root), zone, m),
+        **({"suggested_zone": dict(zip(("zone", "ask"), zone_for(load_context(root), suggest(load_context(root), "", m))))}
+           if where == "workspace" else {}),
         "text": body[:BODY_LIMIT],
         "truncated": len(body) > BODY_LIMIT,
     })
@@ -336,14 +420,16 @@ def _names(pairs) -> str:
     return ", ".join(n or a for n, a in pairs)
 
 
-def draft_page(title: str, date: str, zone: str, parties: List[str], slug: str, mail: dict, today: str) -> str:
+def draft_page(title: str, date: str, zone: str, parties: List[str], slug: str, mail: dict, today: str,
+               sid: str = "") -> str:
     when = datetime.date.fromisoformat(date)
     sender = _names(mail["from"]) or "an unknown sender"
     lines = ["---", "title: %s" % _yaml(title), "type: email", "date: %s" % date, "zone: %s" % zone,
              "parties: [%s]" % ", ".join(parties), "from: %s" % _yaml(", ".join(_fmt(mail["from"])))]
     lines += _block("to", _fmt(mail["to"]))
     lines += _block("cc", _fmt(mail["cc"]))
-    lines += ["people: []", 'raw: "[[raw/%s]]"' % slug, "created: %s" % today, "updated: %s" % today, "---", ""]
+    lines += ["people: []", 'raw: "[[raw/%s]]"' % slug] + (["source-id: %s" % _yaml(sid)] if sid else [])
+    lines += ["created: %s" % today, "updated: %s" % today, "---", ""]
     lines += ["# %s" % title, "",
               "Mail from %s, %d %s %d." % (sender, when.day, when.strftime("%B"), when.year)
               + (" To %s." % _names(mail["to"]) if mail["to"] else "")
@@ -392,6 +478,8 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     (slug, raw path, page path).
     """
     path, where, zone, kind, m = _item(root, path)
+    if where == "workspace":
+        raise Refusal(FIRST_ZONE % path.name)
     if where != "zone":
         raise Refusal("%s is in the Meetings inbox; a transcript is landed with the meetings skill's ingest.py land."
                       % path.name)
@@ -414,12 +502,13 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     sources = meetings_root(root) / "wiki" / "sources"
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
+    refuse_if_filed(root, path)
     slug = build_slug(date, title, _stems(raw_dir, sources))
     dest = raw_dir / (slug + path.suffix.lower())
     page = sources / (slug + ".md")
     meetings = meetings_root(root)
     today = today or datetime.date.today().isoformat()
-    text = draft_page(title, date, zone, tags, slug, mail, today)
+    text = draft_page(title, date, zone, tags, slug, mail, today, source_id(path))
     with filing(root):
         landing(root, meetings, dest)
         _page_then(root, meetings, page, text, lambda: move_new(root, meetings, path, dest))
@@ -433,8 +522,31 @@ def reading_slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
 
 
+def _name_part(text: str) -> str:
+    """A piece of a raw file's name, from a title or a publisher: no folder
+    separators or characters a file name cannot hold, spaces kept."""
+    text = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", text or "")
+    return re.sub(r"\s+", " ", text).strip(" .")[:120]
+
+
+def raw_place(kroot: Path, schema: dict, slug: str, ext: str, kind: str, date: str, publisher: str,
+              title: str) -> Path:
+    """Where the original goes, by the wiki's raw pattern."""
+    pattern = schema["raw"]
+    if "{kind}" in pattern:
+        if not kind:
+            raise Refusal("This Knowledge wiki keeps its originals by kind; pass --kind, one of %s."
+                          % ", ".join(schema["kinds"]))
+        if kind not in schema["kinds"]:
+            raise Refusal("%s is not a kind this Knowledge wiki keeps; its kinds are %s." % (kind, ", ".join(schema["kinds"])))
+    values = {"slug": slug, "ext": ext.lstrip("."), "kind": kind, "date": date,
+              "publisher": _name_part(publisher) or "Unknown", "title": _name_part(title) or slug}
+    rel = re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)], pattern)
+    return kroot / rel
+
+
 def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
-                 today: Optional[str] = None) -> Tuple[str, Path, Path]:
+                 today: Optional[str] = None, shelf: str = "") -> Tuple[str, Path, Path]:
     """Freeze an item from a zone's Inbox into `Wikis/Knowledge/raw/` and write a
     draft source page for the knowledge skill to finish. A mail is frozen with
     the reader's own addresses removed (`strip_recipients`); anything else is
@@ -445,7 +557,7 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
     used; never overwrites. Returns (slug, raw path, page path).
     """
     path, where, zone, kind, m = _item(root, path)
-    if where != "zone":
+    if where not in ("zone", "workspace"):          # reading carries no zone: it may come straight from the workspace's
         raise Refusal("%s is in the Meetings inbox, which holds conversations, never reading." % path.name)
     if kind in ("unreadable", "transcript"):
         raise Refusal("%s is %s, which is never filed as reading." % (
@@ -462,31 +574,52 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
     if slug in _stems(raw_dir, sources):
         raise Refusal("%s is already used in Knowledge. If this is a different item, pass --slug with a "
                       "distinguishing word, not a number." % slug)
-    dest = raw_dir / (slug + path.suffix.lower())
+    schema, _ = knowledge_schema(root)
     page = sources / (slug + ".md")
     today = today or datetime.date.today().isoformat()
+    sender = _names(mail["from"]) if mail else ""
+    dest = raw_place(kroot, schema, slug, path.suffix.lower(), shelf, (mail and mail["date"]) or today, sender, title)
+    if dest.exists():
+        raise Refusal("%s is already in Knowledge. If this is a different item, pass --title or --slug with a "
+                      "distinguishing word, not a number." % dest.relative_to(kroot))
     if mail:
-        sender = _names(mail["from"])
         author = _yaml(sender) if sender else "<who wrote or published it>"
         published = mail["date"] or "<YYYY-MM-DD, or YYYY-MM, or YYYY>"
         how = "Arrived by mail%s%s." % (" from %s" % sender if sender else "",
                                        ", %s" % mail["date"] if mail["date"] else "")
     else:
         author, published = "<who wrote or published it>", "<YYYY-MM-DD, or YYYY-MM, or YYYY>"
-        how = "Dropped into the %s inbox as %s." % (zone, path.name)
-    text = "\n".join([
-        "---", "title: %s" % _yaml(title), "type: source", "author: %s" % author, "published: %s" % published,
-        'raw: "[[raw/%s]]"' % slug, "confidence: <high, medium or low>", "created: %s" % today,
-        "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
-        "<A short summary. Every vendor claim attributed to its vendor.>", "",
-        "Touches <the concept and entity pages it speaks to>.", ""])
+        how = "Dropped into the %s inbox as %s." % (zone or "workspace's", path.name)
+    known = {"author": author, "published": published,
+             "raw": '"[[%s]]"' % dest.relative_to(kroot).with_suffix("").as_posix()}
+    fields = ["author", "published", "raw"] + [f for f in schema["source"]["fields"] if f not in ("author", "published", "raw")]
+    text = "\n".join(
+        ["---", "title: %s" % _yaml(title), "type: %s" % schema["source"]["type"]]
+        + ["%s: %s" % (f, known.get(f, "<%s>" % f.replace("-", " "))) for f in fields]
+        + ["confidence: <high, medium or low>", "created: %s" % today,
+           "updated: %s" % today, "---", "", "# %s" % title, "", how, "",
+           "<A short summary. Every vendor claim attributed to its vendor.>", "",
+           "Touches <the concept and entity pages it speaks to>.", ""])
+    frozen = None
+    if mail:
+        own = load_context(root).get("me", [])
+        frozen = strip_recipients(path.read_bytes(), path.suffix, own)
+        left = parse_mail_bytes(frozen, path.suffix)
+        named = [a for _, a in left["to"] + left["cc"] + left["delivered"]]
+        named += [a for a in own if a in frozen.decode("utf-8", errors="replace").lower()]
+        if named:
+            raise Refusal("%s still names who received it (%s) after its recipients were taken out, so it is "
+                          "not filed in Knowledge. Save it as .eml and file that instead." % (
+                              path.name, ", ".join(sorted(set(named)))))
+
     def freeze():
         if mail:
-            write_new(root, kroot, dest, strip_recipients(path.read_bytes()))
+            write_new(root, kroot, dest, frozen)
             path.unlink()
         else:
             move_new(root, kroot, path, dest)
     with filing(root):
+        dest.parent.mkdir(parents=True, exist_ok=True)
         landing(root, kroot, dest)
         _page_then(root, kroot, page, text, freeze)
     return slug, dest, page
@@ -544,6 +677,8 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     """
     path, where, zone, kind, _ = _item(root, path)
     folder, pzone, ptags = resolve_project(root, project)
+    if where == "workspace":
+        raise Refusal(FIRST_ZONE % path.name)
     if where != "zone":
         raise Refusal("%s is in the Meetings inbox, which holds conversations, never project material." % path.name)
     if kind == "mail":
@@ -731,6 +866,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     r.add_argument("--file", required=True)
     r.add_argument("--title", default="", help="title of the work (default: the subject, or the file name)")
     r.add_argument("--slug", default="", help="the name in Knowledge (default: from the title)")
+    r.add_argument("--kind", default="", help="where the original goes, when the wiki's schema.json keeps them by kind")
     t = sub.add_parser("file-to-project", help="move a dropped file into a project's Sources/")
     t.add_argument("--file", required=True)
     t.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
@@ -742,6 +878,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     x.add_argument("--name", default="", help="the attachment's name, as parse lists it")
     x.add_argument("--index", type=int, default=0, help="the attachment's place in the list, from 1")
     x.add_argument("--save-as", default="", help="file name in Sources/ (default: the attachment's)")
+    z = sub.add_parser("move-to-zone", help="move an item from the workspace's Inbox to the zone the user named")
+    z.add_argument("--file", required=True)
+    z.add_argument("--zone", required=True)
+    k = sub.add_parser("skip", help="take an item too thin to keep out of a zone's Inbox, with the reason logged")
+    k.add_argument("--file", required=True)
+    k.add_argument("--reason", required=True, help="why, in a few words: thin, a promotion, a duplicate")
     l = sub.add_parser("learn", help="record that mail from a domain belongs to a party")
     l.add_argument("--domain", required=True)
     l.add_argument("--party", required=True)
@@ -766,13 +908,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                                                  args.today)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-reading":
-            slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today)
+            slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today, args.kind)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-to-project":
             print(rel(file_to_project(root, Path(args.file), args.project, _tags(args.parties), args.name)))
         elif args.command == "extract-attachment":
             how, dest = extract_attachment(root, args.mail, args.project, args.name, args.index, args.save_as)
             print("%s\t%s" % (how, rel(dest)))
+        elif args.command == "move-to-zone":
+            print(rel(move_to_zone(root, Path(args.file), args.zone)))
+        elif args.command == "skip":
+            print(skip(root, Path(args.file), args.reason, args.today))
         elif args.command == "learn":
             print("%s\t%s\t%s" % (learn(root, args.domain, args.party), args.domain.strip().lower(), strip_tag(args.party)))
     except Refusal as exc:

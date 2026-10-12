@@ -32,7 +32,7 @@ When there are several good ways to do something, name two or three, recommend o
 
 Recordings, mail and files you drop in. Getting them here is fetching, done by hand, by a script or by your assistant's own connector, and it decides nothing. Where each one goes is decided by these rules, one item at a time; the `intake` skill is the procedure.
 
-- **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to. An inbox is never a project, and nothing in one is committed.
+- **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to, or in the workspace's own `Inbox/` when one address serves every zone: there its zone is settled before anything else, from its parties, confirmed. An inbox is never a project, and nothing in one is committed.
 - **A recording is always a conversation**, filed in Meetings.
 - **Mail and files go where they belong:**
   - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;
@@ -64,7 +64,7 @@ Much of this workspace is driven by speaking and listening. Every name, request 
 - **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
 - **Where the desk skill is installed** (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
-- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back. **"What's parked"**: name the parked threads.
+- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting on it. If a heard name is close to two entries, ask. Read through ordinary transcription noise without comment, and never correct the user's spelling back at them.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table.

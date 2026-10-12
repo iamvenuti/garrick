@@ -13,6 +13,8 @@ python3 System/tools/release.py update --apply    # do it
 
 Or ask your assistant: "update Garrick". It runs the same command, tells you what would change, and changes it when you say yes.
 
+On a Mac whose `python3` comes from python.org, run it as `/usr/bin/python3 System/tools/release.py update`: python.org's Python has no certificates until you run *Install Certificates.command* in its folder under `/Applications`. Without them, `release.py` fetches through `curl` instead and says so; if `curl` fails too, it tells you which of the two to do.
+
 `release.py update` asks GitHub for the newest release, downloads it into a temporary folder outside your workspace, and runs that release's own update on your workspace. The temporary folder is removed afterwards. When the workspace already runs the newest release, it says so and downloads nothing. `--tag v0.16.0` takes a release other than the newest, but never one older than the workspace runs: that would take your files back. A workspace that follows `main` ahead of its release is updated from `main` by hand, below.
 
 To do the same by hand, get the newer Garrick yourself: download the ZIP from the [latest release](https://github.com/iamvenuti/garrick/releases/latest) and unzip it, or `git pull` in your clone. Keep it outside your workspace: an update refuses to run from a Garrick inside the workspace it would update. Then, from your workspace's folder:

@@ -18,7 +18,8 @@ most of the time a full check takes on a large workspace. `--walls-only` runs
 the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and
 prints one line per wall broken: it is what each zone's pre-commit hook runs.
-`--install-hooks` writes that hook into every zone's repository.
+`--install-hooks` writes that hook into every zone's repository, and into
+every git repository inside a project.
 
 Standard library only, Python 3.9 or later.
 """
@@ -44,6 +45,7 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
+    CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
     SKILL_FOLDERS,
@@ -56,6 +58,7 @@ from garrick_lib import (  # noqa: E402
     is_instruction_file,
     is_speakable,
     is_webmail,
+    knowledge_schema,
     fingerprint,
     garrick_ignores,
     ignore_parts,
@@ -178,6 +181,7 @@ class Workspace:
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
+    raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +553,31 @@ def instruction_files(ws: Workspace) -> List[Path]:
     return [f for f in files if f.is_file()]
 
 
+
+def text_blocks(text: str) -> List[str]:
+    """A Markdown text as its blocks: each bullet or numbered list, table and
+    paragraph, split at blank lines and where one kind gives way to another."""
+    blocks, current, kind = [], [], None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                blocks.append("\n".join(current))
+            current, kind = [], None
+            continue
+        this = "table" if stripped.startswith("|") else "list" if re.match(r"(?:[-*+]|\d+[.)])\s", stripped) \
+            else "heading" if stripped.startswith("#") else "text"
+        if kind == "list" and this == "text" and line[:1].isspace():
+            this = "list"                    # an item carried on to the next line
+        if current and this != kind:
+            blocks.append("\n".join(current))
+            current = []
+        current.append(line)
+        kind = this
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
 def check_instructions(ws: Workspace) -> List[Finding]:
     """An AGENTS.md that grows, a sentence copied between instruction files, or a
     hand-kept list of skills that no longer matches the folder: each one drifts."""
@@ -600,17 +629,26 @@ def check_instructions(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "instructions", names,
                                "the same text in both: \"%s…\"; keep it in one and point from the other" % norm[:60],
                                "Two instruction files say the same thing"))
-    # A file that names several skills names every one of them. Garrick's
-    # file and the local file beside it are read together, so they count as one.
+    # A list of skills names every one of them. A list is several names in
+    # one block (one bullet list, one table, one paragraph); names spread over
+    # separate sentences each point at one procedure, and are pointers.
+    # Garrick's file and the local file beside it are read together.
     skills = {p.parent.name for p in (ws.root / "System" / "skills").glob("*/SKILL.md")}
     for f, text in texts.items():
         if f.name.endswith(".local.md"):
             continue  # read with the file it sits beside
         pair = [g for g in (f, local_beside(ws, f)) if g is not None and g in texts]
-        naming = [g for g in pair if any("`%s`" % s in texts[g] for s in skills)]
-        named = {s for s in skills if any("`%s`" % s in texts[g] for g in pair)}
-        if len(named) >= 3 and named != skills:
-            out.append(Finding(WARNING, "instructions", " and ".join(rel(ws, g) for g in naming),
+        listing = []
+        named = set()
+        for g in pair:
+            for block in text_blocks(texts[g]):
+                in_block = {s for s in skills if "`%s`" % s in block}
+                if len(in_block) >= 3 and g not in listing:
+                    listing.append(g)
+        if listing:                             # a list, and every name the pair gives, wherever it stands
+            named = {s for s in skills if any("`%s`" % s in texts[g] for g in pair)}
+        if named and named != skills:
+            out.append(Finding(WARNING, "instructions", " and ".join(rel(ws, g) for g in listing),
                                "lists skills but not %s; list the folder instead of naming them" % ", ".join(sorted(skills - named)),
                                "An instruction file lists skills that no longer match the folder"))
     # A zone's instructions that name its projects' hub notes name every one
@@ -712,13 +750,41 @@ def check_placeholders(ws: Workspace) -> List[Finding]:
     return out
 
 
+# What a section the checks cannot read leaves undone, said after its fix.
+CONTEXT_EFFECT = {
+    "people": "; until then the wall check sees no one's name",
+    "parties": "; until then no wall can be checked",
+    "walls": "; until then no wall is checked",
+    "aliases": "; until then no heard name resolves",
+    "zones": "; until then no zone folder is checked against it",
+}
+
+
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
     if not (ws.root / ctx_path).is_file():
         return [Finding(ERROR, "context", ctx_path, "missing; walls and aliases cannot be read", "The context file is missing")]
     parties = ws.context["parties"]
-    if not parties:
+    unread = set()
+    for name, (shown, _) in CONTEXT_TABLES.items():
+        seen = ws.context.get("tables", {}).get(name)
+        if not seen:
+            continue
+        title = name.capitalize()
+        wanted = ", ".join(shown)
+        if seen["text"] and not seen["table"]:
+            unread.add(name)
+            out.append(Finding(ERROR, "context", ctx_path,
+                               "%s is written as prose or a list; the checks cannot read anything in it. "
+                               "Make it a table: %s%s" % (title, wanted, CONTEXT_EFFECT.get(name, "")),
+                               "The %s section of the context file is not a table" % title))
+        elif seen["missing"]:
+            out.append(Finding(WARNING, "context", ctx_path,
+                               "the %s table has no %s column; it needs %s" % (
+                                   title, " or ".join(c.capitalize() for c in seen["missing"]), wanted),
+                               "The %s table is missing a column" % title))
+    if not parties and "parties" not in unread:
         out.append(Finding(WARNING, "context", ctx_path, "the Parties table is empty; no wall can be checked",
                            "The Parties table is empty"))
     for wall in sorted(ws.context["walls"], key=sorted):
@@ -837,6 +903,30 @@ def hooks_elsewhere(repo: Path) -> Optional[Tuple[str, Path]]:
     return value, where
 
 
+def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
+    """(repository, its project, the project's hub frontmatter) for every git
+    repository inside a project: a product's code, a site, a book. Each is
+    found at its top; nothing below one is looked in."""
+    out = []
+    for project, pfm in ws.projects:
+        for folder, dirs, _ in os.walk(project):
+            here = Path(folder)
+            keep = []
+            for d in sorted(dirs):
+                if d in SKIP_DIRS or d.startswith("."):
+                    continue
+                if (here / d / ".git").exists():
+                    out.append((here / d, project, pfm))
+                else:
+                    keep.append(d)
+            dirs[:] = keep
+    return out
+
+
+def has_remote(repo: Path) -> bool:
+    return bool((_git(["remote"], repo) or "").strip())
+
+
 def check_hooks(ws: Workspace) -> List[Finding]:
     """A zone's wall check sits in its own .git/hooks, and git runs the hooks
     there only while `core.hooksPath` is unset or names that folder. Set
@@ -864,6 +954,15 @@ def check_hooks(ws: Workspace) -> List[Finding]:
                            "run `git config core.hooksPath .git/hooks` in %s" % (value, what, rel(ws, repo)),
                            ("Git skips the wall check in the %s zone" % repo.name) if is_zone
                            else "Git skips the hooks of the %s repository" % repo.name))
+    # A repository inside a project is the likeliest to be pushed somewhere
+    # public, and the zone's hook never sees its commits.
+    for repo, project, _ in project_repos(ws):
+        if not (repo / ".git").is_dir() or has_wall_hook(repo) or not has_remote(repo):
+            continue
+        out.append(Finding(WARNING, "hooks", rel(ws, repo),
+                           "a repository inside %s, with a remote, and no wall check before its commits; "
+                           "run `python3 System/tools/check.py --install-hooks`" % project.name,
+                           "A repository inside %s pushes without a wall check" % project.name))
     return out
 
 
@@ -1204,7 +1303,7 @@ def resume_block(text: str) -> List[str]:
 
 # A Resume here block as the thread template leaves it: its date and table
 # cells still hold the template's <angle-bracket> prompts.
-RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Waiting on|Deadline)\s*\|\s*<")
+RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Keep in mind|Waiting on|Deadline)\s*\|\s*<")
 RESUME_DATE_PROMPT = "**Where it stands, <"
 
 
@@ -1397,6 +1496,15 @@ def check_deliverables(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "deliverables", rel(ws, path),
                                    "name does not start with its creation date, `YYMMDD - <name>`",
                                    "A deliverable in %s lacks its date" % project.name))
+        # What left the workspace: a row drift.py cannot read is a file nobody watches.
+        ledger = project / "Deliverables" / "published.md"
+        if ledger.is_file():
+            from drift import ledger_rows
+            for line in ledger_rows(ledger)[1]:
+                out.append(Finding(WARNING, "deliverables", rel(ws, ledger),
+                                   "a row does not read as `| YYYY-MM-DD | `file` | `destination` | recipients | "
+                                   "share or here |`, so its file is not watched for drift: %s" % line[:80],
+                                   "A row of what %s published does not read" % project.name))
     return out
 
 
@@ -1744,8 +1852,42 @@ def note_refs(ws: Workspace, zone: Path) -> List[Finding]:
     return out
 
 
-def check_meetings(ws: Workspace) -> List[Finding]:
+def link_stem(value: str) -> str:
+    """A link's target as a bare name: `[[raw/2026/x.txt|X]]` reads x."""
+    return Path(str(value).strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()).stem
+
+
+def check_splits(ws: Workspace) -> List[Finding]:
+    """Pages that share a raw record are a declared split: each names every
+    other in `split-with:`, so each is read with its own parties and a
+    brief or a wall never takes one for the whole call. Two pages on one
+    record without it are one conversation filed twice, or a split nobody
+    declared."""
     out = []
+    by_raw: Dict[Path, List[Path]] = {}
+    for page, fm in ws.meetings.items():
+        if not any(fm.get(k) for k in RAW_FIELDS):
+            continue                                  # only pages that name their record
+        for raw in meeting_raws(ws, page, fm):
+            by_raw.setdefault(raw, []).append(page)
+    for raw, pages in sorted(by_raw.items()):
+        pages = sorted(set(pages))
+        if len(pages) < 2:
+            continue
+        for page in pages:
+            named = {link_stem(v) for v in as_list(ws.meetings[page].get("split-with"))}
+            missing = [o.stem for o in pages if o != page and o.stem not in named]
+            if missing:
+                out.append(Finding(ERROR, "meetings", rel(ws, page),
+                                   "shares its raw record %s with %s, and its split-with does not name %s; each page of "
+                                   "a split names every other, or the two are one conversation filed twice"
+                                   % (raw.name, ", ".join(o.stem for o in pages if o != page), ", ".join(missing)),
+                                   "Two meeting pages share one record without saying they split it"))
+    return out
+
+
+def check_meetings(ws: Workspace) -> List[Finding]:
+    out = check_splits(ws)
     zone_names = {z.name for z in ws.zones} | set(ws.context["zones"])
     for page, fm in ws.meetings.items():
         r = rel(ws, page)
@@ -2089,18 +2231,65 @@ def shared_link(ws: Workspace, source: Path) -> Callable[[str], bool]:
     return test
 
 
-def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
-    """The raw transcripts behind a meeting page: the one its `raw` field names,
-    else any file in raw/ with the page's slug. The inbox is not yet filed. In
-    staged mode, a record deleted from disk but still in git counts too."""
-    raw = ws.root / "Wikis" / "Meetings" / "raw"
-    stems = {page.stem}
-    for value in as_list(fm.get("raw")):
-        stems.add(Path(value.strip("[]").split("|", 1)[0]).stem)
-    found = {p for p in raw.iterdir() if p.is_file() and p.stem in stems} if raw.is_dir() else set()
-    found |= {p for p in ws.git_view if p.parent == raw and p.stem in stems}
-    return sorted(found)
+# The fields of a meeting page that name its raw record.
+RAW_FIELDS = ("raw", "transcript")
 
+
+def raw_records(ws: Workspace) -> Dict[str, List[Path]]:
+    """Every file under the Meetings raw/, at any depth, by stem; raw/inbox/
+    is not filed yet. In staged mode, a record deleted from disk but still
+    in git counts too."""
+    if ws.raw_records is not None:
+        return ws.raw_records
+    raw = ws.root / "Wikis" / "Meetings" / "raw"
+    inbox = raw / "inbox"
+    found = set()
+    if raw.is_dir():
+        for folder, dirs, files in os.walk(raw):
+            here = Path(folder)
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != inbox)
+            found |= {here / f for f in files if not f.startswith(".")}
+    found |= {p for p in ws.git_view if raw in p.parents and inbox not in p.parents and p != inbox}
+    index: Dict[str, List[Path]] = {}
+    for p in sorted(found):
+        index.setdefault(p.stem, []).append(p)
+    ws.raw_records = index
+    return index
+
+
+def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
+    """The raw records behind a meeting page. A `raw` (or `transcript`) link
+    with a path names one record exactly, at any depth under raw/, with or
+    without its extension. A bare name, and the page's own slug, find the
+    records of that name directly in raw/, and only when there are none
+    there, in its subfolders: a record in a subfolder is never claimed by a
+    page whose link names another."""
+    raw = ws.root / "Wikis" / "Meetings" / "raw"
+    index = raw_records(ws)
+    found, stems = set(), set()
+    linked = False
+    for key in RAW_FIELDS:
+        for value in as_list(fm.get(key)):
+            target = value.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()
+            if not target:
+                continue
+            linked = True
+            tail = target.split("raw/", 1)[1] if target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")) else target
+            if "/" in tail or target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")):
+                exact = {p for p in index.get(Path(tail).stem, []) if p.relative_to(raw).as_posix() in
+                         (tail, Path(tail).with_suffix("").as_posix()) or p.relative_to(raw).with_suffix("").as_posix() == tail}
+                found |= exact
+                if not exact and "/" not in tail:
+                    stems.add(Path(tail).stem)
+            else:
+                stems.add(Path(tail).stem)
+    if not linked:
+        stems.add(page.stem)
+    for stem in stems:
+        candidates = index.get(stem, [])
+        top = [p for p in candidates if p.parent == raw]
+        found |= set(top or candidates)
+    return sorted(found)
 
 def finished(fm: dict) -> bool:
     """A meeting page with both of the fields the walls read."""
@@ -2464,17 +2653,16 @@ def mail_index(ws: Workspace) -> Dict[Tuple[str, int, str], List[MailRecord]]:
     .eml in the Meetings raw records, and every one waiting in a zone Inbox."""
     if ws.mail_index is not None:
         return ws.mail_index
-    owner: Dict[Path, Path] = {}
+    owner: Dict[Path, List[Path]] = {}
     for page, fm in ws.meetings.items():
         for raw in meeting_raws(ws, page, fm):
-            owner.setdefault(raw, page)
+            owner.setdefault(raw, []).append(page)
+    # A mail split into a page per project is a record per page: what each
+    # page's project may take from it is read with that page's parties.
     records: List[MailRecord] = []
-    raw_dir = ws.root / "Wikis" / "Meetings" / "raw"
-    if raw_dir.is_dir():
-        records += [MailRecord(p, owner.get(p)) for p in sorted(raw_dir.iterdir())
-                    if p.is_file() and p.suffix.lower() == ".eml"]
-    for zone in ws.zones:
-        inbox = zone / INBOX
+    records += [MailRecord(p, page) for paths in raw_records(ws).values() for p in paths
+                if p.suffix.lower() == ".eml" and p.is_file() for page in sorted(owner.get(p) or [None], key=str)]
+    for inbox in [zone / INBOX for zone in ws.zones] + [ws.root / INBOX]:
         if inbox.is_dir():
             records += [MailRecord(p, None) for p in sorted(inbox.iterdir())
                         if p.is_file() and p.suffix.lower() == ".eml"]
@@ -2717,9 +2905,9 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         except ValueError:
             minbox_rel = None  # the Meetings inbox is in another repository
         for name in names:
-            if top_path in zones and in_inbox(name, (INBOX,)):
+            if (top_path in zones or top_path == ws.root.resolve()) and in_inbox(name, (INBOX,)):
                 out.append(Finding(ERROR, "inbox", rel(ws, top_path / name),
-                                   "is waiting in the inbox to be filed, and never goes into the zone's history; "
+                                   "is waiting in the inbox to be filed, and never goes into any history; "
                                    "unstage it and file it where it belongs",
                                    "A file from the %s inbox was about to be committed" % top_path.name))
                 continue
@@ -2826,6 +3014,16 @@ def check_inbox(ws: Workspace) -> List[Finding]:
                                    "committed into the %s zone's history from its inbox, which is never committed: "
                                    "`git rm --cached` it, then file it where it belongs" % zone.name,
                                    "Something in the %s inbox was committed" % zone.name))
+    shared = ws.root / INBOX               # mail sent to one address for every zone, waiting for its zone
+    if shared.is_dir():
+        inboxes.append((shared, "the workspace's inbox"))
+        if _own_repo(ws.root):
+            listing = _git(["ls-files", "-z", "--", INBOX], ws.root) or ""
+            for name in sorted(n for n in listing.split("\0") if n and Path(n).name != ".gitkeep"):
+                out.append(Finding(ERROR, "inbox", rel(ws, ws.root / name),
+                                   "committed into the workspace's history from its inbox, which is never committed: "
+                                   "`git rm --cached` it, then file it where it belongs",
+                                   "Something in the workspace's inbox was committed"))
     minbox = ws.root.joinpath(*MEETINGS_INBOX)
     if minbox.is_dir():
         inboxes.append((minbox, "the Meetings inbox"))
@@ -2856,7 +3054,9 @@ def check_inbox(ws: Workspace) -> List[Finding]:
                             by_size.setdefault(r.stat().st_size, []).append(r)
             data = path.read_bytes()
             # Mail filed as reading is frozen without the reader's addresses, so compare that form too.
-            forms = [data] + ([strip_recipients(data)] if path.suffix.lower() == ".eml" else [])
+            forms = [data]
+            if path.suffix.lower() in (".eml", ".md", ".txt"):
+                forms += [strip_recipients(data, path.suffix), strip_recipients(data, path.suffix, ws.context.get("me", []))]
             twin = next((r for f in forms for r in by_size.get(len(f), []) if r.read_bytes() == f), None)
             if twin is not None:
                 out.append(Finding(WARNING, "inbox", rel(ws, path),
@@ -2879,6 +3079,14 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
     raw = kroot / "raw"
     beyond = None
+    schema, problems = knowledge_schema(ws.root)
+    for problem in problems:
+        out.append(Finding(WARNING, "knowledge", "Wikis/Knowledge/schema.json", problem,
+                           "The Knowledge wiki's schema has a problem"))
+    sources = kroot / "wiki" / "sources"
+    stype, sfields = schema["source"]["type"], schema["source"]["fields"]
+    known_types = {stype, "concept", "entity"}
+    declared = (kroot / "schema.json").is_file()      # a wiki that declares its layout is held to it
     for path in walk_files(kroot):
         suffix = path.suffix.lower()
         if suffix not in TEXT_SUFFIXES and suffix != ".eml":
@@ -2888,6 +3096,21 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
             fm = {}
             if suffix == ".md":  # read once; a page too big to scan still has its fields read
                 fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
+            if suffix == ".md" and fm and path.parent == sources and declared:
+                lacking = [f for f in sfields if not as_list(fm.get(f))]
+                if fm.get("type") != stype or lacking:
+                    out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                                       "a source page %s; the wiki's schema asks for `type: %s` and %s" % (
+                                           "has `type: %s`" % fm.get("type") if fm.get("type") != stype
+                                           else "has no %s" % ", ".join("`%s`" % f for f in lacking),
+                                           stype, ", ".join("`%s`" % f for f in sfields)),
+                                       "A Knowledge source page does not follow the wiki's schema"))
+            elif suffix == ".md" and fm.get("type") and fm.get("type") not in known_types \
+                    and kroot / "wiki" in path.parents:
+                out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                                   "`type: %s` is not a kind of page the wiki's schema knows (%s); the graph draws it "
+                                   "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),
+                                   "A Knowledge page has a type the schema does not know"))
             carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
             if carried:
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
@@ -3186,6 +3409,9 @@ def report_staged(findings: List[Finding]) -> str:
 
 
 def install_hooks(root: Path) -> int:
+    """The wall check in every zone's repository, and in every repository
+    inside a project, which checks its staged files against the walls of the
+    project's party, as a zone's does."""
     ws = discover(root)
     code = 0
     for zone in ws.zones:
@@ -3194,6 +3420,14 @@ def install_hooks(root: Path) -> int:
             print("%s: wall check installed at %s" % (zone.name, rel(ws, hook)))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (zone.name, exc), file=sys.stderr)
+            code = 1
+    for repo, project, pfm in project_repos(ws):
+        parties = ", ".join(strip_tag(t) for t in as_list(pfm.get("party"))) or "no party"
+        try:
+            hook = install_wall_hook(repo, nested=True)
+            print("%s: wall check installed at %s, on %s's side" % (rel(ws, repo), rel(ws, hook), parties))
+        except (FileExistsError, FileNotFoundError) as exc:
+            print("%s: %s" % (rel(ws, repo), exc), file=sys.stderr)
             code = 1
     return code
 
@@ -3216,7 +3450,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
-                        help="install the pre-commit wall check in every zone's repository")
+                        help="install the pre-commit wall check in every zone's repository, and in each repository inside a project")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
     args = parser.parse_args(argv)

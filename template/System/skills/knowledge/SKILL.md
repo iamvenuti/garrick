@@ -5,7 +5,8 @@ description: >
   it. Use when the user says "read this", "add this to knowledge", "add this
   to the library", "ingest this report", "save this page", "what does my
   library say about X", "what do we know about X", "has anyone written about
-  X", or hands over a PDF, a link, or pasted text to keep for later. Also use
+  X", "lint the library", "lint knowledge", or hands over a PDF, a link, or
+  pasted text to keep for later. Also use
   when material dictated in conversation sounds like a published claim rather
   than something that happened in a meeting, so it can be redirected to the
   right memory. The intake skill hands over what it sorted as something to
@@ -160,10 +161,12 @@ project, never here.
    may have ingested something since you last looked. Add a row for the
    source and for any concept or entity page you created, newest first. For a
    page you only touched, update its Updated cell and move its row to its
-   place.
+   place. When the wiki's `schema.json` says `"index": "tables"`, the row
+   goes in the table for its type instead.
 9. **Re-read `wiki/log.md` right before you append.** One line, newest on
    top: what was ingested, its author or vendor, and which concept or entity
-   pages it touches.
+   pages it touches. With `"log": "section"`, a dated `## ` section on top
+   instead, holding the same.
 10. **Commit, in the Wikis repository.** Stage only what this ingest wrote:
     the raw file, the source page, any concept and entity pages touched, the
     index and the log. Never `git add -A`, and never a Meetings file in the
@@ -244,6 +247,40 @@ cut. That's the vendor's number, not independently checked." Offer the
 detail rather than reading it out.
 
 Written: the same, then each source page linked, and its confidence.
+
+## Lint: "lint the library", "lint knowledge"
+
+A wiki that grows by ingest drifts in ways no file check sees. On request,
+or once a month if the user asks for that, read it for them and report. The
+lint changes nothing: the user picks what to fix, and each fix is then an
+ordinary edit.
+
+1. **What a script can find**, first:
+   ```sh
+   python3 System/tools/wiki_lint.py --wiki Knowledge
+   ```
+   Orphans (pages that link nowhere and that nothing links to) and missing
+   pages (links to a page that is not there).
+2. **What needs reading.** Read the index, then the concept and entity
+   pages and a sample of the sources ingested in the last three months,
+   and look for:
+   - **contradictions**: two pages that state incompatible facts; name both;
+   - **stale claims**: a claim a later source supersedes, or a figure
+     whose source is more than two years old with nothing newer;
+   - **single-perspective claims**: a "consensus" every source behind
+     which is the vendor that sells it;
+   - **missing pages**: a name or idea that turns up in three or more
+     sources with no concept or entity page of its own.
+3. **Write the report** as `wiki/lint/<YYYY-MM-DD>.md`: one section per
+   kind, each finding with its pages linked and a suggested fix in a line.
+   Nothing found under a heading says so. It names no party, as every
+   Knowledge page does not.
+4. **Commit** it in the Wikis repository, alone, and say how many findings
+   of each kind there are.
+
+Spoken: "Four things in the library: two pages disagree on failover times,
+one claim rests only on its vendor, and two orphans. The report has the
+detail."
 
 ## Examples
 

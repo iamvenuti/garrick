@@ -443,6 +443,16 @@ def check_target(target):
             raise BuildError(f"{target} is not empty. Pick an empty or new folder.")
 
 
+def notes(folder):
+    """Every .md under a folder, never inside .git, where git may be packing
+    objects in the background as the walk passes."""
+    for top, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for f in files:
+            if f.endswith(".md"):
+                yield Path(top) / f
+
+
 def scaffold(root, when, args):
     """Run the workspace's own scaffold script, then give what it wrote the plan's date.
 
@@ -450,11 +460,11 @@ def scaffold(root, when, args):
     `created:` and `updated:` lines of the files it wrote or changed are rewritten.
     """
     zone = root / "Zones" / args[args.index("--zone") + 1]
-    before = {p: p.read_bytes() for p in zone.rglob("*.md")}
+    before = {p: p.read_bytes() for p in notes(zone)}
     run([sys.executable, str(root / "System" / "tools" / "scaffold.py")] + args, root, when, "scaffold")
     stamp_re = re.compile(r"(?m)^(created|updated): \d{4}-\d{2}-\d{2}$")
     date = when.split(" ")[0]
-    for path in zone.rglob("*.md"):
+    for path in notes(zone):
         if before.get(path) == path.read_bytes():
             continue
         text = path.read_text(encoding="utf-8")

@@ -13,7 +13,7 @@ cmux is a Mac terminal built for running several assistant sessions side by side
 - **"Start the day"** or **"restore my tabs"** starts cmux, or restores its last tabs, then puts the right session back into any tab that came back at a bare prompt.
 - **"What tabs are open"** lists them: workspace, tab, assistant, idle or working, folder.
 
-desk works with Claude Code and Codex sessions alike. It tells idle from working by reading each session's own transcript, never the tab's title, and it refuses to close, wrap or quit under a session that is mid-turn or waiting on a question, or one whose transcript it cannot read. A wrap can take minutes, so each tab is checked again the moment its wrap is sent, and one that has started a turn since, or stopped on a question, gets nothing typed into it. Before it does anything that closes or quits, it says what it would do and waits for you to say yes.
+desk works with Claude Code and Codex sessions alike. It tells idle from working by reading each session's own transcript, never the tab's title, and it refuses to close, wrap or quit under a session that is mid-turn or waiting on a question, or one whose transcript it cannot read. A Claude Code tab with no prompt since it started or was cleared with `/clear` has no transcript yet; desk reads it as `empty`, idle with nothing to wrap, and closes it without one. A wrap can take minutes, so each tab is checked again the moment its wrap is sent, and one that has started a turn since, or stopped on a question, gets nothing typed into it. Before it does anything that closes or quits, it says what it would do and waits for you to say yes.
 
 These phrases are in `System/rules.md`, under Voice. Without the extra, "close X" and "close for the day" are wraps done from the session you are in, and "open X" opens the thread there.
 
@@ -68,7 +68,7 @@ Once the page says the desk is ready (the extra, cmux, and the preview `page-act
 | The menu's or the panel's field, with the preview `ask` off and cmux the assistant | the words you typed, at the workspace root |
 | Ask, with the preview `ask` on, opening a project or thread in cmux | "open Acme Review, Pricing" |
 
-A tab at the workspace root goes to the *System* workspace (the `neutral` setting). desk opens the root only when given its full path, so a heard name never lands there. If a tab is already open in that folder, desk brings it forward, and sends the words only when its session is idle. Without the desk, each of these opens the folder in cmux with the phrase on the clipboard, as before. The [Obsidian plugin](status-page.md#in-obsidian) gets the page's buttons the same way.
+A tab at the workspace root goes to the *System* workspace (the `neutral` setting), named for what it does: *Inbox* for *Process the Inbox*, and the first few words of the question for *Ask Garrick*, so two of them are told apart and "close the Inbox tab" works. Opened by hand without a name, it is *Workspace*, never the folder's name. desk opens the root only when given its full path, so a heard name never lands there. If a tab is already open in that folder, desk brings it forward, and sends the words only when its session is idle. Without the desk, each of these opens the folder in cmux with the phrase on the clipboard, as before. The [Obsidian plugin](status-page.md#in-obsidian) gets the page's buttons the same way.
 
 ## The socket password
 

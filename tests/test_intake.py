@@ -421,6 +421,17 @@ class TestListAndParse(MailCase):
 
 
 class TestFileConversation(MailCase):
+    def test_a_mail_already_filed_is_refused_by_its_message_id(self):
+        first = self.drop("forecast.eml", eml(plain="Figures inside.\n", headers={"Message-ID": "<abc@acmecorp.example>"}))
+        slug, _, page = intake.file_conversation(self.root, first, ["acme"], today="2026-09-29")
+        self.assertEqual("abc@acmecorp.example", lib.parse_frontmatter(page)["source-id"])
+        again = self.drop("forecast2.eml", eml(plain="Figures inside.\n\n-- \nsent from my phone\n",
+                                               headers={"Message-ID": "<ABC@acmecorp.example>"}))
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_conversation(self.root, again, ["acme"])
+        self.assertIn("already filed as " + slug, str(caught.exception))
+        self.assertTrue(again.exists())
+
     def test_moves_the_raw_and_writes_the_page(self):
         data = eml(subject="Re: Fwd: Pallet forecast", plain="Figures inside.\n",
                    attachment=("forecast.csv", b"q,p\n"), cc="Owen Pike <owen.pike@acmecorp.example>")
@@ -526,6 +537,76 @@ class TestFileReading(MailCase):
         self.assertIn("you%40removed.invalid", texts[0])
         attached = [p.get_content() for p in m.walk() if p.get_filename() == "rates.csv"]
         self.assertEqual(["lane,rate\njo@joexample.example,1\n"], attached)  # attachments are left as they are
+
+    def test_a_mail_saved_as_markdown_loses_its_reader_too(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("Jo Example. Independent advisor.\n",
+                                               "Jo Example. Independent advisor.\n\nMy addresses: jo@joexample.example\n"))
+        text = "\n".join([
+            "---", "from: The Freight Ledger <newsletter@freightledger.example>",
+            "to: Jo Example <jo+work@joexample.example>", "cc:", "  - jo.alias@joexample.example",
+            "delivered-to: jo+work@joexample.example", "subject: Freight Ledger Weekly", "date: 2026-09-28", "---", "",
+            "Jo, worth a read.", "", "---------- Forwarded message ---------",
+            "From: Jo Example <jo@joexample.example>", "Date: Mon, 28 Sep 2026 09:00", "Subject: Freight Ledger Weekly",
+            "To: Jo Example <jo+work@joexample.example>", "", "Lanes are tight this winter.",
+            "Sent to jo+work@joexample.example", ""])
+        slug, raw, _ = intake.file_reading(self.root, self.drop("weekly.md", text), today="2026-09-29")
+        frozen = raw.read_text()
+        self.assertNotIn("joexample", frozen.lower())
+        self.assertNotIn("delivered-to", frozen.lower())
+        self.assertNotIn("\nto:", frozen.lower())
+        self.assertIn("newsletter@freightledger.example", frozen)
+        self.assertIn("Lanes are tight this winter.", frozen)
+        self.assertIn("From: Jo Example <you@removed.invalid>", frozen)
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("knowledge", "inbox")])
+
+    def test_a_to_line_in_the_prose_is_text_and_stays(self):
+        text = ("From: The Freight Ledger <newsletter@freightledger.example>\nTo: jo@joexample.example\n"
+                "Subject: Weekly\n\nThe memo opened like this:\n\nTo: all hauliers, from the board.\n"
+                "  We expect higher rates.\n")
+        out = lib.strip_recipients(text.encode(), ".md").decode()
+        self.assertNotIn("To: jo@", out)
+        self.assertIn("To: all hauliers, from the board.\n  We expect higher rates.", out)
+
+    def test_a_mail_it_cannot_strip_is_refused(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("Jo Example. Independent advisor.\n",
+                                               "Jo Example. Independent advisor.\n\nMy addresses: jo@joexample.example\n"))
+        with mock.patch.object(intake, "strip_recipients", lambda data, *a, **k: data):
+            path = self.drop("weekly.md", "From: newsletter@freightledger.example\nTo: jo@joexample.example\n\nBody.\n")
+            with self.assertRaises(intake.Refusal) as caught:
+                intake.file_reading(self.root, path)
+        self.assertIn("jo@joexample.example", str(caught.exception))
+        self.assertTrue(path.exists())
+
+    def test_a_wiki_that_declares_its_layout_is_filed_by_it(self):
+        write(self.root / "Wikis" / "Knowledge" / "schema.json", json.dumps({
+            "raw": "raw/{kind}/{date} {publisher} - {title}.{ext}", "kinds": ["papers", "articles"],
+            "source": {"type": "reading", "fields": ["author", "published", "raw", "publisher"]},
+            "index": "tables", "log": "section"}))
+        path = self.drop("weekly.eml", eml(**NEWSLETTER))
+        with self.assertRaisesRegex(intake.Refusal, "pass --kind"):
+            intake.file_reading(self.root, path, today="2026-09-29")
+        with self.assertRaisesRegex(intake.Refusal, "not a kind"):
+            intake.file_reading(self.root, path, today="2026-09-29", shelf="books")
+        slug, raw, page = intake.file_reading(self.root, path, today="2026-09-29", shelf="articles")
+        self.assertEqual(self.root / "Wikis" / "Knowledge" / "raw" / "articles" /
+                         "2026-09-28 The Freight Ledger - Freight Ledger Weekly.eml", raw)
+        fm = lib.parse_frontmatter(page)
+        self.assertEqual("reading", fm["type"])
+        self.assertEqual("[[raw/articles/2026-09-28 The Freight Ledger - Freight Ledger Weekly]]", fm["raw"])
+        self.assertEqual("<publisher>", fm["publisher"])
+        warned = [f.path for f in check.run_checks(self.root) if f.check == "knowledge"]
+        self.assertNotIn("Wikis/Knowledge/wiki/sources/%s.md" % slug, warned)          # the draft has every field
+        self.assertIn("Wikis/Knowledge/wiki/sources/supply-chain-report.md", warned)      # an older page does not
+
+    def test_a_schema_that_does_not_read_keeps_garricks_layout_and_says_so(self):
+        write(self.root / "Wikis" / "Knowledge" / "schema.json", json.dumps({"raw": "../elsewhere/{slug}.{ext}", "index": "grid"}))
+        schema, problems = lib.knowledge_schema(self.root)
+        self.assertEqual("raw/{slug}.{ext}", schema["raw"])
+        self.assertEqual(2, len(problems))
+        found = [f for f in check.run_checks(self.root) if f.path == "Wikis/Knowledge/schema.json"]
+        self.assertEqual(2, len(found))
 
     def test_a_dropped_article(self):
         path = self.drop("Lanes in winter.md", "# Lanes in winter\n\nA trade paper's view.\n")

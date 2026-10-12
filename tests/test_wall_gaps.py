@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -143,6 +144,52 @@ class TestHooksPath(GapCase):
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestProjectRepositories(GapCase):
+    """A git repository inside a project, often pushed somewhere public, gets
+    the wall check too, on its project's side of the walls."""
+
+    def setUp(self):
+        super().setUp()
+        env = mock.patch.dict(os.environ, NO_USER_GIT)
+        env.start()
+        self.addCleanup(env.stop)
+        tools = Path(check.__file__).resolve().parent
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        for name in ("check.py", "garrick_lib.py"):              # what the hook looks up for
+            shutil.copy(tools / name, self.root / "System" / "tools" / name)
+        self.site = self.acme / "Site"
+        self.site.mkdir()
+        git(self.site, "init", "-q")
+        git(self.site, "config", "user.email", "jo@example.invalid")
+        git(self.site, "config", "user.name", "Jo")
+        write(self.meetings / "wiki" / "sources" / "260312-birch-call.md", meeting_page("Work", "[birch]", "Birch call"))
+
+    def commit(self, name, text):
+        write(self.site / name, text)
+        git(self.site, "add", name)
+        return subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(self.site), capture_output=True, text=True)
+
+    def test_without_a_remote_nothing_is_said(self):
+        self.assertEqual([], [f for f in self.findings("hooks") if "Site" in f.path])
+
+    def test_a_remote_and_no_hook_is_a_warning(self):
+        git(self.site, "remote", "add", "origin", "https://example.invalid/site.git")
+        [found] = [f for f in self.findings("hooks") if "Site" in f.path]
+        self.assertIn("--install-hooks", found.message)
+        self.assertIn("Acme Review", found.message)
+
+    def test_install_hooks_reaches_it_and_its_commits_are_checked(self):
+        git(self.site, "remote", "add", "origin", "https://example.invalid/site.git")
+        with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            check.install_hooks(self.root)
+        self.assertEqual([], [f for f in self.findings("hooks") if "Site" in f.path])
+        self.assertEqual(0, self.commit("index.md", "# Acme site\n\nAbout us.\n").returncode)
+        refused = self.commit("notes.md", "Background: [[260312-birch-call]]\n")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("Commit refused", refused.stderr + refused.stdout)
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestMeetingsInbox(GapCase):
     """Transcripts wait in Wikis/Meetings/raw/inbox/ and, like a zone's Inbox,
     never enter any history."""
@@ -266,6 +313,47 @@ class TestUnfinishedPages(QuoteCase):
         self.assertEqual(["Zones/Work/Acme Review/Deliverables/260320 - Note.md"], [f.path for f in found])
         self.assertIn("260319-call", found[0].message)
 
+    def _quoted_from(self, record, field, value, slug="260319-call"):
+        write(self.meetings / "raw" / record, "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        page = meeting_page(None, None, "Second call").replace("type: meeting", "type: meeting\n%s: \"%s\"" % (field, value))
+        write(self.meetings / "wiki" / "sources" / (slug + ".md"), page)
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        return self.walls()
+
+    def test_wording_from_a_raw_record_in_a_subfolder(self):
+        found = self._quoted_from("2026/03/260319-call.txt", "raw", "[[raw/2026/03/260319-call.txt]]")
+        self.assertEqual(["Zones/Work/Acme Review/Deliverables/260320 - Note.md"], [f.path for f in found])
+        self.assertIn("260319-call", found[0].message)
+
+    def test_wording_from_a_subfolder_record_found_by_the_slug(self):
+        found = self._quoted_from("calls/260319-call.txt", "title2", "x")
+        self.assertEqual(1, len(found), found)
+
+    def test_a_transcript_field_names_the_record_too(self):
+        found = self._quoted_from("calls/2026-03-19 call with acme.txt", "transcript",
+                                  "[[calls/2026-03-19 call with acme]]", slug="260319-second-call")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("260319-second-call", found[0].message)
+
+    def test_a_record_of_the_same_name_elsewhere_lends_no_owner(self):
+        write(self.meetings / "raw" / "260319-call.txt", "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        write(self.meetings / "raw" / "2026" / "260319-call.txt", "Theo: our launch is in May.\n")
+        write(self.meetings / "wiki" / "sources" / "260319-call.md", meeting_page("Work", "[birch]", "Birch call").replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/260319-call]]"'))
+        write(self.meetings / "wiki" / "sources" / "260319-call-acme.md", meeting_page("Work", "[acme]", "Acme call").replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/2026/260319-call]]"'))
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        found = [f for f in self.walls() if "Note.md" in f.path]
+        self.assertEqual(1, len(found), found)
+        self.assertIn("wall stands between", found[0].message)
+
+    def test_the_inbox_is_still_not_a_record(self):
+        write(self.meetings / "raw" / "inbox" / "260319-call.txt",
+              "Dana: we lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        write(self.meetings / "wiki" / "sources" / "260319-call.md", meeting_page(None, None, "Second call"))
+        write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
+        self.assertEqual([], [f for f in self.walls() if "260319" in f.message])
+
     def test_linked_and_quoted_is_one_finding(self):
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "[[260318-call]]: " + BRIEF + ".\n")
         found = self.walls()
@@ -277,6 +365,50 @@ class TestUnfinishedPages(QuoteCase):
         page.write_text(meeting_page("Work", "[acme]", "Call").replace("Decisions.", BRIEF + "."))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", BRIEF + ".\n")
         self.assertEqual([], self.walls())
+
+
+class TestSplitPages(GapCase):
+    """One record, a page per project: declared with split-with, each page
+    read with its own parties."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.meetings / "raw" / "260310-weekly.txt", "Jo: Acme first. Then Birch.\n")
+
+    def page(self, slug, parties, others):
+        text = meeting_page("Work", parties, slug).replace(
+            "type: meeting", 'type: meeting\nraw: "[[raw/260310-weekly]]"' +
+            ("\nsplit-with: [%s]" % ", ".join('"[[%s]]"' % o for o in others) if others is not None else ""))
+        write(self.meetings / "wiki" / "sources" / (slug + ".md"), text)
+
+    def splits(self):
+        return [f for f in self.findings("meetings", "error") if "split-with" in f.message]
+
+    def test_a_two_way_split_that_names_each_other_is_fine(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme"])
+        self.assertEqual([], self.splits())
+
+    def test_a_three_way_split_names_every_other(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch", "260310-weekly-cedar"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme", "260310-weekly-cedar"])
+        self.page("260310-weekly-cedar", "[acme]", ["260310-weekly-acme"])
+        [found] = self.splits()
+        self.assertEqual("Wikis/Meetings/wiki/sources/260310-weekly-cedar.md", found.path)
+        self.assertIn("260310-weekly-birch", found.message)
+
+    def test_a_shared_record_without_split_with_is_reported(self):
+        self.page("260310-weekly-acme", "[acme]", None)
+        self.page("260310-weekly-birch", "[birch]", None)
+        self.assertEqual(2, len(self.splits()))
+
+    def test_each_page_is_walled_by_its_own_parties(self):
+        self.page("260310-weekly-acme", "[acme]", ["260310-weekly-birch"])
+        self.page("260310-weekly-birch", "[birch]", ["260310-weekly-acme"])
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "From the call: [[260310-weekly-acme]].\n")
+        self.assertEqual([], [f for f in self.findings("walls") if "Notes.md" in f.path])
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "From the call: [[260310-weekly-birch]].\n")
+        self.assertTrue([f for f in self.findings("walls") if "Notes.md" in f.path])
 
 
 class TestProjectFiles(QuoteCase):

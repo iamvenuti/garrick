@@ -257,7 +257,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(5, html.count("</script>"))          # the graph's data, the state the page waits for, the page's, the menu's, the graph's
+        self.assertEqual(7, html.count("</script>"))          # the graph's data, the state the page waits for, the dialogs' data, the page's, the dialogs', the menu's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -562,7 +562,7 @@ class TestThreadCards(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg"}, set(card))
         self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
@@ -863,7 +863,7 @@ class TestPreviewFeatures(StatusCase):
         card = cards(html)[("Acme Review", "Pricing")]
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["pa"])     # what Park acts on
         self.assertIn("if(host&&(o.h?o.pp:o.pa))return park(o)", status.PANEL_JS)          # only the app parks
-        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
+        self.assertIn("'<div class=\"phead\"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>", status.PANEL_JS)   # beside the name
         self.assertIn("if(!host)document.body.classList.add('nohost')", status.JS)          # a browser hides them
         self.assertIn(".nohost .tacts{display:none}", status.CSS)
 
@@ -1023,7 +1023,7 @@ class TestJobs(StatusCase):
 
     def test_day_that_ended_failed_is_red(self):
         self.heartbeat(0)
-        t = self.now.timestamp() - 2 * 86400
+        t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
         (self.jobs / "brief.log").write_text(
             "===== %s  brief  exit 0  (30s) =====\n\n===== %s  brief  exit 4  (5s) =====\n\n" % (stamp(t), stamp(t + 600)))
         html = self.page()
@@ -1032,7 +1032,7 @@ class TestJobs(StatusCase):
 
     def test_day_that_recovered_is_amber(self):
         self.heartbeat(0)
-        t = self.now.timestamp() - 2 * 86400
+        t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
         (self.jobs / "brief.log").write_text(
             "===== %s  brief  exit 4  (5s) =====\n\n===== %s  brief  exit 0  (30s) =====\n\n===== %s  brief  exit 0  (30s) =====\n\n"
             % (stamp(t), stamp(t + 600), stamp(t + 1200)))

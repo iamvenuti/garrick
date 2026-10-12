@@ -32,6 +32,7 @@ All paths are relative to the workspace root.
 |---|---|
 | Recordings, as transcripts | `Wikis/Meetings/raw/inbox/` |
 | Mail and any other file, one inbox per zone | `Zones/<Zone>/Inbox/` |
+| Mail sent to one address for every zone, before its zone is settled | `Inbox/` |
 | The rules for where things go | `System/rules.md`, *Ways in* |
 | Parties (with their mail domains), Walls, People | `System/context.md` |
 | A project's material | `Zones/<Zone>/<Project>/Sources/` |
@@ -92,7 +93,17 @@ folder that was checked. A link that stays inside that folder is fine.
    Can't tell: ask, in one line. "Is the Freight Ledger mail something to
    read, or a conversation?"
 
-5. **Zone and parties.** The zone is the Inbox it sits in. The parties come
+5. **Zone and parties.** The zone is the Inbox it sits in. An item in the
+   workspace's own `Inbox/` has none yet: `parse` gives `suggested_zone`,
+   the zone its parties point to, or `ask` with why it cannot tell (no party
+   on it, as with personal webmail or only your own addresses; or parties
+   from two zones). Confirm the zone in one line ("Work, from Acme?") or ask
+   it ("Which zone is this, Work or Personal?"), then move it there and go
+   on from that zone's inbox:
+   ```sh
+   python3 System/skills/intake/intake.py move-to-zone --file "Inbox/<file>" --zone <Zone>
+   ```
+   Something to read may be filed straight from `Inbox/`: it carries no zone. The parties come
    from `suggested`, confirmed exactly as the `meetings` skill's *File a
    mail*, step 2 sets out, with the same spoken questions. A mail in the
    wrong zone's Inbox: ask, and if the user agrees, move it to the right
@@ -114,11 +125,20 @@ folder that was checked. A link that stays inside that folder is fine.
      ```sh
      python3 System/skills/intake/intake.py file-reading --file "Zones/<Zone>/Inbox/<file>" [--title "<title of the work>"]
      ```
-     It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`: a file
+     Something too thin to keep (a one-line promotion, an empty notice) is
+     not filed: `intake.py skip --file "<it>" --reason "<a few words>"` takes
+     it out of the Inbox and logs why in the Inbox's `.skipped.log`. An item
+     named `reading-…` came from an address kept for reading.
+     It moves the item into `Wikis/Knowledge/raw/<slug>.<ext>`, or where the
+     wiki's `schema.json` says (ask which `--kind` when its pattern names
+     one): a file
      untouched, a mail with its recipients taken out first. The recipient
-     headers and `Received` lines go, and any recipient address in the text
-     becomes `you@removed.invalid`, because Knowledge is read in every zone;
-     attachments stay byte for byte. It writes a draft source page with no
+     headers and `Received` lines go (in a mail saved as Markdown or text,
+     the recipient keys of its frontmatter and every `To:` and `Cc:` line),
+     and any recipient address in the text, or one of yours from
+     `System/context.md`, becomes `you@removed.invalid`, because Knowledge
+     is read in every zone; attachments stay byte for byte. A mail that
+     still names who received it afterwards is refused, not filed. It writes a draft source page with no
      zone and no parties, the author and date filled from the mail where it
      has them, and prints `<slug>\t<raw path>\t<page path>`. Then the
      `knowledge` skill, *Ingest*, from step 4: check the author and date,

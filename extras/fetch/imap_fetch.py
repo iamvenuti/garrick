@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch mail from one IMAP mailbox into one zone's Inbox. An optional extra.
+"""Fetch mail from one IMAP mailbox into one zone's Inbox, or into the
+workspace's own Inbox for one address that serves every zone. An optional extra.
 
 A fetcher writes files into `Zones/<Zone>/Inbox/` and decides nothing. This one
 saves each new message in one mailbox (a folder, or a Gmail label) as a `.eml`
@@ -21,7 +22,10 @@ The config is a small JSON file:
 
 Optional keys: "port" (993), "search" (an IMAP search, default "ALL"),
 "mark_read" (false), "copy_to" (a mailbox to copy each saved message to; on
-Gmail that adds a label), "keychain_service" ("garrick-imap"), and "state"
+Gmail that adds a label), "keychain_service" ("garrick-imap"), "reading"
+(false; true for a mailbox kept for newsletters and reports, whose messages
+are saved as `reading-<name>.eml`, for intake to treat as something to read
+and the reading sweep in the jobs extra to file into Knowledge), and "state"
 (where the list of saved messages is kept; default: beside the config, as
 <config name>.state.json).
 
@@ -52,7 +56,9 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-DEFAULTS = {"port": 993, "search": "ALL", "mark_read": False, "copy_to": "", "keychain_service": "garrick-imap"}
+DEFAULTS = {"port": 993, "search": "ALL", "mark_read": False, "copy_to": "", "keychain_service": "garrick-imap",
+            "reading": False}
+READING_PREFIX = "reading-"     # what intake and the reading sweep know an address kept for reading by
 REQUIRED = ("server", "user", "mailbox", "inbox")
 KNOWN = set(REQUIRED) | set(DEFAULTS) | {"state"}
 SECRET_KEYS = {"password", "pass", "passwd", "secret", "token", "app_password"}
@@ -86,8 +92,10 @@ def load_config(path: Path) -> dict:
         raise FetchError("%s is missing %s." % (path, ", ".join(missing)))
     cfg = dict(DEFAULTS, **raw)
     inbox = Path(str(cfg["inbox"])).expanduser()
-    if inbox.name != "Inbox" or inbox.parent.parent.name != "Zones" or not inbox.is_dir():
-        raise FetchError("%s is not a zone's Inbox folder, Zones/<Zone>/Inbox, that exists." % inbox)
+    shared = inbox.name == "Inbox" and (inbox.parent / "System" / "rules.md").is_file()     # the workspace's own
+    if not inbox.is_dir() or inbox.name != "Inbox" or not (inbox.parent.parent.name == "Zones" or shared):
+        raise FetchError("%s is not a zone's Inbox folder, Zones/<Zone>/Inbox, or the workspace's Inbox, that exists."
+                         % inbox)
     cfg["inbox"] = inbox
     cfg["state"] = Path(str(cfg.get("state") or Path(path).expanduser().with_suffix(".state.json"))).expanduser()
     return cfg
@@ -195,7 +203,7 @@ def fetch(cfg: dict, imap_factory: Callable = imaplib.IMAP4_SSL, password: Optio
                 continue
             msg_id = str(email.message_from_bytes(message, policy=email.policy.default).get("Message-ID", "") or "").strip()
             if not (msg_id and msg_id in ids):
-                dest = cfg["inbox"] / file_name(message, uid)
+                dest = cfg["inbox"] / ((READING_PREFIX if cfg.get("reading") else "") + file_name(message, uid))
                 tmp = dest.with_name("." + dest.name + ".part")  # hidden until whole
                 tmp.write_bytes(message)
                 os.replace(str(tmp), str(dest))

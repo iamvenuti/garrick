@@ -100,6 +100,27 @@ class LandTest(unittest.TestCase):
         self.assertEqual(dest, self.ws.meetings / "raw" / "260310-acme-kick-off.txt")
         self.assertEqual(dest.read_text(), "Dana: we start Monday.\n")
 
+    def test_a_recording_already_filed_is_refused(self):
+        slug, _ = ingest.land(self.ws.root, self.ws.inbox_file("call.txt"), "2026-03-10", "Acme kick-off")
+        again = self.ws.inbox_file("call (1).txt")                      # the same bytes, fetched twice
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, again, "2026-03-10", "Acme kick-off")
+        self.assertIn("already filed as " + slug, str(caught.exception))
+        self.assertTrue(again.exists())
+
+    def test_the_same_recorder_id_in_other_words_is_refused_too(self):
+        first = self.ws.inbox_file("a.md", "---\nsource-id: rec-4471\n---\n\nDana: Monday.\n")
+        slug, _ = ingest.land(self.ws.root, first, "2026-03-10", "Acme kick-off")
+        nested = self.ws.meetings / "raw" / "2026"
+        nested.mkdir()
+        (self.ws.meetings / "raw" / (slug + ".md")).rename(nested / (slug + ".md"))     # filed in a subfolder
+        again = self.ws.inbox_file("b.md", "---\nsource-id: REC-4471\n---\n\nDana: Monday, reworded.\n")
+        with self.assertRaises(ingest.Refusal) as caught:
+            ingest.land(self.ws.root, again, "2026-03-11", "Acme again")
+        self.assertIn("2026/" + slug, str(caught.exception))
+        other = self.ws.inbox_file("c.md", "---\nsource-id: rec-9000\n---\n\nDana: Monday, reworded.\n")
+        ingest.land(self.ws.root, other, "2026-03-11", "Acme again")
+
     def test_never_overwrites_a_same_day_meeting(self):
         f1 = self.ws.inbox_file("one.txt")
         slug1, dest1 = ingest.land(self.ws.root, f1, "2026-03-10", "Acme kick-off")
@@ -364,6 +385,66 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(n, 0)
         self.assertIn("| Page | Type | Updated |", path.read_text())
 
+    def _page(self):
+        fixtures.write(self.ws.meetings / "wiki" / "sources" / "260310-acme-kickoff.md",
+                        fixtures.meeting_page("Work", "[acme]", "Acme kick-off"))
+
+    def test_what_it_did_not_write_is_kept(self):
+        index = self.ws.meetings / "wiki" / "index.md"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("# Index\n\nKept by hand: held recordings.\n\n| Recording | Why held |\n|---|---|\n"
+                         "| 260301 | waiting on consent |\n\nEvery page, newest first.\n\n"
+                         "| Page | Type | Updated |\n|---|---|---|\n| [[old\\|Old]] | meeting | 2026-01-01 |\n\n"
+                         "## Coverage\n\nNotes at the bottom.\n")
+        self._page()
+        ingest.rebuild_index(self.ws.root)
+        first = index.read_text()
+        for kept in ("Kept by hand: held recordings.", "| 260301 | waiting on consent |", "## Coverage",
+                     "Notes at the bottom."):
+            self.assertIn(kept, first)
+        self.assertNotIn("[[old", first)
+        self.assertEqual(1, first.count(ingest.INDEX_START))
+        self.assertLess(first.index(ingest.INDEX_END), first.index("## Coverage"))
+        self.assertIn("Acme kick-off", first)
+        ingest.rebuild_index(self.ws.root)
+        self.assertEqual(first, index.read_text())          # a second run changes nothing
+
+    def test_an_index_with_no_table_of_garricks_gets_the_block_at_the_end(self):
+        index = self.ws.meetings / "wiki" / "index.md"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("# My index\n\n| Domain | Pages |\n|---|---|\n| customer | 3 |\n")
+        self._page()
+        ingest.rebuild_index(self.ws.root)
+        text = index.read_text()
+        self.assertTrue(text.startswith("# My index\n\n| Domain | Pages |\n|---|---|\n| customer | 3 |\n\n"))
+        self.assertTrue(text.rstrip().endswith(ingest.INDEX_END))
+
+
+class SourceLinkTest(unittest.TestCase):
+    def setUp(self):
+        self.ws = TempWorkspace()
+
+    def tearDown(self):
+        self.ws.close()
+
+    def test_a_wikilink_when_one_vault_holds_both_or_neither_is_one(self):
+        self.assertEqual("[[260310-acme-kick-off]]", ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off"))
+        (self.ws.root / ".obsidian").mkdir()
+        self.assertEqual("[[260310-acme-kick-off]]", ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off"))
+
+    def test_an_obsidian_link_when_the_zone_and_the_wikis_are_vaults_of_their_own(self):
+        (self.ws.root / "Zones" / "Work" / ".obsidian").mkdir(parents=True)
+        (self.ws.root / "Wikis" / ".obsidian").mkdir(parents=True)
+        link = ingest.source_link(self.ws.root, "Work", "260310-acme-kick-off", "Acme [kick-off]")
+        self.assertEqual("[Acme (kick-off)](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260310-acme-kick-off)", link)
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ingest.main(["--root", str(self.ws.root), "link", "--zone", "Work", "--slug", "260310-acme-kick-off"])
+        self.assertEqual(0, code)
+        self.assertEqual("[260310-acme-kick-off](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260310-acme-kick-off)",
+                         out.getvalue().strip())
+
 
 class LogTest(unittest.TestCase):
     def setUp(self):
@@ -388,6 +469,34 @@ class LogTest(unittest.TestCase):
                                   today="2026-03-10")
         text = path.read_text()
         self.assertTrue(text.startswith("# Log\n\nOne line per ingest, newest first.\n"))
+
+    def _log(self, text):
+        path = ingest.meetings_root(self.ws.root) / "wiki" / "log.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        ingest.append_log(self.ws.root, "260312-birch-kick-off", "Birch kick-off", "Work", ["birch"],
+                          today="2026-03-12")
+        return path.read_text().splitlines()
+
+    def test_a_log_without_the_header_gets_the_entry_above_its_entries(self):
+        lines = self._log("# Log\n\nWhat was filed, and when.\n\n- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertEqual("What was filed, and when.", lines[2])
+        self.assertIn("260312-birch-kick-off", lines[4])
+        self.assertIn("2026-03-01", lines[5])
+
+    def test_a_log_of_dated_sections_gets_the_entry_above_the_first_section(self):
+        lines = self._log("# Log\n\n## 2026-03-01\n\nFiled the Acme call.\n")
+        self.assertIn("260312-birch-kick-off", lines[2])
+        self.assertEqual("## 2026-03-01", lines[4])
+
+    def test_frontmatter_is_never_written_into(self):
+        lines = self._log("---\ntags:\n  - log\n---\n\n# Log\n\n- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertEqual(["---", "tags:", "  - log", "---"], lines[:4])
+        self.assertIn("260312-birch-kick-off", lines[7])
+
+    def test_a_log_with_no_title_or_entries_gets_the_entry_at_the_top(self):
+        lines = self._log("- 2026-03-01: [[wiki/sources/a|A]] (Work; acme)\n")
+        self.assertIn("260312-birch-kick-off", lines[0])
 
 
 class CliTest(unittest.TestCase):

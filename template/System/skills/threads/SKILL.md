@@ -9,7 +9,8 @@ description: >
   "close for the day", "I'm done for today", "finish X", "X is done", "close
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
   parked", "new project X for Acme", "new thread X in Acme", "start a thread
-  on X", "add a zone called X", or "new zone X". Also use at the end of any
+  on X", "rename X to Y", "delete X", "add a zone called X", or "new zone X".
+  Also use at the end of any
   session that produced a decision or a deliverable, so the thread can be
   resumed cold.
 ---
@@ -107,7 +108,8 @@ session touched several, ask which, naming them.
    the working notes, not the dated entries, unless the user asks.
 3. Reply in two sentences: **where it stands**, then **the next action**. Fold
    in who it is waiting on when it is blocked, and the deadline when it is
-   close.
+   close. When **Keep in mind** says more than nothing, add it as a third
+   sentence: it is what the user had in their head when they left.
 4. That thread is now the one in focus for this session: a later "wrap" with no
    name means it.
 
@@ -121,8 +123,14 @@ note, and the note's path.
 whether to reopen it. Reopening sets `status: active` and writes a new Resume
 here block above the outcome paragraph.
 
-**If the thread is parked**, say so, give where it stood in one sentence, and
-ask whether to wake it. Waking is the Park section's second half.
+**If the thread is parked**, wake it first: someone who opens a thread means
+to work on it. Waking is the Park section's second half, steps 2 to 5
+(`status: active`, `updated:`, a dated "Woken." entry, a commit). When the
+thread is parked because its project is, wake the project's hub instead, which
+brings back every thread that was live before; say so. Then answer as for any
+live thread, opening with a few words that say what changed: "Pricing was
+parked; it's active again." A question that only looks at a thread ("where
+did Pricing stand", "what's parked") reads it and leaves it parked.
 
 **If X names a zone** ("open Work"), treat it as "what's open in Work".
 
@@ -174,12 +182,22 @@ per wrap: the one named, and nothing else.
    |---|---|
    | Live artifact | <path, relative to the project, and what it is> |
    | Rebuild with | <how to make it again, and from what> |
-   | Next action | <the single next thing, and whose it is> |
+   | Next action | <the single next thing, small enough to start in two minutes, and whose it is> |
+   | Keep in mind | <what is only in your head: a decision half made and why, a doubt; or nothing> |
    | Waiting on | <who, or nobody> |
    | Deadline | <date, and what breaks if it slips; or none> |
    ```
-   Keep all five rows; a row that does not apply says "none" or "nobody". The
-   next action is one action. Anything more goes to `Todo.md` (step 7).
+   Keep all six rows; a row that does not apply says "none" or "nobody". The
+   next action is one action, small enough to start in two minutes: "draft
+   the pricing section" fails, "open the pricing sheet and fill in the
+   tier-two volume" passes. Anything more goes to `Todo.md` (step 7).
+   **Keep in mind** holds what no file can tell a cold resume: the decision
+   half made and which way you were leaning and why, a doubt about a figure,
+   a thing noticed and not yet acted on. Write it from what was said in this
+   session, not from the files; `nothing` is a valid answer, and the usual
+   one for a thread that is simply waiting. When the user is listening, ask
+   for it: "Anything that's only in your head right now?" A block written
+   before this row existed is still whole; the row is added at its next wrap.
    **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
    end the moment it needs a change. Every path and link in the block must lead
    to something that exists now; `check.py` warns about one that does not.
@@ -200,6 +218,15 @@ per wrap: the one named, and nothing else.
    finds its lines.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
+   **A deliverable that left the workspace** in this session, copied to a
+   shared folder: ask who edits it next. Colleagues who edit it: the shared
+   copy counts from now on (`share`); nobody, or colleagues who only read
+   it: the copy here does (`here`). Re-read `Deliverables/published.md`
+   (make it with the header row when there is none) and append one row,
+   `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
+   the destination relative to the folder the hub names in `shared:`. Say
+   so in the Live artifact row when the shared copy is the one that counts.
+   `python3 System/tools/drift.py` compares them from then on.
 8. **Set `updated:`** in the note's frontmatter to today.
 9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
    Re-read the hub first; change that one line.
@@ -392,6 +419,65 @@ sentence?" or, on a refusal: "Can't name it Q3 pricing: names can't have
 digits. Autumn pricing?"
 
 Written: the paths created and the commit hash.
+
+## Rename: "rename X to Y"
+
+The scaffolding script renames, so the folder, the note and every link to it
+in the zone move together, in one commit:
+
+```sh
+python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
+```
+
+1. **Resolve X.** If it could be the project or one of its threads, ask which.
+2. **Confirm in one line** before acting: "Rename Acme pricing to Renewal?"
+3. **Run the script.** It refuses a name that cannot be said, that sounds
+   like a sibling or is taken, and a rename while the files it would change
+   have changes not committed, or while a session is mid-turn there; relay
+   the reason as under *New*. It moves the folder and the note with git,
+   renames the title and heading, rewrites every link to it in the zone (the
+   hub's list, `Todo.md`, `project:` frontmatter, the notes between) and adds
+   the dated entry "Renamed from <old>.", all in one commit in the zone. It
+   adds the old name as a heard alias in `System/context.md`: commit that in
+   the workspace root's repository.
+4. **The memory pointer**, if you keep one: point it at the new note.
+5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
+
+Moving a thread to another project or zone is not a rename: it crosses
+parties and walls. Say so, and stop.
+
+Spoken: "Pricing is Renewal now, and its links follow. The old name still
+finds it."
+
+Written: the script's report, and the commit hash.
+
+## Delete: "delete X"
+
+For what should never have existed: a duplicate, a test, a thread opened in
+the wrong project. Real work is finished or parked, never deleted: offer those
+first.
+
+```sh
+python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"]
+python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"] --confirm "<Name>"
+```
+
+1. **Resolve X**, and run the first form: it changes nothing and lists what
+   would go: the folder and its files, the hub's line, the open `Todo.md`
+   lines naming it, and for a project every thread in it.
+2. **Read that back** in three sentences at most, then ask: "Finish it,
+   park it, or delete it?" Act on deletion only on "yes, delete <X>", with
+   the name said again; a plain "yes" is not enough.
+3. **Run the second form.** One commit in the zone; the reply gives the
+   commit to revert. Meetings pages stay.
+4. **The memory pointer**, if you keep one: delete it.
+
+Spoken: "Deleted the test thread and its one open action. Say undo to bring
+it back." On undo, `python3 System/tools/scaffold.py undo --zone <Zone>
+--commit <commit>`, which refuses once anything else has been committed in
+the zone. A rename is undone the same way.
+
+Written: the script's report, and the commit hash.
 
 ## New zone: "add a zone called X", "new zone X"
 

@@ -34,6 +34,8 @@ updated: YYYY-MM-DD
 
 Then: what was decided, what each side said where the wording matters, and an actions table (what, who, by when).
 
+A call that covers several projects can be split: a page per project, each `<slug>-<word>`, each keeping the same `raw:` and naming every other in `split-with: ["[[<slug>-<word>]]"]`, each with only its own section's `parties` and saying which part of the record it covers.
+
 ## A mail page
 
 Mail arrives through a zone's `Inbox/` folder (`Zones/<Zone>/Inbox/`), as `.eml`, `.txt` or `.md`, and comes here when it is a conversation. Once filed, the original moves into `raw/` under the same `YYMMDD-slug` naming, and its page sits in `wiki/sources/` beside the meeting pages, so every wall reads it the same way:
@@ -56,7 +58,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
+A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
 
 ## A person page
 

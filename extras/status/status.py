@@ -232,6 +232,35 @@ def workspace_lib(ws: Optional[Path]):
     return _LIBS[ws]
 
 
+DRIFT = ("System", "generated", "drift.json")
+DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missing, here or on the share",
+             "unread": "has a row in published.md that does not read"}
+
+
+def drifted(ws: Path) -> List[str]:
+    """What drift.py last found worth a look, from System/generated/drift.json,
+    which it writes when run from a session or the app: a launchd job may
+    not read a cloud folder, so the page never compares anything itself."""
+    try:
+        data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for f in data.get("files", []) if isinstance(data, dict) else []:
+        if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
+            out.append("%s: %s %s" % (f.get("project", "?"), f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+    return out
+
+
+def workspace_context(ws: Path) -> dict:
+    """System/context.md as the workspace's own garrick_lib reads it, or {}."""
+    lib = workspace_lib(ws)
+    try:
+        return lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
+    except Exception:
+        return {}
+
+
 def workspace_stamp(ws: Path) -> dict:
     """The installer's stamp, System/garrick-version.json, or {}."""
     try:
@@ -877,6 +906,102 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 .tadd .shake{animation:tshake .3s}@keyframes tshake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
 """
 
+MANAGE_CSS = r"""
+.mg-new{display:flex;gap:6px;justify-content:flex-end;margin:0 0 8px}.mg-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+dialog.gmanage .mg-msg{margin:12px 0 0;font-size:12.5px;color:var(--ink2)}dialog.gmanage .mg-msg.bad{color:var(--critical)}
+dialog.gmanage select,dialog.gmanage input[type=text]{font:inherit;font-size:13px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;box-sizing:border-box}
+dialog.gmanage .mg-row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+dialog.gmanage ul{margin:8px 0 0;padding-left:18px;font-size:13px}.act.danger{color:var(--critical);border-color:var(--critical)}
+.act.danger:disabled{opacity:.45}#mg-undo{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:11;display:flex;gap:10px;align-items:center;
+background:var(--ink);color:var(--surface);font-size:13px;padding:7px 8px 7px 14px;border-radius:10px}
+"""
+
+# Making, renaming and deleting projects and threads (#36, #37, #38): its own
+# script, so an error here leaves the rest of the page working; the card's
+# head asks window.GarrickManage only when this loaded. In the app with
+# page-actions on, a dialog's request goes to page_action.py, which runs
+# scaffold.py; anywhere else the dialog copies the phrase to say instead.
+MANAGE_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,D={zones:{},acting:false};
+try{D=JSON.parse(document.getElementById('manage-data').textContent)}catch(e){}
+var act=!!(host&&D.acting);
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
+function copy(text,done){var ok=function(){say(done)};if(host){host.postMessage({copy:text});ok();return}
+if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(ok,function(){say(text)});return}say(text)}
+function send(q,said){host.postMessage({act:q});say(said)}
+/* the card's own buttons: Rename and Delete on a thread or a project, New thread here on a project */
+window.GarrickManage=function(o){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
+return'<div class="mg-acts">'+(k==='project'?'<button class="act" type="button" data-manage="new-thread" data-mg="'+m+'">New thread here</button>':'')
++'<button class="act" type="button" data-manage="rename" data-mg="'+m+'">Rename…</button>'
++'<button class="act" type="button" data-manage="delete" data-mg="'+m+'">Delete…</button></div>'};
+function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
+d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
+document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
+d.showModal();var c=d.querySelector('[data-cancel]');if(c){c.onclick=function(){d.close()};}return d}
+function field(id,label,value){return'<label class="tlab" for="'+id+'">'+esc(label)+'</label><input type="text" id="'+id+'" value="'+esc(value||'')+'" autocomplete="off">'}
+function select(id,label,opts,chosen){return'<label class="tlab" for="'+id+'">'+esc(label)+'</label><select id="'+id+'">'
++opts.map(function(x){var v=Array.isArray(x)?x[0]:x,n=Array.isArray(x)?x[1]:x;return'<option value="'+esc(v)+'"'+(v===chosen?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select>'}
+function val(d,id){var e=d.querySelector('#'+id);return e?e.value.trim():''}
+function bad(d,t){var m=d.querySelector('#mg-msg');m.textContent=t;m.classList.add('bad')}
+var CANCEL='<button class="act" type="button" data-cancel>Cancel</button>';
+function zoneNames(){return Object.keys(D.zones||{})}
+function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
+function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say'),
+CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
+function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>'}
+d.querySelector('#mg-zone').onchange=projects;projects();d.querySelector('#mg-name').focus();
+d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
+if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');
+d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
+function newProject(){var zs=zoneNames(),z=zoneOf();if(!zs.length){say('There is no zone yet.');return}
+var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
+CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
+function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];d.querySelector('#mg-pt').innerHTML=p.length?select('mg-party','For',p,''):'<p class="mg-msg">No party belongs to this zone yet: add it to System/context.md first.</p>'}
+d.querySelector('#mg-zone').onchange=parties;parties();d.querySelector('#mg-name').focus();
+d.querySelector('[data-go]').onclick=function(){var q={verb:'new-project',zone:val(d,'mg-zone'),name:val(d,'mg-name'),party:val(d,'mg-party'),thread:val(d,'mg-thread')};
+if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+' for '+q.party+' in '+q.zone+', first thread '+q.thread,'Copied the phrase. Paste it to your assistant.')}}
+function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
+var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
+CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
+d.querySelector('[data-go]').onclick=function(){var to=val(d,'mg-name');if(!to||to===old)return bad(d,'Give it a new name.');
+var q={verb:'rename',zone:mg[0],project:mg[1],to:to};if(mg[2])q.thread=mg[2];d.close();
+if(act)send(q,'Renaming '+old+'…');else copy('rename '+old+' to '+to,'Copied “rename '+old+' to '+to+'”. Paste it to your assistant.')}}
+function del(mg){var name=mg[2]||mg[1],kind=mg[2]?'thread':'project',subs=mg[5]||[];
+var gone=['its folder, '+mg[3]+' file'+(mg[3]===1?'':'s')];if(kind==='thread')gone.push('its line in the project’s note');
+if(mg[4])gone.push(mg[4]+' open line'+(mg[4]===1?'':'s')+' in Todo.md that name'+(mg[4]===1?'s':'')+' it');
+if(subs.length)gone.push('its threads: '+subs.join(', '));
+var body='<p>Deleting '+esc(name)+' removes:</p><ul>'+gone.map(function(g){return'<li>'+esc(g)+'</li>'}).join('')+'</ul>'
++'<p class="mg-msg">Meetings pages stay, and so does '+esc(mg[0])+'’s history: the deletion can be undone. To keep it on record, finish it or park it instead.</p>'
++(kind==='project'?field('mg-confirm','Type '+name+' to delete it'):'');
+var d=dialog('Delete '+name+'?',body,'<button class="act" type="button" data-finish>Finish instead</button><button class="act" type="button" data-park>Park instead</button>'
++CANCEL+'<button class="act danger" type="button" data-go'+(kind==='project'?' disabled':'')+'>Delete</button>');
+d.querySelector('[data-cancel]').focus();
+var c=d.querySelector('#mg-confirm');if(c){c.oninput=function(){d.querySelector('[data-go]').disabled=c.value.trim()!==name}}
+d.querySelector('[data-finish]').onclick=function(){d.close();copy('finish '+name,'Copied “finish '+name+'”. Paste it to your assistant.')};
+d.querySelector('[data-park]').onclick=function(){d.close();var q={verb:'park',zone:mg[0],project:mg[1]};if(mg[2])q.thread=mg[2];
+if(act)send(q,'Parking '+name+'…');else copy('park '+name,'Copied “park '+name+'”. Paste it to your assistant.')};
+d.querySelector('[data-go]').onclick=function(){var q={verb:'delete',zone:mg[0],project:mg[1],confirm:name};if(mg[2])q.thread=mg[2];d.close();
+if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete '+name+'”. Paste it to your assistant, who asks you again.')}}
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
+var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
+var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='delete'&&mg)del(mg)},true);
+/* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
+   every request, so the commit to revert is kept in this browser until then */
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename')){var m=/(?:commit )([0-9a-f]{7,40})/.exec(out.say||'');
+try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
+if(prev)return prev(q,out)};
+function offer(){var u=null;try{u=JSON.parse(localStorage.getItem('garrick-undo')||'null')}catch(e){}if(!u||!act||!u.commit||u.until<Date.now())return;
+var bar=document.createElement('div');bar.id='mg-undo';bar.innerHTML='<span>'+esc(u.what)+'.</span><button class="act" type="button">Undo</button>';
+document.body.appendChild(bar);bar.querySelector('button').onclick=function(){localStorage.removeItem('garrick-undo');bar.remove();send({verb:'undo',zone:u.zone,commit:u.commit},'Undoing…')};
+setTimeout(function(){bar.remove()},Math.max(0,u.until-Date.now()))}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',offer);else offer();
+})();
+"""
+
 TADD_JS = r"""
 (function(){var dlg=document.getElementById('tadd');if(!dlg)return;
 var dtext=document.getElementById('tadd-text'),ddate=document.getElementById('tadd-date'),dfil=document.getElementById('tadd-filter'),dwhere=document.getElementById('tadd-where'),dz='';
@@ -1309,7 +1434,35 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
 # (`type: email` in the Meetings wiki) has its own kind beside meetings.
 KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("mail", "mail", "#c94f9c"),
-         ("person", "person", "#13a38a"), ("knowledge", "knowledge", "#7c9a2d")]
+         ("person", "person", "#13a38a"), ("source", "source", "#7c9a2d"), ("concept", "concept", "#8c6d1f"),
+         ("entity", "entity", "#4b6584")]
+
+# Each place's kinds come from Garrick's own model of it, and nothing else: a
+# page whose type and folder the model does not know is drawn as other notes.
+# The core view of a place is its hubs: a zone's projects and threads, the
+# people in Meetings, the concepts and entities in Knowledge.
+CORE_LABEL = {"Meetings": "People", "Knowledge": "Concepts and entities"}
+WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
+
+
+def wiki_kind(wiki: str, kind: str, parts: tuple, source_type: str = "source") -> str:
+    if wiki == "Meetings":
+        return kind if kind in ("meeting", "mail", "person") else "note"
+    if kind in (source_type, "source") and (not parts or parts[0] == "sources"):
+        return "source"
+    if kind == "concept" or (parts and parts[0] == "concepts" and kind in ("", "concept")):
+        return "concept"
+    if kind == "entity" or (parts and parts[0] == "entities" and kind in ("", "entity")):
+        return "entity"
+    return "note"
+
+
+def short_label(title: str, limit: int = WIKI_LABEL) -> str:
+    """A title cut at a word to about `limit` characters, with an ellipsis."""
+    if len(title) <= limit:
+        return title
+    cut = title[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-–—")
+    return (cut or title[:limit]) + "…"
 
 
 OTHER = next(c for k, _, c in KINDS if k == "note")    # a note no colour group of its vault takes: "other notes"
@@ -1341,7 +1494,7 @@ def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, st
             terms = [t.strip() for t in re.split(r"\s+OR\s+", str(cg.get("query") or "")) if t.strip()]
             rgb = (cg.get("color") or {}).get("rgb")
             if terms and isinstance(rgb, int):
-                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms)))
+                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms, len(groups) + 1)))
     except (OSError, ValueError, AttributeError, TypeError):
         groups = []
     try:
@@ -1358,23 +1511,57 @@ def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, st
     return groups, ignore
 
 
-def group_label(terms: List[str]) -> str:
+# A property term: [key], [key:value], with either side quoted, and the
+# ["key","value"] form some vaults hold.
+PROPERTY_TERM = re.compile(r"""\[\s*["']?([\w-]+)["']?\s*(?:[:,]\s*(.+?))?\s*\]""")
+
+
+def group_word(term: str) -> str:
+    """One term of a colour group as a person would say it: a folder's last
+    name, a file's name, a property's value (or its key), a tag. Empty for a
+    term Garrick does not read."""
+    m = PROPERTY_TERM.fullmatch(term.strip())
+    if m:
+        word = (m.group(2) or m.group(1)).strip().strip("\"'")
+    else:
+        m = re.fullmatch(r"(file|path|tag):(.+)", term.strip())
+        if not m:
+            return ""
+        kind, value = m.group(1), m.group(2).strip().strip("\"'")
+        if kind == "path":
+            value = [part for part in value.split("/") if part.strip()][-1:] or [""]
+            value = value[0]
+        elif kind == "file":
+            value = value.rsplit("/", 1)[-1]
+            value = value[:-3] if value.lower().endswith(".md") else value
+        else:
+            value = value.lstrip("#")
+        word = value
+    word = re.sub(r"[-_]+", " ", word).strip()
+    return word[:1].upper() + word[1:]
+
+
+def group_label(terms: List[str], n: int = 0) -> str:
     """A colour group as the legend says it: `[type:project] OR file:Brief`
-    reads "Project, Brief"."""
-    said = []
+    reads "Project, Brief", `path:"Notes/wiki/concepts/"` reads "Concepts".
+    A word said twice, or as singular and plural, is said once; a group with
+    no word Garrick reads is "Group n"."""
+    said, seen = [], set()
     for t in terms:
-        m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", t)
-        word = (m.group(2) or m.group(1)) if m else re.sub(r"^(?:file|path|tag):", "", t)
-        said.append(word.strip().strip("\"'"))
-    text = ", ".join(w for w in said if w)
-    return text[:1].upper() + text[1:]
+        word = group_word(t)
+        key = word.lower()
+        key = key[:-1] if key.endswith("s") and len(key) > 3 else key
+        if word and key not in seen:
+            seen.add(key)
+            said.append(word)
+    return ", ".join(said) or "Group %d" % n
 
 
 def group_match(term: str, fm: dict, rel: str) -> bool:
     """Whether a note answers one term of a colour group's query, in the forms
     Garrick reads: [key], [key:value], file:, path: and tag:. Any other term
     never matches: the page reads no note's text to test it."""
-    m = re.fullmatch(r"\[([\w-]+)(?::(.+))?\]", term)
+    m = PROPERTY_TERM.fullmatch(term.strip())
     if m:
         key, want = m.group(1), m.group(2)
         if key not in fm:
@@ -1448,6 +1635,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     by_rel = {r: p for p, r in rel.items()}
     nodes, index = [], {}
     kinds = [k for k, _, _ in KINDS]
+    lib, source_type = workspace_lib(ws), "source"
+    try:
+        if lib is not None and callable(getattr(lib, "knowledge_schema", None)):
+            source_type = lib.knowledge_schema(ws)[0]["source"]["type"]     # a wiki that names its sources otherwise
+    except Exception:
+        pass
     projects = [(place, path.parent.name) for place, root, path in notes
                 if root.parent.name == "Zones" and path.parent.parent == root and path.stem == path.parent.name]
     threads_said = {t.casefold() for z in T.values() for r in z["rows"] + z["parked"] for t in [r["thread"]]}
@@ -1458,11 +1651,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         kind = "mail" if kind in ("email", "mail") else kind
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
-        if kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
+        wiki = root.parent.name if not in_zone else ""
+        if wiki:
+            kind = wiki_kind(wiki, kind, parts, source_type)
+        elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
             kind = "project"
-        elif kind in ("source", "concept", "entity", "summary") or root.parent.name == "Knowledge":
-            kind = "knowledge"
-        elif kind not in kinds:
+        elif kind not in ("project", "thread"):
             kind = "note"
         thread = parts[2] if kind == "thread" and len(parts) > 3 else ""
         state = as_text(fm.get("status")).strip().lower()
@@ -1480,12 +1674,16 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
         # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
-        nodes.append({"n": as_text(fm.get("title")).strip() or path.stem, "k": kinds.index(kind), "z": place, "p": project,
+        title = as_text(fm.get("title")).strip() or path.stem
+        hub = kind in ("project", "thread", "person", "concept", "entity")
+        nodes.append({"n": short_label(title) if wiki else title, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
-                      "c": 1 if kind in ("project", "thread") else 0, "h": 1 if kind == "project" else 0,
+                      "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
+        if wiki and nodes[-1]["n"] != title:
+            nodes[-1]["N"] = title                   # the whole title, for the card and the tooltip
         vault = vault_at[root]
-        if vault is not None and vaults[vault][1]:
+        if vault is not None and vaults[vault][1] and not wiki:     # a wiki is drawn by its kinds, whatever its vault says
             first, gs, _ = vaults[vault]
             rel_v = path.relative_to(vault).as_posix()
             nodes[-1]["g"] = next((first + i for i, (terms, _, _) in enumerate(gs) if any(group_match(t, fm, rel_v) for t in terms)), -1)
@@ -1532,9 +1730,31 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                 edges.add((min(a, b), max(a, b)))
     used = sorted({n["k"] for n in nodes if "g" not in n}
                   | ({kinds.index("note")} if any(n.get("g") == -1 for n in nodes) else set()))
+    # In a wiki's core view the hubs are joined when one page links both: two
+    # people in the same meeting, two concepts cited by the same source. The
+    # third number is how many pages do.
+    wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    neighbours: Dict[int, set] = {}
+    for a, b in edges:
+        neighbours.setdefault(a, set()).add(b)
+        neighbours.setdefault(b, set()).add(a)
+    co: Dict[Tuple[int, int], int] = {}
+    for i, n in enumerate(nodes):
+        if n["z"] not in wikis or n["c"]:
+            continue
+        hubs = sorted(j for j in neighbours.get(i, ()) if nodes[j]["c"] and nodes[j]["z"] == n["z"])
+        for x in range(len(hubs)):
+            for y in range(x + 1, len(hubs)):
+                co[(hubs[x], hubs[y])] = co.get((hubs[x], hubs[y]), 0) + 1
+    counts: Dict[str, int] = {}
+    for n in nodes:
+        counts[n["z"]] = counts.get(n["z"], 0) + 1
     return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS], "other": OTHER,
             "kinds": [[i, KINDS[i][1]] for i in used], "groups": groups,
-            "mode": "all" if len(nodes) <= 150 else "core"}
+            "mode": "all" if len(nodes) <= 150 else "core",
+            "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
+            "cl": {z: CORE_LABEL[z] for z in wikis if z in CORE_LABEL},
+            "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
 
 
 def launch_agents() -> Path:
@@ -2070,12 +2290,52 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
         card["held"] = 1             # parked with its project: woken with it, from the project's card
     elif actions:
         card["pa"] = [r["zone"], r["rel"]]
+    if r["note"] != r["hub"]:
+        card["mg"] = [r["zone"], r["project"], r["thread"], files_in(r["note"].parent),
+                      open_naming(r["note"].parents[3], {r["thread"]})]
     if drive:
         card["dk"] = [r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]]
     live = session_in(desk, r["note"].parent)
     if live:
         card["live"] = live
     return json.dumps(card, separators=(",", ":"), ensure_ascii=False)
+
+
+def files_in(folder: Path) -> int:
+    """How many files deleting a folder would take, for the warning."""
+    return sum(len([f for f in fs if not f.startswith(".")]) for d, _, fs in os.walk(folder) if ".git" not in Path(d).parts)
+
+
+_OPEN: Dict[Path, List[str]] = {}
+
+
+def open_naming(zone: Path, names: set) -> int:
+    """How many open lines of the zone's Todo.md link to one of `names`, as
+    scaffold.py's delete would remove them."""
+    if zone not in _OPEN:
+        try:
+            text = (zone / "Todo.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        _OPEN[zone] = [l for l in text.splitlines() if re.match(r"\s*- \[ \]", l)]
+    n = 0
+    for line in _OPEN[zone]:
+        targets = [t.split("|")[0].split("#")[0] for t in re.findall(r"\[\[([^\]]+)\]\]", line)]
+        n += any(t.rsplit("/", 1)[-1] in names for t in targets)
+    return n
+
+
+def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
+    """For the New project and New thread dialogs: each zone's projects and
+    the parties a project there can be for; and whether the app acts, or the
+    page only copies the phrase to say."""
+    zones = {}
+    for zone, data in T.items():
+        projects = sorted({r["project"] for r in data["rows"] + data["parked"] if r.get("hub")}, key=str.casefold)
+        parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
+                          if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
+        zones[zone] = {"projects": projects, "parties": parties}
+    return {"zones": zones, "acting": acting}
 
 
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
@@ -2791,9 +3051,10 @@ function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';re
 function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
 /* a row's card (row) leaves out the kind, zone and project: the section it sits in says the zone, the row above it the project;
    the graph's panel, which floats free of any list, keeps them */
-function head(o,row){return'<div class="phead"><h4>'+esc(o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
+function head(o,row){return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4>'+flip(o)+'</div>'+(row?'':'<div class="muted">'+esc([o.kl,o.z,o.p].filter(Boolean).join(' · '))+'</div>')
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
-+line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)}
++line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)
++(window.GarrickManage?GarrickManage(o):'')}
 /* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a');if(!a||!host)return;
 var d=GarrickPrefs.def();if(!d||d==='note'||chosen().indexOf(d)<0)return;
@@ -3042,7 +3303,7 @@ var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').mat
 var places=[];G.nodes.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
 /* which place the graph shows: the one asked for last, else Work when there is one, else everything */
 var zsel=st.get('garrick-graph-place');if(zsel!=='*'&&places.indexOf(zsel)<0)zsel=places.indexOf('Work')>=0?'Work':'*';
-var mode=st.get('garrick-graph-mode')||G.mode,spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
+function modeFor(z){return st.get('garrick-graph-mode-'+z)||(G.modes&&G.modes[z])||G.mode}var mode=modeFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -3076,12 +3337,12 @@ rest.forEach(function(p,i){perm(o.concat([p]),rest.slice(0,i).concat(rest.slice(
 function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.ax=a[0];n.ay=a[1]})}
 /* parked threads and projects stay off the graph unless asked for, as in the lists */
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)&&(zsel==='*'||n.z===zsel)}
-function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=G.edges.filter(function(e){return on[e[0]]&&on[e[1]]});
+function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(mode==='all'?G.edges:G.edges.concat(G.ce||[])).filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
 var drawn={},dg={};V.forEach(function(n){if(n.g>=0)dg[n.g]=1;else drawn[n.g===-1?OTHERK:n.k]=1});
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode)});
+document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode);if(b.dataset.m==='core')b.textContent=(G.cl&&G.cl[zsel])||'Projects and threads'});
 var zs=document.querySelector('.gzsel');if(zs)zs.value=zsel;
 var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
 /* Every note pushes every other away, which costs the square of the notes a
@@ -3190,7 +3451,7 @@ if(down){if(Math.hypot(h.x-down.x,h.y-down.y)>4)down.moved=true;
 if(drag&&down.moved){var w=toWorld(h.x,h.y);drag.x=w[0];drag.y=w[1];drag.vx=drag.vy=0;alpha=Math.max(alpha,.2)}
 else if(!drag&&down.moved){auto=false;px=down.px+h.x-down.x;py=down.py+h.y-down.y}return}
 hover=h.n;cv.classList.toggle('hot',!!h.n);
-if(h.n){var n=h.n;cv.dataset.tip=n.n+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
+if(h.n){var n=h.n;cv.dataset.tip=(n.N||n.n)+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
 cv.addEventListener('pointerup',function(){cv.classList.remove('drag');if(!down)return;if(!down.moved){if(down.n)select(down.n);else close()}drag=null;down=null;wake()});
 cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dataset.tip;wake()}});
 cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
@@ -3208,11 +3469,11 @@ pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W
 function close(){sel=null;pop.hidden=true;wake()}
 function glide(tx,ty){var sx=px,sy=py,t0=performance.now();glides++;wake();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g);else glides--})(t0)}
 pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
-var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode',mode)}
+var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode-'+zsel,mode)}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
-var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode',mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
+var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);mode=modeFor(zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
+document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode-'+zsel,mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};
@@ -3296,6 +3557,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     notice = release_notice(ws)
     if notice:
         attn.append(("warning", notice[0], notice[1]))
+    for f in drifted(ws):
+        attn.append(("warning", f, "#threads"))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
@@ -3410,6 +3673,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              "u": link(hub) if hub else link(items[0]["note"])}
         if acting and hub:
             c["pp"] = [zone, project]        # what Park and Wake act on: the hub, and with it every thread
+        if hub:
+            subs = sorted({r["thread"] for r in items if r["note"] != r["hub"]})
+            c["mg"] = [zone, project, "", files_in(hub.parent), open_naming(hub.parent.parent, set(subs) | {project}),
+                       subs]
         if cmux:
             c["f"] = str((hub or items[0]["note"]).parent)
         if DK:
@@ -3480,9 +3747,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend mu"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>Over 45 days</span></div>')
+    new_bar = ('<div class="mg-new"><button class="act" type="button" data-manage="new-project">New project</button>'
+               '<button class="act" type="button" data-manage="new-thread">New thread</button></div>')
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated">%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
-                        % (tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
+                        '<div class="tview" data-tm="updated">%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        % (new_bar, tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
 
 
     # ---- checks
@@ -3651,6 +3920,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                               | {"%s/%s/%s.md" % (zone, p, p) for zone, z in T.items() for p in z.get("held", ())}),
              "live": sorted(str(f) for f in folders if session_in(S, f))}
     menu += '<script type="application/json" id="state-data">%s</script>' % script_json(state)
+    menu += '<script type="application/json" id="manage-data">%s</script>' % script_json(manage_data(T, workspace_context(ws), acting))
     shared = shared_launchers(ws)
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
@@ -3659,12 +3929,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS, MENU_JS,
-               GRAPH_JS if show_graph else ""]
+    # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets.
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS,
+               MANAGE_JS, MENU_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
                 "".join("<script>%s</script>" % js for js in scripts if js)))
 
 

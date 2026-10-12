@@ -154,7 +154,26 @@ class TestResumePoints(Installed):
                         "| | |\n|---|---|\n| Live artifact | none yet |\n| Rebuild with | nothing to rebuild |\n"
                         "| Next action | Sam: read Dana's answer |\n| Waiting on | Dana |\n| Deadline | none |\n\n"
                         + text[end:])
-        self.assertEqual([], self.resume_findings())
+        self.assertEqual([], self.resume_findings())                  # a block without Keep in mind is whole
+
+    def test_keep_in_mind_left_as_the_prompt_is_flagged(self):
+        self.run_tool("scaffold.py", "project", "--zone", "Work", "--name", "Acme", "--party", "acme",
+                      "--thread", "Pricing")
+        note = self.root / "Zones/Work/Acme/Threads/Pricing/Pricing.md"
+        text = note.read_text()
+        self.assertIn("| Keep in mind | <", text)
+        self.assertIn("small enough to start in two minutes", text)
+        start = text.index("**Where it stands, <")
+        end = text.index("| Keep in mind |", start)
+        note.write_text(text[:start] + "**Where it stands, 6 October 2026.** First draft sent.\n\n"
+                        "| | |\n|---|---|\n| Live artifact | none yet |\n| Rebuild with | nothing to rebuild |\n"
+                        "| Next action | Sam: read Dana's answer |\n" + text[end:])
+        text = note.read_text()
+        for row in ("Waiting on", "Deadline"):
+            text = text.replace(next(l for l in text.splitlines() if l.startswith("| %s |" % row)), "| %s | none |" % row)
+        note.write_text(text)
+        [found] = self.resume_findings()
+        self.assertIn("keep in mind", found["message"].lower())
 
     def test_a_parked_thread_is_left_alone(self):
         self.run_tool("scaffold.py", "project", "--zone", "Work", "--name", "Acme", "--party", "acme",

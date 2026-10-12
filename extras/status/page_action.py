@@ -25,6 +25,21 @@ zone's repository, as the skills would:
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
+    new-project a project and its first thread, as "new project" by voice:
+                {"zone", "name", "party", "thread"}; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name"}
+    check-name  whether a new name would do, making nothing, for the form as
+                it is typed: {"kind": "project", "thread" or "rename", and the
+                fields of that verb}
+    rename      a project or thread and every link to it in the zone:
+                {"zone", "project", "thread"?, "to"}
+    delete      without "confirm", what would go; with "confirm" naming it,
+                gone in one commit: {"zone", "project", "thread"?, "confirm"?}
+    undo        a rename or deletion, while it is the zone's last commit:
+                {"zone", "commit"}
+                These six run System/tools/scaffold.py and nothing else, so
+                the page, the voice command and the script make the same
+                folders, notes and commits.
     settings    which ways to open a thread the page offers, and which one
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
                 "default": "cmux"}, written to System/generated/status-settings.json,
@@ -84,12 +99,14 @@ except ImportError:             # not on Windows, where the status app does not 
     fcntl = None
 
 sys.dont_write_bytecode = True
-VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings")
+VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
+         "new-project", "new-thread", "check-name", "rename", "delete", "undo")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default")
+LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default",
+          "name", "party", "kind", "to", "confirm", "commit")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
@@ -665,13 +682,30 @@ def by_folder(ws: Path, req: dict) -> Optional[str]:
     return None
 
 
+# What a tab opened at the workspace root is called, by what it starts on.
+# Anything else at the root is a question asked of Garrick, named by its
+# first words, so two of them are told apart and "close the X tab" has an X.
+ROOT_TITLES = {"process the inbox": "Inbox"}
+ROOT_TITLE_WORDS = 4
+
+
+def root_title(prompt: str) -> str:
+    known = ROOT_TITLES.get(re.sub(r"\s+", " ", prompt).strip().lower().rstrip(".!?"))
+    if known:
+        return known
+    words = re.findall(r"[\w'’-]+", prompt)[:ROOT_TITLE_WORDS]
+    title = " ".join(words).strip("-'’ ")
+    return (title[:1].upper() + title[1:]) if title else "Ask"
+
+
 def cmux_act(ws: Path, req: dict) -> str:
     verb = req["verb"]
     if verb == "open" and "folder" in req:
         req = dict(req)
         prompt = by_folder(ws, req)
         if prompt is not None:
-            said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--front").splitlines()
+            said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--title", root_title(prompt),
+                            "--front").splitlines()
             return said[0][:1].upper() + said[0][1:] if said else "Opened the workspace root in cmux"
     if verb == "open":
         folder, name = cmux_folder(ws, req)
@@ -693,6 +727,91 @@ def cmux_act(ws: Path, req: dict) -> str:
 # ---- end of cmux tabs ----------------------------------------------------------
 
 
+# ---- projects and threads: made, renamed and deleted through scaffold.py -------
+
+NAME_MAX = 80
+
+
+def field(req: dict, key: str, required: bool = True) -> Optional[str]:
+    value = req.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value) > NAME_MAX or value.strip().startswith("-") \
+            or "\n" in value:
+        raise Refused("no %s given" % key if value is None else "not a %s: %r" % (key, value))
+    return value.strip()
+
+
+def scaffold(ws: Path, *args) -> str:
+    """Run the workspace's scaffold.py: what it said, or Refused with its reason."""
+    tool = ws / "System" / "tools" / "scaffold.py"
+    if not tool.is_file():
+        raise Refused("System/tools/scaffold.py is missing")
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--root", str(ws)] + list(args), capture_output=True, text=True,
+                           timeout=GIT_TIMEOUT * 2, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise Refused("scaffold.py took too long and was stopped")
+    if r.returncode != 0:
+        raise Refused((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused")
+    return r.stdout.strip()
+
+
+def manage(ws: Path, req: dict) -> str:
+    verb = req["verb"]
+    zone = zone_dir(ws, req.get("zone"))
+    if verb == "check-name":
+        kind = req.get("kind")
+        if kind not in ("project", "thread", "rename"):
+            raise Refused("not a kind of name: %r" % kind)
+        req = dict(req, verb={"project": "new-project", "thread": "new-thread"}.get(kind, kind))
+        return manage_args(ws, zone, req, check=True)
+    with zone_lock(zone):
+        return manage_args(ws, zone, req, check=False)
+
+
+def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
+    verb, z = req["verb"], zone.name
+    flag = ["--check"] if check else []
+    if verb == "new-project":
+        name, thread = field(req, "name"), field(req, "thread")
+        said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
+                        *flag)
+        if not check:
+            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread))
+        return said
+    if verb == "new-thread":
+        project, name = field(req, "project"), field(req, "name")
+        said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag)
+        if not check:
+            commit_new(zone, zone / project, "%s: new thread %s" % (project, name))
+        return said
+    if verb == "undo":
+        commit = req.get("commit")
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{7,40}", commit):
+            raise Refused("not a commit: %r" % commit)
+        return scaffold(ws, "undo", "--zone", z, "--commit", commit)
+    thread = field(req, "thread", required=False)
+    which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
+    if verb == "rename":
+        return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+    confirm = field(req, "confirm", required=False)
+    return scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
+
+
+def commit_new(zone: Path, folder: Path, message: str) -> None:
+    """Commit what scaffold.py made, as the threads skill's New does: the new
+    folder by name, and its hub. Refused, the folder stays for the user."""
+    rel = folder.relative_to(zone).as_posix()
+    code, said = git(zone, "add", "--", rel)
+    if code == 0:
+        code, said = git(zone, "commit", "-q", "-m", message, "--", rel)
+    if code != 0:
+        git(zone, "reset", "-q", "--", rel, timeout=10)
+        why = said.strip().splitlines()[-1] if said and said.strip() else "git refused"
+        raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
+
+
 def act(ws: Path, req, today=None) -> str:
     """Carry out one request, or raise Refused. Every verb but settings needs
     the page-actions flag, read now rather than when the page was built."""
@@ -711,6 +830,8 @@ def act(ws: Path, req, today=None) -> str:
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
+    if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
+        return manage(ws, req)
     return todo(ws, req)
 
 

@@ -315,9 +315,15 @@ def live_sessions() -> List[dict]:
         raise DeskError(str(e))
 
 
+# A tab whose last turn has ended, and one that has had no turn yet.
+IDLE = ("idle", "empty")
+
+
 def state_of(s: dict) -> str:
-    """From the assistant's transcript: a tab's title and cmux's own lifecycle flag can be stale."""
-    return cx.turn_state(s.get("transcript"), s.get("agent"))[0]
+    """From the assistant's transcript: a tab's title and cmux's own lifecycle
+    flag can be stale. `empty` is a Claude Code tab with no prompt since it
+    started or was cleared: idle, with nothing to wrap."""
+    return cx.session_state(s)
 
 
 def tab_label(s: dict) -> str:
@@ -504,7 +510,7 @@ def cmd_open(desk: Desk, a) -> None:
         # cannot read, such as a session cmux remembers but whose transcript
         # is gone, is passed over, and a new tab starts on the prompt instead.
         states = [(s, state_of(s)) for s in existing]
-        idle = [s for s, st in states if st == "idle" and s.get("surface")]
+        idle = [s for s, st in states if st in IDLE and s.get("surface")]
         busy = [s for s, st in states if st == "working"]
         if idle or busy:
             s = (idle or busy)[0]
@@ -522,7 +528,9 @@ def cmd_open(desk: Desk, a) -> None:
             print("sent to %s in %s: %s" % (tab_label(s), s.get("workspace_name") or "?", a.prompt))
             return
 
-    name = a.title or (desk.say_place(place) if place["kind"] == "thread" else folder.name or "Workspace")
+    at_root = Path(folder).resolve() == desk.ws.resolve()
+    name = a.title or ("Workspace" if at_root else desk.say_place(place) if place["kind"] == "thread"
+                       else folder.name or "Workspace")
     command = start_command(agent, name, a.prompt)
     target = a.target or desk.workspace_for(place["zone"] if not at_root else "root")
     if a.dry_run:
@@ -583,6 +591,9 @@ def cmd_close(desk: Desk, a) -> None:
         if state == "?":
             raise DeskError("cannot tell whether %s is idle: its %s transcript is missing or unreadable"
                             % (tab_label(s), s.get("agent")))
+        if state == "empty" and a.wrap:
+            raise DeskError("nothing to wrap in %s: it has had no prompt since it started or was cleared. "
+                            "Close it without --wrap." % tab_label(s))
     labels = ", ".join(tab_label(s) for s in chosen)
     if a.wrap:
         unsupported = [tab_label(s) for s in chosen if s.get("agent") not in cx.AGENTS]
@@ -601,7 +612,7 @@ def cmd_close(desk: Desk, a) -> None:
         if a.wrap:
             ready = wrap_tab(s, CLOSE_PROMPT, None) is not None
         else:
-            ready = state_of(s) == "idle"
+            ready = state_of(s) in IDLE
         if not ready:
             left.append(tab_label(s))
             continue
@@ -631,7 +642,7 @@ def cmd_workspace(desk: Desk, a) -> None:
 
 def cmd_end(desk: Desk, a) -> None:
     sessions = live_sessions()
-    busy = [s for s in sessions if state_of(s) != "idle"]
+    busy = [s for s in sessions if state_of(s) not in IDLE]
     rows = []
     for s in sorted(sessions, key=lambda x: (x.get("workspace_name") or "", tab_label(x))):
         r = desk.rel(s.get("cwd") or "")
@@ -652,7 +663,7 @@ def cmd_end(desk: Desk, a) -> None:
         return
     if busy and not a.force:
         raise DeskError("not quitting while a tab is busy or desk cannot read it. Let it finish, or pass --force.")
-    write_snapshot(sessions)
+    write_snapshot([s for s in sessions if state_of(s) != "empty"])
     quit_cmux()
     print("\ncmux quits in %d seconds. `desk start`, or opening cmux, brings it all back." % QUIT_AFTER_S)
 
@@ -711,7 +722,7 @@ def cmd_shutdown(desk: Desk, a) -> None:
     if busy:
         raise DeskError("%d tab%s mid-turn or waiting on a question: %s. Let them finish first."
                         % (len(busy), "" if len(busy) == 1 else "s", ", ".join(busy)))
-    todo = sorted((s for s in sessions if s["agent"] in cx.AGENTS and used_today(s)),
+    todo = sorted((s for s in sessions if s["agent"] in cx.AGENTS and used_today(s) and state_of(s) != "empty"),
                   key=lambda x: (x.get("workspace_name") or "", tab_label(x)))
     before = desk.cfg["before_quit"]
     if not a.yes:
@@ -735,7 +746,7 @@ def cmd_shutdown(desk: Desk, a) -> None:
     if skipped:
         stop("not wrapped, busy when its turn came: %s" % ", ".join(skipped), log)
 
-    unsafe = [tab_label(s) for s in live_sessions() if state_of(s) != "idle"]
+    unsafe = [tab_label(s) for s in live_sessions() if state_of(s) not in IDLE]
     if unsafe:
         stop("tabs became busy before quitting: %s" % ", ".join(unsafe), log)
     failed = []
@@ -748,10 +759,10 @@ def cmd_shutdown(desk: Desk, a) -> None:
         if rc != 0:
             failed.append(Path(c[0]).name)
     final = live_sessions()
-    unsafe = [tab_label(s) for s in final if state_of(s) != "idle"]
+    unsafe = [tab_label(s) for s in final if state_of(s) not in IDLE]
     if unsafe:
         stop("tabs became busy before quitting: %s" % ", ".join(unsafe), log)
-    n = write_snapshot(final)
+    n = write_snapshot([s for s in final if state_of(s) != "empty"])
     say("snapshot: %d tab(s) recorded; quitting cmux" % n, log)
     notify("Wrapped %d tab(s)%s. cmux quits now." % (len(todo), "; check " + ", ".join(failed) if failed else ""))
     quit_cmux()

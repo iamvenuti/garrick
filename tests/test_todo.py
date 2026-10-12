@@ -68,13 +68,14 @@ class TodoTest(unittest.TestCase):
 
     def test_expire_waits_its_days_then_moves_the_untriaged_lines_out_unchanged(self):
         day = dt.date(2026, 10, 1)
-        self.assertEqual(1, todo.expire(self.root, self.zone, day))         # the Waiting on line with no chase day
-        self.assertNotIn("Theo: the signed letter", self.text())
+        self.assertEqual(0, todo.expire(self.root, self.zone, day))
         seen = json.loads((self.zone / todo.LEDGER).read_text())
         self.assertEqual(day.isoformat(), seen[todo_lines.key("- [ ] Dana: confirm volumes")])   # the page's key
         self.assertEqual(0, todo.expire(self.root, self.zone, day + dt.timedelta(days=13)))
-        self.assertEqual(2, todo.expire(self.root, self.zone, day + dt.timedelta(days=14)))   # the two undated Inbox lines
+        self.assertEqual(3, todo.expire(self.root, self.zone, day + dt.timedelta(days=14)))   # two undated Inbox lines, one Waiting on
         text = self.text()
+        self.assertNotIn("Theo: the signed letter", text)
+        self.assertIn("Dana's volumes #waiting ⏳ 2026-10-16", text)          # a day to chase: triaged
         self.assertNotIn("send the sheet", text)
         self.assertNotIn("confirm volumes", text)
         self.assertIn("book the call 📅 2026-10-20", text)                   # dated: triaged
@@ -82,6 +83,19 @@ class TodoTest(unittest.TestCase):
         expired = (self.zone / "archive" / "Todo-expired-2026.md").read_text()
         self.assertIn("- [ ] [[Pricing]]: send the sheet\n", expired)       # open, as it was
         self.assertIn("- [ ] Theo: the signed letter #waiting\n", expired)
+
+    def test_a_waiting_on_line_with_no_chase_day_survives_its_first_night(self):
+        day = dt.date(2026, 10, 1)
+        text = self.text().replace("- [ ] Theo: the signed letter #waiting\n", "")
+        write(self.zone / "Todo.md", text.replace("## Waiting on\n\n", "## Waiting on\n\n- [ ] Send the contract → Dana #waiting\n"))
+        line = "- [ ] Send the contract → Dana #waiting"
+        for n in range(14):                                                 # the first night, and every night to the fourteenth
+            todo.expire(self.root, self.zone, day + dt.timedelta(days=n))
+            self.assertIn(line, self.text())
+        self.assertEqual(day.isoformat(), json.loads((self.zone / todo.LEDGER).read_text())[todo_lines.key(line)])
+        todo.expire(self.root, self.zone, day + dt.timedelta(days=14))     # the fifteenth night
+        self.assertNotIn(line, self.text())
+        self.assertIn(line + "\n", (self.zone / "archive" / "Todo-expired-2026.md").read_text())
 
     def test_the_days_can_be_set_per_zone(self):
         write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-expire-days": {"Work": 3}}))
@@ -107,13 +121,43 @@ class TodoTest(unittest.TestCase):
                           "- [ ] Dana: confirm volumes"], inbox)
         self.assertEqual(0, todo.tidy(self.zone))                          # a second run changes nothing
 
+    def test_the_inbox_can_follow_thread_names_as_a_tasks_query_does(self):
+        write(self.zone / "Todo.md", LIST.replace("- [ ] Dana: confirm volumes\n",
+                                                  "- [ ] Dana: confirm volumes\n- [ ] [[Acme/Threads/Zed|Audit]]: book it\n"))
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-inbox-order": {"Work": "thread"}}))
+        self.assertEqual("thread", todo.inbox_order(self.root, "Work"))
+        self.assertEqual("first-seen", todo.inbox_order(self.root, "Personal"))
+        todo.tidy(self.zone, "thread")
+        inbox = self.text().split("## Inbox\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
+        self.assertEqual(["- [ ] [[Acme/Threads/Zed|Audit]]: book it",                 # by its alias
+                          "- [ ] [[Freight]]: book the call 📅 2026-10-20",
+                          "- [ ] [[Pricing]]: send the sheet",
+                          "- [ ] [[Pricing]]: check the tier against Birch's 🔺 📅 2026-10-21",
+                          "- [ ] Dana: confirm volumes"], inbox)
+        found = [f for f in __import__("check").run_checks(self.root) if f.check == "settings"]
+        self.assertEqual([], found)                                         # both todo keys are settings the check knows
+
+    def test_tidy_keeps_a_moved_lines_first_seen_day_and_oldest_names_the_next_to_expire(self):
+        day = dt.date(2026, 10, 1)
+        todo.expire(self.root, self.zone, day)
+        write(self.zone / "Todo.md", self.text().replace("## Inbox\n\n", "## Inbox\n\n- [ ] [[Freight]]: a new one\n"))
+        todo.expire(self.root, self.zone, day + dt.timedelta(days=3))
+        before = "- [ ] [[Pricing]]: 🔺 check the tier 📅 2026-10-21 against Birch's"
+        todo.tidy(self.zone)
+        after = "- [ ] [[Pricing]]: check the tier against Birch's 🔺 📅 2026-10-21"
+        seen = json.loads((self.zone / todo.LEDGER).read_text())
+        self.assertNotIn(todo.key(before), seen)
+        self.assertEqual(day.isoformat(), seen[todo.key(after)])
+        self.assertEqual("- [ ] [[Freight]]: a new one", todo.oldest(self.zone, day + dt.timedelta(days=3), 10)[-1])
+        self.assertEqual(2, len(todo.oldest(self.zone, day, 2)))
+
     def test_all_from_the_command_line(self):
         import io
         from contextlib import redirect_stdout
         out = io.StringIO()
         with redirect_stdout(out):
             todo.main(["all", "--zone", "work", "--root", str(self.root), "--today", "2026-10-12", "--json"])
-        self.assertEqual({"zone": "Work", "expired": 1, "archived": 1, "tidied": 3}, json.loads(out.getvalue()))
+        self.assertEqual({"zone": "Work", "expired": 0, "archived": 1, "tidied": 3}, json.loads(out.getvalue()))
         self.assertIn("The header the list keeps.", self.text())
 
 

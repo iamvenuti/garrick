@@ -234,7 +234,8 @@ def workspace_lib(ws: Optional[Path]):
 
 DRIFT = ("System", "generated", "drift.json")
 DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missing, here or on the share",
-             "unread": "has a row in published.md that does not read"}
+             "unread": "has a row in published.md that does not read",
+             "conflict": "is a copy a sync conflict left on the share"}
 
 
 def drifted(ws: Path) -> List[str]:
@@ -248,7 +249,8 @@ def drifted(ws: Path) -> List[str]:
     out = []
     for f in data.get("files", []) if isinstance(data, dict) else []:
         if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
-            out.append("%s: %s %s" % (f.get("project", "?"), f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+            where = f.get("project", "?") + (", " + f["thread"] if f.get("thread") else "")
+            out.append("%s: %s %s" % (where, f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
     return out
 
 

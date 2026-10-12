@@ -12,14 +12,35 @@ cloud folder, is one row in its project's `Deliverables/published.md`:
     |---|---|---|---|---|
     | 2026-10-01 | `260930 - Pricing deck.pptx` | `Decks/Pricing deck.pptx` | Dana, Owen | share |
 
-`File` is the project's copy, under `Deliverables/`. `Destination` is the
-shared copy, relative to the folder the hub names in its `shared:` key, or
-`<link>:<path>` for another folder linked under the zone's `.shared/`. The
+`File` is the project's copy, a path under `Deliverables/`, or from the
+project's own folder when it is kept elsewhere (`Threads/Pricing/Working/
+Rates.xlsx`). `Destination` is the shared copy, relative to the folder the
+hub names in its `shared:` key, or `<link>:<path>` for another folder linked
+under the zone's `.shared/`; a destination that is a folder (`Decks/`) holds
+a copy with the file's own name. The
 hub's key names its folder the same way, `<link>/<path>`, through a link in
 `Zones/<Zone>/.shared/`: never by the provider's own path, which changes
 when an account or library is renamed. `Authoritative` says which copy wins
 from now on: `share` when colleagues edit it there, `here` when they only
-read it.
+read it. Only its first word is read, so a note may follow: `share,
+colleagues edit the wording there`.
+
+A row stays as the record of what left. When a copy is taken off the share,
+or a newer version takes its place, its date cell becomes `withdrawn
+YYYY-MM-DD` or `replaced YYYY-MM-DD`, the day it happened; a copy sent by
+mail rather than placed on a share is `sent YYYY-MM-DD`. Such a row is
+history: read, never compared. Only the table whose first column is `Date`
+is the ledger; another table in the same file is left alone.
+
+A thread-first project (`layout: thread-first` on its hub) keeps one ledger
+per thread, `Threads/<Thread>/Deliverables/published.md`, its files under
+that thread's `Deliverables/`. Both places are read in every project.
+
+A sync conflict leaves a second copy beside the first. The names under each
+folder a ledger uses are read, never the files: one with `conflicted copy`
+or a `-conflict` suffix is reported anywhere there, and a numbered copy
+(`Terms (1).docx`) only beside a published file, since elsewhere that shape
+is mostly downloads saved by hand.
 
 Drift is a real difference. A file is compared byte for byte, except an
 Office file (.docx, .xlsx, .pptx), which a shared library rewrites on every
@@ -28,7 +49,9 @@ its relationships as a set of what points to what, and its XML in canonical
 form, leaving out the provider's own parts (customXml/, and the properties
 in docProps/, which record who saved it when). A copy the provider keeps
 online only, with no bytes on this Mac, is never downloaded: it is reported
-as unchecked. An Office file saved with a password is reported apart.
+as unchecked. An Office file saved with a password, or one a
+rights-management service encrypted in place (neither a zip nor a password
+file), is reported apart, as encrypted.
 
 macOS keeps a scheduled job out of ~/Library/CloudStorage, so this runs
 from a session or the app, never from launchd. It changes nothing but
@@ -60,32 +83,56 @@ from garrick_lib import parse_frontmatter, workspace_root  # noqa: E402
 LEDGER = ("Deliverables", "published.md")
 LINKS = ".shared"
 OFFICE = {".docx", ".xlsx", ".pptx", ".docm", ".xlsm", ".pptm"}
-PROVIDER = re.compile(r"^(?:customXml/|docProps/)", re.I)
+PROVIDER = re.compile(r"^(?:customXml/|docProps/|\[trash\]/)", re.I)   # the provider's parts, and what Excel leaves after a save
 OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"          # an encrypted Office file is an OLE container, not a zip
-ROW = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|([^|]*)\|\s*(\w+)\s*\|\s*$")
+ZIP = b"PK\x03\x04"                                 # how Office saves .docx, .xlsx and .pptx
+ROW = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|([^|]*)\|\s*(share|here)\b([^|]*)\|\s*$", re.I)
+HISTORY = re.compile(r"^\|\s*(withdrawn|replaced|sent)\s+(\d{4}-\d{2}-\d{2})\s*\|", re.I)
+HEADER = re.compile(r"^\|\s*Date\s*\|", re.I)
+RULE = re.compile(r"^\|[\s:|-]+\|$")
 SAVED = ("System", "generated", "drift.json")
+HISTORY_WORDS = ("withdrawn", "replaced", "sent")
 
 
 # --------------------------------------------------------------------------- the ledger
 
 
 def ledger_rows(path: Path) -> Tuple[List[dict], List[str]]:
-    """(rows, lines that look like rows but do not read) of a published.md."""
+    """(rows, lines that look like rows but do not read) of a published.md.
+    Only the table under a `| Date |` header is read; a history row comes
+    back with `history` set to its word and is never compared."""
     rows, bad = [], []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return rows, bad
+    headed = any(HEADER.match(line.strip()) for line in lines)
+    in_ledger = not headed                           # with no `| Date |` header, every table is read, as before
     for line in lines:
         s = line.strip()
-        if not s.startswith("|") or re.match(r"^\|\s*(?:Date|-{3})", s, re.I):
+        if not s.startswith("|"):
+            in_ledger = not headed                   # a table ends at its first line that is not a row
+            continue
+        if HEADER.match(s):
+            in_ledger = True
+            continue
+        if not in_ledger or RULE.match(s):
+            continue
+        h = HISTORY.match(s)
+        if h:
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            rows.append({"date": h.group(2), "history": h.group(1).lower(), "file": cells[1].strip("`") if len(cells) > 1 else "",
+                         "destination": cells[2].strip("`") if len(cells) > 2 else "",
+                         "recipients": cells[3] if len(cells) > 3 else "",
+                         "authoritative": cells[4].split(None, 1)[0].strip(",;.:").lower() if len(cells) > 4 and cells[4] else ""})
             continue
         m = ROW.match(s)
         if not m:
             bad.append(s)
             continue
         rows.append({"date": m.group(1), "file": m.group(2), "destination": m.group(3),
-                     "recipients": m.group(4).strip(), "authoritative": m.group(5).lower()})
+                     "recipients": m.group(4).strip(), "authoritative": m.group(5).lower(),
+                     "note": m.group(6).strip(" ,;:—–-")})
     return rows, bad
 
 
@@ -189,6 +236,11 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
         return "drifted", "the bytes differ"
     if b.startswith(OLE) or a.startswith(OLE):
         return "encrypted", "one copy is saved with a password, so its content cannot be compared"
+    if not a or not b:
+        return "drifted", "the %s copy is empty" % ("shared" if a else "project's")
+    if not (a.startswith(ZIP) and b.startswith(ZIP)):
+        return "encrypted", ("the %s copy is not an Office file as Office saves one; a rights-management service may "
+                             "have encrypted it in place" % ("shared" if a.startswith(ZIP) else "project's"))
     try:
         fa, fb = office_form(a), office_form(b)
     except Exception as exc:      # a half-synced or damaged file: zip, zlib, EOF and parse errors alike
@@ -203,42 +255,95 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
 # --------------------------------------------------------------------------- the workspace
 
 
+def _visible(folder: Path) -> List[Path]:
+    return sorted(p for p in (folder.iterdir() if folder.is_dir() else []) if p.is_dir() and not p.name.startswith((".", "_")))
+
+
+def ledgers(project: Path) -> List[Tuple[Optional[str], Path]]:
+    """(thread or None, its Deliverables/ folder) for every ledger of a
+    project: its own, and one per thread, as a thread-first project keeps them."""
+    out = [(None, project / LEDGER[0])] + [(t.name, t / LEDGER[0]) for t in _visible(project / "Threads")]
+    return [(t, d) for t, d in out if (d / LEDGER[1]).is_file()]
+
+
 def projects(root: Path):
-    zones = root / "Zones"
-    for zone in sorted(z for z in (zones.iterdir() if zones.is_dir() else []) if z.is_dir() and not z.name.startswith((".", "_"))):
-        for project in sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
-            if project.joinpath(*LEDGER).is_file():
-                yield zone, project
+    for zone in _visible(root / "Zones"):
+        for project in _visible(zone):
+            for thread, folder in ledgers(project):
+                yield zone, project, thread, folder
+
+
+# What a sync client names the second copy when two saves meet. Names only: no file is opened.
+CONFLICT = re.compile(r"conflicted copy|[-_ ]conflict\b", re.I)      # anywhere under a folder a ledger uses
+NUMBERED = re.compile(r"[ _]\(\d{1,3}\)\.[A-Za-z0-9]+$")          # only beside a published file: elsewhere, downloads
+
+
+def conflicts(watched: Dict[Path, dict], published: Dict[Path, dict]) -> List[dict]:
+    """Conflict copies under each watched folder, and numbered copies in each
+    folder a live row publishes to; {folder: where it belongs} for both."""
+    out, seen = [], set()
+    for top, where in sorted(watched.items(), key=lambda kv: str(kv[0])):
+        for base, dirs, files in os.walk(top, onerror=lambda e: None):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            here = Path(base)
+            for name in sorted(files):
+                if name.startswith((".", "~$")) or here / name in seen:
+                    continue
+                strict = CONFLICT.search(Path(name).stem)
+                beside = here in published and NUMBERED.search(name)
+                if strict or beside:
+                    seen.add(here / name)
+                    owner = published.get(here, where)
+                    folder = os.path.relpath(base, top)
+                    out.append(dict(owner, file=name, state="conflict",
+                                    destination="" if folder == "." else folder,
+                                    say="a sync conflict left this copy%s" % ("" if folder == "." else " in " + folder)))
+    return out
 
 
 def survey(root: Path) -> List[dict]:
     out = []
-    for zone, project in projects(root):
+    watched: Dict[Path, dict] = {}
+    published: Dict[Path, dict] = {}
+    for zone, project, thread, folder in projects(root):
         hub = project / (project.name + ".md")
         value = parse_frontmatter(hub).get("shared") if hub.is_file() else None
         hub_shared = shared_root(zone, value) if value else None
-        rows, bad = ledger_rows(project.joinpath(*LEDGER))
+        rows, bad = ledger_rows(folder / LEDGER[1])
+        where = {"zone": zone.name, "project": project.name}
+        if thread:
+            where["thread"] = thread
         for line in bad:
-            out.append({"zone": zone.name, "project": project.name, "state": "unread", "file": "",
-                        "say": "a row of published.md does not read as Date | `file` | `destination` | recipients | "
-                               "authoritative: %s" % line[:80]})
+            out.append(dict(where, state="unread", file="",
+                            say="a row of published.md does not read as Date | `file` | `destination` | recipients | "
+                                "share or here: %s" % line[:80]))
         for row in rows:
-            ours = project / "Deliverables" / row["file"]
-            if row["file"].startswith(("/", "~")) or ".." in Path(row["file"]).parts:
-                out.append({"zone": zone.name, "project": project.name, "file": row["file"], "state": "unread",
-                            "say": "the file must be a path under Deliverables/"})
+            if row.get("history"):
+                out.append(dict(where, file=row["file"], destination=row["destination"], date=row["date"],
+                                state=row["history"], say=""))
                 continue
+            if row["file"].startswith(("/", "~")) or ".." in Path(row["file"]).parts:
+                out.append(dict(where, file=row["file"], state="unread",
+                                say="the file must be a path under Deliverables/, or from the %s's folder" % ("thread" if thread else "project")))
+                continue
+            ours = folder / row["file"]
+            if not ours.exists() and (folder.parent / row["file"]).exists():
+                ours = folder.parent / row["file"]           # kept outside Deliverables/, named from the project's (or thread's) folder
             theirs = destination(zone, hub_shared, row["destination"])
             if theirs is None:
                 state, say = "unchecked", ("the hub names no shared folder, `shared:`, through a link in %s/%s/"
                                            % (zone.name, LINKS) if ":" not in row["destination"]
                                            else "no link %s in %s/%s/" % (row["destination"].split(":")[0], zone.name, LINKS))
             else:
+                if row["destination"].endswith(("/", ":")) or theirs.is_dir():
+                    theirs = theirs / Path(row["file"]).name    # a folder: the copy there keeps the file's name
                 state, say = compare(ours, theirs)
-            out.append({"zone": zone.name, "project": project.name, "file": row["file"],
-                        "destination": row["destination"], "authoritative": row["authoritative"],
-                        "date": row["date"], "state": state, "say": say})
-    return out
+                top = theirs.parent if ":" in row["destination"] else hub_shared
+                watched.setdefault(top, where)
+                published.setdefault(theirs.parent, where)
+            out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
+                            date=row["date"], state=state, say=say))
+    return out + conflicts({k: v for k, v in watched.items() if k.is_dir()}, published)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -266,10 +371,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not found:
             print("No project has published anything yet.")
         for f in found:
-            print("%s, %s: %s%s%s" % (f["zone"], f["project"], f["file"] or "published.md",
+            if f["state"] in HISTORY_WORDS:
+                continue                                 # the record of what left, not something to look at
+            print("%s, %s: %s%s%s" % (f["zone"], f["project"] + (", " + f["thread"] if f.get("thread") else ""),
+                                      f["file"] or "published.md",
                                       ": " + f["state"] if f["state"] != "same" else ": the same",
                                       " (%s)" % f["say"] if f["say"] else ""))
-    return 1 if any(f["state"] in ("drifted", "missing", "unread") for f in found) else 0
+    return 1 if any(f["state"] in ("drifted", "missing", "unread", "conflict") for f in found) else 0
 
 
 if __name__ == "__main__":

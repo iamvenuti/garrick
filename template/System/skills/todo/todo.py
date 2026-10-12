@@ -7,22 +7,30 @@ lines it can name; a commit is left to the caller.
     python3 System/skills/todo/todo.py archive --zone Work
     python3 System/skills/todo/todo.py tidy    --zone Work
     python3 System/skills/todo/todo.py all     --zone Work      the three, in that order
+    python3 System/skills/todo/todo.py oldest  --zone Work [--count 3]
 
 expire   Records, in the zone's .todo-seen.json (never committed), the first
-         night each open line under `## Inbox` was seen. A line still there
-         after the zone's days (14, or `todo-expire-days` in
-         System/garrick-checks.json: a number, or a number per zone) moves,
-         unchanged and still open, to archive/Todo-expired-<YYYY>.md, so it
-         can be pasted back. So does a `## Waiting on` line with no `⏳` day
-         to chase. A line the user has triaged has left the Inbox or carries
-         a date, so expiry never reaches it.
+         night each open line under `## Inbox` and `## Waiting on` was seen.
+         An Inbox line with no date, or a Waiting on line with no `⏳` day to
+         chase, still there after the zone's days (14, or `todo-expire-days`
+         in System/garrick-checks.json: a number, or a number per zone)
+         moves, unchanged and still open, to archive/Todo-expired-<YYYY>.md,
+         so it can be pasted back. A line the user has triaged has left the
+         Inbox, carries a date, or waits with a day to chase, so expiry
+         never reaches it.
 archive  Moves ticked lines (`- [x]`) done before today to
          archive/Todo-<YYYY>.md, so the list is only as long as what is
          open. A line ticked today stays, for the page's *Done today*.
 tidy     Moves priority and date fields written mid-line to the end, where
-         Obsidian Tasks reads them, and keeps the Inbox in thread order:
-         lines that open with the same [[thread]] together, in the order
-         each thread first appears, the rest after them.
+         Obsidian Tasks reads them, keeping each moved line's first-seen
+         date, and keeps the Inbox in thread order: lines that open with the
+         same [[thread]] together, the rest after them. The threads come in
+         the order each first appears, or, with `todo-inbox-order` set to
+         "thread" (for every zone, or per zone), by name, the alias after
+         `|` when there is one, as a Tasks query sorted by description shows
+         them.
+oldest   Prints the open Inbox lines first seen longest ago, the next to
+         expire, for a digest that names them.
 
 Each prints one line of what it did, and `--json` a count for a job.
 Standard library only, Python 3.9 or later.
@@ -110,15 +118,37 @@ def keep_out(zone: Path, name: str, title: str, moved: List[str]) -> Path:
     return path
 
 
+def setting(root: Path, key: str, zone: str):
+    """A key of System/garrick-checks.json, or its value for this zone."""
+    try:
+        value = json.loads((root / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get(key)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value.get(zone) if isinstance(value, dict) else value
+
+
+def inbox_order(root: Path, zone: str) -> str:
+    return "thread" if setting(root, "todo-inbox-order", zone) == "thread" else "first-seen"
+
+
+def read_seen(zone: Path) -> Dict[str, str]:
+    try:
+        seen = json.loads((zone / LEDGER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return seen if isinstance(seen, dict) else {}
+
+
+def write_seen(zone: Path, seen: Dict[str, str]) -> None:
+    tmp = zone / (LEDGER + ".new")
+    tmp.write_text(json.dumps(dict(sorted(seen.items())), indent=0) + "\n", encoding="utf-8")
+    os.replace(tmp, zone / LEDGER)
+
+
 def expire_days(root: Path, zone: str, given: Optional[int]) -> int:
     if given is not None:
         return given
-    try:
-        value = json.loads((root / "System" / "garrick-checks.json").read_text(encoding="utf-8")).get("todo-expire-days")
-    except (OSError, ValueError, AttributeError):
-        return DAYS
-    if isinstance(value, dict):
-        value = value.get(zone, DAYS)
+    value = setting(root, "todo-expire-days", zone)
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else DAYS
 
 
@@ -126,26 +156,21 @@ def expire(root: Path, zone: Path, today: datetime.date, days: Optional[int] = N
     limit = expire_days(root, zone.name, days)
     lines = read(zone)
     where = sections(lines)
-    ledger = zone / LEDGER
-    try:
-        seen = json.loads(ledger.read_text(encoding="utf-8"))
-        seen = seen if isinstance(seen, dict) else {}
-    except (OSError, ValueError):
-        seen = {}
+    seen = read_seen(zone)
     inbox = range(*where.get("Inbox", (0, 0)))
     waiting = range(*where.get("Waiting on", (0, 0)))
-    open_inbox = [i for i in inbox if lines[i].startswith("- [ ] ") and "<action>" not in lines[i]]
-    for i in open_inbox:
+    watched = [(i, ANY_DATE) for i in inbox] + [(i, CHASE) for i in waiting]       # a line is safe once it carries this
+    watched = [(i, safe) for i, safe in watched if lines[i].startswith("- [ ] ") and "<action>" not in lines[i]]
+    for i, _ in watched:
         seen.setdefault(key(lines[i]), today.isoformat())
     gone = []
-    for i in open_inbox:
+    for i, safe in watched:
         try:
             first = datetime.date.fromisoformat(seen[key(lines[i])])
         except ValueError:
             continue
-        if (today - first).days >= limit and not ANY_DATE.search(lines[i]):
+        if (today - first).days >= limit and not safe.search(lines[i]):
             gone.append(i)
-    gone += [i for i in waiting if lines[i].startswith("- [ ] ") and not CHASE.search(lines[i])]
     if gone:
         gone = with_steps(lines, sorted(gone))
         moved = [lines[i] for i in gone]
@@ -154,10 +179,7 @@ def expire(root: Path, zone: Path, today: datetime.date, days: Optional[int] = N
         lines = [l for i, l in enumerate(lines) if i not in set(gone)]
         write(zone, lines)
     live = {key(l) for l in lines if l.startswith("- [ ] ")}
-    seen = {k: v for k, v in sorted(seen.items()) if k in live}
-    tmp = ledger.with_name(LEDGER + ".new")
-    tmp.write_text(json.dumps(seen, indent=0) + "\n", encoding="utf-8")
-    os.replace(tmp, ledger)
+    write_seen(zone, {k: v for k, v in seen.items() if k in live})
     return len(gone)
 
 
@@ -185,15 +207,29 @@ def archive(zone: Path, today: datetime.date) -> int:
     return n
 
 
-def tidy(zone: Path) -> int:
+def thread_name(line: str) -> str:
+    """The name a Tasks query sorts a line by: the alias after `|`, else the
+    link's last part, case-folded."""
+    m = re.match(r"^- \[ \] \[\[([^\]]+)\]\]", line)
+    link = m.group(1) if m else ""
+    return (link.split("|", 1)[1] if "|" in link else link.split("#", 1)[0].rsplit("/", 1)[-1]).strip().casefold()
+
+
+def tidy(zone: Path, by: str = "first-seen") -> int:
     lines = read(zone)
     changed = 0
+    seen, rekeyed = read_seen(zone), False
     for i, line in enumerate(lines):
         if line.startswith(("- [ ] ", "- [x] ")):
             new = fields_last(line)
             if new != line:
+                if key(line) in seen:                                   # the move does not restart its days
+                    seen.setdefault(key(new), seen.pop(key(line)))
+                    rekeyed = True
                 lines[i] = new
                 changed += 1
+    if rekeyed:
+        write_seen(zone, seen)
     start, end = sections(lines).get("Inbox", (0, 0))
     block = [i for i in range(start, end) if lines[i].startswith("- [ ] ")]
     if block and block == list(range(block[0], block[-1] + 1)):      # only a run of task lines is reordered
@@ -208,13 +244,25 @@ def tidy(zone: Path) -> int:
         def rank(l):
             m = LABEL.match(l)
             return order.index(m.group(1).rsplit("/", 1)[-1].lower()) if m else len(order)
-        ranked = sorted(items, key=rank)                              # stable: each thread keeps its own order
+
+        def by_name(l):
+            return (0, thread_name(l)) if LABEL.match(l) else (1, "")
+        ranked = sorted(items, key=by_name if by == "thread" else rank)     # stable: each thread keeps its own order
         if ranked != items:
             changed += sum(1 for a, b in zip(items, ranked) if a != b)
             lines[block[0]:block[-1] + 1] = ranked
     if changed:
         write(zone, lines)
     return changed
+
+
+def oldest(zone: Path, today: datetime.date, count: int = 3) -> List[str]:
+    """The open Inbox lines first seen longest ago, oldest first; a line not
+    yet seen counts as seen today."""
+    lines = read(zone)
+    seen = read_seen(zone)
+    inbox = [lines[i] for i in range(*sections(lines).get("Inbox", (0, 0))) if lines[i].startswith("- [ ] ")]
+    return sorted(inbox, key=lambda l: seen.get(key(l), today.isoformat()))[:max(count, 0)]
 
 
 def zone_of(root: Path, name: str) -> Path:
@@ -227,23 +275,28 @@ def zone_of(root: Path, name: str) -> Path:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Expire, archive and tidy a zone's Todo.md.")
-    ap.add_argument("command", choices=("expire", "archive", "tidy", "all"))
+    ap.add_argument("command", choices=("expire", "archive", "tidy", "all", "oldest"))
     ap.add_argument("--zone", required=True)
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--days", type=int, help="days in the Inbox before a line expires (default: the zone's, or 14)")
     ap.add_argument("--today", help="YYYY-MM-DD, for tests")
+    ap.add_argument("--count", type=int, default=3, help="how many lines `oldest` prints (default 3)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     root = Path(a.root).expanduser().resolve() if a.root else HERE.parents[2]
     zone = zone_of(root, a.zone)
     today = datetime.date.fromisoformat(a.today) if a.today else datetime.date.today()
+    if a.command == "oldest":
+        found = oldest(zone, today, a.count)
+        print(json.dumps({"zone": zone.name, "oldest": found}) if a.json else "\n".join(found))
+        return 0
     done = {}
     if a.command in ("expire", "all"):
         done["expired"] = expire(root, zone, today, a.days)
     if a.command in ("archive", "all"):
         done["archived"] = archive(zone, today)
     if a.command in ("tidy", "all"):
-        done["tidied"] = tidy(zone)
+        done["tidied"] = tidy(zone, inbox_order(root, zone.name))
     if a.json:
         print(json.dumps(dict(done, zone=zone.name)))
     else:

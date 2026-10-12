@@ -120,7 +120,9 @@ A deck or a workbook that leaves the workspace, copied to a shared cloud folder 
 | 2026-10-01 | `260930 - Pricing deck.pptx` | `Decks/Pricing deck.pptx` | Dana, Owen | share |
 ```
 
-The destination is relative to the folder the hub names in `shared: <link>/<path>`, through a link you make once in the zone's `.shared/` folder (`ln -s "<the provider's folder>" Zones/Work/.shared/team`); never write the provider's own path into a note, since it changes when an account or library is renamed. `<link>:<path>` reaches another linked folder. `python3 System/tools/drift.py` then compares each file with its shared copy and reports only real differences: an Office file is compared by its content, not its bytes, which a shared library rewrites on every upload. A copy kept online only is never downloaded, only reported as unchecked. With `--save` the status page lists what drifted. macOS keeps scheduled jobs out of cloud folders, so run it from a session or the app.
+Only the first word of the last cell is read, so a clause may follow it: `share, Dana edits the wording there`. A row is never deleted, since it is the record of what left: when a copy comes off the share, or a newer version takes its place, its date cell becomes `withdrawn 2026-10-14` or `replaced 2026-10-14`, and a file sent by mail rather than placed on a share is dated `sent 2026-10-14`. Such a row is history, never compared. A project with `layout: thread-first` keeps one ledger per thread, in `Threads/<Thread>/Deliverables/published.md`.
+
+The file is a path under `Deliverables/`, or from the project's own folder when it is kept elsewhere, such as a thread's working folder (`Threads/Pricing/Shared Notes/Rates.xlsx`). The destination is relative to the folder the hub names in `shared: <link>/<path>`, through a link you make once in the zone's `.shared/` folder (`ln -s "<the provider's folder>" Zones/Work/.shared/team`), which the zone's `.gitignore` keeps out of its history; never write the provider's own path into a note, since it changes when an account or library is renamed. `<link>:<path>` reaches another linked folder, and a destination that is a folder (`Decks/`) holds a copy with the file's own name. `python3 System/tools/drift.py` then compares each file with its shared copy and reports only real differences: an Office file is compared by its content, not its bytes, which a shared library rewrites on every upload. A copy kept online only is never downloaded, only reported as unchecked. A second copy a sync conflict left beside a published file, such as `Terms (1).docx` or one with `conflicted copy` in its name, is reported by its name alone. With `--save` the status page lists what drifted. macOS keeps scheduled jobs out of cloud folders, so run it from a session or the app.
 
 ## The check
 
@@ -184,7 +186,9 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "word-budgets": {"root": 1000, "other": 1200},
   "retired-skills": {"old-wrap": "threads"},
   "raw-accepted": {"Wikis/Meetings/raw/260310-acme-kickoff.txt": "4f2a91c"},
-  "as-shipped": ["System/tools/"]
+  "as-shipped": ["System/tools/"],
+  "todo-expire-days": {"Work": 14, "Personal": 30},
+  "todo-inbox-order": "thread"
 }
 ```
 
@@ -195,6 +199,8 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `retired-skills`: a skill you retired, and the one that does its job now. The check reports the old one if its folder comes back, a link to it stays, or an instruction still names it.
 - `raw-accepted`: a raw record you changed on purpose, and the commit of that change. Only a later change is reported.
 - `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.
+- `todo-expire-days`: the days an untriaged line waits in a zone's `Todo.md` before the `todo` skill moves it to the expired archive; 14 otherwise. A number, or one per zone.
+- `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
 The check reports a settings file that does not read, a key it does not know, and a zone it names that does not exist.
 

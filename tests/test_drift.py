@@ -96,6 +96,10 @@ class DriftTest(unittest.TestCase):
             self.assertEqual("unchecked", self.one()["state"])                    # never downloaded
         target.write_bytes(drift.OLE + b"\0" * 600)
         self.assertEqual("encrypted", self.one()["state"])
+        target.write_bytes(b"XYZ" + b"\0" * 600)                                 # encrypted in place by a rights service
+        found = self.one()
+        self.assertEqual("encrypted", found["state"])
+        self.assertIn("rights-management", found["say"])
         target.unlink()
         self.assertEqual("missing", self.one()["state"])
 
@@ -129,6 +133,103 @@ class DriftTest(unittest.TestCase):
         found = self.one()
         self.assertEqual("unchecked", found["state"])
         self.assertIn("shared:", found["say"])
+
+    def test_a_history_row_is_read_never_compared_and_never_warned_about(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text()
+                          + "| withdrawn 2026-10-03 | `260901 - Old terms.docx` | `Old terms.docx` | Dana | share |\n"
+                          + "| replaced 2026-10-04 | `260902 - Terms draft.docx` | `Terms.docx` | Dana | here, until the draft went |\n"
+                          + "| sent 2026-10-05 | `260930 - Terms.docx` | email to Birch & Co | Theo | here |\n")
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx())
+        found = drift.survey(self.root)
+        self.assertEqual(["same", "withdrawn", "replaced", "sent"], [f["state"] for f in found])
+        self.assertEqual("2026-10-03", found[1]["date"])
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "deliverables" and "published.md" in f.path])
+        with mock.patch("builtins.print"):
+            self.assertEqual(0, drift.main(["--root", str(self.root)]))           # history is nothing to look at
+
+    def test_a_note_may_follow_share_or_here(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("| Dana | share |", "| Dana | Share, Dana edits the wording there |"))
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx("Dana's wording."))
+        found = self.one()
+        self.assertEqual(("drifted", "share"), (found["state"], found["authoritative"]))
+        ledger.write_text(ledger.read_text().replace("| Share, Dana", "| shared by Dana"))
+        self.assertEqual("unread", drift.survey(self.root)[0]["state"])           # a first word that is neither
+
+    def test_only_the_table_under_the_date_header_is_the_ledger(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text() + "\n## Amendments\n\n| Amendment | What moved |\n|---|---|\n| 2026-10-02 | two rows |\n")
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx())
+        self.assertEqual(["same"], [f["state"] for f in drift.survey(self.root)])
+
+    def test_a_thread_keeps_its_own_ledger(self):
+        thread = self.acme / "Threads" / "Pricing"
+        (thread / "Deliverables").mkdir(parents=True)
+        (thread / "Deliverables" / "261001 - Rates.csv").write_bytes(b"rates")
+        (self.share / "Acme" / "Rates.csv").write_bytes(b"rates, edited")
+        write(thread / "Deliverables" / "published.md",
+              "| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+              "| 2026-10-02 | `261001 - Rates.csv` | `Rates.csv` | Dana | here |\n"
+              "| last week | Rates | somewhere | Dana | here |\n")
+        found = [f for f in drift.survey(self.root) if f.get("thread") == "Pricing"]
+        self.assertEqual(["unread", "drifted"], [f["state"] for f in found])
+        self.assertEqual("bytes", found[1]["say"].split()[-2])
+        warned = [f for f in check.run_checks(self.root) if f.check == "deliverables" and "published.md" in f.path]
+        self.assertEqual(["Zones/Work/Acme Review/Threads/Pricing/Deliverables/published.md"], [f.path for f in warned])
+
+    def test_excels_trash_is_not_content(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(docx())) as src, zipfile.ZipFile(buf, "w") as z:
+            for name in src.namelist():
+                z.writestr(name, src.read(name))
+            z.writestr("[trash]/0000.dat", b"what an incremental save left behind")
+        (self.share / "Acme" / "Terms.docx").write_bytes(buf.getvalue())
+        self.assertEqual("same", self.one()["state"])
+
+    def test_the_zone_ignores_its_shared_links(self):
+        import garrick_lib
+        lines = garrick_lib.garrick_ignores(["Work"])
+        self.assertIn(".shared/", lines["Zones/Work/.gitignore"].splitlines())
+        self.assertIn(".shared/", lines["/".join(garrick_lib.ZONE_TEMPLATE + (".gitignore",))].splitlines())
+
+    def test_a_destination_folder_holds_a_copy_with_the_files_name(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        (self.share / "Acme" / "Contracts").mkdir()
+        (self.share / "Acme" / "Contracts" / "260930 - Terms.docx").write_bytes(docx())
+        for dest in ("`Contracts/`", "`Contracts`", "`team:Acme/Contracts/`"):
+            ledger.write_text(ledger.read_text().split("| 2026-10-01")[0]
+                              + "| 2026-10-01 | `260930 - Terms.docx` | %s | Dana | share |\n" % dest)
+            self.assertEqual("same", self.one()["state"], dest)
+
+    def test_a_file_may_be_named_from_the_projects_folder(self):
+        working = self.acme / "Threads" / "Pricing" / "Shared Notes"
+        working.mkdir(parents=True)
+        (working / "261001 - Rates.csv").write_bytes(b"rates")
+        (self.share / "Acme" / "Rates.csv").write_bytes(b"rates")
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("`260930 - Terms.docx` | `Terms.docx`",
+                                                     "`Threads/Pricing/Shared Notes/261001 - Rates.csv` | `Rates.csv`"))
+        self.assertEqual("same", self.one()["state"])
+        ledger.write_text(ledger.read_text().replace("`Threads/Pricing", "`../Acme Review/Threads/Pricing"))
+        self.assertEqual("unread", self.one()["state"])                         # never out of the project
+
+    def test_a_sync_conflict_beside_what_was_published_is_reported_by_name_alone(self):
+        acme = self.share / "Acme"
+        (acme / "Terms.docx").write_bytes(docx())
+        (acme / "Old").mkdir()
+        for name in ("Terms (1).docx", "Terms - Copy.docx", "Terms-v2.docx", "~$Terms.docx",
+                     "Old/Rates (Dana's conflicted copy 2026-10-12).xlsx", "Old/Rates (1).xlsx"):
+            (acme / name).write_bytes(b"x")
+        (acme / "Terms (1).docx").chmod(0)                                    # never opened, only named
+        self.addCleanup((acme / "Terms (1).docx").chmod, 0o644)
+        found = {(f["file"], f["destination"]) for f in drift.survey(self.root) if f["state"] == "conflict"}
+        self.assertEqual({("Terms (1).docx", ""), ("Rates (Dana's conflicted copy 2026-10-12).xlsx", "Old")}, found)
+        with mock.patch("builtins.print"):
+            self.assertEqual(1, drift.main(["--root", str(self.root), "--save"]))
+        sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
+        import status
+        self.assertIn("Acme Review: Terms (1).docx is a copy a sync conflict left on the share", status.drifted(self.root))
 
     def test_the_status_page_lists_what_drifted(self):
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))

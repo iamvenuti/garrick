@@ -408,6 +408,8 @@ SETTING_KINDS = {
     "retired-skills": dict,  # retired skill -> the skill that does its job now
     "raw-accepted": dict,    # raw record -> the last commit in which a change to it was accepted
     "as-shipped": list,      # path prefixes of files Garrick ships that are never changed here
+    "todo-expire-days": (int, dict),     # days an untriaged Todo line waits, or {zone: days}: the todo skill's
+    "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
 }
 AS_SHIPPED = ["System/tools/"]
 
@@ -430,7 +432,8 @@ def load_settings(root: Path) -> Tuple[dict, List[str]]:
         if kind is None:
             problems.append("`%s` is not a setting; the ones there are: %s" % (key, ", ".join(SETTING_KINDS)))
         elif not isinstance(value, kind) or (kind is list and not all(isinstance(v, str) for v in value)):
-            problems.append("`%s` should be %s" % (key, "a list of names" if kind is list else "an object"))
+            problems.append("`%s` should be %s" % (key, "a list of names" if kind is list else "an object" if kind is dict
+                                                   else "a %s, or an object with one per zone" % ("number" if int in kind else "word")))
         else:
             out[key] = value
     return out, problems
@@ -1497,9 +1500,12 @@ def check_deliverables(ws: Workspace) -> List[Finding]:
                                    "name does not start with its creation date, `YYMMDD - <name>`",
                                    "A deliverable in %s lacks its date" % project.name))
         # What left the workspace: a row drift.py cannot read is a file nobody watches.
-        ledger = project / "Deliverables" / "published.md"
-        if ledger.is_file():
+        # A history row (`withdrawn`, `replaced` or `sent` before its date) reads, and is not watched on purpose.
+        found = [f / "published.md" for f in [project / "Deliverables"] + [t / "Deliverables" for t in visible_dirs(project / "Threads")]
+                 if (f / "published.md").is_file()]
+        if found:
             from drift import ledger_rows
+        for ledger in found:
             for line in ledger_rows(ledger)[1]:
                 out.append(Finding(WARNING, "deliverables", rel(ws, ledger),
                                    "a row does not read as `| YYYY-MM-DD | `file` | `destination` | recipients | "

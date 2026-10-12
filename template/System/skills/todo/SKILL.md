@@ -26,7 +26,7 @@ to that, and never against it.
 | What | Where |
 |---|---|
 | The list, per zone | `Zones/<Zone>/Todo.md` |
-| When each Inbox line was first seen | `Zones/<Zone>/.todo-seen.json`, never committed |
+| When each Inbox and Waiting on line was first seen | `Zones/<Zone>/.todo-seen.json`, never committed |
 | What expired, still open | `Zones/<Zone>/archive/Todo-expired-<YYYY>.md` |
 | What was done | `Zones/<Zone>/archive/Todo-<YYYY>.md` |
 | The script for the steps that need no reading | `System/skills/todo/todo.py` |
@@ -63,10 +63,11 @@ to that, and never against it.
    ```
    It moves Inbox lines nobody triaged in 14 days (or the days the zone sets
    as `todo-expire-days` in `System/garrick-checks.json`), and `Waiting on`
-   lines with no day to chase, to the expired archive, unchanged and still
-   open, so any can be pasted back; moves lines ticked before today to the
+   lines left as long with no day to chase, to the expired archive,
+   unchanged and still open, so any can be pasted back; moves lines ticked before today to the
    year's archive; and moves dates written mid-line to the end, keeping the
-   Inbox in thread order.
+   Inbox in thread order: each thread where it first appears, or by the
+   thread's name when `todo-inbox-order` is `thread`.
 8. **Commit**, in the zone's repository, `Todo.md` and `archive/` by name:
    ```sh
    git -C "Zones/<Zone>" add -- Todo.md archive/

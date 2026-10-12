@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-12
+
+The status page's Todo tab, its buttons that act and its menu bar are out of preview: on for everyone, with nothing to switch on.
+
 ### Changed
 
 - The status page's Todo tab, its buttons that act and its menu bar are released, on for everyone with no flag. The page has a Todo tab whenever a zone has a `Todo.md`, and each zone's line on the Overview opens it. In Garrick.app and in Obsidian, the buttons tick, date and add lines, park and wake, make, rename and delete projects and threads, and run a job, each through `page_action.py` as before; in a browser they still copy. With the cmux extra and cmux, *Open in cmux*, *Close session*, *Start up* and *Shut down* go through the desk. Settings › Menu bar is always there, with the icon off until you switch it on. Ask's park, wake and add need only the preview `ask`. `todo-list`, `page-actions` and `menu-bar` left in `System/garrick-flags.json` change nothing, and Settings lists the two previews left, `effort` and `ask`.
@@ -613,7 +617,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/iamvenuti/garrick/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iamvenuti/garrick/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/iamvenuti/garrick/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/iamvenuti/garrick/compare/v0.17.0...v0.18.0

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- `drift.py` says when a sync conflict leaves a second copy beside something you published. It reads only the names under each folder a ledger uses, never the files, so nothing is downloaded: `conflicted copy` or a `-conflict` suffix is reported anywhere there, and a numbered copy such as `Terms (1).docx` only beside a published file, since elsewhere that shape is mostly downloads. The status page lists each under *Needs attention*. ([#60](https://github.com/iamvenuti/garrick/issues/60))
+
 ### Changed
 
 - The published ledger keeps its history. A row whose date cell reads `withdrawn YYYY-MM-DD` (the copy came off the share) or `replaced YYYY-MM-DD` (a newer one took its place) stays as the record of what left, and `drift.py` reads it without comparing it; so does `sent YYYY-MM-DD`, a file sent by mail rather than placed on a share. The `threads` skill's wrap writes such a row instead of deleting one. The last cell is read by its first word, `share` or `here`, so a clause may follow: `share, Dana edits the wording there`. Only the table under a `| Date |` header is the ledger, so another table in the same file is left alone. A thread-first project keeps one ledger per thread, `Threads/<Thread>/Deliverables/published.md`; `drift.py`, `check.py` and the status page read it. ([#57](https://github.com/iamvenuti/garrick/issues/57))

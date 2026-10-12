@@ -234,7 +234,8 @@ def workspace_lib(ws: Optional[Path]):
 
 DRIFT = ("System", "generated", "drift.json")
 DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missing, here or on the share",
-             "unread": "has a row in published.md that does not read"}
+             "unread": "has a row in published.md that does not read",
+             "conflict": "is a copy a sync conflict left on the share"}
 
 
 def drifted(ws: Path) -> List[str]:

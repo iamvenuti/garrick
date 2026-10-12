@@ -36,6 +36,12 @@ A thread-first project (`layout: thread-first` on its hub) keeps one ledger
 per thread, `Threads/<Thread>/Deliverables/published.md`, its files under
 that thread's `Deliverables/`. Both places are read in every project.
 
+A sync conflict leaves a second copy beside the first. The names under each
+folder a ledger uses are read, never the files: one with `conflicted copy`
+or a `-conflict` suffix is reported anywhere there, and a numbered copy
+(`Terms (1).docx`) only beside a published file, since elsewhere that shape
+is mostly downloads saved by hand.
+
 Drift is a real difference. A file is compared byte for byte, except an
 Office file (.docx, .xlsx, .pptx), which a shared library rewrites on every
 upload and Office on every save: its parts are compared as a set of names,
@@ -267,8 +273,38 @@ def projects(root: Path):
                 yield zone, project, thread, folder
 
 
+# What a sync client names the second copy when two saves meet. Names only: no file is opened.
+CONFLICT = re.compile(r"conflicted copy|[-_ ]conflict\b", re.I)      # anywhere under a folder a ledger uses
+NUMBERED = re.compile(r"[ _]\(\d{1,3}\)\.[A-Za-z0-9]+$")          # only beside a published file: elsewhere, downloads
+
+
+def conflicts(watched: Dict[Path, dict], published: Dict[Path, dict]) -> List[dict]:
+    """Conflict copies under each watched folder, and numbered copies in each
+    folder a live row publishes to; {folder: where it belongs} for both."""
+    out, seen = [], set()
+    for top, where in sorted(watched.items(), key=lambda kv: str(kv[0])):
+        for base, dirs, files in os.walk(top, onerror=lambda e: None):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            here = Path(base)
+            for name in sorted(files):
+                if name.startswith((".", "~$")) or here / name in seen:
+                    continue
+                strict = CONFLICT.search(Path(name).stem)
+                beside = here in published and NUMBERED.search(name)
+                if strict or beside:
+                    seen.add(here / name)
+                    owner = published.get(here, where)
+                    folder = os.path.relpath(base, top)
+                    out.append(dict(owner, file=name, state="conflict",
+                                    destination="" if folder == "." else folder,
+                                    say="a sync conflict left this copy%s" % ("" if folder == "." else " in " + folder)))
+    return out
+
+
 def survey(root: Path) -> List[dict]:
     out = []
+    watched: Dict[Path, dict] = {}
+    published: Dict[Path, dict] = {}
     for zone, project, thread, folder in projects(root):
         hub = project / (project.name + ".md")
         value = parse_frontmatter(hub).get("shared") if hub.is_file() else None
@@ -302,9 +338,12 @@ def survey(root: Path) -> List[dict]:
                 if row["destination"].endswith(("/", ":")) or theirs.is_dir():
                     theirs = theirs / Path(row["file"]).name    # a folder: the copy there keeps the file's name
                 state, say = compare(ours, theirs)
+                top = theirs.parent if ":" in row["destination"] else hub_shared
+                watched.setdefault(top, where)
+                published.setdefault(theirs.parent, where)
             out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
                             date=row["date"], state=state, say=say))
-    return out
+    return out + conflicts({k: v for k, v in watched.items() if k.is_dir()}, published)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -338,7 +377,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                                       f["file"] or "published.md",
                                       ": " + f["state"] if f["state"] != "same" else ": the same",
                                       " (%s)" % f["say"] if f["say"] else ""))
-    return 1 if any(f["state"] in ("drifted", "missing", "unread") for f in found) else 0
+    return 1 if any(f["state"] in ("drifted", "missing", "unread", "conflict") for f in found) else 0
 
 
 if __name__ == "__main__":

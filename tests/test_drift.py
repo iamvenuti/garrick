@@ -214,6 +214,23 @@ class DriftTest(unittest.TestCase):
         ledger.write_text(ledger.read_text().replace("`Threads/Pricing", "`../Acme Review/Threads/Pricing"))
         self.assertEqual("unread", self.one()["state"])                         # never out of the project
 
+    def test_a_sync_conflict_beside_what_was_published_is_reported_by_name_alone(self):
+        acme = self.share / "Acme"
+        (acme / "Terms.docx").write_bytes(docx())
+        (acme / "Old").mkdir()
+        for name in ("Terms (1).docx", "Terms - Copy.docx", "Terms-v2.docx", "~$Terms.docx",
+                     "Old/Rates (Dana's conflicted copy 2026-10-12).xlsx", "Old/Rates (1).xlsx"):
+            (acme / name).write_bytes(b"x")
+        (acme / "Terms (1).docx").chmod(0)                                    # never opened, only named
+        self.addCleanup((acme / "Terms (1).docx").chmod, 0o644)
+        found = {(f["file"], f["destination"]) for f in drift.survey(self.root) if f["state"] == "conflict"}
+        self.assertEqual({("Terms (1).docx", ""), ("Rates (Dana's conflicted copy 2026-10-12).xlsx", "Old")}, found)
+        with mock.patch("builtins.print"):
+            self.assertEqual(1, drift.main(["--root", str(self.root), "--save"]))
+        sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
+        import status
+        self.assertIn("Acme Review: Terms (1).docx is a copy a sync conflict left on the share", status.drifted(self.root))
+
     def test_the_status_page_lists_what_drifted(self):
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
         import status

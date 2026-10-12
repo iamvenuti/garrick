@@ -186,7 +186,9 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "word-budgets": {"root": 1000, "other": 1200},
   "retired-skills": {"old-wrap": "threads"},
   "raw-accepted": {"Wikis/Meetings/raw/260310-acme-kickoff.txt": "4f2a91c"},
-  "as-shipped": ["System/tools/"]
+  "as-shipped": ["System/tools/"],
+  "todo-expire-days": {"Work": 14, "Personal": 30},
+  "todo-inbox-order": "thread"
 }
 ```
 
@@ -197,6 +199,8 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `retired-skills`: a skill you retired, and the one that does its job now. The check reports the old one if its folder comes back, a link to it stays, or an instruction still names it.
 - `raw-accepted`: a raw record you changed on purpose, and the commit of that change. Only a later change is reported.
 - `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.
+- `todo-expire-days`: the days an untriaged line waits in a zone's `Todo.md` before the `todo` skill moves it to the expired archive; 14 otherwise. A number, or one per zone.
+- `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
 The check reports a settings file that does not read, a key it does not know, and a zone it names that does not exist.
 

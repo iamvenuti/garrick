@@ -121,6 +121,36 @@ class TodoTest(unittest.TestCase):
                           "- [ ] Dana: confirm volumes"], inbox)
         self.assertEqual(0, todo.tidy(self.zone))                          # a second run changes nothing
 
+    def test_the_inbox_can_follow_thread_names_as_a_tasks_query_does(self):
+        write(self.zone / "Todo.md", LIST.replace("- [ ] Dana: confirm volumes\n",
+                                                  "- [ ] Dana: confirm volumes\n- [ ] [[Acme/Threads/Zed|Audit]]: book it\n"))
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-inbox-order": {"Work": "thread"}}))
+        self.assertEqual("thread", todo.inbox_order(self.root, "Work"))
+        self.assertEqual("first-seen", todo.inbox_order(self.root, "Personal"))
+        todo.tidy(self.zone, "thread")
+        inbox = self.text().split("## Inbox\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
+        self.assertEqual(["- [ ] [[Acme/Threads/Zed|Audit]]: book it",                 # by its alias
+                          "- [ ] [[Freight]]: book the call 📅 2026-10-20",
+                          "- [ ] [[Pricing]]: send the sheet",
+                          "- [ ] [[Pricing]]: check the tier against Birch's 🔺 📅 2026-10-21",
+                          "- [ ] Dana: confirm volumes"], inbox)
+        found = [f for f in __import__("check").run_checks(self.root) if f.check == "settings"]
+        self.assertEqual([], found)                                         # both todo keys are settings the check knows
+
+    def test_tidy_keeps_a_moved_lines_first_seen_day_and_oldest_names_the_next_to_expire(self):
+        day = dt.date(2026, 10, 1)
+        todo.expire(self.root, self.zone, day)
+        write(self.zone / "Todo.md", self.text().replace("## Inbox\n\n", "## Inbox\n\n- [ ] [[Freight]]: a new one\n"))
+        todo.expire(self.root, self.zone, day + dt.timedelta(days=3))
+        before = "- [ ] [[Pricing]]: 🔺 check the tier 📅 2026-10-21 against Birch's"
+        todo.tidy(self.zone)
+        after = "- [ ] [[Pricing]]: check the tier against Birch's 🔺 📅 2026-10-21"
+        seen = json.loads((self.zone / todo.LEDGER).read_text())
+        self.assertNotIn(todo.key(before), seen)
+        self.assertEqual(day.isoformat(), seen[todo.key(after)])
+        self.assertEqual("- [ ] [[Freight]]: a new one", todo.oldest(self.zone, day + dt.timedelta(days=3), 10)[-1])
+        self.assertEqual(2, len(todo.oldest(self.zone, day, 2)))
+
     def test_all_from_the_command_line(self):
         import io
         from contextlib import redirect_stdout

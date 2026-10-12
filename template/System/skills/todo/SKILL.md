@@ -66,7 +66,8 @@ to that, and never against it.
    lines left as long with no day to chase, to the expired archive,
    unchanged and still open, so any can be pasted back; moves lines ticked before today to the
    year's archive; and moves dates written mid-line to the end, keeping the
-   Inbox in thread order.
+   Inbox in thread order: each thread where it first appears, or by the
+   thread's name when `todo-inbox-order` is `thread`.
 8. **Commit**, in the zone's repository, `Todo.md` and `archive/` by name:
    ```sh
    git -C "Zones/<Zone>" add -- Todo.md archive/

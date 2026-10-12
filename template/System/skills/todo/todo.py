@@ -8,6 +8,7 @@ lines it can name; a commit is left to the caller.
     python3 System/skills/todo/todo.py tidy    --zone Work
     python3 System/skills/todo/todo.py all     --zone Work      the three, in that order
     python3 System/skills/todo/todo.py oldest  --zone Work [--count 3]
+    python3 System/skills/todo/todo.py digest  --zone Work
 
 expire   Records, in the zone's .todo-seen.json (never committed), the first
          night each open line under `## Inbox` and `## Waiting on` was seen.
@@ -31,6 +32,10 @@ tidy     Moves priority and date fields written mid-line to the end, where
          them.
 oldest   Prints the open Inbox lines first seen longest ago, the next to
          expire, for a digest that names them.
+digest   Prints a morning summary of the list in plain text: what is
+         overdue, due today and come due to chase, the Inbox (and its three
+         oldest lines when it holds more than ten), what expired today, and
+         how many lines carry no date. The nightly job can send it.
 
 Each prints one line of what it did, and `--json` a count for a job.
 Standard library only, Python 3.9 or later.
@@ -125,6 +130,13 @@ def setting(root: Path, key: str, zone: str):
     except (OSError, ValueError, AttributeError):
         return None
     return value.get(zone) if isinstance(value, dict) else value
+
+
+def chase_days(root: Path, zone: str) -> int:
+    """Days ahead the sweep sets `⏳` on a Waiting on line when its source gives
+    none: `todo-chase-days`, 7 otherwise; 0 means it writes none."""
+    value = setting(root, "todo-chase-days", zone)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 7
 
 
 def inbox_order(root: Path, zone: str) -> str:
@@ -265,6 +277,86 @@ def oldest(zone: Path, today: datetime.date, count: int = 3) -> List[str]:
     return sorted(inbox, key=lambda l: seen.get(key(l), today.isoformat()))[:max(count, 0)]
 
 
+DUE = re.compile(r"(?:📅|📆|🗓)️? *(\d{4}-\d{2}-\d{2})")
+CHASE_ON = re.compile(r"(?:⏳|⌛)️? *(\d{4}-\d{2}-\d{2})")
+CAP = 6
+
+
+def plain(line: str) -> str:
+    """A task line as a person reads it aloud: its thread, then the action,
+    without links, tags, sources or fields."""
+    text = line[6:]
+    m = re.match(r"^\[\[([^\]]+)\]\]:\s*", text)
+    label = ""
+    if m:
+        link = m.group(1)
+        label = (link.split("|", 1)[1] if "|" in link else link.split("#", 1)[0].rsplit("/", 1)[-1]).strip()
+        text = text[m.end():]
+    text = re.sub(r"\s*·?\s*\(also in [^)]*\)", "", text)
+    text = re.sub(r"\s*·\s*\[[^\]]*\]\([^)]*\)", "", text)
+    text = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = DATE.sub("", PRIORITY.sub("", text))
+    text = re.sub(r"(?:^|\s)#[\w/-]+", "", text)
+    text = re.sub(r"\s+", " ", text.replace("**", "")).split(" — ", 1)[0].strip(" ·")      # the action, not its aside
+    return "%s: %s" % (label, text) if label else text
+
+
+def digest(zone: Path, today: datetime.date) -> str:
+    """A short morning summary of a zone's list, plain text, a few lines a section."""
+    lines = read(zone)
+    where = sections(lines)
+    waiting = set(range(*where.get("Waiting on", (0, 0))))
+    inbox = set(range(*where.get("Inbox", (0, 0))))
+    overdue, due, chase, undated, no_chase = [], [], [], 0, 0
+    for i, line in enumerate(lines):
+        if not line.startswith("- [ ] ") or "<action>" in line:
+            continue
+        theirs = i in waiting or "#waiting" in line
+        d, c = DUE.search(line), CHASE_ON.search(line)
+        if theirs:
+            if c and c.group(1) <= today.isoformat():
+                chase.append(plain(line))
+            elif not c:
+                no_chase += 1
+        elif d and d.group(1) < today.isoformat():
+            late = (today - datetime.date.fromisoformat(d.group(1))).days
+            overdue.append((-late, "%s (%dd late)" % (plain(line), late)))
+        elif d and d.group(1) == today.isoformat():
+            due.append(plain(line))
+        elif not d and not c:
+            undated += 1
+    open_inbox = [i for i in inbox if lines[i].startswith("- [ ] ")]
+    expired = 0
+    gone = zone / "archive" / ("Todo-expired-%d.md" % today.year)
+    if gone.is_file():
+        mark = "<!-- %s -->" % today.isoformat()
+        tail = gone.read_text(encoding="utf-8").split(mark)[1:]
+        expired = sum(1 for part in tail for l in part.split("<!--", 1)[0].splitlines() if l.startswith("- [ ] "))
+
+    out = ["Todo · %s" % zone.name]
+
+    def block(title, items):
+        if items:
+            out.append("")
+            out.append("%s · %d" % (title, len(items)))
+            out.extend("- " + x for x in items[:CAP])
+            if len(items) > CAP:
+                out.append("… and %d more" % (len(items) - CAP))
+    block("Overdue", [x for _, x in sorted(overdue)])
+    block("Due today", due)
+    block("Chase, they owe you", chase)
+    if open_inbox:
+        out += ["", "Inbox · %d untriaged" % len(open_inbox)]
+        if len(open_inbox) > 10:
+            out.append("The oldest three:")
+            out.extend("- " + plain(l) for l in oldest(zone, today, 3))
+    if expired:
+        out += ["", "Expired today · %d, still open in archive/%s" % (expired, gone.name)]
+    out += ["", "%d undated · %d waiting with no chase date" % (undated, no_chase)]
+    return "\n".join(out)
+
+
 def zone_of(root: Path, name: str) -> Path:
     zones = root / "Zones"
     match = [z for z in (zones.iterdir() if zones.is_dir() else []) if z.is_dir() and z.name.lower() == name.lower()]
@@ -275,7 +367,7 @@ def zone_of(root: Path, name: str) -> Path:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Expire, archive and tidy a zone's Todo.md.")
-    ap.add_argument("command", choices=("expire", "archive", "tidy", "all", "oldest"))
+    ap.add_argument("command", choices=("expire", "archive", "tidy", "all", "oldest", "digest"))
     ap.add_argument("--zone", required=True)
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--days", type=int, help="days in the Inbox before a line expires (default: the zone's, or 14)")
@@ -286,6 +378,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     root = Path(a.root).expanduser().resolve() if a.root else HERE.parents[2]
     zone = zone_of(root, a.zone)
     today = datetime.date.fromisoformat(a.today) if a.today else datetime.date.today()
+    if a.command == "digest":
+        text = digest(zone, today)
+        print(json.dumps({"zone": zone.name, "digest": text}) if a.json else text)
+        return 0
     if a.command == "oldest":
         found = oldest(zone, today, a.count)
         print(json.dumps({"zone": zone.name, "oldest": found}) if a.json else "\n".join(found))

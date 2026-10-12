@@ -2,7 +2,7 @@
 """A scheduled job: keep each zone's Todo.md complete and short, one zone at
 a time, as the todo skill's Sweep does.
 
-    python3 todo_sweep.py --workspace /Users/<you>/Garrick --zone Work [--zone Personal]
+    python3 todo_sweep.py --workspace /Users/<you>/Garrick --zone Work [--zone Personal] [--digest]
 
 For each zone: one assistant call that sweeps that zone's Meetings pages of
 the last 30 days and its live threads' Next action rows into Todo.md,
@@ -11,6 +11,13 @@ already there; then the skill's script, which expires, archives and tidies
 with no assistant; then one commit in the zone, through its wall check, of
 Todo.md and archive/ by name. Nothing else is written. A zone whose call
 fails is left as it was, and its script and commit do not run.
+
+With --digest, each zone's morning summary (`todo.py digest`) then goes
+through the jobs' notifier, GARRICK_NOTIFY_CMD, run in the zone's folder
+with GARRICK_ZONE set, so a notifier can send each zone to a place of its
+own; also when the zone's call failed, opening with a line that says so,
+since a silent morning reads like a clear one. A Waiting on line gets a ⏳
+day `todo-chase-days` ahead when its source gives none (7, or 0 for none).
 
 Run it through job.py, so it has a log, a lock and a watchdog:
 
@@ -46,7 +53,13 @@ EXIT_INCOMPLETE = 3
 COUNTS = re.compile(r"^ADDED (\d+) FOLDED (\d+)\s*$", re.M)
 
 
-def prompt_for(zone: str, today: str) -> str:
+def chase_rule(days: int) -> str:
+    if days == 0:
+        return "with #waiting, and a ⏳ day to chase only when the source gives one: never one of your own"
+    return "with #waiting and a ⏳ day to chase, %d days from today when the source gives none" % days
+
+
+def prompt_for(zone: str, today: str, chase_days: int = 7) -> str:
     return (
         "You are running unattended as a scheduled job, and nobody is watching. Follow the todo skill's "
         "*Sweep* in System/skills/todo/SKILL.md, steps 2 to 6, for the %s zone only, today %s:\n\n"
@@ -55,14 +68,14 @@ def prompt_for(zone: str, today: str) -> str:
         "last 30 days, each one's actions table, and the `Next action` row of each live thread note in Zones/%s/; "
         "never a page whose zone is another, and nothing else;\n"
         "- keep only rows with one named owner and a concrete verb; the user's go under `## Inbox`, what a named "
-        "person owes the user under `## Waiting on` with #waiting and a ⏳ day to chase;\n"
+        "person owes the user under `## Waiting on` %s;\n"
         "- before adding a line, compare it with every open line, the lines ticked in the last 14 days and the "
         "rest of this batch; a match is not added, and its source goes on the line already there as "
         "`(also in [[<slug>]])`, the only change you may make to an existing line;\n"
         "- edit Zones/%s/Todo.md and no other file; never reword, move, tick or delete a line; do not commit.\n\n"
         "Then write one line exactly: ADDED <n> FOLDED <n>, with the numbers of lines you added and folded, "
         "and after it one line that says exactly %s"
-        % (zone, today, zone, zone, zone, zone, SENTINEL))
+        % (zone, today, zone, zone, zone, chase_rule(chase_days), zone, SENTINEL))
 
 
 def counts(text: str) -> Optional[Tuple[int, int]]:
@@ -86,11 +99,33 @@ def find_zone(workspace: Path, name: str) -> Optional[Path]:
     return match[0] if match else None
 
 
+def skill(workspace: Path):
+    """The workspace's own todo.py, for the settings it reads."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("garrick_todo_skill", str(workspace / "System" / "skills" / "todo" / "todo.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def send_digest(workspace: Path, zone: Path, failed: bool) -> None:
+    """The zone's morning summary, through the jobs' notifier."""
+    import job
+    script = workspace / "System" / "skills" / "todo" / "todo.py"
+    r = subprocess.run([sys.executable, str(script), "digest", "--zone", zone.name, "--root", str(workspace)],
+                       capture_output=True, text=True, timeout=300)
+    text = r.stdout.strip() if r.returncode == 0 else "The digest could not be built: %s" % (r.stderr.strip()[-200:])
+    if failed:
+        text = "The sweep did not finish this morning; this is the list as it stood.\n\n" + text
+    job.notify("digest", "Todo", text, zone=zone)
+
+
 def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int, int, str]:
     """(exit code, lines changed, what to log) for one zone."""
     todo = zone / "Todo.md"
     before = todo.read_bytes()
-    code, text = agent.run(tier, prompt_for(zone.name, today), allow=["Read", "Grep", "Glob", "Edit"], cwd=workspace)
+    days = skill(workspace).chase_days(workspace, zone.name)
+    code, text = agent.run(tier, prompt_for(zone.name, today, days), allow=["Read", "Grep", "Glob", "Edit"], cwd=workspace)
     found = counts(text) if code == 0 else None
     if found is None:
         now = todo.read_bytes()
@@ -129,6 +164,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--zone", action="append", required=True, help="a zone to sweep; repeat for more")
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
+    ap.add_argument("--digest", action="store_true", help="then send each zone's morning summary through the notifier")
     args = ap.parse_args(argv)
     workspace = Path(args.workspace).expanduser().resolve()
     if not (workspace / "System" / "skills" / "todo" / "todo.py").is_file():
@@ -146,6 +182,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     for zone in zones:
         code, changed, said = sweep_zone(workspace, zone, args.tier, today)
         print(said)
+        if args.digest:
+            send_digest(workspace, zone, failed=code != 0)
         total += changed
         worst = worst or code
     if worst == 0:

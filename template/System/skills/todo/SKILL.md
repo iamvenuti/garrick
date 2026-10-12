@@ -46,7 +46,8 @@ to that, and never against it.
    - The user owns it: a line for `## Inbox`.
    - A named person owes the user something: a line for `## Waiting on`,
      with `#waiting` and `⏳` a day to chase (a week out when the page
-     gives none).
+     gives none, or the days `todo-chase-days` in `System/garrick-checks.json`
+     sets; `0` writes none, and the line waits for the user's own).
 5. **Fold repeats.** Before adding a line, compare it with every open line,
    the lines ticked in the last 14 days and the rest of this batch. Two lines
    are the same action when they share the thread, the person and the thing

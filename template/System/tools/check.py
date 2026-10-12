@@ -410,6 +410,7 @@ SETTING_KINDS = {
     "as-shipped": list,      # path prefixes of files Garrick ships that are never changed here
     "todo-expire-days": (int, dict),     # days an untriaged Todo line waits, or {zone: days}: the todo skill's
     "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
+    "todo-chase-days": (int, dict),      # days ahead a swept Waiting on line's ⏳ is set, 0 for none, or {zone: days}
 }
 AS_SHIPPED = ["System/tools/"]
 

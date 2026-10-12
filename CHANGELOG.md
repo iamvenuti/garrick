@@ -4,6 +4,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- A morning digest of each zone's `Todo.md`. `todo.py digest --zone <Zone>` prints it in plain text: what is overdue, due today and come due to chase, the Inbox with its three oldest lines when it holds more than ten, what expired today, and how many lines carry no date. `todo_sweep.py --digest` sends it once per zone through the jobs' notifier, also on a morning the sweep failed, then saying so; the job's example plist turns it on. A notice about one zone runs `GARRICK_NOTIFY_CMD` in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so a notifier can send each zone somewhere of its own. ([#65](https://github.com/iamvenuti/garrick/issues/65))
+- `todo-chase-days` in `System/garrick-checks.json`, a number or one per zone, sets how many days ahead the sweep puts `⏳` on a Waiting on line whose source gives no day: 7 by default, as before, and `0` for none, leaving the day to you. The skill and the nightly job's prompt both read it. ([#64](https://github.com/iamvenuti/garrick/issues/64))
+
 ## [0.18.0] - 2026-10-12
 
 The ledger of what a project published now keeps its history: a copy withdrawn, replaced or sent by mail stays on record without being watched, a note may follow `share` or `here`, and a thread-first project keeps one ledger per thread. The drift check follows a destination written as a folder and a file kept outside `Deliverables/`, reports a copy a rights service encrypted in place apart from real drift, and says when a sync conflict leaves a second copy beside something you published. On the Todo list, a Waiting on line waits its days before it expires, and the Inbox can follow thread names as a Tasks query does.

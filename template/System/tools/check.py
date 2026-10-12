@@ -1501,9 +1501,11 @@ def check_deliverables(ws: Workspace) -> List[Finding]:
                                    "A deliverable in %s lacks its date" % project.name))
         # What left the workspace: a row drift.py cannot read is a file nobody watches.
         # A history row (`withdrawn`, `replaced` or `sent` before its date) reads, and is not watched on purpose.
-        from drift import ledger_rows, ledgers
-        for _, folder in ledgers(project):
-            ledger = folder / "published.md"
+        found = [f / "published.md" for f in [project / "Deliverables"] + [t / "Deliverables" for t in visible_dirs(project / "Threads")]
+                 if (f / "published.md").is_file()]
+        if found:
+            from drift import ledger_rows
+        for ledger in found:
             for line in ledger_rows(ledger)[1]:
                 out.append(Finding(WARNING, "deliverables", rel(ws, ledger),
                                    "a row does not read as `| YYYY-MM-DD | `file` | `destination` | recipients | "

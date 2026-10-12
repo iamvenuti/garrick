@@ -63,8 +63,8 @@ to that, and never against it.
    ```
    It moves Inbox lines nobody triaged in 14 days (or the days the zone sets
    as `todo-expire-days` in `System/garrick-checks.json`), and `Waiting on`
-   lines with no day to chase, to the expired archive, unchanged and still
-   open, so any can be pasted back; moves lines ticked before today to the
+   lines left as long with no day to chase, to the expired archive,
+   unchanged and still open, so any can be pasted back; moves lines ticked before today to the
    year's archive; and moves dates written mid-line to the end, keeping the
    Inbox in thread order.
 8. **Commit**, in the zone's repository, `Todo.md` and `archive/` by name:

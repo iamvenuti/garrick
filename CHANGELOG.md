@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- `todo.py expire` moved a `## Waiting on` line with no `⏳` to the expired archive the night it was written, however new, so a line written there by hand was gone the next morning. Waiting on lines are now recorded in `.todo-seen.json` as Inbox lines are, and one with no day to chase expires only after the zone's days, 14 by default. ([#56](https://github.com/iamvenuti/garrick/issues/56))
+
 ## [0.17.0] - 2026-10-12
 
 You can make, rename and delete projects and threads from the status page or by voice, and one forwarding address can serve every zone. New nightly jobs keep the Todo lists short, file what you read and back up every repository. The wikis get a lint, one call can become a page per project, and Knowledge can declare its own layout. The wall check reaches a repository inside a project, a recording or mail is never filed twice, and Garrick tells you when the shared copy of something you published has changed.

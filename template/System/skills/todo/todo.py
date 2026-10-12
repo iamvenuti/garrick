@@ -9,13 +9,14 @@ lines it can name; a commit is left to the caller.
     python3 System/skills/todo/todo.py all     --zone Work      the three, in that order
 
 expire   Records, in the zone's .todo-seen.json (never committed), the first
-         night each open line under `## Inbox` was seen. A line still there
-         after the zone's days (14, or `todo-expire-days` in
-         System/garrick-checks.json: a number, or a number per zone) moves,
-         unchanged and still open, to archive/Todo-expired-<YYYY>.md, so it
-         can be pasted back. So does a `## Waiting on` line with no `⏳` day
-         to chase. A line the user has triaged has left the Inbox or carries
-         a date, so expiry never reaches it.
+         night each open line under `## Inbox` and `## Waiting on` was seen.
+         An Inbox line with no date, or a Waiting on line with no `⏳` day to
+         chase, still there after the zone's days (14, or `todo-expire-days`
+         in System/garrick-checks.json: a number, or a number per zone)
+         moves, unchanged and still open, to archive/Todo-expired-<YYYY>.md,
+         so it can be pasted back. A line the user has triaged has left the
+         Inbox, carries a date, or waits with a day to chase, so expiry
+         never reaches it.
 archive  Moves ticked lines (`- [x]`) done before today to
          archive/Todo-<YYYY>.md, so the list is only as long as what is
          open. A line ticked today stays, for the page's *Done today*.
@@ -134,18 +135,18 @@ def expire(root: Path, zone: Path, today: datetime.date, days: Optional[int] = N
         seen = {}
     inbox = range(*where.get("Inbox", (0, 0)))
     waiting = range(*where.get("Waiting on", (0, 0)))
-    open_inbox = [i for i in inbox if lines[i].startswith("- [ ] ") and "<action>" not in lines[i]]
-    for i in open_inbox:
+    watched = [(i, ANY_DATE) for i in inbox] + [(i, CHASE) for i in waiting]       # a line is safe once it carries this
+    watched = [(i, safe) for i, safe in watched if lines[i].startswith("- [ ] ") and "<action>" not in lines[i]]
+    for i, _ in watched:
         seen.setdefault(key(lines[i]), today.isoformat())
     gone = []
-    for i in open_inbox:
+    for i, safe in watched:
         try:
             first = datetime.date.fromisoformat(seen[key(lines[i])])
         except ValueError:
             continue
-        if (today - first).days >= limit and not ANY_DATE.search(lines[i]):
+        if (today - first).days >= limit and not safe.search(lines[i]):
             gone.append(i)
-    gone += [i for i in waiting if lines[i].startswith("- [ ] ") and not CHASE.search(lines[i])]
     if gone:
         gone = with_steps(lines, sorted(gone))
         moved = [lines[i] for i in gone]

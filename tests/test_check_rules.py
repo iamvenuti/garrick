@@ -386,6 +386,20 @@ class TestTodo(CheckCase):
         self.todo("- [ ] [[Old Pricing]]: send the memo")
         self.assertFinds("todo", "warning", "[[Old Pricing]]")
 
+    def test_label_names_a_system_project(self):
+        setup = self.root / "System" / "Workspace Setup"
+        write(setup / "Workspace Setup.md",
+              "---\ntitle: Workspace Setup\ntype: project\nstatus: active\n---\n\n# Workspace Setup\n\n## Threads\n\n- [[Setup]]\n")
+        write(setup / "Threads" / "Setup" / "Setup.md", "---\ntype: thread\nstatus: active\n---\n\n# Setup\n")
+        write(self.root / "System" / "templates" / "Backup" / "Backup.md", "# Not a project\n")
+        self.todo("- [ ] [[Setup]]: rotate the backup key",
+                  "- [ ] [[System/Workspace Setup/Threads/Setup/Setup|Setup]]: test the restore",
+                  "- [ ] [[Workspace Setup]]: write the plan")
+        settings(self.root, {"todo-labels": ["Work"]})
+        self.assertClean("todo")
+        self.todo("- [ ] [[Backup]]: rotate the backup key")      # a System folder that is no project
+        self.assertFinds("todo", "warning", "[[Backup]]")
+
     def test_date_not_last(self):
         self.todo("- [ ] [[Pricing]]: send the memo 📅 2026-03-20 then call Dana")
         self.assertFinds("todo", "warning", "date with text after it")

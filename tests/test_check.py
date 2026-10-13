@@ -485,6 +485,29 @@ class TestGenerated(CheckCase):
         self.assertClean("placeholders")
 
 
+class TestKeptChoices(CheckCase):
+    """The choices a user keeps -- each zone's colour and icon, how a thread
+    opens -- are committed with the workspace, so a restore brings them back (#81)."""
+
+    def kept(self):
+        write(self.root / "System" / "garrick-settings.json",
+              json.dumps({"zones": {"Work": {"color": "Teal"}}}) + "\n")
+
+    def test_no_file_and_no_repository_are_clean(self):
+        self.assertClean("preferences")
+        self.kept()
+        self.assertClean("preferences")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_untracked_warns_and_committed_is_clean(self):
+        git_init(self.root)
+        write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
+        self.kept()
+        self.assertFinds("preferences", "warning", "not in the workspace's history")
+        commit_all(self.root)
+        self.assertClean("preferences")
+
+
 class TestDeliverables(CheckCase):
     def test_pass(self):
         self.assertClean("deliverables")

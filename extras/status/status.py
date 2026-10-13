@@ -537,6 +537,19 @@ def preview_flags(ws: Path) -> Dict[str, bool]:
     return {k: isinstance(data, dict) and data.get(k) is True for k in FLAGS}
 
 
+_PREFS = None
+
+
+def prefs():
+    """prefs.py, beside this file: the one way to the choices the page keeps."""
+    global _PREFS
+    if _PREFS is None:
+        spec = importlib.util.spec_from_file_location("garrick_prefs", str(Path(__file__).with_name("prefs.py")))
+        _PREFS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PREFS)
+    return _PREFS
+
+
 _TL = None
 
 
@@ -2667,24 +2680,20 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
 
-SHARED_SETTINGS = ("System", "generated", "status-settings.json")
 LAUNCH_KEYS = ("note",) + tuple(k for k, _, _, _ in LAUNCHERS)
 
 
 def shared_launchers(ws: Path) -> Optional[dict]:
-    """The launcher settings saved for every viewer of the page, in
-    System/generated/status-settings.json: {"launchers": the ways to open a
-    thread that cards offer, as {name: true or false} or a list of the names
-    switched on, "default": what clicking a thread does}. The page carries
-    them as a list. The
+    """The launcher settings saved for every viewer of the page, in the
+    workspace's own settings file (prefs.FILE, committed with it):
+    {"launchers": the ways to open a thread that cards offer, as {name: true
+    or false} or a list of the names switched on, "default": what clicking a
+    thread does}. The page carries them as a list. The
     app's Settings writes them, through page_action.py; inside the app they
     come before what a window remembers. None when there are none, or they do
     not read; an unknown key is dropped."""
-    try:
-        data = json.loads(ws.joinpath(*SHARED_SETTINGS).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    on = data.get("launchers") if isinstance(data, dict) else None
+    data = prefs().read(ws)
+    on = data.get("launchers")
     if isinstance(on, dict):                  # {"note": true, "cmux": false, ...}: a key left out is on
         chosen = [k for k in LAUNCH_KEYS if on.get(k, True) is True]
     elif isinstance(on, list):                # the names of those switched on
@@ -2696,7 +2705,8 @@ def shared_launchers(ws: Path) -> Optional[dict]:
 
 
 # A colour and an icon for each zone, chosen in Settings › Zones and saved
-# beside the launchers: {"zones": {"Work": {"color": "Teal", "icon": "briefcase"}}}.
+# beside the launchers, in the workspace's own settings file:
+# {"zones": {"Work": {"color": "Teal", "icon": "briefcase"}}}.
 # The colours are cmux's sixteen named workspace colours, so a zone's labels
 # here and its workspace in cmux agree. Each has an ink for a label's text on
 # each ground: on light, cmux's own default value, at 4.9 to 1 or more against
@@ -2741,15 +2751,12 @@ def zone_icon(name: str) -> str:
 
 
 def zone_styles(ws: Path) -> Dict[str, dict]:
-    """Settings › Zones, as saved in System/generated/status-settings.json:
-    per zone, {"color": one of cmux's names, "icon": one of ZONE_ICONS}. A
-    colour is matched whatever its case; an unknown colour or icon is dropped,
-    and a zone left with neither is left out, so it looks as it always has."""
-    try:
-        data = json.loads(ws.joinpath(*SHARED_SETTINGS).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    zones = data.get("zones") if isinstance(data, dict) else None
+    """Settings › Zones, as saved in the workspace's own settings file
+    (prefs.FILE): per zone, {"color": one of cmux's names, "icon": one of
+    ZONE_ICONS}. A colour is matched whatever its case; an unknown colour or
+    icon is dropped, and a zone left with neither is left out, so it looks as
+    it always has."""
+    zones = prefs().read(ws).get("zones")
     if not isinstance(zones, dict):
         return {}
     named = {k.lower(): k for k in ZONE_COLOURS}
@@ -2851,7 +2858,8 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
     return ('<section class="setsec apponly" id="zone-settings">%s%s%s<script type="application/json" id="zone-icons">%s</script></section>'
             % (set_head("Zones", "zones"), help_text("zones", 'A colour and an icon for each zone, '
                'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
-               'Saved for every viewer when you close Settings.'), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+               'Saved for every viewer when you close Settings, in <code>%s</code>, which is committed with your '
+               'workspace.' % E(prefs().FILE)), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
 
 
 def script_json(data) -> str:
@@ -4301,6 +4309,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.settle and args.settle > 0 and not settle(out.with_name(out.name + ".settle"), args.settle):
         return 0                              # a later request builds it
     out.parent.mkdir(parents=True, exist_ok=True)
+    prefs().migrate(ws)          # choices a Garrick before 0.25.0 left in System/generated/, kept where they belong
     tmp = out.with_name(out.name + ".tmp")
     vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
     flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)

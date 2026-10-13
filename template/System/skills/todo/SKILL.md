@@ -31,6 +31,13 @@ to that, and never against it.
 | What was done | `Zones/<Zone>/archive/Todo-<YYYY>.md` |
 | The script for the steps that need no reading | `System/skills/todo/todo.py` |
 
+A project about the workspace itself lives in `System/`, in no zone, so it
+has no list of its own. Its actions go in the `Todo.md` of the zone the user
+works from most, each opening with its thread's link, as
+`- [ ] [[Setup]]: rotate the backup key`. Where a zone's list already holds
+lines for that project, keep to that zone; otherwise ask which, once. The
+check and the status page find the thread in `System/`.
+
 ## Sweep: "sweep my actions"
 
 1. **Which zone.** The one named, or the one the session is in. Never two in

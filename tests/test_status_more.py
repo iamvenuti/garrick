@@ -72,6 +72,17 @@ class TestTodoTab(StatusCase):
         self.assertIn("in the thread note", work)
         self.assertIn('<a class="thr" href="', work)                                           # the thread opens its note
 
+    def test_a_system_project_thread_opens_its_note(self):
+        setup = self.root / "System" / "Workspace Setup"
+        write(setup / "Workspace Setup.md", "---\ntype: project\nstatus: active\n---\n\n# Workspace Setup\n")
+        write(setup / "Threads" / "Setup" / "Setup.md", "---\ntype: thread\nstatus: active\n---\n\n# Setup\n")
+        todo = self.root / "Zones" / "Work" / "Todo.md"
+        todo.write_text(todo.read_text().replace("- [ ] Book the room\n", "- [ ] [[Setup]]: Rotate the backup key\n"))
+        _, tab = self.tab()
+        m = re.search(r'<a class="thr" href="([^"]*)">Setup</a>', tab)
+        self.assertTrue(m, "the System thread's label is not a link")
+        self.assertIn("System/Workspace%20Setup/Threads/Setup/Setup", m.group(1))
+
     def test_done_today_can_be_reopened_in_the_app(self):
         _, tab = self.tab()
         done = tab[tab.index("Done today"):]

@@ -550,14 +550,32 @@ def todo_lines():
     return _TL
 
 
+def system_notes(ws: Path) -> Dict[str, Path]:
+    """The hub and thread notes of every project kept in System/, by name and
+    by path from the workspace, lower-cased. Such a project has no Todo.md of
+    its own: its actions live in a zone's, opening with its thread's link."""
+    out: Dict[str, Path] = {}
+    for project in visible_dirs(ws / "System"):
+        hub = project / (project.name + ".md")
+        if not hub.is_file() or as_text(frontmatter(hub, ws).get("type")).strip().lower() != "project":
+            continue
+        for note in [hub] + [t / (t.name + ".md") for t in visible_dirs(project / "Threads")]:
+            if note.is_file():
+                out.setdefault(note.relative_to(ws).with_suffix("").as_posix().lower(), note)
+                out.setdefault(note.stem.lower(), note)
+    return out
+
+
 def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     """Preview: each zone's open actions, read from the notes, never written.
     Per zone: the lines of Todo.md grouped under its `## ` headings in their
     order, then the lines that sit in thread notes ("In thread notes"), then
     what was ticked today, with counts of the open, the overdue and the
-    undated. An empty section is left out, but an empty Inbox is said."""
+    undated. An empty section is left out, but an empty Inbox is said. A
+    label names a note in the zone or, failing that, a project in System/."""
     tl = todo_lines()
     out = []
+    system = system_notes(ws)
     for zone in visible_dirs(ws / "Zones"):
         todo_md = zone / "Todo.md"
         notes = {}
@@ -565,6 +583,8 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
             rel = Path(n).relative_to(zone).with_suffix("").as_posix()
             notes.setdefault(rel.lower(), Path(n))
             notes.setdefault(Path(n).stem.lower(), Path(n))
+        for name, n in system.items():
+            notes.setdefault(name, n)
 
         def row(t, done=False):
             field = t["scheduled"] if t["waiting"] else t["due"]

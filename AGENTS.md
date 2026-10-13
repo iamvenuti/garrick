@@ -16,7 +16,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
 | `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace; `System/tools/release.py update` downloads a release and runs it. Updates the extras a workspace has copied in, too |
 | `split.py` | `install.py --update --split`: moves a workspace's own text out of Garrick's instruction files, `System/rules.md` and each `AGENTS.md`, into the local file beside each (`rules.local.md`, `AGENTS.local.md`), and puts Garrick's back as shipped |
-| `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. After tagging a release, run `python3 update.py --release-hashes` and commit the result; a test fails until you do |
+| `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. *Releasing* has the step that rewrites it; a test fails until the result is committed |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |
 | `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs, and the status page with its Mac app |
@@ -30,6 +30,30 @@ Instructions for any assistant working on this repository. This is the source of
 - `<angle brackets>` are filled by the user, or by their assistant on their behalf.
 
 Never leave a third kind. A file no script can finish and the user cannot recognise as theirs to fill is a broken install.
+
+## Releasing
+
+With the notes for the new version written in `CHANGELOG.md` and the work on `main`, from a clone:
+
+```sh
+git tag -a v0.25.0 -m "Garrick 0.25.0"
+python3 update.py --release-hashes
+git add release-hashes.json
+git commit -m "Release hashes for 0.25.0"
+git push origin main v0.25.0
+git archive --format=zip --prefix=garrick/ -o /tmp/garrick.zip v0.25.0
+gh release create v0.25.0 /tmp/garrick.zip --title 0.25.0 --notes-file <release-notes.md>
+```
+
+Put the version in place of `v0.25.0` throughout. `--release-hashes` reads the clone's tags, so it runs once the tag exists, and the commit it produces lands after the tag, on `main`; a test fails until that commit is made.
+
+`garrick.zip` is the asset beginners download, and three things about it are fixed:
+
+- **Built from the tag**, not the working tree, so git substitutes `VERSION`'s `$Format:%h$` through `export-subst` and a workspace installed from it stamps the release's commit.
+- **`--prefix=garrick/`**, so the download unpacks into a folder called `garrick`, the one the beginner pages tell people to `cd` into.
+- **Named `garrick.zip`**, because the docs send people to `https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip`, which GitHub resolves by asset name. `latest` follows the newest release, so a release published without the asset breaks that link for everyone.
+
+To add it to a release already published, `gh release upload v0.25.0 /tmp/garrick.zip`, or drag the file onto the release page. `tests/test_docs.py` holds the asset name and the folder against what the docs tell people to download.
 
 ## Rules for this repository
 

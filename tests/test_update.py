@@ -559,6 +559,110 @@ class TestSafety(Case):
             self.apply(only=["System/nowhere.md"])
 
 
+class TestAllowRules(Case):
+    """The allow rules the installer wrote: Garrick replaces its own entries and
+    leaves the rest, in a file whose owner may have edited it or emptied it."""
+
+    SETTINGS = ".claude/settings.json"
+    RECORD = "System/garrick-settings.json"
+    MINE = "Bash(ls:*)"
+    RETIRED = "Bash(python3 System/tools/gone.py:*)"
+
+    def allow(self):
+        return json.loads((self.root / self.SETTINGS).read_text())["permissions"]["allow"]
+
+    def recorded(self):
+        return json.loads((self.root / self.RECORD).read_text())["allowed-commands"]
+
+    def write_allow(self, rules, record=None, commit=True):
+        settings = json.loads((self.root / self.SETTINGS).read_text())
+        settings["permissions"]["allow"] = list(rules)
+        (self.root / self.SETTINGS).write_text(json.dumps(settings, indent=2) + "\n")
+        if record is not None:
+            held = json.loads((self.root / self.RECORD).read_text())
+            held["allowed-commands"] = list(record)
+            (self.root / self.RECORD).write_text(json.dumps(held, indent=2) + "\n")
+        if commit:
+            self.commit(self.root, "my own settings")
+
+    def test_a_fresh_install_needs_nothing(self):
+        p = self.plan()
+        self.assertEqual({"add": [], "remove": [], "record": False},
+                         {k: v for k, v in p["allowlist"].items() if k != "files" and k != "problem"})
+        self.assertNotIn("Allow rules", update.report(p))
+        head = self.head(self.root)
+        self.assertEqual({"add": [], "remove": [], "record": False}, self.apply()["allowlist"])
+        self.assertEqual(head, self.head(self.root))
+
+    def test_what_you_added_stays_what_garrick_dropped_goes_and_what_you_deleted_stays_out(self):
+        rules = self.recorded()
+        deleted = rules[0]                      # one of Garrick's, taken back by the owner
+        self.write_allow([r for r in rules if r != deleted] + [self.RETIRED, self.MINE],
+                         record=rules + [self.RETIRED])
+        p = self.plan()
+        self.assertEqual([], p["allowlist"]["add"])
+        self.assertEqual([self.RETIRED], p["allowlist"]["remove"])
+        self.assertIn("1 taken out, with --apply", update.report(p))
+        result = self.apply()
+        allow = self.allow()
+        self.assertIn(self.MINE, allow)                 # yours, untouched
+        self.assertNotIn(self.RETIRED, allow)           # Garrick's own, no longer written
+        self.assertNotIn(deleted, allow)                # taken back, and never put back
+        # The record says what Garrick writes now; the order a zone was named in is not meaning.
+        self.assertEqual(sorted(rules), sorted(self.recorded()))
+        self.assertIn("1 taken out", update.say_applied(p, result))
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+        self.assertIn("allow rules", self.git(self.root, "log", "-1", "--format=%s"))
+        # And running it again changes nothing.
+        self.assertEqual({"add": [], "remove": [], "record": False}, self.apply()["allowlist"])
+
+    def test_a_zone_added_after_the_install_gets_its_rules(self):
+        subprocess.run([sys.executable, str(self.root / "System" / "tools" / "scaffold.py"),
+                        "zone", "Side Projects", "--holds", "Ventures"], cwd=str(self.root),
+                       capture_output=True, text=True, env=self.env, check=True)
+        self.commit(self.root, "a zone added")
+        p = self.plan()
+        self.assertEqual(5, len(p["allowlist"]["add"]))         # five words, in the one spelling a space allows
+        self.apply()
+        for word in ("status", "diff", "log", "add", "commit"):
+            self.assertIn('Bash(git -C "Zones/Side Projects" %s:*)' % word, self.allow())
+        self.assertNotIn("Bash(git -C Zones/Side Projects commit:*)", self.allow())
+
+    def test_a_workspace_that_declined_is_never_given_them(self):
+        (self.root / self.RECORD).write_text("{}\n")
+        self.commit(self.root, "no record")
+        self.assertIsNone(self.plan()["allowlist"])
+        before = (self.root / self.SETTINGS).read_bytes()
+        self.apply()
+        self.assertEqual(before, (self.root / self.SETTINGS).read_bytes())
+
+    def test_a_settings_file_you_deleted_is_not_written_again(self):
+        (self.root / self.SETTINGS).unlink()
+        self.commit(self.root, "taken back")
+        self.assertIsNone(self.plan()["allowlist"])
+        self.apply()
+        self.assertFalse((self.root / self.SETTINGS).exists())
+
+    def test_a_settings_file_that_does_not_read_is_reported_and_left(self):
+        (self.root / self.SETTINGS).write_text("{ not json")
+        self.commit(self.root, "broken")
+        p = self.plan()
+        self.assertIn("not JSON Garrick can add to", p["allowlist"]["problem"])
+        self.assertIn("is left as it is", update.report(p))
+        self.apply()
+        self.assertEqual("{ not json", (self.root / self.SETTINGS).read_text())
+
+    def test_changes_not_committed_are_skipped_never_committed(self):
+        rules = self.recorded()
+        self.write_allow(rules + [self.RETIRED], record=rules + [self.RETIRED])
+        self.write_allow(rules + [self.RETIRED, self.MINE], commit=False)
+        result = self.apply()
+        self.assertEqual([(self.SETTINGS, "it has changes not committed; commit or discard them, "
+                                          "then run again")], result["skipped"])
+        self.assertIn(self.RETIRED, self.allow())
+        self.assertIn("Skipped .claude/settings.json", update.say_applied(self.plan(), result))
+
+
 class TestCommandLine(Case):
     def run_update(self, *args):
         return subprocess.run([sys.executable, str(INSTALL), "--update", str(self.root), *args],

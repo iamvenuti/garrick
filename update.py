@@ -36,6 +36,15 @@ yours outside them. The update replaces only what is between the markers, and
 adds them to a file that has none, keeping every line of yours; it never
 offers a `.new` for one.
 
+Two settings files are the workspace's own in the same way, and neither is
+compared or replaced as a whole: `.claude/settings.json`, where the installer
+writes the allow rules for Garrick's own commands, and
+`System/garrick-settings.json`, which records which of those rules are
+Garrick's. The update adds the rules it now writes and takes out those it no
+longer writes, and leaves every other entry alone, the ones you added and the
+ones of Garrick's you deleted among them. A workspace that declined the
+question at install has nothing recorded, so neither file is touched.
+
 The extras a workspace has installed are updated with the rest: the status
 page in `System/status`, the scheduled jobs in `System/jobs`, and desk in
 `System/cmux` with its skill in `System/skills/desk`. Their files are sorted as
@@ -187,6 +196,44 @@ def extra_place(path):
     return None
 
 
+def allowlist(root, zones):
+    """What this Garrick would change where the workspace already has the allow
+    rules the installer writes: the two files to write, the rules to add and the
+    rules to take out. A rule Garrick wrote and no longer writes goes; a rule
+    Garrick now writes that it never recorded is added; everything else in the
+    file stays, the rules the user added among them, and so does one of
+    Garrick's own that the user has since deleted, which is how taking the
+    allowance back holds. None where there is nothing to maintain: a workspace
+    that declined the question, one whose assistant settings are gone, and one
+    whose settings do not read.
+
+    The two files are never compared or replaced as a whole (they are in
+    garrick_lib.UNLISTED, so neither is fingerprinted and neither is ever
+    offered as a `.new`): only the entries Garrick wrote are its own.
+    """
+    lib = install.lib()
+    recorded = lib.allowed_commands(root)
+    settings_file = root.joinpath(*lib.CLAUDE_SETTINGS)
+    if not recorded or not settings_file.is_file():
+        return None
+    try:
+        settings = install.read_json_file(settings_file, install.CLAUDE_SETTINGS)
+        ours = install.read_json_file(root.joinpath(*lib.SETTINGS), "/".join(lib.SETTINGS))
+    except install.InstallError as exc:
+        return {"files": {}, "add": [], "remove": [], "record": False, "problem": str(exc)}
+    allow = settings.get("permissions", {}).get("allow")
+    if not isinstance(allow, list):
+        return None
+    writes = install.claude_allow_rules(zones)
+    gone = [rule for rule in recorded if rule not in writes and rule in allow]
+    added = [rule for rule in writes if rule not in recorded and rule not in allow]
+    settings["permissions"]["allow"] = [rule for rule in allow if rule not in gone] + added
+    ours[lib.ALLOWED_COMMANDS] = writes      # the order a zone was named in is not a change
+    files = {install.CLAUDE_SETTINGS: ((json.dumps(settings, indent=2) + "\n").encode("utf-8"), 0o644),
+             "/".join(lib.SETTINGS): ((json.dumps(ours, indent=2) + "\n").encode("utf-8"), 0o644)}
+    return {"files": files, "add": added, "remove": gone, "record": sorted(recorded) != sorted(writes), "problem": ""}
+
+
 def zones_of(root, stamp):
     """The zones to update: those the stamp lists files for that still have a
     folder, and every visible folder in Zones/ that is a repository of its own."""
@@ -289,7 +336,8 @@ def plan(root, zones=None):
     return {"workspace": str(root), "from": {k: stamp.get(k, "") for k in ("commit", "date")},
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
-            "recorded": recorded, "listed": listed, "extras": extras}
+            "recorded": recorded, "listed": listed, "extras": extras,
+            "allowlist": allowlist(root, zones)}
 
 
 def ever_committed(root, path, history):
@@ -345,6 +393,24 @@ def say_commit(v):
     return "%s of %s" % (commit, v["date"]) if v.get("date") else commit
 
 
+def say_allowlist(allow, applied=None):
+    """What the allow rules the installer wrote need, or what was done to them."""
+    if not allow:
+        return []
+    if allow.get("problem"):
+        return ["%s is left as it is: %s" % (install.CLAUDE_SETTINGS, allow["problem"])]
+    counts = [n for n in ("%d added" % len(allow["add"]) if allow["add"] else "",
+                          "%d taken out" % len(allow["remove"]) if allow["remove"] else "") if n]
+    when = "" if applied else ", with --apply"
+    if counts:
+        return ["Allow rules Garrick wrote in %s: %s%s. Any you added are left alone." % (
+            install.CLAUDE_SETTINGS, " and ".join(counts), when)]
+    if allow.get("record"):
+        return ["Which allow rules are Garrick's own: the record in %s is brought up to date%s, and %s is "
+                "unchanged." % ("/".join(install.lib().SETTINGS), when, install.CLAUDE_SETTINGS)]
+    return []
+
+
 def report(p, applied=None):
     lines = ["Garrick update for %s: from %s to %s." % (p["workspace"], say_commit(p["from"]), say_commit(p["to"]))]
     if applied is None:
@@ -377,6 +443,7 @@ def report(p, applied=None):
         names = {name: (what, places) for name, what, places in EXTRAS}
         lines.append("Extras updated with the rest: %s." % "; ".join(
             "%s (%s)" % (names[n][0], ", ".join(dest for _, dest, _ in names[n][1])) for n in p["extras"]))
+    lines += say_allowlist(p.get("allowlist"))
     steps = p.get("then") or []
     if steps:
         lines += ["", "Then%s:" % (", with --apply" if applied is None else "")]
@@ -520,6 +587,19 @@ def apply(root, p, only=None, today=None):
         for kind, path, _, _, _ in items:
             done[kind].append(path)
 
+    # The allow rules the installer wrote: Garrick's own entries brought up to
+    # date, in the user's own settings file, which it never replaces as a whole.
+    allow = p.get("allowlist") or {}
+    allowed = {"add": [], "remove": [], "record": False}
+    if picked is None and (allow.get("add") or allow.get("remove") or allow.get("record")):
+        why = commit_files(root, allow["files"], "Garrick: allow rules, %d added, %d taken out" % (
+            len(allow["add"]), len(allow["remove"])))
+        if why:
+            skipped.append((install.CLAUDE_SETTINGS, why))
+        else:
+            allowed = {"add": allow["add"], "remove": allow["remove"], "record": allow["record"]}
+            commits.append(git(root, "rev-parse", "--short", "HEAD").stdout.strip() + " in the workspace")
+
     hooks = []
     for zone in p["hooks"]:
         lib.install_wall_hook(root / "Zones" / zone)
@@ -537,7 +617,37 @@ def apply(root, p, only=None, today=None):
     for what, do in next_steps(root, p, done):
         then.append(do() if do else "To do: %s." % what)
     return {"done": done, "skipped": skipped, "commits": commits, "hooks": hooks,
-            "problems": problems, "stamped": stamped, "unstamped": unstamped, "then": then}
+            "problems": problems, "stamped": stamped, "unstamped": unstamped, "then": then,
+            "allowlist": allowed}
+
+
+def commit_files(root, files, message):
+    """Write `files`, {path from the top: (bytes, mode)}, and commit them in the
+    workspace's own repository. "" when it went, or why it did not, with
+    whatever was written put back."""
+    rels = sorted(files)
+    for rel in rels:
+        if install.lib().link_on_the_way(root, root / rel) is not None:
+            return "a symbolic link stands on the way to it"
+        if uncommitted(root, rel):
+            return "it has changes not committed; commit or discard them, then run again"
+    before = {}
+    for rel in rels:
+        target = root / rel
+        before[rel] = ((target.read_bytes(), target.stat().st_mode & 0o777, None) if target.is_file()
+                       else (None, None, first_missing(root, target)))
+    try:
+        for rel in rels:
+            write_bytes(root / rel, *files[rel])
+        git(root, "add", "--", *rels)
+        git(root, "commit", "-q", "-m", message, "--", *rels)
+    except (UpdateError, OSError) as exc:
+        git(root, "reset", "-q", "--", *rels, check=False)
+        stuck = put_back(root, before)
+        if stuck:
+            return "the commit was refused and it could not be put back (%s): restore it with git checkout" % exc
+        return "the commit was refused, so it was put back: %s" % exc
+    return ""
 
 
 def put_back(root, before):
@@ -663,6 +773,7 @@ def say_applied(p, result):
         lines.append("Committed as %s." % ", ".join(result["commits"]))
     if result["hooks"]:
         lines.append("Refreshed the wall check in: %s." % ", ".join(result["hooks"]))
+    lines += say_allowlist(result.get("allowlist"), applied=True)
     for path, why in result["skipped"]:
         lines.append("Skipped %s: %s." % (path, why))
     if result.get("unstamped"):
@@ -1028,7 +1139,10 @@ def main(argv=None):
         if not args.apply:
             p["then"] = [what for what, _ in next_steps(root, p)]
             if args.json:
-                print(json.dumps({k: v for k, v in p.items() if k not in ("files", "recorded")}, indent=2))
+                shown = {k: v for k, v in p.items() if k not in ("files", "recorded")}
+                if shown.get("allowlist"):      # its files hold bytes, as p["files"] does
+                    shown["allowlist"] = {k: v for k, v in shown["allowlist"].items() if k != "files"}
+                print(json.dumps(shown, indent=2))
             else:
                 print(report(p))
             return 0

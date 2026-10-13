@@ -27,7 +27,7 @@ The workspace is --workspace, else GARRICK_WORKSPACE, else the folder you are
 in or the nearest one above it holding System/rules.md, else ~/Garrick. The
 settings are in System/desk.json (desk.example.json, beside this file, shows
 every one), or the file GARRICK_DESK_CONFIG names. A zone's colour comes from
-the status page's Settings › Zones, saved in System/generated/status-settings.json:
+the status page's Settings › Zones, kept in System/garrick-settings.json:
 a tab opened in a project or thread colours its zone's workspace with it. A
 tab at the workspace root, in a wiki or in System/ takes none. Standard
 library only.
@@ -145,16 +145,47 @@ def commands(given, where: str) -> List[List[str]]:
     return out
 
 
+_SETTINGS_LIB: Dict[Path, object] = {}
+
+
+def settings_lib(ws: Path):
+    """garrick_lib, which keeps the choices a workspace holds: the
+    workspace's own copy in System/tools, else the one beside this extra
+    (System/cmux is a step from System/tools), else a Garrick clone's
+    template. One accessor for the colours, shared with the status page,
+    which the desk runs without. None when none of them has it."""
+    ws = Path(ws)
+    if ws not in _SETTINGS_LIB:
+        here = Path(__file__).resolve().parent
+        found = None
+        for src in (ws / "System" / "tools" / "garrick_lib.py", here.parent / "tools" / "garrick_lib.py",
+                    here.parent.parent / "template" / "System" / "tools" / "garrick_lib.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_desk_settings", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "preferences", None)):
+                found = mod
+                break
+        _SETTINGS_LIB[ws] = found
+    return _SETTINGS_LIB[ws]
+
+
 def zone_colours(ws: Path) -> Dict[str, str]:
-    """Each zone's colour, by cmux's name for it, from the status page's
-    shared settings: {"zones": {"Work": {"color": "Teal", …}}}. A name cmux
-    does not know is dropped, whatever its case is matched; nothing saved, or
-    nothing that reads, is no colour."""
+    """Each zone's colour, by cmux's name for it, from the choices the
+    workspace keeps, where the status page's Settings › Zones saves them:
+    {"zones": {"Work": {"color": "Teal", …}}}. A name cmux does not know is
+    dropped, whatever its case is matched; nothing saved, or nothing that
+    reads, is no colour."""
+    lib = settings_lib(ws)
     try:
-        data = json.loads((ws / "System" / "generated" / "status-settings.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    zones = data.get("zones") if isinstance(data, dict) else None
+        zones = lib.preferences(ws).get("zones") if lib is not None else None
+    except Exception:
+        zones = None
     named = {c.lower(): c for c in cx.COLOURS}
     out = {}
     for zone, style in (zones.items() if isinstance(zones, dict) else ()):

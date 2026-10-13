@@ -1042,9 +1042,19 @@ LOCAL_RULES = "System/rules.local.md"
 LOCAL_HEADER = ("Adds to Garrick's `AGENTS.md` beside it and wins where the two differ. "
                 "Garrick never ships or changes this file.")
 
+# The workspace's own settings, where the release notice lives and where the
+# installer records the allow rules it wrote (see below), and the assistant's
+# own settings, which Garrick adds those rules to and never owns.
+SETTINGS = ("System", "garrick-settings.json")
+CLAUDE_SETTINGS = (".claude", "settings.json")
+ALLOWED_COMMANDS = "allowed-commands"
+
 # Files the installer writes that are the user's from the start: never listed in
-# the stamp, never compared or written by an update.
-UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES)
+# the stamp, never compared or written by an update. The two settings files are
+# here because each holds the user's own entries beside Garrick's; an update
+# replaces only the entries it wrote, and never the whole file.
+UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES,
+            "/".join(SETTINGS), "/".join(CLAUDE_SETTINGS))
 
 
 def is_instruction_file(path: str) -> bool:
@@ -1201,13 +1211,14 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
 
 
-# The workspace's settings: choices that stay, unlike the preview flags in
-# System/garrick-flags.json, which a release drops. One so far:
+# What the workspace's settings hold, SETTINGS above: choices that stay, unlike
+# the preview flags in System/garrick-flags.json, which a release drops.
 # {"release-notice": true} lets the status page ask GitHub, at most once a day,
 # whether a newer Garrick is out. Off unless the file says true: it is the only
 # call Garrick makes on its own. "release-repository" names another repository
-# to ask, for a fork, as owner/name.
-SETTINGS = ("System", "garrick-settings.json")
+# to ask, for a fork, as owner/name. "allowed-commands" lists the allow rules
+# the installer wrote into the assistant's own settings, so an update can
+# replace its own and leave the ones the user added.
 RELEASE_NOTICE = "release-notice"
 RELEASE_REPOSITORY = "iamvenuti/garrick"
 # What the last question to GitHub found, written by System/tools/release.py.
@@ -1235,11 +1246,134 @@ def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
 
 
+def allowed_commands(root: PathLike) -> List[str]:
+    """The allow rules the installer wrote into the assistant's own settings,
+    as it recorded them, or [] where the workspace has none. The rules
+    themselves are the installer's: nothing here depends on one assistant."""
+    found = read_settings(root).get(ALLOWED_COMMANDS)
+    return [x for x in found if isinstance(x, str)] if isinstance(found, list) else []
+
+
+def allow_rules(root: PathLike) -> List[str]:
+    """Every command the assistant may run in this workspace without asking,
+    as its own settings list them, Garrick's rules and the user's alike. []
+    where there is no settings file, or it allows nothing, or it does not
+    read."""
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*CLAUDE_SETTINGS).read_text(encoding="utf-8"))
+        allow = data["permissions"]["allow"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return [x for x in allow if isinstance(x, str)] if isinstance(allow, list) else []
+
+
 def release_repository(root: PathLike) -> str:
     """The repository to ask about releases: the setting, when it reads as
     owner/name, else the one Garrick comes from."""
     named = read_settings(root).get("release-repository")
     return named if isinstance(named, str) and _REPO_NAME.match(named) else RELEASE_REPOSITORY
+
+
+# The choices a user makes once and keeps: each zone's colour and icon, and
+# Settings > Opening a thread, from the status page and its Mac app. They live
+# in the settings file above, so they are committed with the workspace: a
+# rebuild of System/generated/ keeps them, and so does a workspace restored
+# from its own history. Garrick saved them in System/generated/status-settings.json
+# up to 0.24.0; migrate_shared_settings() copies those across, once, and never
+# over a newer choice. What a window alone remembers -- its theme, its folds,
+# the cards it has hidden -- stays in that window's own storage and never
+# comes here. The names of the colours, icons and ways to open a thread
+# belong to whoever offers them, so nothing here knows one from another: this
+# is the one place they are read and written, by the page's build, its
+# settings request and the cmux desk, and by the Mac app in Swift, which
+# reads the same file by the same keys.
+PREFERENCES = ("zones", "launchers", "default")
+PREFERENCES_FILE = "/".join(SETTINGS)
+SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
+
+
+def preferences(root: PathLike) -> dict:
+    """The kept choices: "zones", each zone's colour and icon; "launchers"
+    and "default", how a thread opens. A key nothing is saved under is left
+    out, and nothing is checked beyond its shape, so an older or a newer
+    Garrick's choice reads as it was saved. What an older Garrick left in
+    System/generated/ is read with the settings file until the migration
+    copies it across, so no choice is lost in between."""
+    return _preferences(root)[0]
+
+
+def save_preferences(root: PathLike, chosen: dict) -> dict:
+    """Keep these choices, leaving every other setting, and every choice not
+    named, as it stands; returns the choices as they now are. Anything an
+    older Garrick left in System/generated/ is copied across first, so saving
+    one choice never loses another. Written beside the file and renamed over
+    it, so a reader sees one whole file or the other."""
+    unknown = sorted(set(chosen) - set(PREFERENCES))
+    if unknown:
+        raise ValueError("not a kept choice: %s" % ", ".join(unknown))
+    root = Path(root)
+    migrate_shared_settings(root)
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return {key: saved[key] for key in PREFERENCES if key in saved}
+
+
+def migrate_shared_settings(root: PathLike) -> List[str]:
+    """Copy the choices Garrick used to save in
+    System/generated/status-settings.json into the settings file, where they
+    are committed with the workspace. Run it as often as you like: it never
+    replaces a newer choice. Where both files hold the same zone, or both say
+    how a thread opens, the choice in the file written later wins; a choice
+    only one file holds is taken from there. Returns the keys it copied, and
+    writes nothing when there is nothing to copy."""
+    root = Path(root)
+    chosen = _preferences(root)[1]
+    if not chosen:
+        return []
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return sorted(key for key in chosen if key != "default")
+
+
+def _preferences(root: PathLike) -> Tuple[dict, dict]:
+    """(the choices as they stand, what of them the settings file does not
+    hold yet). The settings file is their home; an older Garrick's
+    System/generated/status-settings.json is read beside it, and of the two
+    the file written later wins, zone by zone and for how a thread opens."""
+    root = Path(root)
+    saved = read_settings(root)
+    mine = {key: saved[key] for key in PREFERENCES if key in saved}
+    was = root.joinpath(*SHARED_SETTINGS_WAS)
+    try:
+        old = json.loads(was.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return mine, {}
+    if not isinstance(old, dict):
+        return mine, {}
+    try:
+        theirs_is_older = was.stat().st_mtime <= root.joinpath(*SETTINGS).stat().st_mtime
+    except OSError:
+        theirs_is_older = False      # no settings file yet: anything saved there is the newer choice
+    chosen: dict = {}
+    zones = old.get("zones")
+    mine_zones = mine["zones"] if isinstance(mine.get("zones"), dict) else {}
+    if isinstance(zones, dict):
+        take = {zone: style for zone, style in zones.items() if not (theirs_is_older and zone in mine_zones)}
+        if take:
+            chosen["zones"] = dict(mine_zones, **take)
+    if "launchers" in old and not (theirs_is_older and "launchers" in mine):
+        chosen["launchers"] = old["launchers"]
+        if "default" in old:
+            chosen["default"] = old["default"]
+    chosen = {key: value for key, value in chosen.items() if mine.get(key) != value}   # the same choice is not a change
+    return dict(mine, **chosen), chosen
+
+
+def _write_settings(root: Path, data: dict) -> None:
+    write_over(root, root, root.joinpath(*SETTINGS), (json.dumps(data, indent=1) + "\n").encode("utf-8"))
 
 
 def release_key(tag: object) -> Optional[tuple]:

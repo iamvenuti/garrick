@@ -158,14 +158,66 @@ class InstallTest(unittest.TestCase):
                 p = Path(folder) / n
                 if not p.is_symlink():
                     on_disk.add(p.relative_to(self.root).as_posix())
-        # Everything the installer wrote, less the user's own answers, the stamp itself and
-        # System/generated/, where other tests here build pages.
+        # Everything the installer wrote, less what is the user's from the start (their
+        # answers, their rules, the workspace's settings and the assistant's), the stamp
+        # itself and System/generated/, where other tests here build pages.
         on_disk = {p for p in on_disk if not p.startswith("System/generated/")}
-        self.assertEqual(on_disk - {"System/context.md", "System/garrick-version.json", "System/rules.local.md"}, set(files))
+        yours = {"System/context.md", "System/garrick-version.json", "System/rules.local.md",
+                 "System/garrick-settings.json", ".claude/settings.json"}
+        self.assertEqual(on_disk - yours, set(files))
+        self.assertTrue(yours <= on_disk)
         for rel, digest in files.items():
             self.assertEqual(hashlib.sha256((self.root / rel).read_bytes()).hexdigest(), digest, rel)
         self.assertIn("Zones/Work/AGENTS.md", files)
         self.assertIn("System/rules.md", files)
+
+    def test_the_commands_garrick_asks_to_have_allowed(self):
+        installer = load_installer()
+        allow = json.loads((self.root / ".claude" / "settings.json").read_text())["permissions"]["allow"]
+        self.assertEqual(installer.claude_allow_rules(["Work", "Personal"]), allow)
+        for tool in installer.ALLOWED_TOOLS:            # one rule each, and every one is shipped
+            self.assertTrue((self.root / tool).is_file(), tool)
+            self.assertIn("Bash(python3 %s:*)" % tool, allow)
+        # Each repository the installer makes, in the spelling the skills write and the plain one.
+        for repo in (".", "Wikis", '"Zones/Work"', "Zones/Work", '"Zones/Personal"', "Zones/Personal"):
+            for word in ("status", "diff", "log", "add", "commit"):
+                self.assertIn("Bash(git -C %s %s:*)" % (repo, word), allow)
+        # Recorded, so an update can replace Garrick's own entries and leave the user's.
+        recorded = json.loads((self.root / "System" / "garrick-settings.json").read_text())
+        self.assertEqual(allow, recorded["allowed-commands"])
+        tracked = git(self.root, "ls-files").splitlines()
+        for rel in (".claude/settings.json", "System/garrick-settings.json"):
+            self.assertIn(rel, tracked)                 # saved with the workspace, so it can be read
+
+    def test_the_allowlist_refuses_the_rest(self):
+        installer = load_installer()
+        allow = json.loads((self.root / ".claude" / "settings.json").read_text())["permissions"]["allow"]
+        words = ("push", "pull", "fetch", "clone", "remote",
+                 "reset", "checkout", "restore", "clean", "rm", "--force")
+        self.assertEqual(sorted(words), sorted(installer.REFUSED_GIT))
+        for word in words:
+            found = [r for r in allow if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(word), r)]
+            self.assertEqual([], found, word)
+        # Never a rule that stops at a folder: every git rule says what it may do there.
+        for rule in [r for r in allow if r.startswith("Bash(git")]:
+            self.assertRegex(rule, r'^Bash\(git -C (?:"[^"]+"|\S+) (?:status|diff|log|add|commit):\*\)$')
+        # Nothing outside the workspace, and not the one tool that reaches the network.
+        self.assertEqual([], [r for r in allow if "release.py" in r or ".." in r or "~" in r or "/Users/" in r])
+        self.assertEqual(len(set(allow)), len(allow))
+        # Each is the shape the repository already knows for a shell command: the start
+        # of the command, as extras/jobs/headless-settings.json writes its own.
+        profile = json.loads((REPO / "extras" / "jobs" / "headless-settings.json").read_text())
+        self.assertIn("Bash(git push:*)", profile["permissions"]["deny"])
+        for rule in allow:
+            self.assertRegex(rule, r"^Bash\([^()]+:\*\)$")
+
+    def test_the_installer_and_the_library_name_the_same_two_settings_files(self):
+        sys.path.insert(0, str(self.root / "System" / "tools"))
+        import garrick_lib
+        self.assertEqual("/".join(garrick_lib.CLAUDE_SETTINGS), load_installer().CLAUDE_SETTINGS)
+        # Each holds the user's entries beside Garrick's, so neither is ever replaced whole.
+        self.assertIn("/".join(garrick_lib.CLAUDE_SETTINGS), garrick_lib.UNLISTED)
+        self.assertIn("/".join(garrick_lib.SETTINGS), garrick_lib.UNLISTED)
 
     def test_your_rules_start_beside_garricks_and_are_never_listed(self):
         local = self.root / "System" / "rules.local.md"
@@ -516,7 +568,7 @@ class SourceFolderInstallTest(unittest.TestCase):
     def test_questions_offer_another_folder(self):
         answers = ["~/Garrick",                       # typed: refused, and asked again
                    "",                                # the default offered instead
-                   "Sam Rivera", "Independent advisor", "", "", "", "", "", "", "y"]
+                   "Sam Rivera", "Independent advisor", "", "", "", "", "", "", "", "y"]
         r = run([self.installer], self.box.env, cwd=self.source, stdin="\n".join(answers) + "\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("Where should the workspace go? [~/Garrick-workspace]", r.stdout)
@@ -553,6 +605,7 @@ class InteractiveTest(unittest.TestCase):
                 "acme birch", "Competitors", "",  # one wall, then done
                 "Dana Whitlock", "acme", "Procurement", "",  # one person, then done
                 "dana whitlaw", "Dana Whitlock", "",         # one alias, then done
+                "",                               # the commands allowed: the default, yes
                 "y",
             ]
             r = run([INSTALL], box.env, stdin="\n".join(answers) + "\n")
@@ -586,7 +639,7 @@ class InteractiveTest(unittest.TestCase):
                 "fernway cobalt", "", "",                # one wall, then done
                 "",                                      # no people
                 "dana whitlaw", "",                      # an alias with no meaning: skipped, and said so
-                "", "y",
+                "", "", "y",
             ]
             r = run([INSTALL], box.env, stdin="\n".join(answers) + "\n")
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -611,7 +664,27 @@ class InteractiveTest(unittest.TestCase):
             box.close()
 
     # Every answer after the folder: a name, a line, the default zones, and nothing else.
-    SHORT = ["Sam Rivera", "Independent advisor", "", "", "", "", "", "", "y"]
+    SHORT = ["Sam Rivera", "Independent advisor", "", "", "", "", "", "", "", "y"]
+
+    def test_the_last_question_offers_the_commands_and_takes_a_no(self):
+        box = Sandbox()
+        try:
+            answers = ["ws-asked"] + self.SHORT[:-2] + ["n", "y"]
+            r = run([INSTALL], box.env, cwd=box.work, stdin="\n".join(answers) + "\n")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            asked = [line for line in r.stdout.splitlines() if line.startswith("May your assistant run")]
+            self.assertEqual(1, len(asked), r.stdout)
+            self.assertEqual("May your assistant run Garrick's own tools, and git's status, diff, log, add and "
+                             "commit inside the workspace, without asking each time? None of them sends anything "
+                             "off your Mac. (y/n) [y]", asked[0])
+            # It is the last question before Go ahead, and a no writes nothing about permissions.
+            self.assertLess(r.stdout.index(asked[0]), r.stdout.index("Go ahead?"))
+            target = box.home / "ws-asked"
+            self.assertFalse((target / ".claude" / "settings.json").exists())
+            self.assertFalse((target / "System" / "garrick-settings.json").exists())
+            self.assertIn("No command is allowed in advance", r.stdout)
+        finally:
+            box.close()
 
     def test_a_typed_folder_goes_in_the_home_folder(self):
         box = Sandbox()
@@ -668,6 +741,60 @@ class InteractiveTest(unittest.TestCase):
             self.assertEqual(list(box.home.iterdir()), [])
         finally:
             box.close()
+
+
+class AllowlistTest(unittest.TestCase):
+    """The commands the assistant may run: declined, and written into a workspace
+    already installed, where it may find a settings file of the user's own."""
+
+    def setUp(self):
+        self.box = Sandbox()
+        self.addCleanup(self.box.close)
+        self.declined = self.box.config("declined", **{"allow-commands": False})
+
+    def test_a_config_that_declines_writes_nothing_about_permissions(self):
+        target, r = self.box.install("declined", config=self.declined)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((target / ".claude" / "settings.json").exists())
+        self.assertFalse((target / "System" / "garrick-settings.json").exists())
+        self.assertIn("No command is allowed in advance", r.stdout)
+        self.assertEqual("", git(target, "status", "--porcelain"))
+
+    def test_a_settings_file_of_your_own_keeps_everything_in_it(self):
+        target, r = self.box.install("mine", config=self.declined)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        settings = target / ".claude" / "settings.json"
+        mine = ["Bash(ls:*)", "Bash(python3 System/tools/check.py:*)"]
+        settings.write_text(json.dumps({"model": "opus", "permissions": {"allow": list(mine),
+                                                                         "deny": ["WebFetch"]}}, indent=2))
+        r = run([INSTALL, "--allowlist", target], self.box.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        after = json.loads(settings.read_text())
+        self.assertEqual("opus", after["model"])                        # nothing else is touched
+        self.assertEqual(["WebFetch"], after["permissions"]["deny"])
+        allow = after["permissions"]["allow"]
+        self.assertEqual(mine, allow[:2])                               # kept, in their own order
+        self.assertEqual(1, allow.count(mine[1]))                       # and not added a second time
+        rules = load_installer().claude_allow_rules(["Personal", "Work"])
+        self.assertEqual(mine[:1] + rules, allow)
+        recorded = json.loads((target / "System" / "garrick-settings.json").read_text())
+        self.assertEqual(rules, recorded["allowed-commands"])
+        self.assertIn("%d of %d rules added" % (len(rules) - 1, len(rules)), r.stdout)
+
+    def test_a_settings_file_that_does_not_read_is_left_as_it_is(self):
+        target, r = self.box.install("broken", config=self.declined)
+        settings = target / ".claude" / "settings.json"
+        settings.write_text("{ not json")
+        r = run([INSTALL, "--allowlist", target], self.box.env)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("not JSON Garrick can add to", r.stderr)
+        self.assertEqual("{ not json", settings.read_text())
+        self.assertFalse((target / "System" / "garrick-settings.json").exists())
+
+    def test_it_refuses_a_folder_that_is_not_a_workspace(self):
+        r = run([INSTALL, "--allowlist", self.box.work], self.box.env)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("does not look like a Garrick workspace", r.stderr)
 
 
 class ScaffoldTest(unittest.TestCase):

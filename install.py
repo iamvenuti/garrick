@@ -4,6 +4,7 @@
     python3 install.py                                   asks, one question at a time
     python3 install.py --config FILE.json --target PATH  no questions (guided sessions, tests, demos)
     python3 install.py --update ~/Garrick [--apply]      bring an installed workspace up to this Garrick
+    python3 install.py --allowlist ~/Garrick             allow Garrick's own commands there, and nothing else
 
 Python 3.9+, standard library only. Writes nothing outside the target folder.
 """
@@ -46,6 +47,36 @@ EXAMPLE_WALLS = (("acme", "birch"), ("cedar", "dune"))
 # The one way to put your own address on the workspace's repositories when git had
 # none. docs/getting-started.md gives the same command; a test keeps them alike.
 OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done'
+
+# What the assistant may run without asking, when the last question is answered
+# yes. Garrick's own tools, named one at a time, as the skills run them: never
+# one blanket rule for everything under System/, which would also cover
+# whatever the user puts there later. System/tools/release.py is not here: it
+# is the one tool that reaches the network.
+ALLOWED_TOOLS = (
+    "System/tools/check.py",
+    "System/tools/probe.py",
+    "System/tools/scaffold.py",
+    "System/tools/wiki_lint.py",
+    "System/tools/drift.py",
+    "System/skills/intake/intake.py",
+    "System/skills/meetings/ingest.py",
+    "System/skills/todo/todo.py",
+)
+# git's words that only look at history, or save it on this Mac.
+ALLOWED_GIT = ("status", "diff", "log", "add", "commit")
+# The words no rule may carry: the first five reach the internet, the rest can
+# throw work away. Nor may a rule stop at a folder, `git -C Zones/Work`, which
+# would let every git command run there, push included.
+REFUSED_GIT = ("push", "pull", "fetch", "clone", "remote",
+               "reset", "checkout", "restore", "clean", "rm", "--force")
+# Claude Code is the only host with a per-workspace setting, so it is the only
+# one that gets rules; Codex's approval setting belongs to the user's account,
+# and the installer says which to choose instead. The rules live here, on the
+# installer's side, and not in template/, which depends on no one assistant.
+CLAUDE_SETTINGS = ".claude/settings.json"
+# A path a command line can carry without quotes, so both spellings are worth a rule.
+PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._-]+$")
 
 
 class InstallError(Exception):
@@ -112,6 +143,9 @@ def normalise(raw):
     aliases = []
     for a in raw.get("aliases") or []:
         aliases.append({"heard": str(a.get("heard", "")).strip(), "means": str(a.get("means", "")).strip()})
+    # Allowing Garrick's own commands is the last question, and its default is yes;
+    # a config file left silent gets the same answer, so a --config run asks nothing.
+    allow = raw.get("allow-commands")
     return {
         "owner": {"name": str(owner.get("name", "")).strip(),
                   "description": str(owner.get("description", "")).strip()},
@@ -120,6 +154,7 @@ def normalise(raw):
         "walls": walls,
         "people": people,
         "aliases": aliases,
+        "allow_commands": True if allow is None else bool(allow),
     }
 
 
@@ -424,6 +459,119 @@ def ignore_files(zones):
     return {path: lib_.ignore_block(lines) for path, lines in lib_.garrick_ignores(zones).items()}
 
 
+def joined(words, last="and"):
+    """"status, diff, log, add and commit", for a sentence."""
+    words = list(words)
+    return "%s %s %s" % (", ".join(words[:-1]), last, words[-1]) if len(words) > 1 else "".join(words)
+
+
+def claude_allow_rules(zones):
+    """The commands Garrick asks to have allowed in a workspace with these
+    zones: one prefix rule per tool, and five per repository the installer
+    makes, in the shape extras/jobs/headless-settings.json uses. A prefix rule
+    matches the start of the command string, so each repository is spelled as
+    the skills spell it: a zone's path in quotes, since a zone name may hold a
+    space, and plain as well, for the names that need no quotes."""
+    rules = ["Bash(python3 %s:*)" % tool for tool in ALLOWED_TOOLS]
+    for repo in [".", "Wikis"] + ["Zones/%s" % z for z in zones]:
+        spellings = ['"%s"' % repo] if repo.startswith("Zones/") else []
+        if PLAIN_PATH.match(repo):
+            spellings.append(repo)          # a name with a space is only ever written in quotes
+        rules += ["Bash(git -C %s %s:*)" % (spelling, word)
+                  for spelling in spellings for word in ALLOWED_GIT]
+    return rules
+
+
+def read_json_file(path, what):
+    """The JSON object in `path`, or {} where there is no file. A file that
+    does not read is a refusal, not something to overwrite."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise InstallError(f"{what} could not be read: {exc}") from None
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except ValueError as exc:
+        raise InstallError(f"{what} is not JSON Garrick can add to ({exc}). It is left as it is; "
+                           "allow the commands yourself, as the first-steps page describes.") from None
+    if not isinstance(data, dict):
+        raise InstallError(f"{what} does not hold a JSON object, so Garrick cannot add to it.")
+    return data
+
+
+def with_allow_rules(settings, rules):
+    """`settings`, read from the assistant's own settings file, with `rules`
+    added to permissions.allow. Everything already there stays, in its own
+    order, and a rule already there is not added twice: nothing is overwritten.
+    Returns (the settings, the rules it added)."""
+    perms = settings.setdefault("permissions", {})
+    if not isinstance(perms, dict):
+        raise InstallError(f'{CLAUDE_SETTINGS} has a "permissions" that is not an object, '
+                           "so Garrick cannot add to it.")
+    allow = perms.setdefault("allow", [])
+    if not isinstance(allow, list):
+        raise InstallError(f'{CLAUDE_SETTINGS} has a "permissions.allow" that is not a list, '
+                           "so Garrick cannot add to it.")
+    added = [rule for rule in rules if rule not in allow]
+    allow.extend(added)
+    return settings, added
+
+
+def allowlist_files(root, zones):
+    """The two files to write when the commands are allowed: the assistant's
+    own settings with Garrick's rules in them, and the workspace's settings
+    recording which rules are Garrick's, so an update can replace its own and
+    leave the user's. ({path from the top: text}, the rules, those it added)."""
+    pl = lib()
+    rules = claude_allow_rules(zones)
+    settings, added = with_allow_rules(read_json_file(Path(root) / CLAUDE_SETTINGS, CLAUDE_SETTINGS), rules)
+    recorded = "/".join(pl.SETTINGS)
+    ours = read_json_file(Path(root) / recorded, recorded)
+    ours[pl.ALLOWED_COMMANDS] = rules
+    return ({CLAUDE_SETTINGS: json.dumps(settings, indent=2) + "\n",
+             recorded: json.dumps(ours, indent=2) + "\n"}, rules, added)
+
+
+def allowed_lines(rules):
+    """What to say about the rules just written, for either route in."""
+    return [
+        f"Your assistant may run Garrick's own tools, and git's {joined(ALLOWED_GIT)} inside the workspace, "
+        f"without asking each time: {len(rules)} rules in {CLAUDE_SETTINGS}, for Claude Code.",
+        f"Nothing else: no {joined(REFUSED_GIT, 'or')}, and nothing outside the workspace.",
+        "Codex has one approval setting for your whole account rather than one per workspace, so there is "
+        "nothing to write for it: choose the setting that lets Codex work inside the workspace on its own "
+        "and ask before it runs commands outside the workspace or reaches the internet.",
+    ]
+
+
+def workspace_zones(root):
+    """The zones of a workspace already installed."""
+    zones = Path(root) / "Zones"
+    return sorted(d.name for d in zones.iterdir()
+                  if d.is_dir() and not d.name.startswith((".", "_"))) if zones.is_dir() else []
+
+
+def allow_commands(root):
+    """--allowlist: write the rules into a workspace already installed, for
+    someone who declined the question or installed before it existed. Writes
+    the same two files and nothing else, and overwrites neither."""
+    root = Path(root).expanduser().resolve()
+    if not (root / "AGENTS.md").is_file() or not (root / "System").is_dir():
+        raise InstallError(f"{root} does not look like a Garrick workspace.")
+    files, rules, added = allowlist_files(root, workspace_zones(root))
+    w = Writer(root)
+    for rel, text in files.items():
+        w.write(root / rel, text)
+    print(f"Allowed in {root}: {len(added)} of {len(rules)} rules added to {CLAUDE_SETTINGS}.")
+    for line in allowed_lines(rules):
+        print("  " + line)
+    print("  To save it: git add -- %s %s && git commit -m \"Settings: Garrick's own commands allowed\""
+          % (CLAUDE_SETTINGS, "/".join(lib().SETTINGS)))
+    return 0
+
+
 def count(items, one, many):
     return f"{len(items)} {one if len(items) == 1 else many}"
 
@@ -530,6 +678,15 @@ def install(cfg, target, force=False, quiet=False):
     # ignore file every zone was just given: its inbox stays out of that zone's history too.
     zone_ignore = "/".join(pl.ZONE_TEMPLATE + (".gitignore",))
     w.write(root / zone_ignore, ignore_files([])[zone_ignore])
+    # The commands the assistant may run without asking, on a yes. The two files
+    # are the workspace's own from the start, so neither is fingerprinted below:
+    # what Garrick wrote is recorded in System/garrick-settings.json instead.
+    allowed = []
+    if cfg["allow_commands"]:
+        files, allowed, _ = allowlist_files(root, [z["name"] for z in cfg["zones"]])
+        for rel, text in files.items():
+            w.write(root / rel, text)
+
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an
     # update can tell a file still as installed from one the user has changed.
     stamp = source_version()
@@ -561,6 +718,11 @@ def install(cfg, target, force=False, quiet=False):
         say("  To turn it on, run in each zone: git config core.hooksPath .git/hooks")
     else:
         say("  Each zone checks the walls before every commit.")
+    if allowed:
+        for line in allowed_lines(allowed):
+            say("  " + line)
+    else:
+        say("  No command is allowed in advance, so your assistant asks before each one.")
     say("  More zones and parties can come later: ask your assistant.")
     if local_identity:
         say("  git had no name or email set, so commits here carry your name and the address garrick@localhost. "
@@ -731,8 +893,12 @@ def interview(pl, target=None, force=False):
         else:
             print(f'Skipped "{heard}": an alias needs what it means.\n')
 
+    allow = ask("May your assistant run Garrick's own tools, and git's %s inside the workspace, without "
+                "asking each time? None of them sends anything off your Mac. (y/n)" % joined(ALLOWED_GIT),
+                "y").lower() in ("y", "yes")
+
     cfg = {"owner": {"name": name, "description": desc}, "zones": zones, "parties": parties,
-           "walls": walls, "people": people, "aliases": aliases}
+           "walls": walls, "people": people, "aliases": aliases, "allow-commands": allow}
     print(f"Ready to install in {root}: {count(zones, 'zone', 'zones')}, "
           f"{count(parties, 'party', 'parties')}, {count(walls, 'wall', 'walls')}.")
     if ask("Go ahead? (y/n)", "y").lower() not in ("y", "yes"):
@@ -754,8 +920,12 @@ def main(argv=None):
     ap.add_argument("--config", help="JSON file with the answers; skips the questions")
     ap.add_argument("--target", help=f"folder to install into (default {DEFAULT_TARGET})")
     ap.add_argument("--force", action="store_true", help="allow a folder that already has other files in it")
+    ap.add_argument("--allowlist", metavar="WORKSPACE",
+                    help="allow Garrick's own commands in a workspace already installed, and change nothing else")
     args = ap.parse_args(argv)
     try:
+        if args.allowlist:
+            return allow_commands(args.allowlist)
         if args.config:
             try:
                 cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))

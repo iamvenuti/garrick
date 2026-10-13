@@ -48,6 +48,7 @@ from garrick_lib import (  # noqa: E402
     CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
+    PREFERENCES_FILE,
     SKILL_FOLDERS,
     VERSION_STAMP,
     MEDIA_EXTS,
@@ -110,6 +111,7 @@ CHECKS = [
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
     ("generated", "Generated files"),
+    ("preferences", "Kept choices"),
     ("updates", "Updates to merge"),
 ]
 
@@ -140,6 +142,7 @@ EAR_GROUP = {
     "knowledge": "{n} Knowledge pages carry parties or meeting material",
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
+    "preferences": "{n} of the choices you keep are not in the workspace history",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -3283,6 +3286,29 @@ def check_generated(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_preferences(ws: Workspace) -> List[Finding]:
+    """The choices made once and kept -- each zone's colour and icon, and how
+    a thread opens -- are saved in the settings file, which is committed with
+    the workspace. That is what carries them through a rebuild of
+    System/generated/, which is never committed, and through a workspace
+    restored from its own history. A settings file left out of git loses
+    them."""
+    out = []
+    if not (ws.root / PREFERENCES_FILE).is_file() or not (ws.root / ".git").exists():
+        return out
+    try:
+        tracked = subprocess.run(["git", "-C", str(ws.root), "ls-files", "--", PREFERENCES_FILE],
+                                 capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    if tracked.returncode == 0 and not tracked.stdout.strip():
+        out.append(Finding(WARNING, "preferences", PREFERENCES_FILE,
+                           "the choices kept here are not in the workspace's history, so a restore loses them; "
+                           "`git add` it and commit it",
+                           "The settings file is not committed"))
+    return out
+
+
 def check_updates(ws: Workspace) -> List[Finding]:
     """An update leaves Garrick's newer version of a file you changed beside it,
     as `<name>.new`, for you and your assistant to merge. Until then the file
@@ -3351,7 +3377,7 @@ ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_zones, check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
-    check_raw, check_generated, check_updates,
+    check_raw, check_generated, check_preferences, check_updates,
 ]
 
 

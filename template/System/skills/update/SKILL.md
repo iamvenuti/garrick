@@ -47,6 +47,7 @@ the workspace.
 | Ask GitHub for the newest release, at most once a day | `python3 System/tools/release.py latest` |
 | Download it and say what an update would change | `python3 System/tools/release.py update` |
 | The release notice, on or off | `System/garrick-settings.json`, `"release-notice"` |
+| Each zone's colour and icon, and how a thread opens | `System/garrick-settings.json`, `"zones"`, `"launchers"`, `"default"` |
 | What GitHub last said, never committed | `System/generated/garrick-release.json` |
 | A file waiting to be merged | `<the file>.new`, beside it |
 | The user's own rules and routing, never touched by an update | `System/rules.local.md`, and `AGENTS.local.md` beside an `AGENTS.md` |

@@ -120,6 +120,18 @@ class TestProbe(Installed):
         self.assertIn("Apps: cmux, Obsidian.", said)
         self.assertIn("git skips the wall check in: Zones/Work.", said)
 
+    def test_it_says_which_commands_are_allowed_here(self):
+        # The setup skill asks about the allowance only where there is none.
+        found = probe.probe(self.root)
+        self.assertGreater(found["allow_rules"], 0)
+        self.assertEqual(found["allow_rules"], found["allow_rules_garricks"])
+        self.assertIn("Commands allowed here without asking: %d rules in .claude/settings.json, %d of them "
+                      "Garrick's own." % (found["allow_rules"], found["allow_rules"]), probe.say(found))
+        (self.root / ".claude" / "settings.json").unlink()
+        found = probe.probe(self.root)
+        self.assertEqual(0, found["allow_rules"])
+        self.assertIn("No command is allowed here without asking", probe.say(found))
+
     def test_command_line_changes_nothing(self):
         before = subprocess.run(["git", "-C", str(self.root), "status", "--porcelain"], capture_output=True,
                                 text=True, env=self.env).stdout

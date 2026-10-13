@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -385,6 +386,93 @@ class TestLanding(unittest.TestCase):
             lib.move_new(self.root, self.home, again, dest)
         self.assertTrue(again.exists())
         self.assertEqual("1,2\n", dest.read_text())
+
+
+class TestKeptChoices(unittest.TestCase):
+    """The choices a user makes once and keeps -- each zone's colour and icon,
+    and how a thread opens -- live in System/garrick-settings.json, committed
+    with the workspace, and are read and written here and nowhere else (#81).
+    Up to 0.24.0 they sat in System/generated/status-settings.json, which is
+    never committed; migrate_shared_settings() copies them across without
+    replacing a newer choice."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name) / "ws"
+        write(self.root / "System" / "rules.md", "# Rules\n")
+        self.addCleanup(self._tmp.cleanup)
+
+    def was(self, data, when=None):
+        """What an older Garrick saved, written before or after the settings file."""
+        write(self.root / "System" / "generated" / "status-settings.json", json.dumps(data))
+        if when is not None:
+            os.utime(str(self.root / "System" / "generated" / "status-settings.json"), (when, when))
+
+    def settings(self):
+        return json.loads((self.root / "System" / "garrick-settings.json").read_text(encoding="utf-8"))
+
+    def stamp(self):
+        return (self.root / "System" / "garrick-settings.json").stat().st_mtime
+
+    def test_saved_and_read_back_with_the_rest_of_the_file_kept(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"release-notice": True}))
+        lib.save_preferences(self.root, {"zones": {"Work": {"color": "Teal", "icon": "briefcase"}}})
+        lib.save_preferences(self.root, {"launchers": {"note": True, "cmux": False}, "default": "note"})
+        self.assertEqual({"zones": {"Work": {"color": "Teal", "icon": "briefcase"}},
+                          "launchers": {"note": True, "cmux": False}, "default": "note"},
+                         lib.preferences(self.root))
+        self.assertTrue(self.settings()["release-notice"])      # a setting of its own is left alone
+        self.assertTrue(lib.release_notice_on(self.root))
+
+    def test_nothing_saved_is_no_choice_and_an_unknown_key_is_refused(self):
+        self.assertEqual({}, lib.preferences(self.root))
+        write(self.root / "System" / "garrick-settings.json", "not json")
+        self.assertEqual({}, lib.preferences(self.root))
+        with self.assertRaises(ValueError):
+            lib.save_preferences(self.root, {"theme": "dark"})      # what a window remembers stays in the window
+
+    def test_an_older_garricks_choices_are_copied_once(self):
+        self.was({"zones": {"Work": {"color": "Teal"}}, "launchers": {"note": True}, "default": "note"})
+        self.assertEqual({"zones": {"Work": {"color": "Teal"}}, "launchers": {"note": True}, "default": "note"},
+                         lib.preferences(self.root))                # read before the migration, so nothing is lost
+        self.assertEqual(["launchers", "zones"], lib.migrate_shared_settings(self.root))
+        self.assertEqual({"zones": {"Work": {"color": "Teal"}}, "launchers": {"note": True}, "default": "note"},
+                         self.settings())
+        stamp = (self.root / "System" / "garrick-settings.json").stat().st_mtime
+        self.assertEqual([], lib.migrate_shared_settings(self.root))   # run again: nothing to copy, nothing written
+        self.assertEqual(stamp, (self.root / "System" / "garrick-settings.json").stat().st_mtime)
+
+    def test_the_newer_choice_wins_either_way_round(self):
+        lib.save_preferences(self.root, {"zones": {"Work": {"color": "Rose"}, "Personal": {"icon": "house"}},
+                                         "launchers": {"note": True, "cmux": True}, "default": "cmux"})
+        self.was({"zones": {"Work": {"color": "Teal"}, "Books": {"color": "Olive"}},
+                  "launchers": {"note": True}, "default": "note"}, when=self.stamp() - 60)
+        # Saved here last, so Work and the launchers stand; only Books, which
+        # this file has never held, comes across.
+        self.assertEqual(["zones"], lib.migrate_shared_settings(self.root))
+        self.assertEqual({"Work": {"color": "Rose"}, "Personal": {"icon": "house"}, "Books": {"color": "Olive"}},
+                         self.settings()["zones"])
+        self.assertEqual(({"note": True, "cmux": True}, "cmux"),
+                         (self.settings()["launchers"], self.settings()["default"]))
+        self.assertEqual([], lib.migrate_shared_settings(self.root))
+        # The other way round: saved there last, so that is the newer choice,
+        # and a zone only this file holds is still kept.
+        self.was({"zones": {"Work": {"color": "Teal"}}, "launchers": {"note": True}, "default": "note"},
+                 when=self.stamp() + 60)
+        self.assertEqual({"Work": {"color": "Teal"}, "Personal": {"icon": "house"}, "Books": {"color": "Olive"}},
+                         lib.preferences(self.root)["zones"])
+        self.assertEqual(["launchers", "zones"], lib.migrate_shared_settings(self.root))
+        self.assertEqual(({"Work": {"color": "Teal"}, "Personal": {"icon": "house"}, "Books": {"color": "Olive"}}, "note"),
+                         (self.settings()["zones"], self.settings()["default"]))
+        self.assertEqual([], lib.migrate_shared_settings(self.root))   # the same choice again is not a change
+
+    def test_nothing_to_copy_from_and_nothing_that_reads(self):
+        self.assertEqual([], lib.migrate_shared_settings(self.root))
+        write(self.root / "System" / "generated" / "status-settings.json", "{")
+        self.assertEqual(([], {}), (lib.migrate_shared_settings(self.root), lib.preferences(self.root)))
+        self.was(["Work"])
+        self.assertEqual([], lib.migrate_shared_settings(self.root))
+        self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
 
 
 if __name__ == "__main__":

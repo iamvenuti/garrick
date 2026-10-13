@@ -1127,6 +1127,107 @@ def release_repository(root: PathLike) -> str:
     return named if isinstance(named, str) and _REPO_NAME.match(named) else RELEASE_REPOSITORY
 
 
+# The choices a user makes once and keeps: each zone's colour and icon, and
+# Settings > Opening a thread, from the status page and its Mac app. They live
+# in the settings file above, so they are committed with the workspace: a
+# rebuild of System/generated/ keeps them, and so does a workspace restored
+# from its own history. Garrick saved them in System/generated/status-settings.json
+# up to 0.24.0; migrate_shared_settings() copies those across, once, and never
+# over a newer choice. What a window alone remembers -- its theme, its folds,
+# the cards it has hidden -- stays in that window's own storage and never
+# comes here. The names of the colours, icons and ways to open a thread
+# belong to whoever offers them, so nothing here knows one from another: this
+# is the one place they are read and written, by the page's build, its
+# settings request and the cmux desk, and by the Mac app in Swift, which
+# reads the same file by the same keys.
+PREFERENCES = ("zones", "launchers", "default")
+PREFERENCES_FILE = "/".join(SETTINGS)
+SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
+
+
+def preferences(root: PathLike) -> dict:
+    """The kept choices: "zones", each zone's colour and icon; "launchers"
+    and "default", how a thread opens. A key nothing is saved under is left
+    out, and nothing is checked beyond its shape, so an older or a newer
+    Garrick's choice reads as it was saved. What an older Garrick left in
+    System/generated/ is read with the settings file until the migration
+    copies it across, so no choice is lost in between."""
+    return _preferences(root)[0]
+
+
+def save_preferences(root: PathLike, chosen: dict) -> dict:
+    """Keep these choices, leaving every other setting, and every choice not
+    named, as it stands; returns the choices as they now are. Anything an
+    older Garrick left in System/generated/ is copied across first, so saving
+    one choice never loses another. Written beside the file and renamed over
+    it, so a reader sees one whole file or the other."""
+    unknown = sorted(set(chosen) - set(PREFERENCES))
+    if unknown:
+        raise ValueError("not a kept choice: %s" % ", ".join(unknown))
+    root = Path(root)
+    migrate_shared_settings(root)
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return {key: saved[key] for key in PREFERENCES if key in saved}
+
+
+def migrate_shared_settings(root: PathLike) -> List[str]:
+    """Copy the choices Garrick used to save in
+    System/generated/status-settings.json into the settings file, where they
+    are committed with the workspace. Run it as often as you like: it never
+    replaces a newer choice. Where both files hold the same zone, or both say
+    how a thread opens, the choice in the file written later wins; a choice
+    only one file holds is taken from there. Returns the keys it copied, and
+    writes nothing when there is nothing to copy."""
+    root = Path(root)
+    chosen = _preferences(root)[1]
+    if not chosen:
+        return []
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return sorted(key for key in chosen if key != "default")
+
+
+def _preferences(root: PathLike) -> Tuple[dict, dict]:
+    """(the choices as they stand, what of them the settings file does not
+    hold yet). The settings file is their home; an older Garrick's
+    System/generated/status-settings.json is read beside it, and of the two
+    the file written later wins, zone by zone and for how a thread opens."""
+    root = Path(root)
+    saved = read_settings(root)
+    mine = {key: saved[key] for key in PREFERENCES if key in saved}
+    was = root.joinpath(*SHARED_SETTINGS_WAS)
+    try:
+        old = json.loads(was.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return mine, {}
+    if not isinstance(old, dict):
+        return mine, {}
+    try:
+        theirs_is_older = was.stat().st_mtime <= root.joinpath(*SETTINGS).stat().st_mtime
+    except OSError:
+        theirs_is_older = False      # no settings file yet: anything saved there is the newer choice
+    chosen: dict = {}
+    zones = old.get("zones")
+    mine_zones = mine["zones"] if isinstance(mine.get("zones"), dict) else {}
+    if isinstance(zones, dict):
+        take = {zone: style for zone, style in zones.items() if not (theirs_is_older and zone in mine_zones)}
+        if take:
+            chosen["zones"] = dict(mine_zones, **take)
+    if "launchers" in old and not (theirs_is_older and "launchers" in mine):
+        chosen["launchers"] = old["launchers"]
+        if "default" in old:
+            chosen["default"] = old["default"]
+    chosen = {key: value for key, value in chosen.items() if mine.get(key) != value}   # the same choice is not a change
+    return dict(mine, **chosen), chosen
+
+
+def _write_settings(root: Path, data: dict) -> None:
+    write_over(root, root, root.joinpath(*SETTINGS), (json.dumps(data, indent=1) + "\n").encode("utf-8"))
+
+
 def release_key(tag: object) -> Optional[tuple]:
     """Sort key for a release, "v0.16.0" or "0.16.0": a pre-release sorts
     before its release. None for anything that is not a version."""

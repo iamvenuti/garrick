@@ -352,7 +352,7 @@ class TestNames(CheckCase):
         t = self.acme / "Threads" / "Q4 Planning"
         write(t / "Q4 Planning.md", thread_note("Acme Review", "Q4 Planning"))
         self.said(t / "Q4 Planning.md", "pricing")
-        self.assertFinds("names", "warning", 'said "pricing" and "Pricing"', "Zones/Work/Acme Review/Threads")
+        self.assertFinds("names", "warning", 'said "Pricing" and "pricing"', "Zones/Work/Acme Review/Threads")
 
 
 class TestProjects(CheckCase):

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- A question at the end of the installer, its default yes, offering to let the assistant run Garrick's own tools, and git's `status`, `diff`, `log`, `add` and `commit` inside the workspace, without asking each time. On a yes it writes one prefix rule per shipped tool, and five per repository it creates, into `.claude/settings.json` in the workspace, and records them in `System/garrick-settings.json`, so an update replaces its own rules, leaves any you added, and puts back none you deleted. It allows no `push`, `pull`, `fetch`, `clone` or `remote`, no `reset`, `checkout`, `restore`, `clean`, `rm` or `--force`, nothing outside the workspace, not `release.py`, the one tool that reaches the network, and never a rule that stops at a folder. Codex gets no file, because its approval setting belongs to your account rather than a workspace: the installer says which one to choose instead. `python3 install.py --allowlist ~/Garrick` writes the same rules into a workspace already installed, which the `setup` skill offers where a workspace has none, and `"allow-commands": false` in a config file declines. See [The commands it asks to approve](docs/first-steps.md#the-commands-it-asks-to-approve). ([#78](https://github.com/iamvenuti/garrick/issues/78))
+
 ## [0.24.0] - 2026-10-13
 
 Each zone can have a colour and an icon, carried into cmux; the Threads card leads with the zone the graph shows; and Settings is short enough to take in at a glance.

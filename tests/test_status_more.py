@@ -611,6 +611,19 @@ class TestSharedLauncherSettings(StatusCase):
                       "if(zChanged)q.zones=zreq();", status.JS)
 
 
+class TestZoneOrder(StatusCase):
+    """The Threads card leads with the zone the graph shows (#72)."""
+
+    def test_each_zone_names_itself_and_the_graph_reorders_them(self):
+        html = self.page()
+        self.assertIn('<details class="zone tsort" id="zone-work" data-zone="Work" open>', html)
+        self.assertIn('<details class="zone tsort" id="zone-personal" data-zone="Personal" open>', html)
+        self.assertLess(html.index('data-zone="Personal"'), html.index('data-zone="Work"'))    # by name, as built
+        self.assertIn("function leadZone(z){", status.GRAPH_JS)
+        self.assertIn("leadZone(zsel);", status.GRAPH_JS.split("function leadZone")[1])          # on load
+        self.assertIn("st.set('garrick-graph-place',zsel);leadZone(zsel);", status.GRAPH_JS)    # on each change
+
+
 class TestZoneColours(StatusCase):
     """Settings › Zones (#67): a colour and an icon per zone, on every label that names it."""
 

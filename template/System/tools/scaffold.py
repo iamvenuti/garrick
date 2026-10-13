@@ -5,9 +5,17 @@
     python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme --thread "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
+    python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
     python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
     python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
     python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
+
+A name has to look like a name and store safely as a folder: letters and
+digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym.
+A name that does not say how it is said ("Q4 Planning") takes `--spoken`, the
+form heard for it, which goes in the note as `spoken:` and is matched
+alongside the name. Without it the script still makes the thing and asks for
+one. A zone has no note, so a zone name must say how it is said.
 
 A zone is made the way the installer makes one: its own folder and git repository
 with a first commit, its inbox, the skill links and the wall check, and a row in
@@ -50,12 +58,14 @@ from garrick_lib import (  # noqa: E402
     hooks_path,
     init_repo,
     install_wall_hook,
-    is_speakable,
+    is_display_name,
+    is_sayable,
     load_context,
     parse_frontmatter,
     record_written,
     skill_links,
-    sounds_alike,
+    spoken_clash,
+    spoken_of,
     table_row,
     workspace_root,
 )
@@ -122,15 +132,57 @@ def find_child(folder, name, kind):
     return folder / match[0]
 
 
-def check_name(name, siblings, kind, where):
-    ok, reason = is_speakable(name)
+def check_name(name, siblings, kind, where, spoken=None, parent=None, must_be_sayable=False):
+    """Apply the three naming questions, and refuse with the one that fails.
+
+    A name has to look like a name (`is_display_name`), and no sibling may be
+    the same folder or sound the same, said as written or through its `spoken`
+    form. A name that does not say how it is said is good as a name: it needs
+    a `spoken` form, which only a zone cannot carry. Every refusal over a
+    sibling ends in a question, because which of the two the user meant is
+    theirs to answer, not the script's to decide.
+    """
+    ok, reason = is_display_name(name)
     if not ok:
         raise Refusal(f'"{name}" will not work as a {kind} name: {reason}')
+    said, why = is_sayable(name)
+    if must_be_sayable and not said:
+        raise Refusal(f'"{name}" will not work as a {kind} name: {why}, '
+                      f"and a {kind} has no note to carry a spoken form.")
+    if spoken:
+        ok, reason = is_sayable(spoken)        # which asks the other two first
+        if not ok:
+            raise Refusal(f'"{spoken}" will not work as the spoken form of {name}: {reason}.')
     for sibling in siblings:
+        here = f"{where[:1].upper()}{where[1:]}"
+        if sibling == name:
+            raise Refusal(f"{here} already has a {kind} called {sibling}. Open it, or pick another name?")
         if sibling.lower() == name.lower():
-            raise Refusal(f"{where[:1].upper()}{where[1:]} already has a {kind} called {sibling}.")
-        if sounds_alike(name, sibling):
-            raise Refusal(f"{name} sounds too much like {sibling}, already in {where}. Pick a name that is easy to tell apart.")
+            raise Refusal(f'{here} already has a {kind} stored as "{sibling}", and "{name}" would be the same '
+                          f"folder. Open {sibling}, or pick another name?")
+        clash = spoken_clash(name, sibling, spoken, spoken_of(parent / sibling) if parent else None)
+        if clash:
+            heard = "" if clash == (name, sibling) else f' ("{clash[0]}" and "{clash[1]}")'
+            raise Refusal(f"{name} sounds too much like {sibling}{heard}, already in {where}. "
+                          f"Open {sibling}, or pick a name that is easy to tell apart?")
+    return said
+
+
+def set_spoken(text, spoken):
+    """Put `spoken:` in a note's frontmatter, under `title:`, or take it out."""
+    text = re.sub(r"(?m)^spoken:.*\n", "", text, count=1)
+    if not spoken:
+        return text
+    return re.sub(r"(?m)^title: .*$", lambda m: "%s\nspoken: %s" % (m.group(0), spoken), text, count=1)
+
+
+def say_how(name, kind, spoken):
+    """The line that asks for a spoken form, where the name needs one and was
+    given none. A question: the form is the user's to choose."""
+    if spoken or is_sayable(name)[0]:
+        return []
+    return [f"{name} does not say how it is said. What should be heard for it, so "
+            f'"open {name}" finds the {kind}? It goes in the note as `spoken:`.']
 
 
 def check_party(root, party):
@@ -168,9 +220,9 @@ def link_thread_in_hub(hub, thread, today):
     hub.write_text(text, encoding="utf-8")
 
 
-def make_thread(root, project_dir, name, party, today):
+def make_thread(root, project_dir, name, party, today, spoken=None):
     threads = project_dir / "Threads"
-    check_name(name, children(threads), "thread", project_dir.name)
+    check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
     target = threads / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
@@ -178,6 +230,9 @@ def make_thread(root, project_dir, name, party, today):
     values = {"ZONE": project_dir.parent.name, "PROJECT": project_dir.name, "THREAD": name,
               "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "thread", target, values)
+    note = target / f"{name}.md"
+    if spoken and note.is_file():
+        note.write_text(set_spoken(note.read_text(encoding="utf-8"), spoken), encoding="utf-8")
     return target
 
 
@@ -236,7 +291,7 @@ def list_zone(root, name, holds):
 def cmd_zone(root, args, today):
     name, holds = args.name.strip(), " ".join(args.holds.split())
     zones = root / "Zones"
-    check_name(name, children(zones), "zone", "the workspace")
+    check_name(name, children(zones), "zone", "the workspace", parent=zones, must_be_sayable=True)
     target = zones / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
@@ -294,21 +349,25 @@ def cmd_project(root, args, today):
     name, thread = args.name.strip(), args.thread.strip()
     if name.lower() == INBOX.lower():
         raise Refusal(f"{INBOX} is where {zone_dir.name}'s mail and files wait to be filed. Pick another name for the project.")
-    check_name(name, children(zone_dir), "project", zone_dir.name)
-    ok, reason = is_speakable(thread)
-    if not ok:
-        raise Refusal(f'"{thread}" will not work as a thread name: {reason}')
+    spoken = (args.spoken or "").strip()
+    thread_spoken = (args.thread_spoken or "").strip()
+    check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
+    check_name(thread, [], "thread", name, spoken=thread_spoken)
     party = check_party(root, args.party)
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
+    asked = say_how(name, "project", spoken) + say_how(thread, "thread", thread_spoken)
     if getattr(args, "check", False):
-        return f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."
+        return "\n".join([f"{name} will do as a project in {zone_dir.name}, and {thread} as its first thread."] + asked)
     values = {"ZONE": zone_dir.name, "PROJECT": name, "THREAD": thread, "PARTY": party, "DATE": today}
     copy_filled(root / "System" / "templates" / "project", target, values)
-    make_thread(root, target, thread, party, today)
-    link_thread_in_hub(target / f"{name}.md", thread, today)
-    return f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."
+    hub = target / f"{name}.md"
+    if spoken and hub.is_file():
+        hub.write_text(set_spoken(hub.read_text(encoding="utf-8"), spoken), encoding="utf-8")
+    make_thread(root, target, thread, party, today, thread_spoken)
+    link_thread_in_hub(hub, thread, today)
+    return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
 
 
 def cmd_thread(root, args, today):
@@ -322,14 +381,17 @@ def cmd_thread(root, args, today):
         raise Refusal(f"{project_dir.name} has no party in its hub note, so a thread cannot inherit one.")
     party = check_party(root, party)
     name = args.name.strip()
+    spoken = (args.spoken or "").strip()
+    asked = say_how(name, "thread", spoken)
     if getattr(args, "check", False):
-        check_name(name, children(project_dir / "Threads"), "thread", project_dir.name)
-        if (project_dir / "Threads" / name).exists():
-            raise Refusal(f"{(project_dir / 'Threads' / name).relative_to(root)} already exists.")
-        return f"{name} will do as a thread in {project_dir.name}."
-    make_thread(root, project_dir, name, party, today)
+        threads = project_dir / "Threads"
+        check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
+        if (threads / name).exists():
+            raise Refusal(f"{(threads / name).relative_to(root)} already exists.")
+        return "\n".join([f"{name} will do as a thread in {project_dir.name}."] + asked)
+    make_thread(root, project_dir, name, party, today, spoken)
     link_thread_in_hub(hub, name, today)
-    return f"Created thread {name} in {project_dir.name}."
+    return "\n".join([f"Created thread {name} in {project_dir.name}."] + asked)
 
 
 # --------------------------------------------------------------------------- rename and delete
@@ -509,11 +571,14 @@ def cmd_rename(root, args, today):
         raise Refusal(f"{old} is already called {new}.")
     if new.lower() == old.lower():
         siblings = [c for c in siblings if c.lower() != new.lower()]
-    check_name(new, siblings, kind, project_dir.name if is_thread else zone_dir.name)
+    spoken = (args.spoken or "").strip()
+    check_name(new, siblings, kind, project_dir.name if is_thread else zone_dir.name,
+               spoken=spoken, parent=folder.parent)
     if not is_thread and new.lower() == INBOX.lower():
         raise Refusal(f"{INBOX} is where {zone_dir.name}'s mail and files wait to be filed. Pick another name.")
+    asked = say_how(new, kind, spoken)
     if getattr(args, "check", False):
-        return f"{new} will do as the {kind}'s new name."
+        return "\n".join([f"{new} will do as the {kind}'s new name."] + asked)
     notes = list(zone_notes(zone_dir))
     others = [n for n in notes if n.stem.lower() == old.lower() and n != note]
     if folder.parent / new != folder and (folder.parent / new).exists() and new.lower() != old.lower():
@@ -555,6 +620,9 @@ def cmd_rename(root, args, today):
                 changed = re.sub(r'(?m)^project: "?\[\[%s\]\]"?$' % re.escape(old), f'project: "[[{new}]]"', changed)
             if path == new_note:
                 changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
+                # The old spoken form goes with the old name, which becomes a heard alias below.
+                if spoken or is_sayable(new)[0]:
+                    changed = set_spoken(changed, spoken)
                 changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
                 changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
                 changed = dated_entry(changed, f"Renamed from {old}.", today)
@@ -572,6 +640,7 @@ def cmd_rename(root, args, today):
                                                        if moved not in t.parents and t.exists()], zone_dir)
         raise Refusal(f"The rename was not committed, so nothing changed: {' '.join(str(exc).split())}")
     said = [f"Renamed the {kind} {old} to {new} in {zone_dir.name}, and every link to it in the zone, in one commit."]
+    said += asked
     if others:
         said.append(f"Links written [[{old}]] were left alone: another note in {zone_dir.name} has that name too.")
     if add_alias(root, old, new):
@@ -708,15 +777,20 @@ def main(argv=None):
     p.add_argument("--name", required=True)
     p.add_argument("--party", required=True, help="tag from Parties in System/context.md")
     p.add_argument("--thread", required=True, help="name of the first thread")
+    p.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
+    p.add_argument("--thread-spoken", dest="thread_spoken",
+                   help="how the first thread's name is said, where it does not say it")
     t = sub.add_parser("thread", help="a new thread in an existing project")
     t.add_argument("--zone", required=True)
     t.add_argument("--project", required=True)
     t.add_argument("--name", required=True)
+    t.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")
     r.add_argument("--zone", required=True)
     r.add_argument("--project", required=True)
     r.add_argument("--thread", help="the thread to rename; without it, the project")
     r.add_argument("--to", required=True, help="the new name")
+    r.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     d = sub.add_parser("delete", help="delete a project or a thread; without --confirm, only say what would go")
     d.add_argument("--zone", required=True)
     d.add_argument("--project", required=True)

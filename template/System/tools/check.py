@@ -55,8 +55,9 @@ from garrick_lib import (  # noqa: E402
     has_wall_hook,
     install_wall_hook,
     is_domain,
+    is_display_name,
     is_instruction_file,
-    is_speakable,
+    is_sayable,
     is_webmail,
     knowledge_schema,
     fingerprint,
@@ -72,7 +73,8 @@ from garrick_lib import (  # noqa: E402
     say_changes,
     say_newer_release,
     say_version,
-    sounds_alike,
+    spoken_clash,
+    spoken_of,
     strip_recipients,
     strip_tag,
     walled,
@@ -1059,16 +1061,44 @@ def check_skills(ws: Workspace) -> List[Finding]:
 
 
 def _check_siblings(ws: Workspace, folders: List[Path], level: str, out: List[Finding]) -> None:
+    """The three naming questions, folder by folder: can it be stored and does
+    it read as a name (`is_display_name`, an error either way), does it say how
+    it is said or carry a `spoken` form (a warning), and can a sibling be told
+    from it by ear, through either's spoken form."""
     for folder in folders:
-        ok, why = is_speakable(folder.name)
+        ok, why = is_display_name(folder.name)
         if not ok:
-            out.append(Finding(ERROR, "names", rel(ws, folder), "%s name is not speakable: %s" % (level, why),
-                               "The %s name %s cannot be said cleanly" % (level, folder.name)))
+            out.append(Finding(ERROR, "names", rel(ws, folder), "%s name will not work: %s" % (level, why),
+                               "The %s name %s will not work" % (level, folder.name)))
+            continue
+        said, why = is_sayable(folder.name)
+        spoken = spoken_of(folder)
+        note = folder / (folder.name + ".md")
+        where = rel(ws, note if note.is_file() else folder)
+        if level == "zone":
+            if not said:
+                out.append(Finding(ERROR, "names", rel(ws, folder),
+                                   "zone name does not say how it is said: %s, and a zone has no note to carry "
+                                   "a `spoken` form" % why,
+                                   "The zone name %s cannot be said as written" % folder.name))
+        elif not said and not spoken:
+            out.append(Finding(WARNING, "names", where,
+                               "%s name does not say how it is said: %s; give the note a `spoken:` form, so "
+                               "asking for it by ear finds it" % (level, why),
+                               "The %s %s has no spoken form" % (level, folder.name)))
+        elif spoken:
+            ok, why = is_sayable(spoken)
+            if not ok:
+                out.append(Finding(WARNING, "names", where,
+                                   "`spoken: %s` does not say how it is said either: %s" % (spoken, why),
+                                   "The spoken form of %s cannot be said as written" % folder.name))
     for i, a in enumerate(folders):
         for b in folders[i + 1:]:
-            if sounds_alike(a.name, b.name):
+            clash = spoken_clash(a.name, b.name, spoken_of(a), spoken_of(b))
+            if clash:
+                heard = "" if clash == (a.name, b.name) else ", said \"%s\" and \"%s\"" % clash
                 out.append(Finding(WARNING, "names", rel(ws, a.parent),
-                                   "%ss \"%s\" and \"%s\" sound alike" % (level, a.name, b.name),
+                                   "%ss \"%s\" and \"%s\" sound alike%s" % (level, a.name, b.name, heard),
                                    "The %ss %s and %s sound alike" % (level, a.name, b.name)))
 
 

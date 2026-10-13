@@ -722,8 +722,8 @@ class ScaffoldTest(unittest.TestCase):
     def test_refusals(self):
         self.assertIn("files wait", self.refuse("project", "--zone", "Work", "--name", "inbox", "--party", "birch",
                                                 "--thread", "Entry"))
-        self.assertIn("digit", self.refuse("project", "--zone", "Work", "--name", "Q3 Review",
-                                           "--party", "birch", "--thread", "Entry"))
+        self.assertIn("underscore", self.refuse("project", "--zone", "Work", "--name", "Q3_Review",
+                                                "--party", "birch", "--thread", "Entry"))
         self.assertIn("sounds too much like Acme",
                       self.refuse("project", "--zone", "Work", "--name", "Akme", "--party", "birch", "--thread", "Entry"))
         self.assertIn("no zone called Office",
@@ -736,11 +736,18 @@ class ScaffoldTest(unittest.TestCase):
                       self.refuse("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing"))
         self.assertIn("sounds too much like Pricing",
                       self.refuse("thread", "--zone", "Work", "--project", "Acme", "--name", "Prising"))
-        self.assertIn("digit", self.refuse("thread", "--zone", "Work", "--project", "Acme", "--name", "Phase 2"))
+        self.assertIn("full stop", self.refuse("thread", "--zone", "Work", "--project", "Acme", "--name", "Phase.2"))
         self.assertIn("no project called Cedar",
                       self.refuse("thread", "--zone", "Work", "--project", "Cedar", "--name", "Entry"))
         self.assertFalse((self.root / "Zones/Work/Birch").exists())
         self.assertFalse((self.root / "Zones/Work/Akme").exists())
+
+    def test_a_business_name_will_do_and_is_asked_about(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Phase 2", "--check")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Phase 2 will do as a thread in Acme.", r.stdout)
+        self.assertIn("does not say how it is said", r.stdout)
+        self.assertFalse((self.root / "Zones/Work/Acme/Threads/Phase 2").exists())
 
     def test_checker_passes(self):
         check = self.root / "System" / "tools" / "check.py"
@@ -856,7 +863,9 @@ class ZoneTest(unittest.TestCase):
 
     def test_refusals(self):
         context = (self.root / "System" / "context.md").read_text()
-        for name, why in (("work", "already has a zone called Work"), ("Werk", "sounds too much like Work"),
+        for name, why in (("Work", "already has a zone called Work. Open it, or pick another name?"),
+                          ("work", 'stored as "Work", and "work" would be the same folder'),
+                          ("Werk", "sounds too much like Work"),
                           ("Clients 2", "contains a digit"), ("_Garden", "starts with an underscore")):
             r = self.scaffold("zone", name, "--holds", "Anything")
             self.assertEqual(r.returncode, 1, (name, r.stdout))

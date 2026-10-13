@@ -149,7 +149,9 @@ def domain_problems(label, domains, taken, pl):
 
 
 def check_zone_name(name, others, pl):
-    ok, reason = pl.is_speakable(name)
+    """A zone has no note to carry a spoken form, so its name has to say how it
+    is said: the strictest of the three naming questions, not just the folder's."""
+    ok, reason = pl.is_sayable(name)      # which asks the other two first
     if not ok:
         return f'"{name}" will not work as a zone name: {reason}'
     for other in others:

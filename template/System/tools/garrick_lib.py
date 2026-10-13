@@ -927,9 +927,19 @@ LOCAL_RULES = "System/rules.local.md"
 LOCAL_HEADER = ("Adds to Garrick's `AGENTS.md` beside it and wins where the two differ. "
                 "Garrick never ships or changes this file.")
 
+# The workspace's own settings, where the release notice lives and where the
+# installer records the allow rules it wrote (see below), and the assistant's
+# own settings, which Garrick adds those rules to and never owns.
+SETTINGS = ("System", "garrick-settings.json")
+CLAUDE_SETTINGS = (".claude", "settings.json")
+ALLOWED_COMMANDS = "allowed-commands"
+
 # Files the installer writes that are the user's from the start: never listed in
-# the stamp, never compared or written by an update.
-UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES)
+# the stamp, never compared or written by an update. The two settings files are
+# here because each holds the user's own entries beside Garrick's; an update
+# replaces only the entries it wrote, and never the whole file.
+UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES,
+            "/".join(SETTINGS), "/".join(CLAUDE_SETTINGS))
 
 
 def is_instruction_file(path: str) -> bool:
@@ -1086,13 +1096,14 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
 
 
-# The workspace's settings: choices that stay, unlike the preview flags in
-# System/garrick-flags.json, which a release drops. One so far:
+# What the workspace's settings hold, SETTINGS above: choices that stay, unlike
+# the preview flags in System/garrick-flags.json, which a release drops.
 # {"release-notice": true} lets the status page ask GitHub, at most once a day,
 # whether a newer Garrick is out. Off unless the file says true: it is the only
 # call Garrick makes on its own. "release-repository" names another repository
-# to ask, for a fork, as owner/name.
-SETTINGS = ("System", "garrick-settings.json")
+# to ask, for a fork, as owner/name. "allowed-commands" lists the allow rules
+# the installer wrote into the assistant's own settings, so an update can
+# replace its own and leave the ones the user added.
 RELEASE_NOTICE = "release-notice"
 RELEASE_REPOSITORY = "iamvenuti/garrick"
 # What the last question to GitHub found, written by System/tools/release.py.
@@ -1118,6 +1129,28 @@ def read_settings(root: PathLike) -> dict:
 
 def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
+
+
+def allowed_commands(root: PathLike) -> List[str]:
+    """The allow rules the installer wrote into the assistant's own settings,
+    as it recorded them, or [] where the workspace has none. The rules
+    themselves are the installer's: nothing here depends on one assistant."""
+    found = read_settings(root).get(ALLOWED_COMMANDS)
+    return [x for x in found if isinstance(x, str)] if isinstance(found, list) else []
+
+
+def allow_rules(root: PathLike) -> List[str]:
+    """Every command the assistant may run in this workspace without asking,
+    as its own settings list them, Garrick's rules and the user's alike. []
+    where there is no settings file, or it allows nothing, or it does not
+    read."""
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*CLAUDE_SETTINGS).read_text(encoding="utf-8"))
+        allow = data["permissions"]["allow"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return [x for x in allow if isinstance(x, str)] if isinstance(allow, list) else []
 
 
 def release_repository(root: PathLike) -> str:

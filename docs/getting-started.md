@@ -12,7 +12,7 @@ From the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP or `~/ga
 python3 install.py
 ```
 
-This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. Most people skip the aliases, names that dictation gets wrong, since nothing has been dictated yet: the assistant adds them to `System/context.md` as it learns them. A party is an organisation or person whose confidences you hold, and each gets a tag, one lowercase word that starts with a letter, and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the zones and parties relevant to your first project and add others later: parties in `System/context.md`, zones as [Another zone](#another-zone) describes.
+This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases, and last whether the assistant may run Garrick's own tools and git's commands that look at or save history without asking each time ([what that allows](first-steps.md#the-commands-it-asks-to-approve)). Press Enter to accept the default in brackets, or skip a section by answering nothing. Most people skip the aliases, names that dictation gets wrong, since nothing has been dictated yet: the assistant adds them to `System/context.md` as it learns them. A party is an organisation or person whose confidences you hold, and each gets a tag, one lowercase word that starts with a letter, and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the zones and parties relevant to your first project and add others later: parties in `System/context.md`, zones as [Another zone](#another-zone) describes.
 
 To skip the questions (for a demo, a test, or a guided session), pass a config file:
 
@@ -20,7 +20,13 @@ To skip the questions (for a demo, a test, or a guided session), pass a config f
 python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
-`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config.
+`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config. Its keys are the questions: `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing.
+
+To allow those commands in a workspace already installed, because you answered no or installed before Garrick asked, run this from the folder Garrick came in. It writes the same rules and changes nothing else, and it overwrites neither file:
+
+```sh
+python3 install.py --allowlist ~/Garrick
+```
 
 The installer writes only inside the target folder. It refuses a target that is your home folder, sits under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library` (macOS blocks scheduled jobs from reading those), overlaps the folder Garrick came in (that folder, one inside it, or one holding it), or already has files in it. It compares the folders themselves, not their names: on a Mac, `~/garrick` and `~/Garrick` are the same folder. `--force` lets it install next to files that are already there, but it still stops if the folder holds an `AGENTS.md`, `System`, `Zones`, `Wikis`, `.git`, `.gitignore`, `.claude` or `.agents`.
 
@@ -29,11 +35,13 @@ The installer writes only inside the target folder. It refuses a target that is 
 ```
 AGENTS.md               entry point for any assistant
 .claude/skills          link to System/skills, for Claude Code
+.claude/settings.json   the commands you allowed at install, if you did, for Claude Code
 .agents/skills          link to System/skills, for Codex
 System/
   rules.md              how the assistant behaves: Garrick's, replaced by each update
   rules.local.md        your own rules, which win over Garrick's; no update touches it
   context.md            who you are and who you deal with, filled in from your answers
+  garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
   tools/                scaffold.py, check.py, probe.py, release.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, interview, setup, update

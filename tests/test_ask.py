@@ -137,7 +137,7 @@ class TestProposals(AskCase):
 
     def test_an_app_switched_off_in_settings(self):
         a = {"verb": "open", "zone": "Work", "project": "Acme Review", "app": "codex"}
-        settings = self.root / "System" / "generated" / "status-settings.json"
+        settings = self.root / "System" / "garrick-settings.json"
         write(settings, json.dumps({"launchers": {"note": True, "codex": False}, "default": "note"}))
         with self.assertRaisesRegex(ask.Bad, "Codex is switched off in Settings"):
             ask.proposal(a, self.names, self.root)

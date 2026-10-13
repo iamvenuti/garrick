@@ -179,9 +179,26 @@ class ZoneGuardTest(unittest.TestCase):
                  "@@\n-a\n+b\n*** End Patch\n")
         decision, reason = self.decision(self.codex(patch))
         self.assertEqual(decision, "deny")
-        self.assertIn("Ask the user", reason)
+        self.assertIn("ask the user", reason)
         self.assertIn("System (System/tools/check.py)", reason)
+        # A reminder to ask, said as one: nothing about the answer is recorded.
+        self.assertIn("records nothing about their answer", reason)
+        self.assertIn("a reminder of scope, not a gate", reason)
+        self.assertIn("make the same edit again", reason)
         self.assertIsNone(self.codex(patch))
+
+    def test_codex_with_no_session_promises_no_retry(self):
+        patch = ("*** Begin Patch\n*** Update File: ../../../../../System/tools/check.py\n"
+                 "@@\n-a\n+b\n*** End Patch\n")
+        event = {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                 "cwd": str(self.thread), "tool_input": {"command": patch}}
+        for _ in range(2):                  # nowhere to remember the place: refused every time
+            decision, reason = self.decision(self.run_guard(event))
+            self.assertEqual(decision, "deny")
+            self.assertIn("Work › Acme Review", reason)
+            self.assertIn("System (System/tools/check.py)", reason)
+            self.assertIn("cannot be retried in this session", reason)
+            self.assertNotIn("make the same edit again", reason)
 
     def test_codex_inside_the_project_goes_ahead(self):
         patch = "*** Begin Patch\n*** Add File: notes.md\n+hello\n*** End Patch\n"

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- The zone guard's Codex refusal ended *If they say yes, make the same edit again and it will go through*, which reads as a gate the guard does not run: nothing about your answer is recorded, and a second attempt at the same place goes through whether you were asked or not. It now says the edit was stopped so that the assistant asks you, and that the guard records nothing about the answer: a reminder of scope, not a gate. When the event carries no session id there is nowhere to remember the place, so the same edit is refused every time; the message then says it cannot be retried in this session and the work belongs in that place's own session. `extras/hooks/README.md` states in one paragraph what is and isn't enforced. ([#80](https://github.com/iamvenuti/garrick/issues/80))
+
 ## [0.24.0] - 2026-10-13
 
 Each zone can have a colour and an icon, carried into cmux; the Threads card leads with the zone the graph shows; and Settings is short enough to take in at a glance.

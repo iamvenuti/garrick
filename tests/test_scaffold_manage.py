@@ -62,11 +62,74 @@ class TestCheck(ManageCase):
         r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Prising", "--check")
         self.assertEqual(1, r.returncode)
         self.assertIn("sounds too much like Pricing", r.stderr)
-        r = self.scaffold("project", "--zone", "Work", "--name", "Birch", "--party", "birch", "--thread", "Q3",
+        r = self.scaffold("project", "--zone", "Work", "--name", "Birch", "--party", "birch", "--thread", "Q3_plan",
                           "--check")
         self.assertEqual(1, r.returncode)
+        self.assertIn("will not work", r.stderr)
         self.assertFalse((self.work / "Birch").exists())
         self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+
+class TestNaming(ManageCase):
+    """The three naming questions through the script: an ordinary business name
+    is made, a name that does not say how it is said is asked about, and a
+    sibling collision is a question the user answers."""
+
+    def test_a_business_name_is_made_and_its_spoken_form_asked_for(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Q4 Planning")
+        self.assertEqual(0, r.returncode, r.stderr)
+        note = self.work / "Acme" / "Threads" / "Q4 Planning" / "Q4 Planning.md"
+        self.assertTrue(note.is_file())
+        self.assertNotIn("spoken:", note.read_text())
+        self.assertIn("does not say how it is said", r.stdout)
+        self.assertIn("What should be heard for it", r.stdout)
+
+    def test_a_spoken_form_goes_into_the_note_under_the_title(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "ISO 27001",
+                          "--spoken", "I S O twenty seven thousand one")
+        self.assertEqual(0, r.returncode, r.stderr)
+        note = (self.work / "Acme" / "Threads" / "ISO 27001" / "ISO 27001.md").read_text()
+        self.assertIn("title: ISO 27001\nspoken: I S O twenty seven thousand one\ntype: thread", note)
+        self.assertNotIn("does not say how it is said", r.stdout)
+        r = self.scaffold("project", "--zone", "Work", "--name", "Q4 Planning", "--party", "birch",
+                          "--thread", "Audit", "--spoken", "fourth quarter planning")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("spoken: fourth quarter planning",
+                      (self.work / "Q4 Planning" / "Q4 Planning.md").read_text())
+
+    def test_a_spoken_form_has_to_say_how_it_is_said_itself(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Q4 Planning",
+                          "--spoken", "Q4 planning")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("will not work as the spoken form", r.stderr)
+
+    def test_a_sibling_collision_is_put_as_a_question(self):
+        for extra, said in ((["--name", "Pricing"], "already has a thread called Pricing. Open it, or pick"),
+                            (["--name", "pricing"], 'stored as "Pricing", and "pricing" would be the same folder'),
+                            (["--name", "Prizing"], "Open Pricing, or pick a name that is easy to tell apart?")):
+            r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", *extra)
+            self.assertEqual(1, r.returncode, extra)
+            self.assertEqual(1, len(r.stderr.strip().splitlines()), r.stderr)
+            self.assertIn(said, r.stderr)
+
+    def test_two_spoken_forms_that_sound_alike_are_a_question_too(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Q4 Planning",
+                          "--spoken", "freight")
+        self.assertEqual(1, r.returncode)
+        self.assertIn('("freight" and "Freight")', r.stderr)
+        self.assertIn("Open Freight, or pick", r.stderr)
+
+    def test_renaming_to_a_business_name_and_giving_it_a_form(self):
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing",
+                          "--to", "Q4 Pricing", "--spoken", "fourth quarter pricing")
+        self.assertEqual(0, r.returncode, r.stderr)
+        note = (self.work / "Acme" / "Threads" / "Q4 Pricing" / "Q4 Pricing.md").read_text()
+        self.assertIn("title: Q4 Pricing\nspoken: fourth quarter pricing\n", note)
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Q4 Pricing",
+                          "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        note = (self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").read_text()
+        self.assertNotIn("spoken:", note)
 
 
 class TestRename(ManageCase):
@@ -106,7 +169,7 @@ class TestRename(ManageCase):
     def test_refusals_change_nothing(self):
         cases = [
             (["--thread", "Pricing", "--to", "Freight"], "already has a thread called Freight"),
-            (["--thread", "Pricing", "--to", "Q3 2026"], "will not work"),
+            (["--thread", "Pricing", "--to", "Pricing_v2"], "will not work"),
             (["--thread", "Pricing", "--to", "Fraight"], "sounds too much like Freight"),
         ]
         for extra, said in cases:

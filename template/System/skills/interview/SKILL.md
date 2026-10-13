@@ -120,9 +120,10 @@ end of the record under `## Proposal`, then show it.
    and never leave out one they asked for.
 3. **People and aliases** heard during the interview.
 4. **Projects and first threads**, zone by zone: the project, its party, its
-   first thread. Every name must be sayable: no dates, codes or punctuation
-   (a year as a word of its own is fine), and no two siblings that sound
-   alike. Offer a spoken version of any that is not.
+   first thread. Names can be the ones the work already has, Q4 Planning and
+   ISO 27001 among them, and no two siblings may sound alike. Where a name
+   does not say how it is said, ask for the form to hear for it and write it
+   into the note as `spoken:`.
 5. **Open actions** for each zone's `Todo.md`, from question 4.
 6. **Ways in**: for each place files live today, the inbox it would feed.
    Advice only: nothing is connected or moved.

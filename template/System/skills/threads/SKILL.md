@@ -76,7 +76,9 @@ dictation, so resolve before acting, and never guess.
 2. **Look it up in Aliases** (`System/context.md`). A heard form listed there
    means what the table says it means.
 3. **Match, in this order, and stop at the first step that finds anything:**
-   - a thread name (`pricing` → Acme's Pricing thread);
+   - a thread name, or the `spoken:` form in its note where the name does not
+     say how it is said (`pricing` → Acme's Pricing thread; `fourth quarter
+     planning` → Q4 Planning);
    - "project, thread" (`acme pricing`, `acme, pricing`);
    - a project name: if it has one live thread, that thread; if several, ask;
    - a party or a person, through Parties and People: the projects whose hub
@@ -87,6 +89,8 @@ dictation, so resolve before acting, and never guess.
    match is heard at once ("Acme pricing: …").
 5. **More than one: ask in one line, naming the candidates.** "Pricing is in
    Acme and in Birch. Which one?" Never pick, and never pick between zones.
+   Two threads heard the same way, by name or by `spoken:` form, are the same
+   question.
 6. **None: say so, and name the nearest live threads.** "No thread called
    roofing. The closest is roof repair, in House."
 7. **Learn it.** When you had to ask what a heard name meant, add the heard form
@@ -394,7 +398,7 @@ the workspace root.
 
 ```sh
 python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
-python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>"
+python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
 ```
 
 1. **Resolve the parts.** The zone against the folders under `Zones/`; the
@@ -410,16 +414,20 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    any Walls rows, then scaffold. Never scaffold with a made-up tag.
 4. **Run the script.** When it refuses, it prints a one-line reason. Relay it
    in plain words and suggest a fix:
-   - a name that cannot be said (digits, dates, codes, punctuation): offer a
-     spoken version, "Q3 pricing" → "autumn pricing";
-   - a sibling that sounds alike: say which, and offer a distinct name, or ask
-     whether the user meant the existing one and wants it opened;
+   - a name that will not work (an underscore, a comma, a slash, a full stop
+     outside an acronym): say what is in the way and offer the name without it;
+   - a sibling that sounds alike, or one already stored under that folder name:
+     the refusal ends in a question, so put it to the user. Never choose
+     between opening the one that exists and naming a new one;
    - an unknown party: step 3;
    - an unknown zone: name the zones that exist, and offer to add it
      (*New zone*, below).
 5. **Fill in what you were told.** If the user gave the purpose, write it into
    the one-line description in the hub and the thread note. Otherwise leave the
-   angle-bracket fields and mention them once.
+   angle-bracket fields and mention them once. A name that does not say how it
+   is said (Q4 Planning, ISO 27001) is a good name, and the script asks for the
+   form to hear for it: ask the user in one line and write their answer into the
+   note's frontmatter as `spoken:`, or pass it as `--spoken` next time.
 6. **Commit**, if the script has not: check
    `git -C "Zones/<Zone>" status --porcelain`, stage the new folder by name, and
    commit "New project Birch (birch), first thread Launch plan". Adding Parties
@@ -429,8 +437,8 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
 The new thread is now in focus, as if opened.
 
 Spoken: "Birch is set up in Work with a launch plan thread. What's it for, in a
-sentence?" or, on a refusal: "Can't name it Q3 pricing: names can't have
-digits. Autumn pricing?"
+sentence?" or, where the name needs a spoken form: "Birch is set up with a Q4
+planning thread. Should I hear that as fourth quarter planning?"
 
 Written: the paths created and the commit hash.
 
@@ -445,7 +453,7 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
 
 1. **Resolve X.** If it could be the project or one of its threads, ask which.
 2. **Confirm in one line** before acting: "Rename Acme pricing to Renewal?"
-3. **Run the script.** It refuses a name that cannot be said, that sounds
+3. **Run the script.** It refuses a name that will not work, that sounds
    like a sibling or is taken, and a rename while the files it would change
    have changes not committed, or while a session is mid-turn there; relay
    the reason as under *New*. It moves the folder and the note with git,
@@ -510,9 +518,9 @@ python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"
    the user did not say what it holds, ask. A heard name close to a zone that
    exists may mean that one: ask, naming it.
 2. **Run the script.** When it refuses, relay the one-line reason in plain
-   words and suggest a fix, as for a project: a spoken version of a name that
-   cannot be said, or a distinct one for a name that sounds like a zone
-   already there.
+   words and suggest a fix: a zone has no note to carry a spoken form, so its
+   name has to say how it is said; offer a spoken version of one that does
+   not, or a distinct name for one that sounds like a zone already there.
 3. **Commit what the script left uncommitted.** Check
    `git status --porcelain` in the workspace root and in `Zones/<Zone>`.
    Stage by name, never `git add -A`, and commit each repository on its own:

@@ -42,7 +42,7 @@ git add release-hashes.json
 git commit -m "Release hashes for 0.25.0"
 git push origin main v0.25.0
 git archive --format=zip --prefix=garrick/ -o /tmp/garrick.zip v0.25.0
-gh release create v0.25.0 /tmp/garrick.zip --title 0.25.0 --notes-file <release-notes.md>
+gh release create v0.25.0 /tmp/garrick.zip --title "Garrick 0.25.0" --notes-file <release-notes.md>
 ```
 
 Put the version in place of `v0.25.0` throughout. `--release-hashes` reads the clone's tags, so it runs once the tag exists, and the commit it produces lands after the tag, on `main`; a test fails until that commit is made.

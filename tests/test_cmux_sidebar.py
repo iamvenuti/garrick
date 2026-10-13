@@ -58,6 +58,12 @@ class TestHelpers(unittest.TestCase):
                          ["dot", [{}, {"id": "c"}]])
         self.assertEqual(["#8EB1F5", "#8A8F98", "orange", "#8A8F98"], dots)
 
+    def test_a_workspace_shows_its_colour(self):
+        # The desk colours a zone's workspace (#67); the bar before its name shows it, or nothing.
+        bars = self.call(["swatch", [{"color": "#006B6B"}]], ["swatch", [{"color": "#006b6b80"}]],
+                         ["swatch", [{}]], ["swatch", [{"color": "teal"}]], ["swatch", [{"color": "#06B"}]])
+        self.assertEqual(["#006B6B", "#006b6b80", "clear", "clear", "clear"], bars)
+
     def test_the_mark_finds_the_status_page(self):
         pages = self.call(
             ["statusPage", [[{"directory": "/tmp", "tabs": [{"directory": "/Users/sam/My Work/Zones/Work/Acme Review"}]}]]],

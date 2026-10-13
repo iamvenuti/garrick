@@ -20,6 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -405,6 +406,68 @@ class TestSettings(ActionCase):
         status = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(status)
         self.assertEqual(("note",) + tuple(k for k, _, _, _ in status.LAUNCHERS), pa.LAUNCHERS)
+
+
+class TestZoneSettings(ActionCase):
+    """Settings › Zones (#67): a colour and an icon per zone, beside the launchers."""
+
+    def setUp(self):
+        super().setUp()
+        # Never this Mac's own cmux: the desk is a recording stand-in.
+        p = mock.patch.object(pa, "run_desk")
+        self.desk = p.start()
+        self.addCleanup(p.stop)
+
+    def path(self):
+        return self.root / "System" / "generated" / "status-settings.json"
+
+    def saved(self):
+        return json.loads(self.path().read_text())
+
+    def test_saved_beside_the_launchers_and_each_kept_by_the_other(self):
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
+        self.assertEqual("Settings saved", self.act(verb="settings", zones={
+            "Work": {"color": "Teal", "icon": "briefcase"}, "Personal": {"color": "", "icon": ""}}))
+        data = self.saved()
+        self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}}, data["zones"])   # a zone with neither is left out
+        self.assertEqual("cmux", data["default"])
+        self.act(verb="settings", launchers=["note"])
+        self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}}, self.saved()["zones"])
+        self.act(verb="settings", launchers=["note", "claude"], default="claude", zones={"Personal": {"icon": "house"}})
+        self.assertEqual(({"Personal": {"icon": "house"}}, "claude"), (self.saved()["zones"], self.saved()["default"]))
+
+    def test_refused_names_and_a_zone_no_longer_there(self):
+        for zones in ({"Work": {"color": "Mauve"}}, {"Work": {"icon": "unicorn"}}, {"Work": "Teal"},
+                      {"Work": {"color": "Teal", "size": 3}}, ["Work"]):
+            with self.assertRaises(pa.Refused, msg=zones):
+                self.act(verb="settings", zones=zones)
+        with self.assertRaisesRegex(pa.Refused, "nothing to save"):
+            self.act(verb="settings")
+        self.assertFalse(self.path().exists())
+        self.act(verb="settings", zones={"Old Name": {"color": "Teal"}, "../System": {"color": "Red"}, "Work": {"color": "Navy"}})
+        self.assertEqual({"Work": {"color": "Navy"}}, self.saved()["zones"])
+
+    def test_a_changed_colour_recolours_its_open_tab(self):
+        self.act(verb="settings", zones={"Work": {"color": "Teal"}, "Personal": {"icon": "house"}})
+        self.assertEqual([mock.call(self.root, "colour", "--", "Work", timeout=20)], self.desk.call_args_list)
+        self.desk.reset_mock()
+        self.act(verb="settings", zones={"Work": {"color": "Teal", "icon": "star"}, "Personal": {"icon": "leaf"}})
+        self.desk.assert_not_called()                                             # icons are the page's alone
+        self.act(verb="settings", zones={"Work": {}, "Personal": {"color": "Rose"}})
+        self.assertEqual([mock.call(self.root, "colour", "--", "Personal", "Work", timeout=20)], self.desk.call_args_list)
+        self.desk.side_effect = pa.Refused("cmux is not installed here")
+        self.assertEqual("Settings saved", self.act(verb="settings", zones={"Work": {"color": "Red"}}))   # best effort
+
+    def test_the_names_are_the_pages_and_cmuxs(self):
+        spec = importlib.util.spec_from_file_location("garrick_status_for_zones", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        spec = importlib.util.spec_from_file_location("garrick_cmuxlib_for_zones", REPO / "extras" / "cmux" / "cmuxlib.py")
+        cx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cx)
+        self.assertEqual(tuple(status.ZONE_COLOURS), pa.ZONE_COLOURS)
+        self.assertEqual(cx.COLOURS, pa.ZONE_COLOURS)
+        self.assertEqual(tuple(status.ZONE_ICONS), pa.ZONE_ICONS)
 
 
 class TestAudit(ActionCase):

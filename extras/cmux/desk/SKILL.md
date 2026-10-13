@@ -25,6 +25,7 @@ desk open X --prompt "open X"    # X's tab, started on "open X"; an idle tab alr
 desk open X --agent codex        # Codex instead of the default assistant
 desk close X [--wrap] [--yes]    # close X's tab; --wrap has it wrap its thread first
 desk workspace NAME              # a new workspace in cmux's sidebar
+desk colour [ZONE...]            # each zone's workspace in its colour from the status page's Settings
 desk end [--yes]                 # check nothing is busy, then quit cmux
 desk shutdown [--yes]            # wrap each tab used today, one at a time, then quit cmux
 desk start                       # start or restore cmux, resume tabs that came back empty

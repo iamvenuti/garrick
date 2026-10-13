@@ -258,7 +258,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(8, html.count("</script>"))          # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the page's, the dialogs', the menu's, the graph's
+        self.assertEqual(9, html.count("</script>"))          # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the zone icons Settings offers, the page's, the dialogs', the menu's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -660,7 +660,7 @@ class TestSettings(StatusCase):
     def test_links_go_only_to_garrick_and_open_outside(self):
         dialog = self.dialog()
         links = self.hrefs(dialog)
-        self.assertEqual(7, len(links))
+        self.assertEqual(8, len(links))
         for h in links:
             self.assertTrue(h.startswith(status.PROJECT + "/"), h)
         for tag in re.findall(r'<a [^>]*href="https://[^>]*>', dialog):
@@ -677,6 +677,57 @@ class TestSettings(StatusCase):
         report = htmllib.unescape(re.search(r'data-copy="([^"]*)"[^>]*>Copy a report<', self.dialog()).group(1))
         self.assertIn("Which Garrick: Garrick abc1234", report)
         self.assertIn("invented names", report)
+
+    def test_each_explanation_is_behind_a_question_mark(self):
+        dialog = self.dialog()
+        for key, name in (("launchers", "Opening a thread"), ("zones", "Zones"), ("menu", "Menu bar"),
+                          ("about", "About Garrick"), ("preview", "Preview features")):
+            self.assertIn('<h3>%s<button class="qhelp" type="button" aria-expanded="false" aria-controls="help-%s" '
+                          'aria-label="Explain %s"' % (name, key, name), dialog)      # a button, so the keyboard reaches it
+        for key in ("launchers", "zones", "menu", "about", "preview", "view"):
+            self.assertEqual(1, dialog.count('<p class="hint sethelp" id="help-%s" hidden>' % key), key)   # hidden until asked for
+        self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
+        self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
+        self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
+        self.assertIn(".setcols{display:grid", status.SETTINGS_CSS)                  # two columns where they fit
+
+    def test_explanations_keep_their_words(self):
+        dialog = htmllib.unescape(self.dialog())
+        for words in ("Tick what project and thread cards offer; the dot marks what clicking a thread's name does.",
+                      "A colour and an icon for each zone, shown wherever the page names it.",
+                      "A menu of the live projects of the zone the graph shows, with their threads, kept at hand outside this window.",
+                      "These open GitHub in your browser. The page sends nothing: a report goes only when you submit it there.",
+                      "In Garrick's source but not yet released, so they may still change.",
+                      "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."):
+            self.assertIn(words, dialog)
+
+    def test_a_bypass_has_a_row_of_its_own(self):
+        dialog = self.dialog()
+        row = re.search(r'<a class="setlink" href="([^"]*)"[^>]*><b>Report a bypass privately</b>', dialog)
+        self.assertIsNotNone(row)
+        self.assertEqual(status.PROJECT + "/security/advisories/new", htmllib.unescape(row.group(1)))
+        para = dialog[dialog.index('id="help-about"'):]
+        self.assertIn('<a href="%s" target="_blank" rel="noopener">report it privately</a>' % row.group(1), para)   # the same address
+        labels = re.findall(r'class="setlink"[^>]*><b>([^<]+)</b>', dialog)
+        self.assertEqual(["Report a bug", "Report a wrong refusal", "Report a bypass privately"], labels[:3])
+
+    def test_the_forms_that_publish_warn_in_their_tooltip(self):
+        dialog = self.dialog()
+        warn = htmllib.escape("Use invented names (Acme, Birch), never a real client's.")
+        for label in ("Report a bug", "Report a wrong refusal"):
+            self.assertRegex(dialog, r'<a class="setlink" [^>]*title="%s"><b>%s</b>' % (re.escape(warn), label))
+        self.assertEqual(2, dialog.count('title="%s"' % warn))
+
+    def test_reset_view_is_a_button_at_the_foot(self):
+        dialog = self.dialog()
+        foot = dialog[dialog.index('<div class="setfoot">'):]
+        self.assertGreater(dialog.index('<div class="setfoot">'), dialog.index('id="help-preview"'))   # after the last section
+        button = re.search(r'<button class="act" type="button" id="reset-view" title="([^"]*)">Reset view</button>', foot)
+        self.assertIsNotNone(button)
+        self.assertTrue(htmllib.unescape(button.group(1)).startswith(
+            "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."))
+        self.assertIn('aria-controls="help-view" aria-label="Explain Reset view"', foot)
+        self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', foot)
 
     def test_the_app_opens_it(self):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")

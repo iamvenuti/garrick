@@ -9,6 +9,9 @@
                                    every tab at or below a folder); --wrap has the
                                    tab wrap its thread first
     desk workspace NAME            a new workspace in cmux's sidebar
+    desk colour [ZONE...]          each zone's workspace in its colour from the status
+                                   page's Settings › Zones; a zone named with no colour
+                                   has its colour cleared
     desk end [--yes]               check nothing is mid-turn, then quit cmux
     desk shutdown [--yes]          wrap each tab used today (the threads skill), run the
                                    before-quitting commands, quit cmux
@@ -23,7 +26,11 @@ tab cmux brought back at a bare prompt. The record is used once.
 The workspace is --workspace, else GARRICK_WORKSPACE, else the folder you are
 in or the nearest one above it holding System/rules.md, else ~/Garrick. The
 settings are in System/desk.json (desk.example.json, beside this file, shows
-every one), or the file GARRICK_DESK_CONFIG names. Standard library only.
+every one), or the file GARRICK_DESK_CONFIG names. A zone's colour comes from
+the status page's Settings › Zones, saved in System/generated/status-settings.json:
+a tab opened in a project or thread colours its zone's workspace with it. A
+tab at the workspace root, in a wiki or in System/ takes none. Standard
+library only.
 """
 
 from __future__ import annotations
@@ -135,6 +142,25 @@ def commands(given, where: str) -> List[List[str]]:
             out.append(list(c))
         else:
             raise DeskError("%s: %r is not a command" % (where, c))
+    return out
+
+
+def zone_colours(ws: Path) -> Dict[str, str]:
+    """Each zone's colour, by cmux's name for it, from the status page's
+    shared settings: {"zones": {"Work": {"color": "Teal", …}}}. A name cmux
+    does not know is dropped, whatever its case is matched; nothing saved, or
+    nothing that reads, is no colour."""
+    try:
+        data = json.loads((ws / "System" / "generated" / "status-settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    zones = data.get("zones") if isinstance(data, dict) else None
+    named = {c.lower(): c for c in cx.COLOURS}
+    out = {}
+    for zone, style in (zones.items() if isinstance(zones, dict) else ()):
+        colour = style.get("color") if isinstance(style, dict) else None
+        if isinstance(colour, str) and colour.lower() in named:
+            out[zone] = named[colour.lower()]
     return out
 
 
@@ -446,6 +472,26 @@ def workspaces() -> Dict[str, dict]:
             for w in data.get("workspaces", []) if isinstance(w, dict) and w.get("id")}
 
 
+def set_colour(ref: str, colour: Optional[str]) -> bool:
+    """A cmux workspace in one of cmux's named colours, or its colour cleared
+    with None. Whether cmux took it: a colour is never worth failing for."""
+    action = ["--action", "set-color", "--color", colour] if colour else ["--action", "clear-color"]
+    try:
+        cx.cmux("workspace-action", *action, "--workspace", ref)
+        return True
+    except cx.CmuxError:
+        return False
+
+
+def colour_for(desk: "Desk", place: dict, target: str, at_root: bool) -> Optional[str]:
+    """The colour a new tab gives its workspace: its zone's, when the tab is in
+    a zone's project or thread and goes to that zone's own workspace."""
+    zone = place.get("zone")
+    if at_root or zone in (None, "neutral", "root") or target != desk.workspace_for(zone):
+        return None
+    return zone_colours(desk.ws).get(zone)
+
+
 def send(surface: str, text: str) -> None:
     """Type one line into a tab, then press Enter: the only key that submits it."""
     cmux("send", "--surface", surface, "--", plain(text))
@@ -544,6 +590,14 @@ def cmd_open(desk: Desk, a) -> None:
     else:
         cmux("new-workspace", "--name", target, "--cwd", str(folder), "--command", command, "--focus", "true")
         where = "a new workspace, %s" % target
+    colour = colour_for(desk, place, target, at_root)
+    if colour:
+        try:
+            ref = (spaces.get(target) or workspaces().get(target) or {}).get("id")
+        except DeskError:
+            ref = None
+        if ref:
+            set_colour(ref, colour)
     if a.front:
         bring_forward()
     print("opened %s: %s" % (name, where))
@@ -638,6 +692,28 @@ def cmd_workspace(desk: Desk, a) -> None:
                  start_command(a.agent or desk.cfg["agent"], desk.say_place(place), None)]
     cmux(*args)
     print("made the workspace %s" % name)
+
+
+def cmd_colour(desk: Desk, a) -> None:
+    """Each zone's open workspace in its colour from Settings › Zones, as the
+    status page's Settings asks when a colour changes. A zone named here with
+    no colour has its colour cleared. With no zone named, every zone with a
+    colour, and nothing cleared: a colour set by hand in cmux stays."""
+    colours = zone_colours(desk.ws)
+    unknown = [z for z in a.zones if z not in desk.zones()]
+    if unknown:
+        raise DeskError("no zone called %s" % ", ".join(unknown))
+    spaces = workspaces()
+    neutral = desk.workspace_for("neutral")
+    done = []
+    for zone in a.zones or sorted(colours):
+        name = desk.workspace_for(zone)
+        if name == neutral or name not in spaces:
+            continue
+        colour = colours.get(zone)
+        if set_colour(spaces[name]["id"], colour):
+            done.append("%s %s" % (name, colour.lower() if colour else "uncoloured"))
+    print("coloured %s" % ", ".join(done) if done else "no zone's workspace is open to colour")
 
 
 def cmd_end(desk: Desk, a) -> None:
@@ -946,6 +1022,10 @@ def parser() -> argparse.ArgumentParser:
     w.add_argument("--folder", help="start an assistant tab in this thread's or project's folder")
     w.add_argument("--agent", choices=cx.AGENTS)
     w.set_defaults(fn=cmd_workspace)
+
+    co = sub.add_parser("colour", help="each zone's workspace in its colour from Settings › Zones")
+    co.add_argument("zones", nargs="*", metavar="ZONE", help="only these; one with no colour is cleared")
+    co.set_defaults(fn=cmd_colour)
 
     e = sub.add_parser("end", help="check, then quit cmux without wrapping")
     e.add_argument("--yes", action="store_true")

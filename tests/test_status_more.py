@@ -607,7 +607,118 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        self.assertIn("if(lpChanged){lpChanged=false;host.postMessage({act:GarrickPrefs.request()})}", status.JS)
+        self.assertIn("if(lpChanged||zChanged){var q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+                      "if(zChanged)q.zones=zreq();", status.JS)
+
+
+class TestZoneOrder(StatusCase):
+    """The Threads card leads with the zone the graph shows (#72)."""
+
+    def test_each_zone_names_itself_and_the_graph_reorders_them(self):
+        html = self.page()
+        self.assertIn('<details class="zone tsort" id="zone-work" data-zone="Work" open>', html)
+        self.assertIn('<details class="zone tsort" id="zone-personal" data-zone="Personal" open>', html)
+        self.assertLess(html.index('data-zone="Personal"'), html.index('data-zone="Work"'))    # by name, as built
+        self.assertIn("function leadZone(z){", status.GRAPH_JS)
+        self.assertIn("leadZone(zsel);", status.GRAPH_JS.split("function leadZone")[1])          # on load
+        self.assertIn("st.set('garrick-graph-place',zsel);leadZone(zsel);", status.GRAPH_JS)    # on each change
+class TestSettingsRowLines(StatusCase):
+    """Settings (#73): a row's own grey line waits behind its section's "?", and is its tooltip meanwhile."""
+
+    def test_row_lines_hidden_until_explained(self):
+        html = self.page()
+        self.assertIn("#settings .setsec:not(.explained) :is(.launcher-choice,.setlink,.flagrow) small{display:none}", html)
+        self.assertIn("sec.classList.toggle('explained',!p.hidden)", html)
+        self.assertIn("r.title=m.textContent.trim()+(r.dataset.tip0?' '+r.dataset.tip0:'')", html)
+        self.assertIn("<small>", html[html.index('id="settings"'):])                     # the lines are all still there
+
+
+class TestZoneColours(StatusCase):
+    """Settings › Zones (#67): a colour and an icon per zone, on every label that names it."""
+
+    def save(self, zones):
+        write(self.root / "System" / "generated" / "status-settings.json", json.dumps({"zones": zones}))
+
+    def test_read_with_unknown_names_dropped(self):
+        self.assertEqual({}, status.zone_styles(self.root))
+        self.save({"Work": {"color": "teal", "icon": "briefcase"}, "Personal": {"color": "Mauve", "icon": "house"},
+                   "Other": {"color": "Plum", "icon": "unicorn"}, "Odd": "Teal"})
+        self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}, "Personal": {"icon": "house"}},
+                         status.zone_styles(self.root))
+        write(self.root / "System" / "generated" / "status-settings.json", "not json")
+        self.assertEqual({}, status.zone_styles(self.root))
+
+    def test_every_label_that_names_a_zone(self):
+        self.save({"Work": {"color": "Teal", "icon": "briefcase"}})
+        write(self.root / "Zones" / "Work" / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] Book the room\n")
+        html = self.page()
+        icon = status.zone_icon("briefcase")
+        self.assertIn('<h3 class="zc zc-teal">%sWork</h3>' % icon, html)                   # the Threads card
+        self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
+        self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
+        self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
+        self.assertIn('<b><a class="zc zc-teal" href=', html)                              # Open actions
+        self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
+        self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
+
+    def test_a_light_and_a_dark_ink_for_every_colour(self):
+        css = status.zone_css()
+        for name, (light, dark) in status.ZONE_COLOURS.items():
+            k = name.lower()
+            self.assertIn(":root .zc.zc-%s{color:var(--zc-%s)}" % (k, k), css)
+            self.assertEqual(1, css.count("--zc-%s:%s" % (k, light)), name)
+            self.assertEqual(2, css.count("--zc-%s:%s" % (k, dark)), name)        # the system's dark, and the page's own
+        self.assertIn('@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"]))', css)
+        self.assertIn(':root[data-theme="dark"]', css)
+        self.assertIn(status.zone_css(), self.page())
+
+    def test_each_ink_reads_against_its_ground(self):
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+            return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+        def ratio(a, b):
+            hi, lo = sorted((lum(a), lum(b)), reverse=True)
+            return (hi + .05) / (lo + .05)
+        for name, (light, dark) in status.ZONE_COLOURS.items():
+            for ground in ("#f4f3f0", "#fcfcfb"):                     # the page and a card, light
+                self.assertGreaterEqual(ratio(light, ground), 4.5, name)
+            for ground in ("#0d0d0d", "#1a1a19", "#211f1e"):          # the page, a card and a raised row, dark
+                self.assertGreaterEqual(ratio(dark, ground), 4.5, name)
+
+    def test_the_icons_are_drawn_in_the_text_colour(self):
+        self.assertEqual(12, len(status.ZONE_ICONS))
+        for name in status.ZONE_ICONS:
+            svg = status.zone_icon(name)
+            self.assertTrue(svg.startswith('<svg class="zi" viewBox="0 0 16 16" aria-hidden="true"'), name)
+            self.assertIn('stroke="currentColor"', svg)
+            self.assertNotRegex(svg, r"#[0-9A-Fa-f]{3,6}")
+        self.assertEqual("", status.zone_icon("unicorn"))
+
+    def test_the_settings_section(self):
+        self.save({"Work": {"color": "Teal", "icon": "briefcase"}})
+        html = self.page()
+        start = html.index('id="zone-settings"')
+        section = html[start:html.index("</section>", start)]
+        self.assertIn('<section class="setsec apponly" id="zone-settings">', html)           # the app saves it; a browser cannot
+        self.assertEqual(2, section.count('class="zrow"'))
+        self.assertIn('<div class="zrow" data-zone="Work"><span class="zprev zc zc-teal">', section)
+        self.assertIn('<option value="Teal" selected>Teal</option>', section)
+        self.assertIn('<option value="briefcase" selected>Briefcase</option>', section)
+        work = section[section.index('data-zone="Work"'):]
+        colours = re.search(r'<select class="zcol"[^>]*>(.*?)</select>', work).group(1)
+        self.assertEqual(["No colour"] + list(status.ZONE_COLOURS), re.findall(r">([^<]+)</option>", colours))
+        # what the eye picks from: the button shows the choice, the palettes show every colour and icon
+        self.assertIn('aria-label="Colour for Work"><i class="zsw" style="background:var(--zc-teal)"></i><span>Teal</span></button>', work)
+        palette = re.search(r'<span class="zpop zp-col" hidden[^>]*>(.*?)</span></span>', work).group(1)
+        self.assertEqual([""] + list(status.ZONE_COLOURS), re.findall(r'data-v="([^"]*)"', palette))
+        self.assertEqual(len(status.ZONE_COLOURS), palette.count('class="zsw" style="background:var(--zc-'))
+        icons_pop = re.search(r'<span class="zpop zp-ico" hidden[^>]*>(.*?)</span></span>', work).group(1)
+        self.assertEqual([""] + list(status.ZONE_ICONS), re.findall(r'data-v="([^"]*)"', icons_pop))
+        self.assertEqual(len(status.ZONE_ICONS), icons_pop.count('<svg class="zi"'))
+        icons = json.loads(re.search(r'id="zone-icons">(.*?)</script>', section).group(1))
+        self.assertEqual(set(status.ZONE_ICONS), set(icons))
+        self.assertIn("function zreq(){", status.JS)
 
 
 if __name__ == "__main__":

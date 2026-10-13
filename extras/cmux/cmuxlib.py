@@ -32,6 +32,9 @@ from typing import Dict, List, Optional, Tuple
 sys.dont_write_bytecode = True
 
 AGENTS = ("claude", "codex")          # the two assistants desk opens, wraps and resumes
+# cmux's named workspace colours, which `workspace-action set-color` takes by name.
+COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
+           "Purple", "Magenta", "Rose", "Brown", "Charcoal")
 NEUTRAL_TOPS = ("Wikis", "System")
 APP_ID = "com.cmuxterm.app"
 APP_BINARIES = ("/Applications/cmux.app/Contents/Resources/bin/cmux",

@@ -6,8 +6,12 @@
 // folder instead: the thread's name, for a tab desk opened. Each tab's dot is
 // blue while its agent is working, orange when it has an unread notification,
 // grey otherwise. cmux reports every finished turn as needs_input, so that
-// state alone does not colour it. Click a workspace to select it, a tab to
-// focus it. Garrick's mark sits on top; clicking it opens the status page.
+// state alone does not colour it. A workspace with a colour in cmux has a bar
+// of it before its name: the desk sets a zone's workspace to the colour its
+// zone has in the status page's Settings. The zone's icon is not drawn, since
+// a sidebar cannot read the file that names it. Click a workspace to select
+// it, a tab to focus it. Garrick's mark sits on top; clicking it opens the
+// status page.
 //
 // Install: copy or link this file to ~/.config/cmux/sidebars/garrick.js, then
 // `cmux sidebar select garrick`. Right-click the sidebar button to go back to
@@ -38,6 +42,12 @@ function tabName(t) {
 function dot(w, t) {
   const working = (w.agents || []).some((a) => a.panelId === t.id && a.status === "working");
   return working ? BLUE : t.hasUnread ? "orange" : GREY;
+}
+
+// The workspace's colour as cmux holds it, for the bar before its name; clear
+// when it has none, so every name still starts at the same place.
+function swatch(w) {
+  return /^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/.test(w.color || "") ? w.color : "clear";
 }
 
 // The workspace root, from the first folder of a tab inside a zone, a wiki or
@@ -78,6 +88,7 @@ sidebar(() =>
     ForEach({ items: () => data.workspaces() ?? [], key: (w) => w.id }, (w) =>
       VStack({ spacing: 1 }, [
         HStack({ spacing: 6 }, [
+          Capsule().fill(() => swatch(w())).frame({ width: 4, height: 14 }),
           Text(() => w().title).weight("semibold").lineLimit(1),
           Spacer(),
           Text(() => (w().unread > 0 ? String(w().unread) : "")).font("caption").color("orange"),

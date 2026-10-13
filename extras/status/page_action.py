@@ -41,8 +41,12 @@ zone's repository, as the skills would:
                 folders, notes and commits.
     settings    which ways to open a thread the page offers, and which one
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
-                "default": "cmux"}, written to System/generated/status-settings.json,
-                so the app and Obsidian agree. It commits nothing
+                "default": "cmux"}; each zone's colour and icon: {"zones":
+                {"Work": {"color": "Teal", "icon": "briefcase"}}}; or both.
+                Written to System/generated/status-settings.json, so the app,
+                Obsidian and the cmux desk agree. It commits nothing. A zone
+                whose colour changed has its open cmux workspace recoloured,
+                when the cmux extra and cmux are there
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
@@ -100,8 +104,12 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
+# What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
+ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
+                "Purple", "Magenta", "Rose", "Brown", "Charcoal")
+ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default",
+LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default", "zones",
           "name", "party", "kind", "to", "confirm", "commit")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
@@ -558,23 +566,39 @@ def run_job(req: dict, folder: Path = None) -> str:
 
 
 def save_settings(ws: Path, req: dict) -> str:
-    """Settings › Opening a thread, kept in one file so every viewer of the page
-    agrees: {"launchers": {"note": true, "cmux": false, …}, "default": "note"}.
-    Every known way is written, on or off; status.py reads the file when it
-    builds the page. A way it does not list is on, as on the page."""
-    on, default = req.get("launchers"), req.get("default", "note")
-    if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
-        raise Refused("not a list of ways to open a thread")
-    unknown = [k for k in on if k not in LAUNCHERS]
-    if unknown:
-        raise Refused("no way to open a thread called %s" % ", ".join(repr(k) for k in unknown))
-    if default not in LAUNCHERS:
-        raise Refused("no way to open a thread called %r" % (default,))
-    if default != "note" and default not in on:
-        raise Refused("the default must be one of the ways switched on")
+    """Settings, kept in one file so every viewer of the page agrees, and the
+    cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
+    "default": "note", "zones": {"Work": {"color": "Teal", "icon": "briefcase"}}}.
+    A request carries the launchers, the zones or both, and what it leaves
+    out stays as saved. Every known way is written, on or off; status.py
+    reads the file when it builds the page. A way it does not list is on, as
+    on the page."""
+    if "launchers" not in req and "zones" not in req:
+        raise Refused("nothing to save")
+    new = {}
+    if "launchers" in req:
+        on, default = req.get("launchers"), req.get("default", "note")
+        if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
+            raise Refused("not a list of ways to open a thread")
+        unknown = [k for k in on if k not in LAUNCHERS]
+        if unknown:
+            raise Refused("no way to open a thread called %s" % ", ".join(repr(k) for k in unknown))
+        if default not in LAUNCHERS:
+            raise Refused("no way to open a thread called %r" % (default,))
+        if default != "note" and default not in on:
+            raise Refused("the default must be one of the ways switched on")
+        new = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
+    if "zones" in req:
+        new["zones"] = zone_styles(ws, req["zones"])
     path = ws / "System" / "generated" / "status-settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    before = data.get("zones") if isinstance(data.get("zones"), dict) else {}
+    data.update(new)
     fd, tmp = tempfile.mkstemp(prefix=".status-settings-", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -583,7 +607,49 @@ def save_settings(ws: Path, req: dict) -> str:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+    if "zones" in new:
+        colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
+        changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
+        if changed:
+            recolour(ws, changed)
     return "Settings saved"
+
+
+def zone_styles(ws: Path, given) -> dict:
+    """Settings › Zones as the page sends it, every zone it lists with what
+    was chosen: {"Work": {"color": "Teal", "icon": "briefcase"}, "Personal": {}}.
+    A zone no longer in the workspace, from a page built before it was
+    renamed, is left out; so is a zone with neither, which looks as it did."""
+    if not isinstance(given, dict):
+        raise Refused("not a colour and an icon for each zone")
+    out = {}
+    for zone, style in given.items():
+        if not isinstance(style, dict) or set(style) - {"color", "icon"}:
+            raise Refused("not a colour and an icon for %s" % zone)
+        colour, icon = style.get("color") or "", style.get("icon") or ""
+        if colour not in ZONE_COLOURS + ("",):
+            raise Refused("no colour called %r" % (colour,))
+        if icon not in ZONE_ICONS + ("",):
+            raise Refused("no icon called %r" % (icon,))
+        try:
+            zone_dir(ws, zone)
+        except Refused:
+            continue
+        chosen = {k: v for k, v in (("color", colour), ("icon", icon)) if v}
+        if chosen:
+            out[zone] = chosen
+    return out
+
+
+def recolour(ws: Path, zones) -> None:
+    """Best effort: the cmux workspace of each zone whose colour changed takes
+    the new one, or loses it. Without the cmux extra, without cmux or with it
+    not running, nothing happens, and a tab takes its colour when the desk
+    next opens one."""
+    try:
+        run_desk(ws, "colour", "--", *zones, timeout=20)
+    except (Refused, OSError):
+        pass
 
 
 # ---- cmux tabs: open, close, startup, shutdown -------------------------------

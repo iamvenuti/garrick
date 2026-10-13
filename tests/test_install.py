@@ -431,7 +431,7 @@ class SourceVersionTest(unittest.TestCase):
         self.installer.VERSION_FILE = folder / "VERSION"
 
     def test_a_download_reads_its_version_file(self):
-        self.point_at(self.base / "garrick-main", "# Which Garrick\ncommit: 3f9c2ab\ndate: 2026-10-04\n")
+        self.point_at(self.base / "garrick", "# Which Garrick\ncommit: 3f9c2ab\ndate: 2026-10-04\n")
         self.assertEqual({"commit": "3f9c2ab", "date": "2026-10-04", "from": "download"},
                          self.installer.source_version())
 

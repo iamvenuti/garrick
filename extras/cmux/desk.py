@@ -269,10 +269,22 @@ class Desk:
                     for h in hits)))
             return None
 
+        def heard(place: dict) -> str:
+            """The `spoken` form in its note, for a name that does not say how it
+            is said. Matched alongside the name, as the threads skill resolves."""
+            form = getattr(self.lib, "spoken_of", None)
+            if form is None or place["kind"] not in ("thread", "project"):
+                return ""
+            return norm(form(place["path"]))
+
+        def by_form(place: dict) -> bool:
+            form = heard(place)
+            return bool(form) and form == q
+
         steps = [
-            [p for p in places if p["kind"] == "thread" and norm(p["name"]) == q],
+            [p for p in places if p["kind"] == "thread" and (norm(p["name"]) == q or by_form(p))],
             [p for p in places if p["kind"] == "thread" and norm(p["project"] + p["name"]) == q],
-            [p for p in places if p["kind"] != "thread" and norm(p["name"]) == q],
+            [p for p in places if p["kind"] != "thread" and (norm(p["name"]) == q or by_form(p))],
         ]
         for hits in steps:
             found = pick(hits)
@@ -281,7 +293,8 @@ class Desk:
         if not q:
             raise DeskError("say which thread or project")
         labels = [(norm(p["name"]), p) for p in places] + \
-                 [(norm(p["project"] + p["name"]), p) for p in places if p["kind"] == "thread"]
+                 [(norm(p["project"] + p["name"]), p) for p in places if p["kind"] == "thread"] + \
+                 [(form, p) for p in places for form in [heard(p)] if form]
         hits = unique(p for k, p in labels if q in k)
         if not hits and len(q) >= 2:
             hits = unique(p for p in places if initials(p["name"]).startswith(q))

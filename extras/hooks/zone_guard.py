@@ -20,7 +20,9 @@ It is a hook for two harnesses, reading the event on stdin:
 - Codex, on PreToolUse for apply_patch. Codex hooks cannot ask, so the first
   edit to a place is refused with the same sentence, which tells the
   assistant to check with you; a second edit there in the same session goes
-  through.
+  through. Nothing about your answer is recorded: the refusal is a reminder
+  to ask, not a gate. Without a session id there is nowhere to remember the
+  place, so the message says the edit cannot be retried here.
 
 The session's home is $CLAUDE_PROJECT_DIR when Claude Code sets it, which
 stays where the session started however often a command changes folder;
@@ -244,9 +246,15 @@ def decide(event):
     if event.get("tool_name") == "apply_patch":
         remember(event, ["/".join(p) for p, _ in fresh])
         reason = ("Zone guard: this session was opened in %s, and this edit is in %s. "
-                  "Ask the user whether it belongs in this session before going on; "
-                  "that place's own session is usually the right one. If they say yes, "
-                  "make the same edit again and it will go through." % (say(home), where))
+                  "The edit was stopped so that you ask the user whether it belongs in "
+                  "this session; that place's own session is usually the right one. The "
+                  "guard records nothing about their answer: this is a reminder of scope, "
+                  "not a gate." % (say(home), where))
+        if memory_file(event):
+            reason += " Once they agree, make the same edit again and it will go through."
+        else:
+            reason += (" It also has nowhere to remember this place, so the edit cannot be "
+                       "retried in this session: the work belongs in that place's own session.")
         decision = "deny"
     else:
         reason = ("Zone guard: this session was opened in %s, and this edit is in %s. "

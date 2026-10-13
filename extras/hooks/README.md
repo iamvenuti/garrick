@@ -23,6 +23,8 @@ How each assistant stops:
 
 It covers the file-editing tools: Edit, Write, MultiEdit and NotebookEdit in Claude Code, and `apply_patch` in Codex. A shell command that writes a file isn't covered; the rule in `System/rules.md` is what covers that. A scheduled job runs with `GARRICK_HEADLESS=1` and has nobody to ask, so the guard stands aside for it. It reads files only and never calls a model. If anything goes wrong inside it, the edit goes through: a broken guard never stops work.
 
+**What is and isn't enforced.** The guard is a reminder, not a gate: it records nothing about your answer. In Claude Code the question reaches you through the assistant's own permission prompt, which is where your consent belongs. On the Codex path the refusal only makes the assistant ask you, and a second attempt at the same place goes through whether you said yes or not. A shell command that writes a file isn't covered, and a guard that breaks lets the edit through. So what the guard gives you is the question, asked at the moment it matters; what keeps the work in the right place is the rule in `System/rules.md` and your answer to it.
+
 ## Load it
 
 It needs `python3`. Point both assistants at `extras/hooks/zone_guard.py` in the Garrick download you keep. When you replace that download with a newer one, the next session uses the new copy. The update command does not change it, since it lives outside your workspace, but its report names the guard when the copy your settings point at differs from the newer Garrick's.

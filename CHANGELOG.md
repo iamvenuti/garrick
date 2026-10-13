@@ -4,6 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-13
+
+Each zone can have a colour and an icon, carried into cmux; the Threads card leads with the zone the graph shows; and Settings is short enough to take in at a glance.
+
+### Added
+
+- A colour and an icon for each zone, chosen in a new *Zones* section of the status page's Settings, in the Mac app and in Obsidian. Each choice is a button that opens a palette: the colours as dots, cmux's sixteen named colours, each with a light and a dark shade that reads against the page; the icons drawn as they will appear, a fixed set of twelve. On the page the colour goes on the text of every label that names the zone, the Threads card's headings, the Todo tab's buttons, the *Open actions* and *Inboxes* cards and the graph's place drop-down, with the icon before the name; backgrounds, bars and dots keep their meaning. Saved beside the apps in `System/generated/status-settings.json`. With the cmux extra, desk colours a zone's workspace when it opens a tab in one of its projects or threads, a colour changed in Settings recolours the zone's open workspace, and `desk colour` does it by hand; the sidebar shows a workspace's colour before its name. A zone with neither looks as before. See [Settings](docs/extras/status-page.md#settings). ([#67](https://github.com/iamvenuti/garrick/issues/67))
+
+### Changed
+
+- The Threads card leads with the zone the graph shows, and the other zones follow by name. Everything, a wiki, or a page built without the graph lists them all by name. ([#72](https://github.com/iamvenuti/garrick/issues/72))
+- Settings is shorter. Each section's explanation, and each row's own line, is behind a "?" beside its heading, which shows or hides them in place; until then a row's line is its tooltip. *Menu bar* is one aligned form, names on the left and every control in one column, with a hotkey's *Clear* as an × inside its field. *Reset view* is a button at the foot of Settings, and the *View* section is gone. The sections sit in two columns when the window is wide enough, so the whole dialog fits in about one window height. *About Garrick* has a new row, *Report a bypass privately*, and *Report a bug* and *Report a wrong refusal* remind you to use invented names when you point at them. ([#73](https://github.com/iamvenuti/garrick/issues/73))
+
 ## [0.23.0] - 2026-10-13
 
 A project kept in `System/` can have its actions in a zone's `Todo.md`, each opening with its thread's link, with no warning from the check and a link on the Todo tab.

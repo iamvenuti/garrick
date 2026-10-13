@@ -1040,7 +1040,7 @@ ACTION_TOAST = 4
 ACTION_WHY = 10
 ACTION_LOST = 960
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
-              "delete", "undo")
+              "delete", "undo", "interrupt")
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}

@@ -201,7 +201,9 @@ class TestWorkOnThePage(StatusCase):
         self.assertLess(longest, status.ACTION_LOST)
 
     def test_the_zone_verbs_are_the_ones_page_action_locks(self):
-        self.assertEqual(set(page_action.VERBS) - {"run", "settings", "check-name"}, set(status.ZONE_VERBS))
+        # back, stack and unstack touch only the interruption stack, never a zone's git.
+        unzoned = {"run", "settings", "check-name", "back", "stack", "unstack"}
+        self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 
     def test_every_button_that_commits_goes_through_it(self):

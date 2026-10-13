@@ -2757,7 +2757,25 @@ def zone_css() -> str:
             '.gzw{position:relative;display:inline-flex;align-items:center}.gzw .gzi{position:absolute;left:9px;display:flex;pointer-events:none}\n'
             '.gzw .gzi .zi{margin:0}.gzw.hasi .gzsel{padding-left:27px}\n'
             '.zrow{display:flex;align-items:center;gap:8px;padding:5px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n' % (light, dark, dark, rules))
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n'
+            '.zpick{position:relative}.zbtn{display:inline-flex;align-items:center;gap:6px;min-width:112px;font:inherit;font-size:12px;'
+            'color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 9px;cursor:pointer}'
+            '.zbtn .zi{margin:0}.zbtn:focus-visible,.zcell:focus-visible{outline:2px solid var(--accent,#2D6CDF);outline-offset:1px}\n'
+            '.zsw{display:inline-block;width:14px;height:14px;border-radius:50%%;flex:none}'
+            '.znone{display:inline-block;width:14px;height:14px;border-radius:50%%;border:1.5px dashed var(--muted);box-sizing:border-box;flex:none}\n'
+            '.zpop{position:absolute;right:0;top:calc(100%% + 4px);z-index:5;display:grid;gap:4px;padding:8px;background:var(--surface);'
+            'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18)}.zpop[hidden]{display:none}'
+            '.zp-col{grid-template-columns:repeat(6,26px)}.zp-ico{grid-template-columns:repeat(5,30px)}\n'
+            '.zcell{display:flex;align-items:center;justify-content:center;height:26px;padding:0;border:1px solid transparent;'
+            'border-radius:7px;background:none;color:var(--ink);cursor:pointer}.zp-ico .zcell{height:30px}.zp-ico .zcell .zi{margin:0;width:16px;height:16px}'
+            '.zcell:hover{background:var(--line)}.zcell.on{border-color:var(--ink)}\n' % (light, dark, dark, rules))
+
+
+def zone_swatch(colour: Optional[str]) -> str:
+    """A dot in a colour's ink for the theme in use; a dashed ring for none."""
+    if colour not in ZONE_COLOURS:
+        return '<i class="zsw znone"></i>'
+    return '<i class="zsw" style="background:var(--zc-%s)"></i>' % colour.lower()
 
 
 def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
@@ -2770,12 +2788,27 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
         return '<option value="">%s</option>' % none + "".join(
             '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(n[:1].upper() + n[1:]))
             for n in names)
-    rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>'
-                   '<select class="menu-style zcol" aria-label="Colour for %s">%s</select>'
-                   '<select class="menu-style zico" aria-label="Icon for %s">%s</select></div>'
-                   % (E(z), zone_class(z, styles), zone_name(z, styles), E(z),
-                      options("No colour", ZONE_COLOURS, styles.get(z, {}).get("color")), E(z),
-                      options("No icon", ZONE_ICONS, styles.get(z, {}).get("icon")))
+    def pick(kind, zone, chosen):
+        # A button that shows the choice, over a palette that shows every one:
+        # a select's list cannot draw a colour or an icon. The select stays,
+        # hidden, as what the row reads and saves.
+        if kind == "col":
+            names, label = ZONE_COLOURS, "Colour"
+            face = zone_swatch(chosen) + '<span>%s</span>' % (E(chosen) if chosen else "No colour")
+            cells = '<button type="button" class="zcell" data-v="" title="No colour">%s</button>' % zone_swatch("") + "".join(
+                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n), zone_swatch(n)) for n in names)
+        else:
+            names, label = ZONE_ICONS, "Icon"
+            face = (zone_icon(chosen) or '<i class="znone"></i>') + '<span>%s</span>' % (E(chosen[:1].upper() + chosen[1:]) if chosen else "No icon")
+            cells = '<button type="button" class="zcell" data-v="" title="No icon"><i class="znone"></i></button>' + "".join(
+                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n[:1].upper() + n[1:]), zone_icon(n)) for n in names)
+        return ('<span class="zpick"><select class="z%s" hidden aria-hidden="true" tabindex="-1">%s</select>'
+                '<button type="button" class="zbtn" aria-haspopup="true" aria-expanded="false" aria-label="%s for %s">%s</button>'
+                '<span class="zpop zp-%s" hidden role="group" aria-label="%s for %s">%s</span></span>'
+                % (kind, options("No " + label.lower(), names, chosen), label, E(zone), face, kind, label, E(zone), cells))
+    rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>%s%s</div>'
+                   % (E(z), zone_class(z, styles), zone_name(z, styles),
+                      pick("col", z, styles.get(z, {}).get("color")), pick("ico", z, styles.get(z, {}).get("icon")))
                    for z in zones)
     return ('<section class="setsec apponly" id="zone-settings"><h3>Zones</h3><p class="hint">A colour and an icon for each zone, '
             'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
@@ -3321,6 +3354,17 @@ function zpick(r,k){return r.querySelector(k).value}
 sd.querySelectorAll('.zrow').forEach(function(r){r.querySelectorAll('select').forEach(function(s){s.onchange=function(){zChanged=true;
 var c=zpick(r,'.zcol'),p=r.querySelector('.zprev');p.className='zprev'+(c?' zc zc-'+c.toLowerCase():'');p.innerHTML=zIcons[zpick(r,'.zico')]||'';
 p.appendChild(document.createTextNode(r.dataset.zone))}})});
+/* Each choice is a button over a palette: the palette sets the hidden select and runs its onchange */
+function zface(b,s){var v=s.value,o=s.options[s.selectedIndex],ico=s.classList.contains('zico');
+b.innerHTML=(ico?(zIcons[v]||'<i class="znone"></i>'):(v?'<i class="zsw" style="background:var(--zc-'+v.toLowerCase()+')"></i>':'<i class="zsw znone"></i>'))+'<span></span>';
+b.lastChild.textContent=o?o.textContent:''}
+function zshut(except){sd.querySelectorAll('.zpop').forEach(function(p){if(p!==except&&!p.hidden){p.hidden=true;p.previousSibling.setAttribute('aria-expanded','false')}})}
+sd.querySelectorAll('.zpick').forEach(function(k){var s=k.querySelector('select'),b=k.querySelector('.zbtn'),p=k.querySelector('.zpop');
+function mark(){p.querySelectorAll('.zcell').forEach(function(c){c.classList.toggle('on',c.dataset.v===s.value)})}mark();
+b.onclick=function(e){e.stopPropagation();zshut(p);p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden){mark();var on=p.querySelector('.zcell.on')||p.querySelector('.zcell');on.focus()}};
+p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
+p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()}}});
+sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
 function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled

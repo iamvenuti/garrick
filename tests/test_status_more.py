@@ -683,8 +683,17 @@ class TestZoneColours(StatusCase):
         self.assertIn('<div class="zrow" data-zone="Work"><span class="zprev zc zc-teal">', section)
         self.assertIn('<option value="Teal" selected>Teal</option>', section)
         self.assertIn('<option value="briefcase" selected>Briefcase</option>', section)
-        colours = re.search(r'aria-label="Colour for Work">(.*?)</select>', section).group(1)
+        work = section[section.index('data-zone="Work"'):]
+        colours = re.search(r'<select class="zcol"[^>]*>(.*?)</select>', work).group(1)
         self.assertEqual(["No colour"] + list(status.ZONE_COLOURS), re.findall(r">([^<]+)</option>", colours))
+        # what the eye picks from: the button shows the choice, the palettes show every colour and icon
+        self.assertIn('aria-label="Colour for Work"><i class="zsw" style="background:var(--zc-teal)"></i><span>Teal</span></button>', work)
+        palette = re.search(r'<span class="zpop zp-col" hidden[^>]*>(.*?)</span></span>', work).group(1)
+        self.assertEqual([""] + list(status.ZONE_COLOURS), re.findall(r'data-v="([^"]*)"', palette))
+        self.assertEqual(len(status.ZONE_COLOURS), palette.count('class="zsw" style="background:var(--zc-'))
+        icons_pop = re.search(r'<span class="zpop zp-ico" hidden[^>]*>(.*?)</span></span>', work).group(1)
+        self.assertEqual([""] + list(status.ZONE_ICONS), re.findall(r'data-v="([^"]*)"', icons_pop))
+        self.assertEqual(len(status.ZONE_ICONS), icons_pop.count('<svg class="zi"'))
         icons = json.loads(re.search(r'id="zone-icons">(.*?)</script>', section).group(1))
         self.assertEqual(set(status.ZONE_ICONS), set(icons))
         self.assertIn("function zreq(){", status.JS)

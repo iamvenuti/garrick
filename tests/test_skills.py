@@ -301,6 +301,21 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, prep, needle)
         self.assertNotIn("from each page's actions table", prep)
 
+    def test_setup_offers_the_allowance_and_changes_no_settings(self):
+        """Like its other per-assistant offers: only where it applies, and it says
+        how rather than doing it."""
+        text = (SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
+        bullets = flat(text).split("- Only if ")
+        offer = [b for b in bullets if "install.py --allowlist" in b]
+        self.assertEqual(1, len(offer), bullets)
+        self.assertTrue(offer[0].startswith("the assistant is Claude Code and the probe found no commands allowed"),
+                        offer[0])
+        self.assertIn("never change the settings for them", offer[0])
+        for word in ("status", "diff", "log", "add", "commit"):
+            self.assertIn(word, offer[0])
+        for word in ("push", "reset", "checkout"):
+            self.assertNotIn(word, offer[0])
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",

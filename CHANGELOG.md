@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Each zone's colour and icon, and the *Opening a thread* choices, are kept in `System/garrick-settings.json`, which is committed with your workspace, instead of `System/generated/status-settings.json`, which is rebuilt output and never committed. Deleting `System/generated/` and rebuilding now keeps every choice, and so does a workspace restored from its own history. The page's build, its `settings` request, the Mac app and the cmux desk read them in one place, `garrick_lib`'s `preferences()`, and Settings tells you which file holds them. A workspace that saved them under the old name has them copied across the next time the page is built, or the next time Settings saves: the choice in the file written later wins, zone by zone, so nothing newer is replaced, and running it again changes nothing. The check warns while the settings file is not in the workspace's history. ([#81](https://github.com/iamvenuti/garrick/issues/81))
+
 ## [0.24.0] - 2026-10-13
 
 Each zone can have a colour and an icon, carried into cmux; the Threads card leads with the zone the graph shows; and Settings is short enough to take in at a glance.

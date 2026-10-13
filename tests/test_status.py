@@ -152,7 +152,8 @@ class TestGraph(StatusCase):
         a, b = self.node(data, "Market Sizing"), self.node(data, "Birch kick-off")
         self.assertIn([min(a, b), max(a, b)], data["edges"])
 
-    def test_names_and_kinds_only(self):
+    @mock.patch.object(status, "desk_ready", return_value=False)      # the desk's keys depend on cmux; tested with a fake one in test_status_more
+    def test_names_and_kinds_only(self, _desk):
         html = self.page()
         data = graph_data(html)
         kinds = dict((i, k) for i, k in data["kinds"])
@@ -160,7 +161,7 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp", "dk"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertNotIn("Decisions.", html)
 
     def test_mail_pages_have_a_kind_of_their_own(self):
@@ -559,11 +560,12 @@ class TestThreadCards(StatusCase):
         self.assertNotIn("data-tip", block)
         self.assertEqual({("Acme Review", "Pricing"), ("Birch Entry", "Market Sizing")}, set(cards(html)))
 
-    def test_a_card_carries_names_tags_dates_status_and_phrases_only(self):
+    @mock.patch.object(status, "desk_ready", return_value=False)      # the desk's keys depend on cmux; tested with a fake one in test_status_more
+    def test_a_card_carries_names_tags_dates_status_and_phrases_only(self, _desk):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg", "pa", "dk"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg", "pa"}, set(card))
         self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
@@ -880,7 +882,8 @@ class TestPreviewFeatures(StatusCase):
         self.assertIn("'style' in a?'':'none'", status.MENU_SETTINGS_JS)    # an app without the panel never shows the choice
         self.assertIn(".nohost .apponly{display:none}", status.SETTINGS_CSS)   # a browser has no menu bar to offer
 
-    def test_what_the_menu_lists(self):
+    @mock.patch.object(status, "desk_ready", return_value=False)      # the desk's keys depend on cmux; tested with a fake one in test_status_more
+    def test_what_the_menu_lists(self, _desk):
         work = self.root / "Zones" / "Work"
         write(work / "Acme Review" / "Threads" / "Renewal" / "Renewal.md", thread_note("Acme Review", "Renewal", "acme", status="parked"))
         write(work / "Solo" / "Solo.md", project_hub("Work", "Solo", "acme"))
@@ -893,13 +896,13 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual(["Acme Review", "Birch Entry", "Solo"], list(projects))           # projects first, by name
         acme = projects["Acme Review"]
         self.assertEqual(["Pricing"], [t["n"] for t in acme["t"]])                          # parked threads stay out
-        self.assertEqual({"n", "w", "u", "t", "dk"}, set(acme))                             # names and links, no figures
+        self.assertEqual({"n", "w", "u", "t"}, set(acme))                             # names and links, no figures
         self.assertIn("Acme%20Review", acme["u"])                                           # the project's own hub
         self.assertEqual("Acme Review", acme["w"])
         self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
         self.assertEqual("Solo", projects["Solo"]["w"])
         pricing = acme["t"][0]
-        self.assertEqual({"n", "w", "u", "dk"}, set(pricing))
+        self.assertEqual({"n", "w", "u"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it

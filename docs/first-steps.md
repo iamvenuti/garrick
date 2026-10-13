@@ -38,12 +38,12 @@ Both should print a version. Python must be 3.9 or later.
 
 ## 3. Download and install Garrick
 
-On the [Garrick repository page](https://github.com/iamvenuti/garrick), choose **Code**, then **Download ZIP**. Safari usually unzips the download for you, so look in Downloads for a folder called **garrick-main**. If you see only `garrick-main.zip`, double-click it to unzip it. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
+Download [garrick.zip](https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip), which is always Garrick's newest release. Safari usually unzips the download for you, so look in Downloads for a folder called **garrick**. If you see only `garrick.zip`, double-click it to unzip it. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
 
 For self-guided setup, run these commands in Terminal. If Finder gave the downloaded folder a different name, type `cd ` and drag that folder into Terminal to supply its path.
 
 ```sh
-cd ~/Downloads/garrick-main
+cd ~/Downloads/garrick
 python3 install.py
 ```
 
@@ -55,7 +55,7 @@ You can close Terminal when installation finishes. The assistant runs the tools 
 
 ## 4. Open the workspace in your app
 
-Follow just the section for the assistant you chose. Select the **installed workspace**, normally `~/Garrick`, rather than the downloaded `garrick-main` source folder.
+Follow just the section for the assistant you chose. Select the **installed workspace**, normally `~/Garrick`, rather than `~/Downloads/garrick`, the source folder you installed from.
 
 ### Using Claude
 

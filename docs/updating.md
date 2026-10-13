@@ -17,11 +17,11 @@ On a Mac whose `python3` comes from python.org, run it as `/usr/bin/python3 Syst
 
 `release.py update` asks GitHub for the newest release, downloads it into a temporary folder outside your workspace, and runs that release's own update on your workspace. The temporary folder is removed afterwards. When the workspace already runs the newest release, it says so and downloads nothing. `--tag v0.16.0` takes a release other than the newest, but never one older than the workspace runs: that would take your files back. A workspace that follows `main` ahead of its release is updated from `main` by hand, below.
 
-To do the same by hand, get the newer Garrick yourself: download the ZIP from the [latest release](https://github.com/iamvenuti/garrick/releases/latest) and unzip it, or `git pull` in your clone. Keep it outside your workspace: an update refuses to run from a Garrick inside the workspace it would update. Then, from your workspace's folder:
+To do the same by hand, get the newer Garrick yourself: download [garrick.zip](https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip) from the latest release and unzip it, or `git pull` in your clone. Keep it outside your workspace: an update refuses to run from a Garrick inside the workspace it would update. Then, from your workspace's folder:
 
 ```sh
-python3 ~/Downloads/garrick-main/install.py --update .            # what would change; changes nothing
-python3 ~/Downloads/garrick-main/install.py --update . --apply    # do it
+python3 ~/Downloads/garrick/install.py --update .            # what would change; changes nothing
+python3 ~/Downloads/garrick/install.py --update . --apply    # do it
 ```
 
 A workspace from before `release.py` has to take that way once.

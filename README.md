@@ -64,6 +64,8 @@ cd ~/garrick-source
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 
+That clone gives you `main`, the branch under development; [Desktop first steps](docs/first-steps.md) installs the newest release instead.
+
 Open `~/Garrick-demo` in your chosen app or terminal assistant and say “what's open”. The [first-session guide](docs/first-session.md#try-the-wall-with-fictional-data) gives you a short wall demonstration. The demo builder writes only inside that target folder; your assistant keeps its own session data separately. [Try it safely](docs/try-it-safely.md) explains removal.
 
 When you want your own, run `python3 install.py` in `~/garrick-source`. It asks one question at a time and writes into a new folder, `~/Garrick` by default. [Getting started](docs/getting-started.md) is the command reference.

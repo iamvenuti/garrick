@@ -6,7 +6,7 @@ Requires macOS, Python 3.9 or later, and git. If `git --version` fails, run `xco
 
 ## Install
 
-From the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP or `~/garrick-source` for a clone:
+From the folder Garrick came in, `~/Downloads/garrick` for the download or `~/garrick-source` for a clone:
 
 ```sh
 python3 install.py

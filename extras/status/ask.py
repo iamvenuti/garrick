@@ -133,6 +133,17 @@ def page_action():
     return _PA
 
 
+_PREFS = None
+
+
+def prefs():
+    """prefs.py, beside this file: the one way to the choices the page keeps."""
+    global _PREFS
+    if _PREFS is None:
+        _PREFS = _load("garrick_prefs", HERE / "prefs.py")
+    return _PREFS
+
+
 def flag_on(ws: Path) -> bool:
     return page_action().flag_on(ws, FLAG)
 
@@ -150,14 +161,10 @@ def desk_ready(ws: Path) -> bool:
 
 def launcher_on(ws: Path, app: str) -> bool:
     """Whether Settings › Opening a thread has this app switched on, read as
-    status.py's shared_launchers() reads System/generated/status-settings.json:
-    {name: true or false}, a name left out being on, or a list of the names
-    on. No settings saved, or none that read: every app is on."""
-    try:
-        data = json.loads((ws / "System" / "generated" / "status-settings.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return True
-    on = data.get("launchers") if isinstance(data, dict) else None
+    status.py's shared_launchers() reads the choices the workspace keeps
+    (prefs.FILE): {name: true or false}, a name left out being on, or a list
+    of the names on. Nothing saved, or nothing that reads: every app is on."""
+    on = prefs().read(ws).get("launchers")
     if isinstance(on, dict):
         return on.get(app, True) is True
     if isinstance(on, list):

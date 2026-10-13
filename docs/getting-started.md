@@ -104,9 +104,13 @@ Open a terminal in the workspace and start your assistant: `cd ~/Garrick`, then 
 
 - **"Open Acme pricing"** reads that thread's Resume here block and answers in two sentences: where it stands, and the next action.
 - **"Wrap Acme pricing"** (or "close X") rewrites that block so it describes now, adds a dated entry below it, moves any open actions into the zone's `Todo.md`, and commits the change in that zone's repository.
-- **"Close for the day"** does this for every thread touched today, one commit each.
+- **"Close for the day"** does this for every thread touched today, one commit each, and names any thread still held (below), which it leaves held.
+- **"I'm being interrupted"** (or "hold this", "hold Acme pricing") is the thirty-second version, for when something cuts in. It asks three short questions, one at a time: where you are exactly, the very next step, and anything only in your head, which you can skip. The answers go into the Resume here block, stamped with the time, the zone commits, and the thread goes on a stack of held threads. The thread stays active.
+- **"Back"** (or "where was I") opens the thread on top of that stack and reads the three answers back; **"back to Acme pricing"** takes that one from anywhere in it. Interruptions nest, so the last one held comes back first. With nothing held, it says so and offers the thread you worked on last. Wrapping, parking or finishing a thread takes it off the stack.
 
 A thread that was just created has no history, so opening it only tells you its Resume here block is still blank. Do some work, wrap it, and the next open has something to say.
+
+The stack is kept by the [status page](extras/status-page.md)'s `page_action.py`, in `System/generated/interrupted.json`, which is never committed: losing it loses only the order, since the answers are in the thread notes. Without that extra, "I'm being interrupted" still saves the three answers, and "back" offers the thread you worked on last.
 
 The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`.
 

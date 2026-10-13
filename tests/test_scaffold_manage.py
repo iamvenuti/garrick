@@ -308,6 +308,34 @@ class TestFromThePage(ManageCase):
             with self.assertRaises(pa.Refused):
                 pa.act(self.root, bad)
 
+    def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
+        """Interrupted (#32) on the template's own thread note: the rows filled,
+        the rest left as scaffolded; a rename moves the entry, a deletion
+        drops it, and the stack file is never committed anywhere."""
+        for thread in ("Pricing", "Freight"):
+            self.act(verb="interrupt", zone="Work", project="Acme", thread=thread, where="Mid-sheet",
+                     next="Fill in row 14", keep="The rate is a guess")
+        note = self.work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
+        text = note.read_text()
+        self.assertRegex(text, r"### Resume here\n\n\*\*Interrupted \d\d:\d\d, \d{1,2} [A-Z][a-z]+ \d{4}\.\*\* Mid-sheet\n\n\| \| \|\n")
+        self.assertIn("| Next action | Fill in row 14 |\n| Keep in mind | The rate is a guess |\n| Waiting on | <who, or nobody> |", text)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal")
+        stack = lambda: [(e["project"], e["thread"], e["file"]) for e in self.act(verb="stack")["stack"]]
+        self.assertEqual([("Acme", "Freight", "Acme/Threads/Freight/Freight.md"),
+                          ("Acme", "Renewal", "Acme/Threads/Renewal/Renewal.md")], stack())
+        self.act(verb="rename", zone="Work", project="Acme", to="Apex")
+        self.assertEqual([("Apex", "Freight", "Apex/Threads/Freight/Freight.md"),
+                          ("Apex", "Renewal", "Apex/Threads/Renewal/Renewal.md")], stack())
+        self.act(verb="delete", zone="Work", project="Apex", thread="Freight")         # a dry run drops nothing
+        self.assertEqual(2, len(stack()))
+        self.act(verb="delete", zone="Work", project="Apex", thread="Freight", confirm="Freight")
+        self.assertEqual("Back to Apex, Renewal.", self.act(verb="back")["say"].split(" Interrupted")[0])
+        self.assertTrue((self.root / "System" / "generated" / "interrupted.json").is_file())
+        root = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=str(self.root),
+                              capture_output=True, text=True, env=self.env).stdout
+        self.assertNotIn("interrupted.json", root)
+
 
 if __name__ == "__main__":
     unittest.main()

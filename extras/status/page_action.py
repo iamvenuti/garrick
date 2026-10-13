@@ -39,6 +39,19 @@ zone's repository, as the skills would:
                 These six run System/tools/scaffold.py and nothing else, so
                 the page, the voice command and the script make the same
                 folders, notes and commits.
+    interrupt   a thread's place saved when something cuts in: {"zone", "project",
+                "thread"} or {"zone", "file"}, with "where", "next", and "keep"
+                and "by" if given; written into its Resume here block as a
+                wrap would, committed, then pushed on the interruption stack
+    back        the top of the stack taken off, or the thread named taken out;
+                the note is only read: the reply adds its "path" and its three
+                lines, "where", "next" and "keep". An empty stack says so and
+                offers the most recent live thread, as "offer"
+    stack       what is on it, top first, as "stack"; it changes nothing
+    unstack     a thread, or all of a project, taken off it without reading
+                it back: {"zone", "project", "thread"?}, for a wrap, park,
+                finish or deletion done by the assistant. Park, rename and
+                delete here keep the stack in step themselves
     settings    which ways to open a thread the page offers, and which one
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
                 "default": "cmux"}; each zone's colour and icon: {"zones":
@@ -75,7 +88,8 @@ the fields a verb reads are written, the text of a new line cut short, so
 nothing else a request carries reaches the log. The host hands the request
 and the reply to the page (window.GarrickActed), which moves a parked or woken
 row at once, and rebuilds the page after every request. The reply is one line
-of JSON: {"ok": true|false, "say": "…"}. Standard library only.
+of JSON: {"ok": true|false, "say": "…"}, and for back and stack what they
+read. Standard library only.
 """
 
 from __future__ import annotations
@@ -102,7 +116,8 @@ except ImportError:             # not on Windows, where the status app does not 
 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
-         "new-project", "new-thread", "check-name", "rename", "delete", "undo")
+         "new-project", "new-thread", "check-name", "rename", "delete", "undo",
+         "interrupt", "back", "stack", "unstack")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -471,7 +486,10 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
                           "name the project to park all of it")
     status = "parked" if req["verb"] == "park" else "active"
     with zone_lock(zone):
-        return park_note(zone, note, parts, is_thread, status, today)
+        said = park_note(zone, note, parts, is_thread, status, today)
+        if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
+            drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
+        return said
 
 
 def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str, today: dt.date) -> str:
@@ -490,21 +508,413 @@ def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str
     fm = re.sub(r"(?m)^status:.*$", "status: " + status, fm) if re.search(r"(?m)^status:", fm) else fm + "\nstatus: " + status
     fm = re.sub(r"(?m)^updated:.*$", "updated: " + today.isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
         else fm + "\nupdated: " + today.isoformat()
-    body = text[m.end():]
-    entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, "Parked." if status == "parked" else "Woken.")
-    resume = body.find("### Resume here")
-    rule = body.find("\n---\n", resume) if resume >= 0 else -1
-    play = re.search(r"(?m)^## State of play[ \t]*\n", body) if resume < 0 else None
-    at = rule + 5 if rule >= 0 else play.end() if play else -1
-    if at >= 0:     # newest first: below the Resume here block's rule, or, with no block, under ## State of play
-        rest = body[at:]
-        lead = re.match(r"\n*(?:<Dated entries[^\n]*>\n)?\n*", rest)
-        at += lead.end()
-        body = body[:at] + entry + "\n\n" + body[at:]
+    body = dated_entry(text[m.end():], today, "Parked." if status == "parked" else "Woken.")
     note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
     name = "%s, %s" % (parts[0], parts[2]) if is_thread else parts[0]
     commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
     return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
+
+
+def dated_entry(body: str, today: dt.date, said: str) -> str:
+    """The body with a dated entry added, newest first: below the Resume here
+    block's rule, or, with no block, under ## State of play. Neither: as it was."""
+    entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, said)
+    resume = body.find("### Resume here")
+    rule = body.find("\n---\n", resume) if resume >= 0 else -1
+    play = re.search(r"(?m)^## State of play[ \t]*\n", body) if resume < 0 else None
+    at = rule + 5 if rule >= 0 else play.end() if play else -1
+    if at >= 0:
+        rest = body[at:]
+        lead = re.match(r"\n*(?:<Dated entries[^\n]*>\n)?\n*", rest)
+        at += lead.end()
+        body = body[:at] + entry + "\n\n" + body[at:]
+    return body
+
+
+# ---- interrupted and back: the stack of threads left mid-thought ----------------
+# "I'm being interrupted" writes the thread's place into its Resume here block
+# and commits it, as a wrap would, then puts the thread on top of a stack;
+# "back" takes it off again. The stack is System/generated/interrupted.json,
+# never committed: it spans zones, and the thread notes hold everything in it
+# but the order, {"stack": [{"zone", "project", "thread", "file", "at"}, …]},
+# top first, `file` from the zone's folder, `thread` null for a project that
+# is its own single thread. Wrapping, parking, finishing or deleting a thread
+# takes it off; renaming one moves its entry with it.
+STACK_FILE = ("System", "generated", "interrupted.json")
+ANSWER_MAX = 400
+BY_MAX = 120
+ROW_RE = r"(?m)^\|\s*%s\s*\|.*$"
+
+
+def stack_path(ws: Path) -> Path:
+    return ws.joinpath(*STACK_FILE)
+
+
+def stack_lock():
+    """One change to the stack at a time. Taken after a zone's lock, never before."""
+    return held("interrupted.lock", busy="the interruption stack is busy")
+
+
+def load_stack(ws: Path, prune: bool = True) -> list:
+    """The entries whose note is still there, top first; every entry, with
+    `prune` off, for a rename to move. A missing or unreadable file is an
+    empty stack: losing it loses the order, not the notes."""
+    try:
+        data = json.loads(stack_path(ws).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    entries = data.get("stack") if isinstance(data, dict) else None
+    out = []
+    for e in entries if isinstance(entries, list) else []:
+        if not (isinstance(e, dict) and all(isinstance(e.get(k), str) for k in ("zone", "project", "file"))):
+            continue
+        if prune:
+            try:
+                live_note(zone_dir(ws, e["zone"]), e["file"])
+            except Refused:
+                continue
+        if not any((e["zone"], e["file"]) == (o["zone"], o["file"]) for o in out):
+            out.append(e)
+    return out
+
+
+def stacked_note(ws: Path, e: dict) -> Path:
+    return (ws / "Zones" / e["zone"] / e["file"]).resolve()
+
+
+def save_stack(ws: Path, entries: list) -> None:
+    path = stack_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".interrupted-", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"stack": entries}, indent=1, ensure_ascii=False) + "\n")
+        os.replace(tmp, str(path))
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def restack(ws: Path, change, prune: bool = True) -> list:
+    """Apply `change`, a function from the entries to the new entries, under
+    the stack's lock; the entries it left out. Saved only when the file
+    changes, which also clears out an entry whose note has gone."""
+    with stack_lock():
+        saved = load_stack(ws, prune=False)
+        before = load_stack(ws) if prune else saved
+        after = change(list(before))
+        if after != saved:
+            save_stack(ws, after)
+    return [e for e in before if e not in after]
+
+
+def drop_from_stack(ws: Path, zone: str, prefix: str) -> list:
+    """Every entry for a note at or under `prefix`, a note or a project's
+    folder from the zone: a thread parked or deleted, or all of a project."""
+    under = lambda e: e["zone"] == zone and (e["file"] == prefix or e["file"].startswith(prefix.rstrip("/") + "/"))
+    return restack(ws, lambda entries: [e for e in entries if not under(e)])
+
+
+def rename_in_stack(ws: Path, zone: str, project: str, thread: Optional[str], to: str) -> None:
+    """A renamed project or thread keeps its place on the stack, under its new name."""
+    def moved(e):
+        if e["zone"] != zone or e.get("project") != project:
+            return e
+        if thread is None:
+            rest = e["file"].split("/", 1)[1]
+            return dict(e, project=to, file="%s/%s" % (to, to + ".md" if rest == project + ".md" else rest))
+        if e.get("thread") != thread:
+            return e
+        return dict(e, thread=to, file="%s/Threads/%s/%s.md" % (project, to, to))
+    restack(ws, lambda entries: [moved(e) for e in entries], prune=False)     # the old paths are gone by now
+
+
+def resume_note(ws: Path, req: dict) -> tuple:
+    """The note that holds a thread's resume point: (zone, note, its parts
+    from the zone, the name to say). A thread note, by its path {"zone",
+    "file"} or by name {"zone", "project", "thread"}; or the hub of a project
+    that is one thread, with no thread named."""
+    zone = zone_dir(ws, req.get("zone"))
+    if req.get("file") is None and req.get("project") is not None:
+        folder, _ = cmux_folder(ws, req)
+        note = live_note(zone, (folder / (folder.name + ".md")).relative_to(zone).as_posix())
+    else:
+        note = live_note(zone, req.get("file"))
+    parts = note.relative_to(zone).parts
+    is_thread = len(parts) == 4 and parts[1] == "Threads" and parts[2] + ".md" == parts[3]
+    is_hub = len(parts) == 2 and parts[0] + ".md" == parts[1]
+    if not (is_thread or is_hub):
+        raise Refused("only a thread note, or a single-thread project's hub, holds a resume point")
+    if is_hub and any((zone / parts[0] / "Threads").glob("*/*.md")):
+        raise Refused("%s has threads; name the one" % parts[0])
+    return zone, note, parts, ("%s, %s" % (parts[0], parts[2]) if is_thread else parts[0])
+
+
+def entry_for(zone: Path, parts: tuple, when: dt.datetime) -> dict:
+    return {"zone": zone.name, "project": parts[0], "thread": parts[2] if len(parts) == 4 else None,
+            "file": "/".join(parts), "at": when.strftime("%Y-%m-%dT%H:%M")}
+
+
+def answer(req: dict, key: str, required: bool = True, most: int = ANSWER_MAX) -> Optional[str]:
+    """One answer, on one line: white space run together, at most `most` characters."""
+    value = req.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str):
+        raise Refused("no %s given" % key if value is None else "not an answer: %s" % key)
+    value = " ".join(value.split())
+    if not value and not required:
+        return None
+    if not value:
+        raise Refused("no %s given" % key)
+    if len(value) > most:
+        raise Refused("%s is longer than %d characters; one line will do" % (key, most))
+    return value
+
+
+def cell(text: str) -> str:
+    return text.replace("|", "\\|")
+
+
+def resume_block(body: str):
+    """Where the Resume here block's lines are in the body: (start, end), the
+    lines between its heading and the next rule or heading. None without one."""
+    head = re.search(r"(?m)^###[ \t]+Resume here[ \t]*\n", body)
+    if not head:
+        return None
+    end = re.compile(r"(?m)^(?:---[ \t]*$|#{1,6}[ \t])").search(body, head.end())
+    return head.end(), end.start() if end else len(body)
+
+
+def saved_lines(note: Path) -> dict:
+    """The three lines an interruption saves, read back from the note: where it
+    stands, the next action and what to keep in mind, each None when missing."""
+    try:
+        body = note.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {"where": None, "next": None, "keep": None}
+    span = resume_block(body)
+    block = body[span[0]:span[1]] if span else ""
+    lead = []
+    for line in block.splitlines():
+        if line.strip().startswith("|") or (lead and not line.strip()):
+            break
+        if line.strip():
+            lead.append(line.strip())
+
+    def row(name):
+        m = re.search(r"(?m)^\|\s*%s\s*\|(.*)\|\s*$" % name, block)
+        return m.group(1).strip().replace("\\|", "|") if m else None
+    return {"where": " ".join(lead).replace("**", "") or None, "next": row("Next action"), "keep": row("Keep in mind")}
+
+
+def interrupt(ws: Path, req: dict, now: dt.datetime) -> str:
+    """"I'm being interrupted": the three answers written into the Resume here
+    block as a wrap would, committed in the zone, then the thread on top of the
+    stack, moved there if it was already on it. {"zone", "project", "thread"}
+    or {"zone", "file"}, with "where" and "next", and "keep" and "by" if given."""
+    zone, note, parts, name = resume_note(ws, req)
+    where, step = answer(req, "where"), answer(req, "next")
+    keep, by = answer(req, "keep", required=False), answer(req, "by", required=False, most=BY_MAX)
+    with zone_lock(zone):
+        interrupt_note(zone, note, parts, name, where, step, keep, by, now)
+        entry = entry_for(zone, parts, now)
+        restack(ws, lambda entries: [entry] + [e for e in entries if stacked_note(ws, e) != note.resolve()])
+        held_now = len(load_stack(ws))
+    return "Held %s at %s%s" % (name, now.strftime("%H:%M"), "" if held_now == 1 else "; %d on the stack" % held_now)
+
+
+def interrupt_note(zone: Path, note: Path, parts: tuple, name: str, where: str, step: str, keep: Optional[str],
+                   by: Optional[str], now: dt.datetime) -> None:
+    """The edit and its commit, under the zone's lock. Where it stands becomes
+    the stamped answer; Next action and Keep in mind take theirs, a Keep in
+    mind skipped is left as it was, or says nothing where there was none.
+    The other rows stay. `status:` stays active: an interruption is no park."""
+    before = note.read_bytes()
+    try:
+        text = before.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Refused("the note is not UTF-8 text")
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        raise Refused("the note has no frontmatter")
+    fm = m.group(1)
+    status = re.search(r"(?m)^status:\s*(\S+)", fm)
+    status = status.group(1).lower() if status else "active"
+    hub = zone / parts[0] / (parts[0] + ".md")
+    parked_project = len(parts) == 4 and hub.is_file() and re.search(
+        r"(?m)^status:\s*parked\s*$", hub.read_text(encoding="utf-8", errors="replace").split("\n---", 2)[0])
+    if status == "done":
+        raise Refused("%s is finished" % name)
+    if status == "parked" or parked_project:
+        raise Refused("%s is parked; wake it first" % name)
+    fm = re.sub(r"(?m)^updated:.*$", "updated: " + now.date().isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
+        else fm + "\nupdated: " + now.date().isoformat()
+    body = text[m.end():]
+    span = resume_block(body)
+    if not span:
+        raise Refused("%s has no Resume here block to write in; wrap it instead" % name)
+    lines = body[span[0]:span[1]].split("\n")
+    stamp = "**Interrupted %s, %d %s %d.** %s" % (now.strftime("%H:%M"), now.day, MONTHS[now.month - 1], now.year, where)
+    first = next((i for i, x in enumerate(lines) if x.strip()), None)
+    if first is None or lines[first].lstrip().startswith("|"):
+        at = 0 if first is None else first
+        lines[at:at] = ["", stamp, ""] if at == 0 else [stamp, ""]
+    else:
+        last = first
+        while last + 1 < len(lines) and lines[last + 1].strip() and not lines[last + 1].lstrip().startswith("|"):
+            last += 1
+        lines[first:last + 1] = [stamp]
+    rows = [i for i, x in enumerate(lines) if x.lstrip().startswith("|")]
+    if not rows:            # a block with no table yet: the two rows, under an empty header
+        at = lines.index(stamp) + 1
+        lines[at:at] = ["", "| | |", "|---|---|"]
+        rows = [at + 1, at + 2]
+    set_row(lines, rows, "Next action", step, after=None)
+    rows = [i for i, x in enumerate(lines) if x.lstrip().startswith("|")]
+    if keep is not None or not any(re.match(ROW_RE % "Keep in mind", lines[i]) for i in rows):
+        set_row(lines, rows, "Keep in mind", keep or "nothing", after="Next action")
+    body = body[:span[0]] + "\n".join(lines) + body[span[1]:]
+    body = dated_entry(body, now.date(), "Interrupted at %s%s." % (now.strftime("%H:%M"), ", by " + by if by else ""))
+    note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
+    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200])
+
+
+def set_row(lines: list, rows: list, name: str, value: str, after: Optional[str]) -> None:
+    """A row of the block's table set to `value`; a missing one goes in after
+    the row named `after`, or at the table's end."""
+    row = "| %s | %s |" % (name, cell(value))
+    for i in rows:
+        if re.match(ROW_RE % re.escape(name), lines[i]):
+            lines[i] = row
+            return
+    prior = next((i for i in rows if after and re.match(ROW_RE % re.escape(after), lines[i])), rows[-1])
+    lines.insert(prior + 1, row)
+
+
+def back(ws: Path, req: dict) -> dict:
+    """"Back": the top of the stack taken off, or, with a thread named, that
+    one taken out from wherever it is, the others left in order. The note is
+    read, never written: the reply carries its three lines and its path, for
+    the caller to open it and read them back. An empty stack says so, and
+    offers the live thread updated most recently."""
+    named = req.get("file") is not None or req.get("project") is not None
+    if named:
+        zone, note, parts, name = resume_note(ws, req)
+    taken = []
+
+    def take(entries):
+        if not entries:
+            return entries
+        at = 0 if not named else next((i for i, e in enumerate(entries) if stacked_note(ws, e) == note.resolve()), None)
+        if at is None:
+            return entries
+        taken.append(entries[at])
+        return entries[:at] + entries[at + 1:]
+    restack(ws, take)
+    if not taken:
+        if named:
+            raise Refused("%s is not on the stack; open it instead" % name)
+        latest = latest_thread(ws)
+        if latest is None:
+            return {"say": "Nothing is on the stack, and no thread is live.", "empty": True}
+        return {"say": "Nothing is on the stack. The most recent live thread is %s." % latest["name"], "empty": True,
+                "offer": latest}
+    e = taken[0]
+    name = e["project"] if not e.get("thread") else "%s, %s" % (e["project"], e["thread"])
+    lines = saved_lines(stacked_note(ws, e))
+    said = ["Back to %s." % name]
+    if lines["where"]:
+        said.append(sentence(lines["where"]))
+    if lines["next"]:
+        said.append(sentence("Next: " + lines["next"]))
+    if lines["keep"] and lines["keep"].lower().rstrip(". ") not in ("nothing", "none"):
+        said.append(sentence("Keep in mind: " + lines["keep"]))
+    out = dict(e, path=("Zones/%s/%s" % (e["zone"], e["file"])), name=name, left=len(load_stack(ws)), **lines)
+    out["say"] = " ".join(said)
+    out["logged"] = said[0]         # the log names the thread; what was saved stays in the note
+    return out
+
+
+def sentence(text: str) -> str:
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
+def show_stack(ws: Path) -> dict:
+    """What is on the stack, top first, each entry with its path and the next
+    action its note saved. Read only: close for the day lists it and leaves it."""
+    entries = load_stack(ws)
+    out = []
+    for e in entries:
+        name = e["project"] if not e.get("thread") else "%s, %s" % (e["project"], e["thread"])
+        out.append(dict(e, name=name, path="Zones/%s/%s" % (e["zone"], e["file"]),
+                        next=saved_lines(stacked_note(ws, e))["next"]))
+    if not out:
+        return {"say": "Nothing is on the stack.", "stack": []}
+    return {"say": "%d on the stack: %s." % (len(out), "; ".join(e["name"] for e in out)), "stack": out}
+
+
+def unstack(ws: Path, req: dict) -> str:
+    """A thread off the stack without reading it back: what a wrap, a park,
+    a finish or a deletion done by the assistant runs. {"zone", "project",
+    "thread"?}: with no thread, every thread of the project. The names need
+    not lead anywhere any more, so a thread already deleted can still go.
+    Not there is no fault."""
+    zone = zone_dir(ws, req.get("zone"))
+    names = [req.get("project")] + ([req["thread"]] if req.get("thread") not in (None, "", "-") else [])
+    if any(not isinstance(n, str) or not n or n.startswith((".", "_")) or "/" in n or n in ("..", "Threads")
+           for n in names):
+        raise Refused("not a project or thread")
+    gone = drop_from_stack(ws, zone.name, "%s/Threads/%s" % tuple(names) if len(names) == 2 else names[0])
+    name = ", ".join(names)
+    return ("%s is off the stack" if gone else "%s was not on the stack") % name
+
+
+def latest_thread(ws: Path) -> Optional[dict]:
+    """The live thread updated most recently, as "what's open" orders them:
+    `updated:`, then the note's last change. A project with no threads is its
+    own; a parked project holds every thread in it parked."""
+    best = None
+    for zone in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
+        if not zone.is_dir() or zone.name.startswith((".", "_")):
+            continue
+        for project in sorted(zone.iterdir()):
+            hub = project / (project.name + ".md")
+            if project.name.startswith((".", "_")) or project.name in SKIP or project.name == "Inbox" or not hub.is_file():
+                continue
+            hub_fm = front(hub)
+            if hub_fm.get("status") in ("done", "parked"):
+                continue
+            notes = [t / (t.name + ".md") for t in sorted((project / "Threads").glob("*"))
+                     if not t.name.startswith((".", "_")) and (t / (t.name + ".md")).is_file()]
+            for note in notes or [hub]:
+                fm = hub_fm if note == hub else front(note)
+                if fm.get("status") in ("done", "parked"):
+                    continue
+                key = (fm.get("updated", ""), note.stat().st_mtime)
+                if best is None or key > best[0]:
+                    thread = note.stem if note != hub else None
+                    best = (key, {"zone": zone.name, "project": project.name, "thread": thread,
+                                  "file": note.relative_to(zone).as_posix(),
+                                  "path": note.relative_to(ws).as_posix(),
+                                  "name": project.name if thread is None else "%s, %s" % (project.name, thread)})
+    return best[1] if best else None
+
+
+def front(note: Path) -> dict:
+    """A note's `status:` and `updated:`, lower-cased status, as listing reads them."""
+    try:
+        text = note.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    m = re.match(r"\A---\n(.*?)\n---", text, re.S)
+    out = {}
+    for key in ("status", "updated"):
+        found = re.search(r"(?m)^%s:[ \t]*(\S*)" % key, m.group(1)) if m else None
+        if found:
+            out[key] = found.group(1).lower() if key == "status" else found.group(1)
+    return out
+# ---- end of interrupted and back ------------------------------------------------
 
 
 def job_label(name, folder: Path = None):
@@ -886,9 +1296,16 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
     if verb == "rename":
-        return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+        said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+        if not check:               # its place on the interruption stack follows it
+            rename_in_stack(ws, z, field(req, "project"), thread, field(req, "to"))
+        return said
     confirm = field(req, "confirm", required=False)
-    return scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
+    said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
+    if confirm:
+        project = field(req, "project")
+        drop_from_stack(ws, z, "%s/Threads/%s" % (project, thread) if thread else project)
+    return said
 
 
 def commit_new(zone: Path, folder: Path, message: str) -> None:
@@ -904,8 +1321,9 @@ def commit_new(zone: Path, folder: Path, message: str) -> None:
         raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
 
 
-def act(ws: Path, req, today=None) -> str:
-    """Carry out one request, or raise Refused."""
+def act(ws: Path, req, today=None, now=None):
+    """Carry out one request, or raise Refused. What to say, or, for back
+    and stack, a reply whose "say" comes with what the caller reads back."""
     if not isinstance(req, dict) or req.get("verb") not in VERBS + CMUX_VERBS:
         raise Refused("unknown action")
     if req["verb"] in CMUX_VERBS:
@@ -917,6 +1335,15 @@ def act(ws: Path, req, today=None) -> str:
         return save_settings(ws, req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
+    if req["verb"] == "interrupt":
+        now = now or dt.datetime.now().replace(second=0, microsecond=0)
+        return interrupt(ws, req, dt.datetime.combine(today, now.time()) if today else now)
+    if req["verb"] == "back":
+        return back(ws, req)
+    if req["verb"] == "stack":
+        return show_stack(ws)
+    if req["verb"] == "unstack":
+        return unstack(ws, req)
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
@@ -929,7 +1356,7 @@ def main(argv=None) -> int:
     ap.add_argument("--workspace", required=True)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
-    req = None
+    req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
             raise Refused("not a Garrick workspace")
@@ -937,12 +1364,17 @@ def main(argv=None) -> int:
             req = json.loads(sys.stdin.read())
         except ValueError:
             raise Refused("not a request")
-        out = {"ok": True, "say": act(ws, req)}
+        done = act(ws, req)
+        if isinstance(done, dict):
+            logged = done.pop("logged", None)
+            out = dict({"ok": True}, **done)
+        else:
+            out = {"ok": True, "say": done}
     except Refused as e:
         out = {"ok": False, "say": str(e)}
     except Exception as e:          # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
-    audit(req, out["ok"], out["say"])
+    audit(req, out["ok"], logged or out["say"])
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1
 

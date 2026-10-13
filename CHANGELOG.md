@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- Projects and threads can keep the names the work already has. The one check that decided three things now asks three questions: what can be stored as a folder, what may stand as a name, and how a name is said. A name takes letters and digits anywhere, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, so Q4 Planning, ISO 27001 and Birch & Co are names; an underscore, a comma, a full stop outside an acronym, and anything a folder could not hold or a synced folder would strip, are not. A name that does not say how it is said carries the form to hear for it in its note's frontmatter, `spoken: fourth quarter planning`, which `scaffold.py --spoken` writes and which a request matches alongside the name itself; without one the scaffold still makes the project or thread and asks for the form, and `check.py` warns while the note has none. A digit is now heard as its word, so Q4 Planning and Q3 Planning are told apart, and where two siblings would be heard as one another, by name or by spoken form, the script asks which was meant instead of choosing. Zone names are as they were, strictly sayable, since a zone has no note to carry a spoken form. Nothing has to be renamed. ([#82](https://github.com/iamvenuti/garrick/issues/82))
+
 ## [0.24.0] - 2026-10-13
 
 Each zone can have a colour and an icon, carried into cmux; the Threads card leads with the zone the graph shows; and Settings is short enough to take in at a glance.

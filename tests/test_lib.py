@@ -58,32 +58,111 @@ class TestFrontmatter(unittest.TestCase):
             self.assertEqual({}, lib.parse_frontmatter(Path(tmp) / "missing.md"))
 
 
-class TestSpeakable(unittest.TestCase):
-    def test_good_names(self):
-        for name in ("Work", "Acme Review", "Birch & Co", "O'Neill Pricing", "Go-to-market", "Café Opening",
-                     "Harbour Summit 2027", "Summit 2026 Booth"):
-            self.assertEqual((True, ""), lib.is_speakable(name), name)
+class TestPathSafe(unittest.TestCase):
+    """What can be stored as a folder: strict, and about storage alone."""
 
-    def test_bad_names(self):
+    def test_safe(self):
+        for name in ("Work", "Acme Review", "Birch & Co", "Q4 Planning", "ISO 27001", "U.S. Expansion",
+                     "Acme.Review", "pricing_v2", "2026", "x" * lib.NAME_LIMIT):
+            self.assertEqual((True, ""), lib.is_path_safe(name), name)
+
+    def test_unsafe(self):
         cases = {
             "": "empty",
             "   ": "empty",
-            "_project": "underscore",
-            "Q3 Plan": "digit",
-            "2026-03 Review": "digit",
-            "Acme 26": "digit",
-            "2026": "no letters",
-            "Plan 20261": "digit",
-            "pricing_v": "underscore",
-            "Acme.Review": "'.'",
-            "Acme/Birch": "'/'",
-            "&": "no letters",
             " Acme": "space",
+            "Acme ": "space",
+            "_project": "underscore",
+            ".hidden": "hides the folder",
+            "..": "hides the folder",
+            "U.S.": "ends with a full stop",
+            "Acme/Birch": "'/'",
+            "Acme\\Birch": "'\\'",
+            "Acme: Review": "':'",
+            "Why?": "'?'",
+            "Acme\tReview": "cannot be in a folder name",
+            "NUL": "reserves",
+            "com1.md": "reserves",
+            "x" * (lib.NAME_LIMIT + 1): "longer than",
         }
         for name, reason in cases.items():
-            ok, why = lib.is_speakable(name)
+            ok, why = lib.is_path_safe(name)
             self.assertFalse(ok, name)
             self.assertIn(reason, why, name)
+
+
+class TestDisplayName(unittest.TestCase):
+    """What may stand as a name: ordinary business names, and no more."""
+
+    def test_names(self):
+        for name in ("Work", "Acme Review", "Birch & Co", "O'Neill Pricing", "Go-to-market", "Café Opening",
+                     "Harbour Summit 2027", "Summit 2026 Booth", "Q4 Planning", "ISO 27001",
+                     "2026-03 Review", "Acme 26", "Plan 20261", "U.S. Expansion", "U.S.A Entry"):
+            self.assertEqual((True, ""), lib.is_display_name(name), name)
+
+    def test_not_names(self):
+        cases = {
+            "pricing_v2": "underscore",
+            "Acme.Review": "full stop belongs inside an acronym",
+            "Acme, Pricing": "','",
+            "Acme (new)": "'('",
+            "Acme  Review": "double space",
+            "2026": "no letters",
+            "&": "no letters",
+            "Acme/Birch": "'/'",
+        }
+        for name, reason in cases.items():
+            ok, why = lib.is_display_name(name)
+            self.assertFalse(ok, name)
+            self.assertIn(reason, why, name)
+
+
+class TestSayable(unittest.TestCase):
+    """Whether the writing says how the name is said, or it needs a `spoken` form."""
+
+    def test_says_itself(self):
+        for name in ("Work", "Acme Review", "Birch & Co", "Go-to-market", "Harbour Summit 2027",
+                     "Summit 2026 Booth"):
+            self.assertEqual((True, ""), lib.is_sayable(name), name)
+
+    def test_needs_a_spoken_form(self):
+        for name, reason in {"Q4 Planning": "digit that is not a year", "ISO 27001": "digit that is not a year",
+                             "Acme 26": "digit that is not a year",
+                             "U.S. Expansion": "said letter by letter"}.items():
+            ok, why = lib.is_sayable(name)
+            self.assertFalse(ok, name)
+            self.assertIn(reason, why, name)
+
+    def test_what_is_not_a_name_is_not_sayable_either(self):
+        self.assertFalse(lib.is_sayable("pricing_v2")[0])
+
+
+class TestSpokenResolution(unittest.TestCase):
+    """What a heard name can resolve to, and when two siblings are one sound."""
+
+    def test_forms(self):
+        self.assertEqual(["Q4 Planning"], lib.spoken_forms("Q4 Planning"))
+        self.assertEqual(["Q4 Planning", "fourth quarter planning"],
+                         lib.spoken_forms("Q4 Planning", "fourth quarter planning"))
+        self.assertEqual(["Pricing"], lib.spoken_forms("Pricing", "  pricing "))
+
+    def test_the_form_in_a_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "Q4 Planning"
+            write(folder / "Q4 Planning.md", "---\ntitle: Q4 Planning\nspoken: fourth quarter planning\n---\n")
+            self.assertEqual("fourth quarter planning", lib.spoken_of(folder))
+            self.assertEqual("", lib.spoken_of(Path(tmp) / "Pricing"))
+
+    def test_a_clash_through_a_spoken_form(self):
+        self.assertIsNone(lib.spoken_clash("Q4 Planning", "Q3 Planning"))
+        self.assertEqual(("fourth quarter planning", "Fourth Quarter Planning"),
+                         lib.spoken_clash("Q4 Planning", "Fourth Quarter Planning", "fourth quarter planning"))
+
+    def test_a_digit_is_heard_as_its_word(self):
+        self.assertEqual("qfourplanning", lib.normalise_name("Q4 Planning"))
+        self.assertFalse(lib.sounds_alike("Q4 Planning", "Q3 Planning"))
+        self.assertFalse(lib.sounds_alike("Launch 2026", "Launch 2027"))
+        self.assertTrue(lib.sounds_alike("Q4 Planning", "Q Four Planning"))
 
 
 class TestSoundsAlike(unittest.TestCase):

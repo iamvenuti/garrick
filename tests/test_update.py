@@ -652,6 +652,19 @@ class TestAllowRules(Case):
         self.apply()
         self.assertEqual("{ not json", (self.root / self.SETTINGS).read_text())
 
+    def test_never_written_through_a_link(self):
+        rules = self.recorded()
+        self.write_allow(rules + [self.RETIRED], record=rules + [self.RETIRED])
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "settings.json").write_text((self.root / self.SETTINGS).read_text())
+        (self.root / self.SETTINGS).unlink()
+        os.symlink(str(elsewhere / "settings.json"), str(self.root / self.SETTINGS))
+        result = self.apply()
+        self.assertEqual([(self.SETTINGS, "a symbolic link stands on the way to it")], result["skipped"])
+        self.assertIn(self.RETIRED, json.loads((elsewhere / "settings.json").read_text())
+                      ["permissions"]["allow"])
+
     def test_changes_not_committed_are_skipped_never_committed(self):
         rules = self.recorded()
         self.write_allow(rules + [self.RETIRED], record=rules + [self.RETIRED])

@@ -627,6 +627,8 @@ def commit_files(root, files, message):
     whatever was written put back."""
     rels = sorted(files)
     for rel in rels:
+        if install.lib().link_on_the_way(root, root / rel) is not None:
+            return "a symbolic link stands on the way to it"
         if uncommitted(root, rel):
             return "it has changes not committed; commit or discard them, then run again"
     before = {}

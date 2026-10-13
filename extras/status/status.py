@@ -3211,6 +3211,16 @@ justify-content:center;font-size:20px;line-height:1;border:0;background:none;col
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
 dialog.settings .setsec{margin-top:14px}dialog.settings .setsec:first-of-type{margin-top:0}
 .launcher-choice{display:flex;align-items:center;gap:12px;padding:3px 0;font-size:13px}
+/* Settings › Menu bar as one form: the name on the left, every control in one column on the right, of one width,
+   a tick at that column's left edge as a field starts there, and a hotkey's Clear as an × inside its field */
+#menu-settings .launcher-row{display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px;align-items:center;min-height:32px}
+#menu-settings .launcher-row>.launcher-choice:only-child{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px}
+#menu-settings .launcher-choice:only-child>span{grid-column:1;grid-row:1}#menu-settings .launcher-choice:only-child>input{grid-column:2;grid-row:1;justify-self:start;margin:0}
+#menu-settings .menu-style{width:100%}#menu-settings .hotkey{position:relative;display:block;width:100%}
+#menu-settings .hotkey input{width:100%;box-sizing:border-box;padding-right:26px}
+#menu-settings .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
+#menu-settings .hotkey .act::after{content:"\00d7";font-size:15px}#menu-settings .hotkey .act:hover{background:var(--line);color:var(--ink)}
+#menu-settings .hotkey input:placeholder-shown+.act{display:none}
 .launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
 .launcher-choice input:disabled+span{color:var(--muted)}
 .notes{margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:6px 10px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}

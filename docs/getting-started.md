@@ -104,15 +104,19 @@ Open a terminal in the workspace and start your assistant: `cd ~/Garrick`, then 
 
 - **"Open Acme pricing"** reads that thread's Resume here block and answers in two sentences: where it stands, and the next action.
 - **"Wrap Acme pricing"** (or "close X") rewrites that block so it describes now, adds a dated entry below it, moves any open actions into the zone's `Todo.md`, and commits the change in that zone's repository.
-- **"Close for the day"** does this for every thread touched today, one commit each.
+- **"Close for the day"** does this for every thread touched today, one commit each, and names any thread still held (below), which it leaves held.
+- **"I'm being interrupted"** (or "hold this", "hold Acme pricing") is the thirty-second version, for when something cuts in. It asks three short questions, one at a time: where you are exactly, the very next step, and anything only in your head, which you can skip. The answers go into the Resume here block, stamped with the time, the zone commits, and the thread goes on a stack of held threads. The thread stays active.
+- **"Back"** (or "where was I") opens the thread on top of that stack and reads the three answers back; **"back to Acme pricing"** takes that one from anywhere in it. Interruptions nest, so the last one held comes back first. With nothing held, it says so and offers the thread you worked on last. Wrapping, parking or finishing a thread takes it off the stack.
 
 A thread that was just created has no history, so opening it only tells you its Resume here block is still blank. Do some work, wrap it, and the next open has something to say.
+
+The stack is kept by the [status page](extras/status-page.md)'s `page_action.py`, in `System/generated/interrupted.json`, which is never committed: losing it loses only the order, since the answers are in the thread notes. Without that extra, "I'm being interrupted" still saves the three answers, and "back" offers the thread you worked on last.
 
 The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`.
 
 ## What a project published
 
-A deck or a workbook that leaves the workspace, copied to a shared cloud folder where colleagues read or edit it, is one row in the project's `Deliverables/published.md`: the date, the file, where it went, who received it, and which copy counts from now on (`share` when colleagues edit it there, `here` when they only read it). The `threads` skill adds the row when a wrap finishes such a deliverable, and asks who edits it next.
+A deck or a workbook that leaves the workspace, copied to a shared cloud folder where colleagues read or edit it, gets one row in `Deliverables/published.md`, in its project: the date, the file, where it went, who received it, and which copy counts from now on (`share` when colleagues edit it there, `here` when they only read it). The `threads` skill adds the row when a wrap finishes such a deliverable, and asks who edits it next.
 
 ```markdown
 | Date | File | Destination | Recipients | Authoritative |
@@ -120,7 +124,7 @@ A deck or a workbook that leaves the workspace, copied to a shared cloud folder 
 | 2026-10-01 | `260930 - Pricing deck.pptx` | `Decks/Pricing deck.pptx` | Dana, Owen | share |
 ```
 
-Only the first word of the last cell is read, so a clause may follow it: `share, Dana edits the wording there`. A row is never deleted, since it is the record of what left: when a copy comes off the share, or a newer version takes its place, its date cell becomes `withdrawn 2026-10-14` or `replaced 2026-10-14`, and a file sent by mail rather than placed on a share is dated `sent 2026-10-14`. Such a row is history, never compared. A project with `layout: thread-first` keeps one ledger per thread, in `Threads/<Thread>/Deliverables/published.md`.
+Only the first word of the last cell is read, so a clause may follow it: `share, Dana edits the wording there`. A row is never deleted, since it is the record of what left: when a copy comes off the share, or a newer version takes its place, its date cell becomes `withdrawn 2026-10-14` or `replaced 2026-10-14`, and a file that went out by mail, never onto a share, gets `sent 2026-10-14`. Such a row is history, never compared. A project with `layout: thread-first` keeps one ledger per thread, in `Threads/<Thread>/Deliverables/published.md`.
 
 The file is a path under `Deliverables/`, or from the project's own folder when it is kept elsewhere, such as a thread's working folder (`Threads/Pricing/Shared Notes/Rates.xlsx`). The destination is relative to the folder the hub names in `shared: <link>/<path>`, through a link you make once in the zone's `.shared/` folder (`ln -s "<the provider's folder>" Zones/Work/.shared/team`), which the zone's `.gitignore` keeps out of its history; never write the provider's own path into a note, since it changes when an account or library is renamed. `<link>:<path>` reaches another linked folder, and a destination that is a folder (`Decks/`) holds a copy with the file's own name. `python3 System/tools/drift.py` then compares each file with its shared copy and reports only real differences: an Office file is compared by its content, not its bytes, which a shared library rewrites on every upload. A copy kept online only is never downloaded, only reported as unchecked. A second copy a sync conflict left beside a published file, such as `Terms (1).docx` or one with `conflicted copy` in its name, is reported by its name alone. With `--save` the status page lists what drifted. macOS keeps scheduled jobs out of cloud folders, so run it from a session or the app.
 

@@ -1,10 +1,12 @@
 ---
 name: threads
 description: >
-  Open, list, wrap, park, finish and create work threads, and add zones, by
-  voice or typed. The procedure behind the spoken commands in
+  Open, list, wrap, hold, park, finish and create work threads, and add
+  zones, by voice or typed. The procedure behind the spoken commands in
   System/rules.md. Use when the user says "open X", "pick up X", "resume X",
   "where was I on X", "where am I", "what's open", "what's open in Work",
+  "I'm being interrupted", "hold this", "hold X", "back", "where was I",
+  "back to X",
   "close X", "wrap X", "wrap it", "wrap up", "wrap this", "save where I am",
   "close for the day", "I'm done for today", "finish X", "X is done", "close
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
@@ -158,7 +160,10 @@ Listing reads frontmatter only. It never opens a Resume here block.
 Wrapping makes the thread resumable cold, by anyone, months from now. One thread
 per wrap: the one named, and nothing else.
 
-1. **Resolve X.**
+1. **Resolve X.** When this wrap is part of closing the day (yours, or a
+   cmux tab told "Shutting down for the day") and X is on the interruption
+   stack, stop here and say it is still held: its block holds what the user
+   said when they were cut off, and it stays on the stack.
 2. **Re-read the thread note now.** Another session may have changed it since
    you last looked.
 3. **Gather what happened**, from this session's conversation and the thread's
@@ -265,6 +270,8 @@ per wrap: the one named, and nothing else.
     ```
     The message says what changed. One zone per commit. Never push: that leaves
     the machine and needs the user's yes.
+12. **Take it off the interruption stack** with `unstack`: a wrapped thread
+    is not waiting for "back". Not on it, nothing changes.
 
 Spoken: "Acme pricing wrapped. Next is the second draft once Dana sends
 volumes, due Friday." Add a third sentence only for something the user must
@@ -272,6 +279,92 @@ know: a wall held material back, a meeting page was unfinished, a commit
 failed.
 
 Written: the same, plus the files changed and the commit hash.
+
+## Interrupted: "I'm being interrupted", "hold this", "hold X"
+
+Something has cut in, and the user has to leave the thread mid-thought.
+Someone is usually waiting, so the whole thing takes under thirty seconds:
+three short answers, one write, one sentence back. Skip everything else a
+wrap does.
+
+1. **Resolve X.** "Hold this" or no name at all: the thread in focus, as
+   under *No name given*.
+2. **Ask three questions, one at a time**, each answered in one line:
+   "Where are you, exactly?", "What's the very next step?", then "Anything
+   only in your head?" The third can be skipped: "no", "skip" or silence
+   leaves it out. Take each answer as said, and never ask a follow-up. An
+   answer the user gave already ("hold this, I'm on row 14") is not asked
+   again. When they say what cut in ("the Birch renewal call"), keep it as
+   *by*.
+3. **Save it**, through the status page's `page_action.py`:
+   ```sh
+   python3 System/status/page_action.py --workspace . <<'EOF'
+   {"verb": "interrupt", "zone": "Work", "project": "Acme", "thread": "Pricing", "where": "<answer>", "next": "<answer>", "keep": "<answer, or leave the key out>", "by": "<what cut in, or leave the key out>"}
+   EOF
+   ```
+   It overwrites the *Where it stands* line with `**Interrupted 14:32, 13
+   October 2026.** <where>`, sets the `Next action` and `Keep in mind` rows
+   (a skipped Keep in mind stays as it was, or says `nothing` where the
+   row was missing), leaves the other rows alone, sets `updated:`, adds the
+   dated entry "Interrupted at 14:32, by <by>.", commits in the zone, and
+   puts the thread on top of the interruption stack (below). The thread
+   stays `status: active`: an interruption is not parking. When the zone's
+   wall check refuses the commit, nothing is written; say so.
+   **Without the status page extra** (no `System/status/page_action.py`),
+   make the same edit by hand and commit it as Wrap step 11 does. There is
+   no stack then, so "back" offers the most recent thread instead.
+4. **Reply in one sentence**: "Acme pricing held. Say back when you're
+   done." If what cut in is a thread of its own ("Birch renewal"), offer to
+   open it: "Open Birch renewal?"
+
+## Back: "back", "where was I", "back to X"
+
+1. **Which thread.** "Back" or "where was I", with no thread named: the top
+   of the stack. "Back to X": resolve X; it comes out of the stack wherever
+   it is, and the rest stay in order. "Where was I on X" names a thread, so
+   it is Open, not Back.
+2. **Take it off the stack:**
+   ```sh
+   python3 System/status/page_action.py --workspace . <<'EOF'
+   {"verb": "back"}
+   EOF
+   ```
+   or with `"zone"`, `"project"` and `"thread"` for "back to X". The reply
+   gives the thread's `name`, its note's `path`, the three saved lines
+   (`where`, `next`, `keep`) and how many are still held (`left`). It writes
+   nothing.
+3. **Open it as Open does.** Where the `desk` skill is installed, that is its
+   tab: `desk open "<the thread's folder>" --prompt "open <short name>"`, and
+   the session there answers. Otherwise it is the thread in focus here.
+4. **Read the three lines back**, as the context to carry on from: where the
+   user was, the next step, and Keep in mind when it says more than nothing.
+   Then name the next one still held, if any.
+
+Spoken: "Back to Acme pricing. You were halfway through the tier-two volumes,
+and next is row 14. You weren't sure about the tier-two rate. Birch launch is
+still held."
+
+**Nothing on the stack:** say so in one line, and offer the most recent live
+thread, which the reply names as `offer` (without the status page extra,
+the first line of the listing under *Where things are*): "Nothing's held. The last thread
+you worked on is Acme pricing. Open it?" Never answer with silence: it reads
+as a fault. **X is not on the stack:** treat "back to X" as "open X".
+
+## The interruption stack
+
+The threads held and not yet come back to, across zones, last in, first out,
+because interruptions nest: finish C, back to B, then A. It is
+`System/generated/interrupted.json`, kept by `page_action.py` and never
+committed: what each thread was doing is in its note, so losing the file
+loses only the order. A thread held again moves to the top, never twice.
+`{"verb": "stack"}` lists it, top first, and changes nothing;
+`{"verb": "unstack", "zone", "project", "thread"}` takes a thread off without
+reading it back, or with no thread, every thread of the project. The stack is
+not a to-do list, and nothing from it goes into `Todo.md`.
+
+Wrapping, parking, finishing or deleting a thread takes it off; each of
+those sections says at which step. Without the status page extra there is no stack, and those
+steps fall away.
 
 ## Close for the day: "close for the day", "I'm done for today"
 
@@ -298,7 +391,9 @@ Wrap every thread worked on today, then give one summary.
 
    Add any thread this conversation worked on that left no file behind. Skip
    threads marked done or parked: neither is live, and a wrap would rewrite
-   what finishing or parking left in place. Skip a thread already wrapped in
+   what finishing or parking left in place. Skip a thread on the
+   interruption stack (`stack`): its block holds what the user said when
+   they were cut off, and a reconstruction would overwrite it. Skip a thread already wrapped in
    this session with nothing changed since that wrap; name it in the summary
    as already wrapped.
 
@@ -316,14 +411,16 @@ Wrap every thread worked on today, then give one summary.
    truthfully, add the dated entry listing what changed, leave the block as it
    is, and say so. If another session is still open on a thread, that session
    should wrap it; tell the user.
-4. **One summary.**
+4. **One summary**, ending with what is still on the interruption stack,
+   top first. It stays there: closing the day does not empty it, and those
+   are the threads to come back to first.
 
 Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch plan
-and roof repair. First thing tomorrow is the Acme second draft, due Friday. Roof
-repair I could only log from its files, so check its note when you open it."
+and roof repair. First thing tomorrow is the Acme second draft, due Friday.
+Still held: supplier audit."
 
 Written: one line per thread (short name, next action, commit hash), then
-anything that failed or was held back.
+anything that failed or was held back, then the stack, one line per thread.
 
 ## Finish: "finish X", "X is done"
 
@@ -353,6 +450,7 @@ Closes a thread for good.
    thread keeps announcing work that no longer exists.
 9. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
    recorded".
+10. **Take it off the interruption stack** with `unstack`.
 
 Spoken: "Acme pricing is closed. Two actions still point at it: tick them, keep
 them, or drop them?"
@@ -375,12 +473,15 @@ stay exactly where they are.
 5. **Commit** in the zone's repository: "Acme, Pricing: parked".
 6. **Keep the memory pointer**, if there is one. A parked thread is not
    finished.
+7. **Parking takes it off the interruption stack**: run `unstack`. Waking
+   puts nothing back.
 
 **When X is a whole project** ("park Acme", where Acme has threads), park the
 project: the same steps on its hub note, with the dated entry under its
 `## State of play` if it has one, and the commit "Acme: parked". Leave its
 thread notes alone: every thread in it counts as parked while the hub says so,
-and waking the project brings back exactly what was live before. If X could be
+and waking the project brings back exactly what was live before. `unstack`
+with the project alone takes all its threads off the stack. If X could be
 the project or one of its threads, ask which.
 
 Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
@@ -457,6 +558,11 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
 4. **The memory pointer**, if you keep one: point it at the new note.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
 
+When the thread, or a thread of the project, is on the interruption stack,
+run the rename through `page_action.py` instead, `{"verb": "rename", "zone",
+"project", "thread", "to"}`: it runs this same script and moves the entry on
+the stack to the new name, where it keeps its place.
+
 Moving a thread to another project or zone is not a rename: it crosses
 parties and walls. Say so, and stop.
 
@@ -485,6 +591,8 @@ python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--t
 3. **Run the second form.** One commit in the zone; the reply gives the
    commit to revert. Meetings pages stay.
 4. **The memory pointer**, if you keep one: delete it.
+5. **Take it off the interruption stack** with `unstack`, every thread of
+   the project when it was a project.
 
 Spoken: "Deleted the test thread and its one open action. Say undo to bring
 it back." On undo, `python3 System/tools/scaffold.py undo --zone <Zone>

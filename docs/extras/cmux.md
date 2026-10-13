@@ -9,6 +9,7 @@ cmux is a Mac terminal built for running several assistant sessions side by side
 - **"Open Pricing"** opens a tab in the Pricing thread's folder, in a cmux workspace named after its zone, with a session named "Acme Review, Pricing" that starts on "open Pricing" and answers in two sentences. If the tab is already open, desk brings it forward instead, and sends the phrase only when the session there is idle.
 - **"Close Pricing"** has the session in that tab wrap the thread, then closes the tab. "Close the Pricing tab" closes it without a wrap.
 - **"Close for the day"** wraps each tab used today, one at a time, each in its own session, then runs any commands you set to run before quitting, such as a backup, then quits cmux. A wrap that does not finish stops it with cmux still running, and a notification says which tab.
+- **"Back"**, **"where was I"** or **"back to Pricing"** takes a thread held by "I'm being interrupted" off the stack and opens its tab, where the session reads back where you were, the next step and what you had in mind. "Close for the day" names the threads still held and leaves them held: their tabs are not wrapped over what you said when you were cut off.
 - **"Shut everything down"** quits cmux without wrapping. Every tab comes back when cmux starts again.
 - **"Start the day"** or **"restore my tabs"** starts cmux, or restores its last tabs, then puts the right session back into any tab that came back at a bare prompt.
 - **"What tabs are open"** lists them: workspace, tab, assistant, idle or working, folder.

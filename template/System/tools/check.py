@@ -18,6 +18,8 @@ most of the time a full check takes on a large workspace. `--walls-only` runs
 the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and
 prints one line per wall broken: it is what each zone's pre-commit hook runs.
+It keeps what it read of the other files in that repository's git folder, so
+the next commit reads only what changed since (see NoteCache).
 `--install-hooks` writes that hook into every zone's repository, and into
 every git repository inside a project.
 
@@ -31,11 +33,14 @@ import datetime
 import hashlib
 import html
 import json
+import marshal
 import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
+from array import array
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -182,6 +187,7 @@ class Workspace:
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
+    cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +239,103 @@ def read_text(path: Path) -> Optional[str]:
     if b"\0" in data[:8192]:
         return None
     return data.decode("utf-8", errors="replace")
+
+
+class NoteCache:
+    """What the commit check read from each file the last time, kept between
+    commits in the git folder of the repository being committed.
+
+    The hook compares the wording of what is staged with every meeting, raw
+    record and project file, and reading them all, not comparing them, is most
+    of its time on a large workspace. So it keeps, for each file, its
+    frontmatter and its runs of words, under the file's size, modification
+    time and inode, and reads again only the files whose stamp has changed:
+    after the first commit, the check's time follows what changed since the
+    last one, not the size of the workspace. Nothing is kept for a file
+    changed in the last RACY_SECONDS, which a second change could leave with
+    the same stamp, nor across a change to these tools or to Python. A cache
+    that does not read is no cache: everything is read again, and the
+    findings are the same either way."""
+
+    FORMAT = 1
+    RACY_SECONDS = 2
+    NAME = "garrick-walls.cache"
+
+    def __init__(self, path: Optional[Path]):
+        self.path = path
+        self.entries: Dict[str, tuple] = {}  # kind and path -> (stamp, value), as loaded
+        self.kept: Dict[str, tuple] = {}  # what this run used or made: all that is saved
+        self.changed = False
+        self.whole = False  # this run asked after every file the wording check reads
+        if path is None:
+            return
+        self.made_by = self.version()
+        try:
+            data = marshal.loads(path.read_bytes())
+            if isinstance(data, dict) and data.get("version") == self.made_by and isinstance(data.get("entries"), dict):
+                self.entries = data["entries"]
+        except Exception:  # missing, unreadable or from another version: start again
+            pass
+
+    @staticmethod
+    def version() -> tuple:
+        tools = Path(__file__).resolve().parent
+        code = hashlib.sha256()
+        for name in ("check.py", "garrick_lib.py"):
+            try:
+                code.update((tools / name).read_bytes())
+            except OSError:
+                pass
+        return (NoteCache.FORMAT, tuple(sys.version_info[:2]), code.hexdigest())
+
+    @classmethod
+    def for_repo(cls, repo: Path) -> "NoteCache":
+        found = _git(["rev-parse", "--absolute-git-dir"], repo)
+        return cls(Path(found.strip()) / cls.NAME if found else None)
+
+    def get(self, kind: str, path: Path, make: Callable[[], object], fresh: Optional[Callable[[object], bool]] = None):
+        """What `make` gives for the file at `path`, from the cache while the
+        file's stamp is unchanged and `fresh`, if given, accepts it."""
+        key = kind + "\0" + str(path)
+        try:
+            st = path.stat()
+        except OSError:
+            return make()
+        stamp = (st.st_size, st.st_mtime_ns, st.st_ino)
+        hit = self.entries.get(key)
+        if hit is not None and hit[0] == stamp and (fresh is None or fresh(hit[1])):
+            self.kept[key] = hit
+            return hit[1]
+        value = make()
+        if time.time() - st.st_mtime > self.RACY_SECONDS:
+            self.kept[key] = (stamp, value)
+            self.changed = True
+        return value
+
+    def save(self) -> None:
+        """Write what this run kept. When it asked after every file (`whole`),
+        what it did not ask for is gone, and only its own is kept."""
+        if self.path is None or not (self.changed or (self.whole and len(self.kept) < len(self.entries))):
+            return
+        entries = self.kept if self.whole else dict(self.entries, **self.kept)
+        tmp = self.path.with_name(self.path.name + ".%d.tmp" % os.getpid())
+        try:
+            tmp.write_bytes(marshal.dumps({"version": self.made_by, "entries": entries}))
+            os.replace(str(tmp), str(self.path))
+        except (OSError, ValueError):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def note_frontmatter(ws: "Workspace", path: Path) -> dict:
+    """The frontmatter of the note at `path`; in staged mode, from the cache
+    while the note is unchanged."""
+    if ws.cache is None:
+        return parse_frontmatter(path)
+    fm = ws.cache.get("fm", path, lambda: parse_frontmatter(path))
+    return {k: list(v) if isinstance(v, list) else v for k, v in fm.items()}  # a copy: callers may change it
 
 
 def visible_dirs(folder: Path) -> List[Path]:
@@ -476,16 +579,16 @@ def setting_zones(ws: Workspace, key: str) -> List[Path]:
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover(root: Path) -> Workspace:
-    ws = Workspace(root=root, context=load_context(root))
+def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
+    ws = Workspace(root=root, context=load_context(root), cache=cache)
     ws.settings, ws.settings_problems = load_settings(root)
     ws.zones = visible_dirs(root / "Zones")
     for zone in ws.zones:
         for project in project_dirs(zone):
-            ws.projects.append((project, parse_frontmatter(project / (project.name + ".md"))))
+            ws.projects.append((project, note_frontmatter(ws, project / (project.name + ".md"))))
     # A project about the workspace itself may live in System/, in no zone.
     for folder in visible_dirs(root / "System"):
-        fm = parse_frontmatter(folder / (folder.name + ".md"))
+        fm = note_frontmatter(ws, folder / (folder.name + ".md"))
         if fm.get("type") == "project":
             ws.projects.append((folder, fm))
     wikis = root / "Wikis"
@@ -496,7 +599,7 @@ def discover(root: Path) -> Workspace:
     sources = wikis / "Meetings" / "wiki" / "sources"
     if sources.is_dir():
         for page in sorted(sources.rglob("*.md")):
-            ws.meetings[page] = parse_frontmatter(page)
+            ws.meetings[page] = note_frontmatter(ws, page)
     return ws
 
 
@@ -2144,12 +2247,28 @@ def is_content(token: str) -> bool:
     return not (token.isdigit() and (len(token) <= 2 or (len(token) == 4 and token[:2] in ("19", "20"))))
 
 
+# Each word as a number that is the same in every run of the check, unlike
+# Python's own hash of a string, so the commit check can keep a file's runs of
+# words from one commit to the next (see NoteCache). Sixty bits: Python hashes
+# a number that size as itself.
+WORD_IDS: Dict[str, int] = {}
+
+
+def word_id(token: str) -> int:
+    found = WORD_IDS.get(token)
+    if found is None:
+        found = WORD_IDS[token] = int.from_bytes(hashlib.blake2b(token.encode(), digest_size=8).digest(), "big") >> 4
+    return found
+
+
 def shingles(tokens: List[str]) -> Iterable[int]:
     """A hash for each run of SHINGLE words that carries enough content words."""
     content = [is_content(t) for t in tokens]
+    known = WORD_IDS.get
+    ids = [known(t) or word_id(t) for t in tokens]
     for i in range(len(tokens) - SHINGLE + 1):
         if sum(content[i:i + SHINGLE]) >= MIN_CONTENT_WORDS:
-            yield hash(tuple(tokens[i:i + SHINGLE]))
+            yield hash(tuple(ids[i:i + SHINGLE]))
 
 
 HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
@@ -2316,33 +2435,78 @@ def finished(fm: dict) -> bool:
     return bool(fm.get("zone")) and bool(as_list(fm.get("parties")))
 
 
-def quote_index(ws: Workspace) -> QuoteIndex:
+def wording(ws: Workspace, path: Path, text: str, body: bool) -> set:
+    """The runs of words of `text`, the text of the file at `path`: as a
+    transcript, a mail or a page reads (transcript_text), and with `body`
+    without its frontmatter."""
+    text = transcript_text(path, text)
+    return runs(body_of(text) if body else text, shared_link(ws, path))
+
+
+def file_runs(ws: Workspace, path: Path, body: bool) -> Iterable[int]:
+    """wording() of the file at `path` as it is on disk. In staged mode it
+    comes from the cache while the file is unchanged, and while every link it
+    holds still leads to a shared file, or not, as it did: a page added to the
+    Knowledge wiki can change which of its words a reader sees."""
+    if ws.cache is None:
+        return wording(ws, path, read_text(path) or "", body)
+    link = shared_link(ws, path)
+
+    def make() -> tuple:
+        asked: Dict[str, bool] = {}
+
+        def ask(target: str) -> bool:
+            asked[target] = link(target)
+            return asked[target]
+
+        text = transcript_text(path, read_text(path) or "")
+        found = runs(body_of(text) if body else text, ask)
+        return array("q", sorted(found)).tobytes(), sorted(asked.items())
+
+    held, _ = ws.cache.get("body" if body else "text", path, make,
+                           lambda v: all(link(target) == answer for target, answer in v[1]))
+    found = array("q")
+    found.frombytes(held)
+    return found
+
+
+def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
+    """The QuoteIndex of the whole workspace. With `wanted`, the runs of words
+    the files being committed hold, the index of those runs alone: the commit
+    check asks after no other, so a file that holds none of them is passed
+    over once its runs are known, and the cache knows them (see NoteCache)."""
     if ws.quote_index is not None:
+        return ws.quote_index
+    if wanted is not None and not wanted:
+        ws.quote_index = QuoteIndex({}, set())  # nothing to ask after
         return ws.quote_index
     owners: Dict[int, set] = {}
 
-    def add(text: str, owner: Path, source: Path) -> None:
-        for h in runs(text, shared_link(ws, source)):
-            owners.setdefault(h, set()).add(owner)
+    def add(found: List[Iterable[int]], owner: Path) -> bool:
+        """Say that `owner` holds the runs `found`; whether it holds one."""
+        held = False
+        for hs in found:
+            for h in (hs if wanted is None else wanted.intersection(hs)):
+                owners.setdefault(h, set()).add(owner)
+                held = True
+        return held
 
     # In staged mode a file can hold one text on disk and another in git (see
     # git_view): both count as where its wording was said or written.
     view = ws.git_view
 
-    def texts(path: Path) -> List[str]:
-        out = [read_text(path) or ""] if path.exists() else []
+    def texts(path: Path, body: bool) -> List[Iterable[int]]:
+        out = [file_runs(ws, path, body)] if path.exists() else []
         if path in view:
-            out.append(view[path])
+            out.append(wording(ws, path, view[path], body))
         return out
 
     # Every meeting page and its raw record, finished or not: nothing on an
     # unfinished page may be used anywhere until it has its zone and parties.
     for page, fm in ws.meetings.items():
-        for text in texts(page):
-            add(body_of(text), page, page)
+        add(texts(page, True), page)
         for r in meeting_raws(ws, page, fm):
-            for text in texts(r):
-                add(transcript_text(r, text), page, r)
+            add(texts(r, False), page)
     # Every project's own text files, under the party each is written for: a
     # client's brief or data file, and the notes made from them, are that
     # party's material as much as its meetings are. Template folders are not.
@@ -2356,9 +2520,8 @@ def quote_index(ws: Workspace) -> QuoteIndex:
         for path in files:
             if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
                 continue
-            found = [t for t in texts(path) if t]
-            if not found:
-                continue
+            if not add(texts(path, True), path):
+                continue  # holds no run: nobody asks what it is written for
             parts = path.relative_to(project).parts
             ftags = set(ptags)
             if len(parts) > 2 and parts[0] == "Threads":
@@ -2368,8 +2531,6 @@ def quote_index(ws: Workspace) -> QuoteIndex:
                 ftags |= thread_tags[parts[1]]
             tags[path] = frozenset(ftags)
             projects[path] = project
-            for text in found:
-                add(body_of(transcript_text(path, text)), path, path)
     common: set = set()
     beyond: set = set()
     # Wording also found in a shared file is common wording, not a leak. No
@@ -2379,14 +2540,15 @@ def quote_index(ws: Workspace) -> QuoteIndex:
     knowledge = ws.root / "Wikis" / "Knowledge"
     for path in shared_files(ws):
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
-            link = shared_link(ws, path)
-            found = {h for h in runs(transcript_text(path, read_text(path) or ""), link) if h in owners}
+            found = {h for h in file_runs(ws, path, False) if h in owners}
             if path in view:
-                found &= runs(transcript_text(path, view[path]), link)
+                found &= wording(ws, path, view[path], False)
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
+    if ws.cache is not None:
+        ws.cache.whole = True
     return ws.quote_index
 
 
@@ -2483,7 +2645,7 @@ def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
     """The party tags a hub or thread note declares. In staged mode, where git
     holds another version of the note, the tags of both: the more parties a
     file belongs to, the more walls stand around its wording."""
-    tags = {strip_tag(t) for t in as_list((parse_frontmatter(note) if fm is None else fm).get("party"))}
+    tags = {strip_tag(t) for t in as_list((note_frontmatter(ws, note) if fm is None else fm).get("party"))}
     if note in ws.git_view:
         tags |= {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
     return tags
@@ -2497,7 +2659,7 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     if len(parts) > 5 and parts[3] == "Threads":
         thread = parts[4]
         note = project / "Threads" / thread / (thread + ".md")
-        tags |= {strip_tag(t) for t in as_list(parse_frontmatter(note).get("party"))}
+        tags |= {strip_tag(t) for t in as_list(note_frontmatter(ws, note).get("party"))}
         where = "%s's %s thread" % (project.name, thread)
     return tags, where
 
@@ -2892,7 +3054,7 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
             if note not in ws.git_view or committing not in note.parents:
                 continue
             staged = {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
-            disk = {strip_tag(t) for t in as_list(parse_frontmatter(note).get("party"))}
+            disk = {strip_tag(t) for t in as_list(note_frontmatter(ws, note).get("party"))}
             if staged != disk:
                 out.append(Finding(ERROR, "walls", rel(ws, note),
                                    "names a different party on disk from the one staged; stage that change or undo "
@@ -2948,11 +3110,13 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 project, pfm = owner
                 ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
                 out.extend(sources_for_file(ws, project, ptags, top_path / name, res.stdout))
-    for path, text in staged_files(repo) or []:
-        owner = project_of(ws, path)
-        if owner is None:
-            continue  # not inside a project: no party, so no wall to hold
-        project, pfm = owner
+    files = [(path, text, project_of(ws, path)) for path, text in staged_files(repo) or []]
+    files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
+    # The wording check asks only after the runs of words these files hold:
+    # the index is built for those alone, from the cache where it can be.
+    if not ws.quick:
+        quote_index(ws, set().union(*(wording(ws, path, text, False) for path, text, _ in files)))
+    for path, text, (project, pfm) in files:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
         out.extend(walls_for_file(ws, project, ptags, path, text))
     return out
@@ -3332,11 +3496,13 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
     file, a person page or a Knowledge page repeats a meeting. That comparison
     reads every meeting and project file, and is most of the time a full check
     takes on a large workspace; the commit hook still runs it on what is staged."""
-    ws = discover(Path(root).resolve())
+    cache = NoteCache.for_repo(Path(staged)) if staged is not None else None
+    ws = discover(Path(root).resolve(), cache)
     ws.quick = quick and staged is None
     findings: List[Finding] = []
     if staged is not None:
         findings = check_walls_staged(ws, Path(staged))
+        cache.save()
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:

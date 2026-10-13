@@ -255,6 +255,43 @@ class TestFromThePage(ManageCase):
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 
+    def slow_hook(self, seconds):
+        """The zone's own wall check, after `seconds` of sleep: a workspace whose check takes that long."""
+        hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())
+        hook = hook if hook.is_absolute() else self.work / hook
+        shipped = hook.read_text()
+        hook.write_text(shipped.replace("\n", "\nsleep %s\n" % seconds, 1))
+        return hook, shipped
+
+    def test_a_wall_check_slower_than_a_git_command_still_commits(self):
+        self.slow_hook(4)
+        real = pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT
+        pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT = 2, 60
+        try:
+            self.assertIn("Created project Birch", self.act(verb="new-project", zone="Work", name="Birch", party="birch",
+                                                             thread="Launch Plan"))
+        finally:
+            pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT = real
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertIn("New project Birch (birch), first thread Launch Plan", self.git("log", "-1", "--format=%s").stdout)
+
+    def test_a_wall_check_stopped_leaves_the_files_for_a_commit_by_hand(self):
+        hook, shipped = self.slow_hook(30)
+        real, pa.COMMIT_TIMEOUT = pa.COMMIT_TIMEOUT, 2
+        try:
+            with self.assertRaisesRegex(pa.Refused, "^made, but not committed: the wall check was still running after "
+                                        "2 s and was stopped. The files are there, unstaged; commit them by hand: that "
+                                        "commit waits for the check and goes through$"):
+                self.act(verb="new-project", zone="Work", name="Birch", party="birch", thread="Launch Plan")
+        finally:
+            pa.COMMIT_TIMEOUT = real
+        self.assertTrue((self.work / "Birch" / "Threads" / "Launch Plan" / "Launch Plan.md").is_file())
+        self.assertEqual("?? Birch/\n", self.git("status", "--porcelain").stdout)
+        self.assertFalse((self.work / ".git" / "index.lock").exists())
+        hook.write_text(shipped.replace("\n", "\nsleep 3\n", 1))     # by hand, git waits as long as the check takes
+        self.commit("New project Birch")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
     def test_rename_delete_and_undo(self):
         self.assertIn("Renamed the thread Pricing to Renewal",
                       self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal"))

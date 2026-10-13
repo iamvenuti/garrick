@@ -55,9 +55,11 @@ page learns the new key only when it rebuilds; until then a second click on the
 same row still carries the old key, so the handler keeps, for an hour, which
 old key became which new one (todo-rekeys.json in the jobs folder) and follows
 it. Every path must be a live note inside a zone. When the zone's wall check
-refuses the commit, or git takes longer than GIT_TIMEOUT, the file is put back
-as it was, unless it was edited meanwhile, in Obsidian say: then it is left as
-it is, and the reply says so.
+refuses the commit, or is still running after COMMIT_TIMEOUT, the file is put
+back as it was, unless it was edited meanwhile, in Obsidian say: then it is
+left as it is, and the reply says so. A check stopped that way had found
+nothing wrong yet, so the reply also says that a commit by hand, which waits
+for it, goes through. A new project or thread stays made, unstaged.
 
 Every click is its own process, so two quick clicks, or a click and an ask,
 can run at once. Each takes a lock on the zone first (page-action-<zone>.lock
@@ -114,10 +116,14 @@ LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 REKEY_HOURS = 1
-# Seconds: git's whole share of one commit (add, commit and its hooks), then
-# how long a request waits for another on the same zone. Together they stay
-# under the two minutes the Obsidian plugin gives a request.
+# Seconds: how long one git command may take, then a commit's whole share
+# (add, commit and its hooks), then how long a request waits for another on
+# the same zone. A commit runs the zone's wall check, which on a large
+# workspace reads every meeting and project file the first time (see
+# check.py's NoteCache): a minute or more while another job has the disk.
+# The Obsidian plugin gives a request longer than all of them together.
 GIT_TIMEOUT = 60
+COMMIT_TIMEOUT = 300
 LOCK_WAIT = 45
 # A lock with no record of its own, left by an older job.py, holds for the
 # default limit job.py gives it: twice the watchdog's 1500 s, the sign-in
@@ -311,19 +317,34 @@ def git(zone: Path, *args, timeout: float = None):
     return p.returncode, (err or out or "")
 
 
+def how_long(seconds: float) -> str:
+    return "%d minutes" % round(seconds / 60) if seconds >= 120 else "%d s" % round(seconds)
+
+
+def committing(zone: Path, rel: str, message: str) -> tuple:
+    """Add and commit `rel` within COMMIT_TIMEOUT: (exit code, why not). The
+    code is None when the commit was stopped while its hooks ran: the wall
+    check had found nothing wrong yet."""
+    deadline = time.time() + COMMIT_TIMEOUT
+    code, said = git(zone, "add", "--", rel)
+    if code == 0:
+        code, said = git(zone, "commit", "-q", "-m", message, "--", rel, timeout=deadline - time.time())
+        if code is None:
+            return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
+    if code != 0:
+        why = said.strip().splitlines() if code is not None else [said]
+        return code or 1, why[-1] if why else "git refused"
+    return 0, ""
+
+
 def commit(zone: Path, note: Path, before: bytes, message: str) -> None:
     """Commit the one file, or put it back as it was and say why. Put back
     only if it still holds what this request wrote: an edit made meanwhile,
     in Obsidian say, is left alone."""
     rel = str(note.relative_to(zone))
     mine = note.read_bytes()
-    deadline = time.time() + GIT_TIMEOUT
-    code, said = git(zone, "add", "--", rel)
-    if code == 0:
-        code, said = git(zone, "commit", "-q", "-m", message, "--", rel, timeout=deadline - time.time())
+    code, why = committing(zone, rel, message)
     if code != 0:
-        why = said.strip().splitlines() if code is not None else [said]
-        why = why[-1] if why else "git refused"
         try:
             ours = note.read_bytes() == mine
         except OSError:
@@ -331,6 +352,12 @@ def commit(zone: Path, note: Path, before: bytes, message: str) -> None:
         if ours:
             note.write_bytes(before)
         git(zone, "reset", "-q", "--", rel, timeout=10)
+        if code is None and ours:
+            raise Refused("not committed: %s, so the note was put back as it was. Make the change again and commit "
+                          "it by hand: that commit waits for the check and goes through" % why)
+        if code is None:
+            raise Refused("not committed: %s. The note was edited meanwhile, so it was left as it is, uncommitted; "
+                          "commit it by hand: that commit waits for the check and goes through" % why)
         if not ours:
             raise Refused("not committed: %s. The note was edited meanwhile, so it was left as it is" % why)
         raise Refused("not committed, so nothing changed: %s" % why)
@@ -804,15 +831,19 @@ def field(req: dict, key: str, required: bool = True) -> Optional[str]:
 
 
 def scaffold(ws: Path, *args) -> str:
-    """Run the workspace's scaffold.py: what it said, or Refused with its reason."""
+    """Run the workspace's scaffold.py: what it said, or Refused with its reason.
+    A rename or a deletion commits through the wall check, so it has a
+    commit's time and a git command's besides."""
     tool = ws / "System" / "tools" / "scaffold.py"
     if not tool.is_file():
         raise Refused("System/tools/scaffold.py is missing")
     try:
         r = subprocess.run([sys.executable, str(tool), "--root", str(ws)] + list(args), capture_output=True, text=True,
-                           timeout=GIT_TIMEOUT * 2, stdin=subprocess.DEVNULL)
+                           timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
-        raise Refused("scaffold.py took too long and was stopped")
+        raise Refused("scaffold.py was still running after %s, most likely in the wall check of its commit, and was "
+                      "stopped; its change may be left staged, so look at git status in the zone before trying again"
+                      % how_long(COMMIT_TIMEOUT + GIT_TIMEOUT))
     if r.returncode != 0:
         raise Refused((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused")
     return r.stdout.strip()
@@ -864,12 +895,12 @@ def commit_new(zone: Path, folder: Path, message: str) -> None:
     """Commit what scaffold.py made, as the threads skill's New does: the new
     folder by name, and its hub. Refused, the folder stays for the user."""
     rel = folder.relative_to(zone).as_posix()
-    code, said = git(zone, "add", "--", rel)
-    if code == 0:
-        code, said = git(zone, "commit", "-q", "-m", message, "--", rel)
+    code, why = committing(zone, rel, message)
     if code != 0:
         git(zone, "reset", "-q", "--", rel, timeout=10)
-        why = said.strip().splitlines()[-1] if said and said.strip() else "git refused"
+        if code is None:
+            raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "
+                          "commit waits for the check and goes through" % why)
         raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
 
 

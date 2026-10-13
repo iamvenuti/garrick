@@ -374,10 +374,12 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 
 	// A button that changes something: page_action.py,
 	// beside status.py, checks it, does it and commits it, and says what it did.
+	// Its own limits come first: a commit waits up to five minutes for the
+	// wall check, so the plugin waits fifteen before it lets the request go.
 	act(view, request) {
 		const script = path.join(path.dirname(this.script()), "page_action.py");
 		if (!fs.existsSync(script)) return view.toast("This page's actions need page_action.py beside status.py.");
-		const child = execFile(this.python(), [script, "--workspace", this.root()], { cwd: this.root(), timeout: 120000 }, (err, out) => {
+		const child = execFile(this.python(), [script, "--workspace", this.root()], { cwd: this.root(), timeout: 900000 }, (err, out) => {
 			let said = null;
 			try { said = JSON.parse(out); } catch (e) {}
 			view.toast((said && said.say) || "That did not work.");

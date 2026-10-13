@@ -582,17 +582,31 @@ class TestTogether(ActionCase):
         import time
         self.hook("sleep 30\n")
         before = (self.work / "Todo.md").read_bytes()
-        real, pa.GIT_TIMEOUT = pa.GIT_TIMEOUT, 1
+        real, pa.COMMIT_TIMEOUT = pa.COMMIT_TIMEOUT, 1
         try:
             t0 = time.time()
-            with self.assertRaisesRegex(pa.Refused, "longer than 1 s and was stopped"):
+            with self.assertRaisesRegex(pa.Refused, "^not committed: the wall check was still running after 1 s and was "
+                                        "stopped, so the note was put back as it was. Make the change again and commit "
+                                        "it by hand: that commit waits for the check and goes through$"):
                 self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Invoice"))
             self.assertLess(time.time() - t0, 15)
         finally:
-            pa.GIT_TIMEOUT = real
+            pa.COMMIT_TIMEOUT = real
         self.assertEqual(before, (self.work / "Todo.md").read_bytes())
         self.assertFalse((self.work / ".git" / "index.lock").exists())             # git took its lock away
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_a_slow_wall_check_outlasts_a_git_command(self):
+        """A commit has COMMIT_TIMEOUT, however short the read-only calls' GIT_TIMEOUT."""
+        self.hook("sleep 4\n")
+        real = pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT
+        pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT = 2, 60
+        try:
+            self.assertEqual("Done: Acme Corp: Invoice for September",
+                             self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Invoice")))
+        finally:
+            pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT = real
+        self.assertEqual(("Work: done, Acme Corp: Invoice for September", ""), self.last_commit())
 
     def test_a_held_zone_waits_then_refuses(self):
         real, pa.LOCK_WAIT = pa.LOCK_WAIT, 0.3

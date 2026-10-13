@@ -57,7 +57,8 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 Much of this workspace is driven by speaking and listening. Every name, request and reply has to survive that.
 
-- **Names are speakable.** Zones, projects and threads get names a person can say: no dates, codes or punctuation, though a year standing as a word of its own is fine (Summit 2027). Siblings must not sound alike.
+- **Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym: Q4 Planning, ISO 27001, Birch & Co. Nothing else, since the rest either cannot be stored as a folder or is a separator the spoken grammar uses, such as the comma in "Acme, pricing". Siblings must not sound alike.
+- **A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it (Q4 Planning, `spoken: fourth quarter planning`), and a request matches it alongside the name itself. A year standing as a word of its own needs none: Summit 2027 is said "twenty twenty-seven". A zone has no note, so a zone name has to say how it is said.
 - **Say the shortest name that is unique.** A thread name alone, if only one thread has it. Otherwise project and thread ("Acme, pricing"). The zone only when two projects share a name.
 - **When a name matches more than one thing**, ask in one line, naming the candidates. Never guess.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.

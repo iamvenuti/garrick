@@ -5,7 +5,12 @@ Standard library only, Python 3.9 or later. The checker (`check.py`),
 functions below keep their signatures:
 
     parse_frontmatter(path) -> dict
-    is_speakable(name) -> (bool, str)
+    is_path_safe(name) -> (bool, str)
+    is_display_name(name) -> (bool, str)
+    is_sayable(name) -> (bool, str)
+    spoken_forms(name, spoken=None) -> [str]
+    spoken_of(folder) -> str
+    spoken_clash(a, b, a_spoken=None, b_spoken=None) -> (str, str) or None
     sounds_alike(a, b) -> bool
     load_context(root) -> dict
     walled(context, tag_a, tag_b) -> bool
@@ -49,7 +54,13 @@ __all__ = [
     "is_own_address",
     "parse_frontmatter",
     "parse_frontmatter_text",
-    "is_speakable",
+    "is_path_safe",
+    "is_display_name",
+    "is_sayable",
+    "NAME_LIMIT",
+    "spoken_forms",
+    "spoken_of",
+    "spoken_clash",
     "sounds_alike",
     "normalise_name",
     "phonetic_key",
@@ -225,46 +236,150 @@ def parse_frontmatter(path: PathLike) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Voice: speakable names and names that sound alike
+# Names: what can be stored, what a name may look like, how it is said
+#
+# Three questions, three answers, because one answer to all three refused
+# names people use: a folder name has to be safe to store, a name has to read
+# as a name, and a heard name has to find one thread. Only the first is a
+# property of the file system; the second is a house style; the third is
+# answered by the name itself or, where the writing does not say how to say
+# it, by the `spoken` form in the note's frontmatter.
 # ---------------------------------------------------------------------------
 
 _APOSTROPHES = "'’"
 _HYPHENS = "-‐‑"
 _YEAR_RE = re.compile(r"(19|20)\d\d")
+# A full stop belongs inside an acronym (U.S., U.S.A), nowhere else in a name.
+_ACRONYM_RE = re.compile(r"(?:[^\W\d_]\.)+[^\W\d_]?\Z")
+# Characters a folder name cannot hold on a Mac, or in a synced folder.
+_UNSAFE = '/\\:*?"<>|'
+# Names a synced folder reserves, whatever the extension.
+_RESERVED = ({"con", "prn", "aux", "nul"}
+             | {"%s%d" % (stem, n) for stem in ("com", "lpt") for n in range(1, 10)})
+# A folder name and its note's name both carry it, and a link names it again,
+# so the limit is well short of what the file system would take.
+NAME_LIMIT = 96
+_DIGIT_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
 
-def is_speakable(name: str) -> Tuple[bool, str]:
-    """Is `name` fit to be a zone, project or thread name said aloud?
+def is_path_safe(name: str) -> Tuple[bool, str]:
+    """Can `name` be stored as a folder, here and in a synced folder?
 
-    Letters, spaces, hyphens, apostrophes and `&` only, and a year as a word
-    of its own ("Harbour Summit 2027" is said "twenty twenty-seven"). No other
-    digits (dates and codes), no underscores, no other punctuation. Not
-    empty, and not starting with `_`, which is reserved for templates.
+    Strict, and about storage alone: not empty, no path separator or other
+    character a file system refuses, nothing a sync folder reserves or
+    strips, no leading dot (hidden) or underscore (a template), and short
+    enough that the folder, its note and the links to it stay sane.
     """
-    if name is None or not name.strip():
+    if name is None or not str(name).strip():
         return False, "the name is empty"
-    if name.startswith("_"):
-        return False, "it starts with an underscore, which marks a template"
+    name = str(name)
     if name != name.strip():
         return False, "it starts or ends with a space"
-    if "  " in name:
-        return False, "it has a double space"
-    for ch in " ".join(w for w in name.split(" ") if not _YEAR_RE.fullmatch(w)):
-        if ch.isalpha() or ch == " " or ch == "&" or ch in _APOSTROPHES or ch in _HYPHENS:
-            continue
-        if ch.isdigit():
-            return False, "it contains a digit that is not a year; dates and codes cannot be said cleanly"
-        if ch == "_":
-            return False, "it contains an underscore"
-        return False, "it contains '%s', which cannot be said" % ch
-    if not any(ch.isalpha() for ch in name):
-        return False, "it has no letters"
+    if name.startswith("_"):
+        return False, "it starts with an underscore, which marks a template"
+    if name.startswith("."):
+        return False, "it starts with a full stop, which hides the folder"
+    if name.endswith("."):
+        return False, "it ends with a full stop, which a synced folder strips"
+    if len(name) > NAME_LIMIT:
+        return False, "it is longer than %d characters" % NAME_LIMIT
+    for ch in name:
+        if ch in _UNSAFE:
+            return False, "it contains '%s', which cannot be in a folder name" % ch
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            return False, "it contains a character that cannot be in a folder name"
+    if name.split(".")[0].lower() in _RESERVED:
+        return False, "%s is a name a synced folder reserves" % name
     return True, ""
 
 
+def is_display_name(name: str) -> Tuple[bool, str]:
+    """May `name` stand as a zone, project or thread name?
+
+    Ordinary business names, which is wider than what can be said as written:
+    letters and digits anywhere (Q4 Planning, ISO 27001), spaces, hyphens,
+    apostrophes, `&`, and a full stop inside an acronym (U.S. Expansion). No
+    other punctuation, since the rest of it is either unsafe to store or a
+    separator the spoken grammar already uses, such as the comma in "Acme,
+    pricing". At least one letter, which is what a heard name is matched on.
+    """
+    ok, why = is_path_safe(name)
+    if not ok:
+        return False, why
+    name = str(name)
+    if "  " in name:
+        return False, "it has a double space"
+    for word in name.split(" "):
+        if "." in word and not _ACRONYM_RE.match(word):
+            return False, "a full stop belongs inside an acronym, as in U.S., not in '%s'" % word
+        for ch in word:
+            if ch.isalpha() or ch.isdigit() or ch == "&" or ch == "." or ch in _APOSTROPHES or ch in _HYPHENS:
+                continue
+            if ch == "_":
+                return False, "it contains an underscore"
+            return False, "it contains '%s', which does not belong in a name" % ch
+    if not any(ch.isalpha() for ch in name):
+        return False, "it has no letters, so nothing is left to match a heard name on"
+    return True, ""
+
+
+def is_sayable(name: str) -> Tuple[bool, str]:
+    """Does `name` say how it is said, or does it need a `spoken` form?
+
+    True for letters, spaces, hyphens, apostrophes, `&` and a year standing as
+    a word of its own ("Harbour Summit 2027" is said "twenty twenty-seven").
+    False for anything a reader would have to decide how to pronounce: other
+    digits (Q4 Planning, ISO 27001) and an acronym's full stops. A name that
+    is not sayable is still a good name; it carries `spoken:` in its note's
+    frontmatter, and the resolver matches that form alongside the name.
+    """
+    ok, why = is_display_name(name)
+    if not ok:
+        return False, why
+    for word in str(name).split(" "):
+        if _YEAR_RE.fullmatch(word):
+            continue
+        for ch in word:
+            if ch.isdigit():
+                return False, "it contains a digit that is not a year, so how to say it is a guess"
+            if ch == ".":
+                return False, "it contains a full stop, and an acronym is said letter by letter"
+    return True, ""
+
+
+def spoken_forms(name: str, spoken: Optional[str] = None) -> List[str]:
+    """What a spoken request can resolve to: the name, and the form the note's
+    `spoken` frontmatter gives, where it gives one."""
+    forms = [str(name)]
+    said = str(spoken or "").strip()
+    if said and said.lower() != str(name).lower():
+        forms.append(said)
+    return forms
+
+
+def spoken_of(folder: PathLike) -> str:
+    """The `spoken` form in the note of a project or thread folder, or ""."""
+    folder = Path(folder)
+    return str(parse_frontmatter(folder / (folder.name + ".md")).get("spoken") or "").strip()
+
+
+def spoken_clash(a: str, b: str, a_spoken: Optional[str] = None,
+                 b_spoken: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """The first way two sibling names would be heard as one another: a pair of
+    forms, one from each, that sound alike. None when they are easy to tell
+    apart said aloud."""
+    for first in spoken_forms(a, a_spoken):
+        for second in spoken_forms(b, b_spoken):
+            if sounds_alike(first, second):
+                return first, second
+    return None
+
+
 def normalise_name(name: str) -> str:
-    """Lower-case letters only, with `&` read as "and" and accents dropped."""
+    """Lower-case letters only, with `&` read as "and", a digit as its word and
+    accents dropped."""
     name = unicodedata.normalize("NFKD", name.replace("&", " and "))
+    name = "".join(" %s " % _DIGIT_WORDS[int(ch)] if ch.isdigit() else ch for ch in name)
     return "".join(ch for ch in name.lower() if ch.isalpha() and ord(ch) < 0x250)
 
 

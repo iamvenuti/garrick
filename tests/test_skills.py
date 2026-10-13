@@ -301,6 +301,24 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, prep, needle)
         self.assertNotIn("from each page's actions table", prep)
 
+    def test_the_naming_rule_says_what_the_code_decides(self):
+        """One rule, three questions: the wording in the rules and in the threads
+        skill follows garrick_lib's three functions, and names the frontmatter key
+        that carries a spoken form, which is the key the scaffold writes."""
+        tools = REPO / "template" / "System" / "tools"
+        lib = (tools / "garrick_lib.py").read_text(encoding="utf-8")
+        for decides in ("def is_path_safe(", "def is_display_name(", "def is_sayable("):
+            self.assertIn(decides, lib, decides)
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        for needle in ("a full stop inside an acronym", "`spoken:` in the note's frontmatter",
+                       "a zone name has to say how it is said"):
+            self.assertIn(needle, rules, needle)
+        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        for needle in ("the `spoken:` form in its note", "as `spoken:`", "--spoken"):
+            self.assertIn(needle, threads, needle)
+        self.assertIn("spoken: %s", (tools / "scaffold.py").read_text(encoding="utf-8"))
+        self.assertIn("`spoken:` form", (tools / "check.py").read_text(encoding="utf-8"))
+
     def test_setup_offers_the_allowance_and_changes_no_settings(self):
         """Like its other per-assistant offers: only where it applies, and it says
         how rather than doing it."""

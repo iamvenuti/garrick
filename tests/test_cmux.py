@@ -342,6 +342,18 @@ class ResolveTest(CmuxCase):
             with self.subTest(heard=heard):
                 self.assertEqual(self.desk.resolve(heard)["path"], folder)
 
+    def test_a_spoken_form_from_the_note(self):
+        """A name that does not say how it is said is heard by its `spoken` form."""
+        write(self.ws / "System" / "tools" / "garrick_lib.py",
+              (REPO / "template" / "System" / "tools" / "garrick_lib.py").read_text(encoding="utf-8"))
+        folder = self.work / "Acme Review" / "Threads" / "Q4 Planning"
+        note = thread_note("Acme Review", "Q4 Planning").replace(
+            "type:", "spoken: fourth quarter planning\ntype:", 1)
+        write(folder / "Q4 Planning.md", note)
+        for heard in ("fourth quarter planning", "Q4 Planning", "q four planning"):
+            with self.subTest(heard=heard):
+                self.assertEqual(desk.Desk(self.ws).resolve(heard)["path"], folder)
+
     def test_an_alias_from_the_config(self):
         write(self.ws / "System" / "desk.json", json.dumps({"aliases": {"the price": "Pricing"}}))
         self.assertEqual(desk.Desk(self.ws).resolve("the price")["path"], self.pricing)

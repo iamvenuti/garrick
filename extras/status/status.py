@@ -950,7 +950,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){retur
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 function copy(text,done){var ok=function(){say(done)};if(host){host.postMessage({copy:text});ok();return}
 if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(ok,function(){say(text)});return}say(text)}
-function send(q,said){host.postMessage({act:q});say(said)}
+function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* the card's own buttons: Rename and Delete on a thread or a project, New thread here on a project */
 window.GarrickManage=function(o){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
 return'<div class="mg-acts">'+(k==='project'?'<button class="act" type="button" data-manage="new-thread" data-mg="'+m+'">New thread here</button>':'')
@@ -965,6 +965,8 @@ function select(id,label,opts,chosen){return'<label class="tlab" for="'+id+'">'+
 +opts.map(function(x){var v=Array.isArray(x)?x[0]:x,n=Array.isArray(x)?x[1]:x;return'<option value="'+esc(v)+'"'+(v===chosen?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select>'}
 function val(d,id){var e=d.querySelector('#'+id);return e?e.value.trim():''}
 function bad(d,t){var m=d.querySelector('#mg-msg');m.textContent=t;m.classList.add('bad')}
+/* a zone still busy with another request (WORK_JS) keeps the dialog open and says so */
+function busy(d,z){var b=act&&window.GarrickBusy&&GarrickBusy(z);if(b)bad(d,z+' is still busy: '+b+' Try again when it is done.');return!!b}
 var CANCEL='<button class="act" type="button" data-cancel>Cancel</button>';
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
@@ -974,7 +976,7 @@ CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy
 function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>'}
 d.querySelector('#mg-zone').onchange=projects;projects();d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
-if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');
+if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf();if(!zs.length){say('There is no zone yet.');return}
 var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
@@ -982,13 +984,13 @@ CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy
 function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];d.querySelector('#mg-pt').innerHTML=p.length?select('mg-party','For',p,''):'<p class="mg-msg">No party belongs to this zone yet: add it to System/context.md first.</p>'}
 d.querySelector('#mg-zone').onchange=parties;parties();d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-project',zone:val(d,'mg-zone'),name:val(d,'mg-name'),party:val(d,'mg-party'),thread:val(d,'mg-thread')};
-if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');
+if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+' for '+q.party+' in '+q.zone+', first thread '+q.thread,'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
 d.querySelector('[data-go]').onclick=function(){var to=val(d,'mg-name');if(!to||to===old)return bad(d,'Give it a new name.');
-var q={verb:'rename',zone:mg[0],project:mg[1],to:to};if(mg[2])q.thread=mg[2];d.close();
+var q={verb:'rename',zone:mg[0],project:mg[1],to:to};if(mg[2])q.thread=mg[2];if(busy(d,q.zone))return;d.close();
 if(act)send(q,'Renaming '+old+'…');else copy('rename '+old+' to '+to,'Copied “rename '+old+' to '+to+'”. Paste it to your assistant.')}}
 function del(mg){var name=mg[2]||mg[1],kind=mg[2]?'thread':'project',subs=mg[5]||[];
 var gone=['its folder, '+mg[3]+' file'+(mg[3]===1?'':'s')];if(kind==='thread')gone.push('its line in the project’s note');
@@ -1002,9 +1004,9 @@ var d=dialog('Delete '+name+'?',body,'<button class="act" type="button" data-fin
 d.querySelector('[data-cancel]').focus();
 var c=d.querySelector('#mg-confirm');if(c){c.oninput=function(){d.querySelector('[data-go]').disabled=c.value.trim()!==name}}
 d.querySelector('[data-finish]').onclick=function(){d.close();copy('finish '+name,'Copied “finish '+name+'”. Paste it to your assistant.')};
-d.querySelector('[data-park]').onclick=function(){d.close();var q={verb:'park',zone:mg[0],project:mg[1]};if(mg[2])q.thread=mg[2];
+d.querySelector('[data-park]').onclick=function(){var q={verb:'park',zone:mg[0],project:mg[1]};if(mg[2])q.thread=mg[2];if(busy(d,q.zone))return;d.close();
 if(act)send(q,'Parking '+name+'…');else copy('park '+name,'Copied “park '+name+'”. Paste it to your assistant.')};
-d.querySelector('[data-go]').onclick=function(){var q={verb:'delete',zone:mg[0],project:mg[1],confirm:name};if(mg[2])q.thread=mg[2];d.close();
+d.querySelector('[data-go]').onclick=function(){var q={verb:'delete',zone:mg[0],project:mg[1],confirm:name};if(mg[2])q.thread=mg[2];if(busy(d,q.zone))return;d.close();
 if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete '+name+'”. Paste it to your assistant, who asks you again.')}}
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
@@ -1022,6 +1024,85 @@ setTimeout(function(){bar.remove()},Math.max(0,u.until-Date.now()))}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',offer);else offer();
 })();
 """
+
+# An action that runs (#77): a request that commits in a zone can take a minute
+# or more, since each commit runs the zone's wall check. While it runs, a toast
+# of its own stays up with a spinner and the time so far, says why after
+# ACTION_WHY seconds, and holds every button that acts on that zone; other
+# zones stay usable. A result that took longer than the toast's ACTION_TOAST
+# stays until dismissed; a quick one goes to the host's toast as before. What
+# runs, and what waits to be seen, is kept in this window's sessionStorage, so
+# the rebuild after a request, or one asked for meanwhile, does not lose it. A
+# request with no reply after ACTION_LOST seconds, past the Obsidian plugin's
+# fifteen minutes, is taken as lost. ZONE_VERBS are the requests page_action.py
+# runs under the zone's lock.
+ACTION_TOAST = 4
+ACTION_WHY = 10
+ACTION_LOST = 960
+ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
+              "delete", "undo")
+
+WORK_CSS = r"""
+#work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}
+#work[hidden]{display:none}#work .wk{display:flex;gap:10px;align-items:flex-start;background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px}
+#work .wbody{display:flex;flex-direction:column;gap:2px;min-width:0}#work small,#work .wt{color:color-mix(in srgb,var(--surface) 72%,transparent);font-size:12px}
+#work .wt{font-weight:inherit;font-variant-numeric:tabular-nums;margin-left:4px}#work .bad{box-shadow:inset 3px 0 0 var(--critical)}
+#work .wspin{flex:none;width:11px;height:11px;margin-top:3px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wspin .8s linear infinite}
+@keyframes wspin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#work .wspin{animation:none;border-right-color:currentColor;opacity:.6}}
+#work .wx{flex:none;background:none;border:0;color:inherit;font:inherit;font-size:16px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}#work .wx:hover{opacity:1}
+"""
+
+# Its own script, after MANAGE_JS, so it wraps every window.GarrickActed set
+# before it. The page's buttons hand it a request through window.GarrickAct,
+# which sends one that commits in a zone and shows it running, and answers
+# false for any other, which the button sends as before; window.GarrickHeld
+# says when a zone is still busy, and window.GarrickBusy what it is busy with.
+# Without this script the buttons send as they did before it.
+WORK_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null;
+try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
+function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W))}catch(e){}}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function zoned(q){return!!q&&ZONED.indexOf(q.verb)>=0&&typeof q.zone==='string'}
+function running(z){return W.filter(function(e){return!e.out&&e.q.zone===z})[0]||null}
+function took(ms){var s=Math.max(0,Math.round(ms/1000));return s<60?s+' s':Math.floor(s/60)+' min'+(s%60?' '+s%60+' s':'')}
+function toast(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(function(){t.style.opacity=0},TOAST*1000)}
+/* every button that acts on a busy zone: a Todo line's tick and date, its + Add, a card's Rename, Delete and New thread here, Park and Wake */
+function str(s){return'"'+String(s).replace(/["\\]/g,'\\$&')+'"'}
+function holds(z){var j=JSON.stringify(z),Z=str(z);return['.trow[data-z='+Z+'] button.tick','.trow[data-z='+Z+'] button.tdate','.tadd-open[data-zone='+Z+']',
+'button[data-mg^='+str('['+j+',')+']'].concat(['park','wake'].map(function(v){return'button[data-act*='+str('"verb":"'+v+'"')+'][data-act*='+str('"zone":'+j)+']'}))}
+function hold(){var zs=[];W.forEach(function(e){if(!e.out&&zs.indexOf(e.q.zone)<0)zs.push(e.q.zone)});var sel=[].concat.apply([],zs.map(holds)).join(',');
+var st=document.getElementById('work-hold');if(!st){st=document.createElement('style');st.id='work-hold';document.head.appendChild(st)}
+st.textContent=sel?sel+'{opacity:.45;pointer-events:none;cursor:default}':'';
+[].forEach.call(document.querySelectorAll('[data-work-held]'),function(b){b.disabled=false;b.removeAttribute('data-work-held')});
+if(sel)[].forEach.call(document.querySelectorAll(sel),function(b){if(!b.disabled){b.disabled=true;b.setAttribute('data-work-held','')}})}
+function render(){var now=Date.now();if(box){box.innerHTML=W.map(function(e,i){
+if(e.out)return'<div class="wk '+(e.out.ok?'ok':'bad')+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
++'</span></div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
+return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
++(now-e.t0>=WHY*1000?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
+box.hidden=!W.length;document.body.style.setProperty('--work-h',W.length?box.offsetHeight+8+'px':'0px')}hold()}
+/* each second: the time so far, why after WHY, and a request with no reply after LOST given up */
+function sweep(){var now=Date.now(),changed=false;W.forEach(function(e){if(e.out)return;
+if(now-e.t0>LOST*1000){e.out={ok:false,say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
+else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}});if(changed)keep();return changed}
+function tick(){if(sweep())render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});run()}
+function run(){var on=W.some(function(e){return!e.out});if(on&&!timer)timer=setInterval(tick,1000);if(!on&&timer){clearInterval(timer);timer=null}}
+window.GarrickBusy=function(z){var e=running(z);return e?e.say:''};
+window.GarrickHeld=function(q){var e=zoned(q)&&running(q.zone);if(e)toast(q.zone+' is still busy: '+e.say);return!!e};
+window.GarrickAct=function(q,said){if(!zoned(q))return false;if(GarrickHeld(q))return true;host.postMessage({act:q});
+W.push({q:q,say:said||'Working…',t0:Date.now()});keep();render();run();return true};
+/* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside */
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){var e=zoned(q)&&running(q.zone);
+if(e&&e.q.verb===q.verb){var now=Date.now();if(now-e.t0>TOAST*1000){e.out={ok:!!(out&&out.ok),say:out&&out.say||'That did not work.'};e.done=now;
+var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
+if(prev)return prev(q,out)};
+if(box)box.addEventListener('click',function(e){var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
+sweep();render();run()})();
+""".replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
+    .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":")))
+
 
 TADD_JS = r"""
 (function(){var dlg=document.getElementById('tadd');if(!dlg)return;
@@ -1049,8 +1130,8 @@ ddate.addEventListener('input',where);dtext.addEventListener('input',where);dfil
 document.getElementById('tadd-cancel').addEventListener('click',function(){dlg.close()});
 /* sent inside the click that asked for it, as every page action is */
 function add(){var t=dtext.value.replace(/\s+/g,' ').trim();if(!t){dtext.classList.remove('shake');void dtext.offsetWidth;dtext.classList.add('shake');dtext.focus();return}
-var pick=tree()&&tree().querySelector('input:checked');if(window.TaddSend)window.TaddSend(dz,pick?pick.value:'-',ddate.value||'-',t);dlg.close();
-var el=document.getElementById('toast');if(el){el.textContent='Adding to '+dz+': '+t.slice(0,60)+(t.length>60?'…':'');el.style.opacity=1;setTimeout(function(){el.style.opacity=0},3000)}}
+var busy=window.GarrickBusy&&GarrickBusy(dz);if(busy){dwhere.textContent=dz+' is still busy: '+busy+' Add it when that is done.';return}
+var pick=tree()&&tree().querySelector('input:checked');if(window.TaddSend)window.TaddSend(dz,pick?pick.value:'-',ddate.value||'-',t);dlg.close()}
 document.getElementById('tadd-ok').addEventListener('click',add);
 dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();add()}})})();
 """
@@ -1134,10 +1215,13 @@ var f0=st.get('garrick-todo-filter');filt(f0==='late'||f0==='nodate'?f0:'all');
 /* a zone's "Open the list" on the Overview opens the tab on that zone */
 document.addEventListener('click',function(e){var g=e.target.closest&&e.target.closest('[data-tz-go]');if(g)zone(g.dataset.tzGo)},true);
 /* what a button sends: Garrick's request, page_action.py's to carry out */
-function send(verb,r,more){var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k};for(var k in more||{})q[k]=more[k];host.postMessage({act:q})}
-todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
+function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k};for(var k in more||{})q[k]=more[k];
+if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
+/* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
+function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
+todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending')||held('todo-done',r))return;
 var d=!r.classList.contains('done');r.classList.toggle('done',d);b.setAttribute('aria-label',(d?'Reopen':'Mark done')+b.getAttribute('aria-label').replace(/^[^:]*/,''));
-send(d?'todo-done':'todo-undo',r);say(d?'Ticking it…':'Reopening it…')});
+send(d?'todo-done':'todo-undo',r,null,d?'Ticking it…':'Reopening it…')});
 /* the date menu: the date is worked out at the click, so a page built yesterday still means today */
 var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
 function at(n){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return d}
@@ -1153,13 +1237,13 @@ menu.innerHTML='<div class="dh">'+(w?'Chase on':'Due')+'</div>'+o.map(function(x
 menu.hidden=false;var q=b.getBoundingClientRect(),mw=menu.offsetWidth,mh=menu.offsetHeight,y=q.bottom+4;if(y+mh>window.innerHeight-8)y=q.top-mh-4;
 menu.style.left=Math.max(8,Math.min(q.right-mw,window.innerWidth-mw-8))+'px';menu.style.top=Math.max(8,y)+'px';var f=menu.querySelector('button');if(f)f.focus()}
 function shut(){menu.hidden=true;mrow=null}
-todo.addEventListener('click',function(e){var b=e.target.closest('button.tdate');if(!b||!host)return;e.stopPropagation();var r=b.closest('.trow');if(mrow===r&&!menu.hidden)shut();else open(r,b)});
+todo.addEventListener('click',function(e){var b=e.target.closest('button.tdate');if(!b||!host)return;e.stopPropagation();var r=b.closest('.trow');if(mrow===r&&!menu.hidden)shut();else if(!held('todo-date',r))open(r,b)});
 menu.addEventListener('click',function(e){var b=e.target.closest('button');if(!b||!mrow)return;var v=b.classList.contains('set')?menu.querySelector('input').value:b.dataset.v;if(!v)return;apply(mrow,v);shut()});
 menu.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.tagName==='INPUT'){e.preventDefault();menu.querySelector('.set').click()}});
 document.addEventListener('click',function(e){if(!menu.hidden&&!menu.contains(e.target))shut()});
 document.addEventListener('keydown',function(e){if(e.key==='Escape')shut()});window.addEventListener('scroll',function(){if(!menu.hidden)shut()},{passive:true});
 /* the row says the new date at once, and waits for the rebuild: the line's key changes with its date */
-function apply(r,v){send('todo-date',r,{date:v});say('Dating it…');r.classList.add('pending');
+function apply(r,v){if(held('todo-date',r))return;send('todo-date',r,{date:v},'Dating it…');r.classList.add('pending');
 var b=r.querySelector('.tdate'),w=r.dataset.w==='1';r.dataset.d=v==='-'?'':v;r.classList.remove('late','undated');b.className='tdate';
 if(v==='-'){b.textContent=w?'＋ chase date':'＋ date';b.classList.add('none');r.classList.add('undated');return}
 var d=new Date(v+'T12:00:00'),n=Math.round((d-at(0))/864e5);
@@ -3089,7 +3173,7 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .tick:hover{border-color:var(--accent)}
 .flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
 .flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
-#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
+#toast{position:fixed;left:50%;bottom:calc(22px + var(--work-h,0px));transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
 @media (hover:none){.head .tools{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
 .only [data-ok="1"]{display:none}
@@ -3353,10 +3437,11 @@ document.addEventListener('click',function(e){var t=e.target.closest?e.target:nu
    One with data-confirm asks for a second click within four seconds; one with data-expect
    keeps the page rebuilding until what it asked for shows (RELOAD_JS). */
 var x=t.closest('button[data-act]');if(x){if(!host)return;var r;try{r=JSON.parse(x.dataset.act)}catch(err){return}
+if(window.GarrickHeld&&GarrickHeld(r))return;   /* its zone still busy with another (WORK_JS) */
 if(x.dataset.confirm&&!x.classList.contains('armed')){var was=x.textContent;x.classList.add('armed');x.textContent=x.dataset.confirm;
 setTimeout(function(){x.classList.remove('armed');x.textContent=was},4000);return}
 x.classList.remove('armed');if(x.dataset.expect&&window.GarrickExpect)GarrickExpect(x.dataset.expect);
-host.postMessage({act:r});say(x.dataset.say);return}
+if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r});say(x.dataset.say);return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -3364,7 +3449,8 @@ var b=t.closest('button[data-copy]');if(b)put(b.dataset.copy).then(function(){sa
 /* The Todo list's + button (in the app): Garrick's dialog opens on
    that zone, and the app runs page_action.py with the request, then rebuilds. */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.tadd-open[data-zone]');if(a&&window.TaddOpen)TaddOpen(a.dataset.zone)});
-window.TaddSend=function(z,target,date,text){if(!host)return;host.postMessage({act:{verb:'todo-add',zone:z,target:target,date:date,text:text}});
+window.TaddSend=function(z,target,date,text){if(!host)return;var q={verb:'todo-add',zone:z,target:target,date:date,text:text},s='Adding to '+z+': '+text.slice(0,60)+'…';
+if(!(window.GarrickAct&&GarrickAct(q,s))){host.postMessage({act:q});say(s)}
 if(window.TodoPending)TodoPending(z,target,date,text)};
 /* A project's threads fold under its row on the Threads card; the fold is remembered. */
 function chev(b){var box=document.getElementById(b.dataset.sub);if(!box)return;
@@ -4237,13 +4323,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
-    # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets.
+    # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
+    # and WORK_JS after both.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS,
-               MANAGE_JS, MENU_JS, GRAPH_JS if show_graph else ""]
+               MANAGE_JS, WORK_JS, MENU_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s</body></html>' % (
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
                 "".join("<script>%s</script>" % js for js in scripts if js)))
 
 

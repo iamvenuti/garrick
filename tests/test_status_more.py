@@ -90,7 +90,7 @@ class TestTodoTab(StatusCase):
         self.assertNotIn("An old one", tab)
         self.assertRegex(done, r'<div class="trow done[ "]')
         self.assertIn('aria-label="Reopen: Sent the brief"', done)
-        self.assertIn("send(d?'todo-done':'todo-undo',r)", status.TODO_JS)
+        self.assertIn("send(d?'todo-done':'todo-undo',r,null,", status.TODO_JS)
 
     def test_filters_sorts_and_zones(self):
         html, tab = self.tab()
@@ -108,7 +108,7 @@ class TestTodoTab(StatusCase):
     def test_the_date_menu_and_a_pending_line(self):
         for choice in ("'Today'", "'Tomorrow'", "'Friday'", "'Next Monday'", "'In a week'", "'In two weeks'", "Clear the date"):
             self.assertIn(choice, status.TODO_JS)
-        self.assertIn("send('todo-date',r,{date:v})", status.TODO_JS)           # an ISO date, worked out at the click
+        self.assertIn("send('todo-date',r,{date:v},", status.TODO_JS)            # an ISO date, worked out at the click
         self.assertIn("r.classList.add('pending')", status.TODO_JS)             # its key changes: no second click before the rebuild
         self.assertIn("window.TodoPending=function(z,target,date,text)", status.TODO_JS)
         self.assertIn("if(window.TodoPending)TodoPending(z,target,date,text)", status.JS)
@@ -1160,10 +1160,11 @@ class TestParkLandsAtOnce(StatusCase):
 
     def test_the_hosts_hand_over_the_reply(self):
         swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	// Only a folder inside this workspace")]
-        self.assertIn("JSONSerialization.data(withJSONObject: [request, said])", act)
-        self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", act)
-        self.assertLess(act.index("GarrickActed"), act.index("self.freshen(force: true)"))   # at once, then the rebuild
+        act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
+        acted = swift[swift.index("	func acted("):swift.index("	// Only a folder inside this workspace")]
+        self.assertIn("JSONSerialization.data(withJSONObject: [request, said])", acted)
+        self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", acted)
+        self.assertLess(act.index("self.acted(request, said ?? "), act.index("self.freshen(force: true)"))   # at once, then the rebuild
         plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", plugin)
         self.assertIn("this.rebuild(true);", plugin)

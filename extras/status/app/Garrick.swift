@@ -701,12 +701,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// A button that changes something: page_action.py,
 	// beside status.py, does it and commits it, and says what it did. The app
-	// only passes the request on; the script checks every part of it.
+	// only passes the request on; the script checks every part of it. It waits
+	// as long as the script takes, a slow wall check included, and every
+	// request gets a reply on the page, a failed one too: the page shows a
+	// request running until its reply comes.
 	func act(_ request: [String: Any]) {
 		guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
 		let script = builder.deletingLastPathComponent().appendingPathComponent("page_action.py")
 		guard FileManager.default.fileExists(atPath: script.path) else {
-			return toast("This page's actions need page_action.py beside status.py.")
+			return acted(request, ["ok": false, "say": "This page's actions need page_action.py beside status.py."])
 		}
 		let p = Process()
 		p.executableURL = URL(fileURLWithPath: python)
@@ -720,12 +723,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let reply = output.fileHandleForReading.readDataToEndOfFile()
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
-				self.toast(said?["say"] as? String ?? "That did not work.")
-				// The page shows a park or a wake at once, and the rebuild confirms it.
-				if let said, let both = try? JSONSerialization.data(withJSONObject: [request, said]),
-				   let text = String(data: both, encoding: .utf8) {
-					self.web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
-				}
+				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
 				self.freshen(force: true)
 			}
 		}
@@ -734,7 +732,17 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			input.fileHandleForWriting.write(data)
 			input.fileHandleForWriting.closeFile()
 		} catch {
-			toast("Cannot run \(python)")
+			acted(request, ["ok": false, "say": "Cannot run \(python)"])
+		}
+	}
+
+	// The reply: the toast, then the page, which shows a park or a wake at once
+	// (the rebuild confirms it) and ends what it showed running.
+	func acted(_ request: [String: Any], _ said: [String: Any]) {
+		toast(said["say"] as? String ?? "That did not work.")
+		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
+		   let text = String(data: both, encoding: .utf8) {
+			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
 		}
 	}
 

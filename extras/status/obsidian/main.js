@@ -376,20 +376,31 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	// beside status.py, checks it, does it and commits it, and says what it did.
 	// Its own limits come first: a commit waits up to five minutes for the
 	// wall check, so the plugin waits fifteen before it lets the request go.
+	// Every request gets a reply on the page, a failed one too: the page shows
+	// a request running until its reply comes.
 	act(view, request) {
 		const script = path.join(path.dirname(this.script()), "page_action.py");
-		if (!fs.existsSync(script)) return view.toast("This page's actions need page_action.py beside status.py.");
+		if (!fs.existsSync(script)) return this.acted(view, request, { ok: false, say: "This page's actions need page_action.py beside status.py." });
 		const child = execFile(this.python(), [script, "--workspace", this.root()], { cwd: this.root(), timeout: 900000 }, (err, out) => {
 			let said = null;
 			try { said = JSON.parse(out); } catch (e) {}
-			view.toast((said && said.say) || "That did not work.");
-			if (said && view.web) {
-				view.web.executeJavaScript(`(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(${
-					JSON.stringify([request, said]).replace(/</g, "\\u003c")})`).catch(() => {});
+			if (!said || typeof said !== "object") {
+				said = { ok: false, say: err && err.killed ? "page_action.py had no answer after fifteen minutes and was stopped." : "That did not work." };
 			}
+			this.acted(view, request, said);
 			this.rebuild(true);
 		});
 		child.stdin.end(JSON.stringify(request));
+	}
+
+	// The reply: the toast, then the page, which shows a park or a wake at once
+	// (the rebuild confirms it) and ends what it showed running.
+	acted(view, request, said) {
+		view.toast(said.say || "That did not work.");
+		if (view.web) {
+			view.web.executeJavaScript(`(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(${
+				JSON.stringify([request, said]).replace(/</g, "\\u003c")})`).catch(() => {});
+		}
 	}
 
 	// A link on the page: a note in this vault opens here, in a new tab;

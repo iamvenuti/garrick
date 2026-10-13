@@ -3226,6 +3226,7 @@ dialog.settings .gacts{margin:8px 0 2px}
 .setcols{display:grid;grid-template-columns:minmax(0,1fr);gap:14px 28px}
 @media (min-width:760px){dialog.settings{max-width:860px}.setcols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 /* a section's explanation, word for word, behind the "?" beside its heading */
+#settings .setsec:not(.explained) :is(.launcher-choice,.setlink,.flagrow) small{display:none}
 .qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:10.5px;font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
 .qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings .sethelp{margin:2px 0 6px}
@@ -3416,7 +3417,10 @@ p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagatio
 sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
 /* each "?" shows or hides its section's explanation where it stands */
 sd.addEventListener('click',function(e){var q=e.target.closest('.qhelp'),p=q&&document.getElementById(q.getAttribute('aria-controls'));if(!p)return;
-p.hidden=!p.hidden;q.setAttribute('aria-expanded',String(!p.hidden))});
+p.hidden=!p.hidden;q.setAttribute('aria-expanded',String(!p.hidden));var sec=q.closest('.setsec');if(sec)sec.classList.toggle('explained',!p.hidden)});
+/* a row's own line shows with its section's explanation; until then it is the row's tooltip, read as it stands (some lines change) */
+sd.addEventListener('mouseover',function(e){var r=e.target.closest('.launcher-row,.setlink,.flagrow'),m=r&&r.querySelector('small');
+if(!m||!m.textContent.trim())return;if(!('tip0' in r.dataset))r.dataset.tip0=r.getAttribute('title')||'';r.title=m.textContent.trim()+(r.dataset.tip0?' '+r.dataset.tip0:'')});
 function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled

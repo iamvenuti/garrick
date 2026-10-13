@@ -22,7 +22,7 @@ One row stays pinned at the top while the page scrolls: Garrick's mark, the page
 
 The cog beside the page's name opens *Settings*. In the Mac app, *Settings…* in the app menu (⌘,) opens it too.
 
-Each section shows its controls and nothing else. The "?" beside a section's heading shows what the section does, where it stands, and pressing it again hides it. In a window wide enough, the sections sit in two columns: *Opening a thread*, *Zones* and *Menu bar* on the left, *About Garrick* and *Preview features* on the right, with *Reset view* at the foot. Its "?", or pointing at the button, says what it resets.
+Each section shows its controls and nothing else. The "?" beside a section's heading shows what the section does, where it stands, together with each row's own line, such as what a hotkey opens; pressing it again hides them. Until then, a row's line is its tooltip. In a window wide enough, the sections sit in two columns: *Opening a thread*, *Zones* and *Menu bar* on the left, *About Garrick* and *Preview features* on the right, with *Reset view* at the foot. Its "?", or pointing at the button, says what it resets.
 
 **Opening a thread** lists the ways a project or thread can be opened: the note's own link (*Open in Obsidian*, or *Open the note* where Obsidian is not installed), *Reveal in Finder*, *Open in cmux*, *Open in Codex* and *Open in Claude*. Each build checks which of the apps this Mac has, and one that is not installed is greyed out. Each row has two controls:
 

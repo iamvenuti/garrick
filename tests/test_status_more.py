@@ -611,6 +611,17 @@ class TestSharedLauncherSettings(StatusCase):
                       "if(zChanged)q.zones=zreq();", status.JS)
 
 
+class TestSettingsRowLines(StatusCase):
+    """Settings (#73): a row's own grey line waits behind its section's "?", and is its tooltip meanwhile."""
+
+    def test_row_lines_hidden_until_explained(self):
+        html = self.page()
+        self.assertIn("#settings .setsec:not(.explained) :is(.launcher-choice,.setlink,.flagrow) small{display:none}", html)
+        self.assertIn("sec.classList.toggle('explained',!p.hidden)", html)
+        self.assertIn("r.title=m.textContent.trim()+(r.dataset.tip0?' '+r.dataset.tip0:'')", html)
+        self.assertIn("<small>", html[html.index('id="settings"'):])                     # the lines are all still there
+
+
 class TestZoneColours(StatusCase):
     """Settings › Zones (#67): a colour and an icon per zone, on every label that names it."""
 

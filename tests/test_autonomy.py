@@ -99,6 +99,21 @@ GOES_AHEAD = [
         "autonomy",
         ["the zone's `Todo.md`"],
     ),
+    case(
+        "rename with one match",
+        "\"Rename Pricing to Renewal\", and Pricing is one thread of one project.",
+        "rename",
+        ["**One match goes ahead**", "the instruction named it, so do not ask it back"],
+        ["**Confirm in one line** before acting"],
+    ),
+    case(
+        "add a zone with a name and a purpose",
+        "\"Add a zone called Health, for appointments and records.\"",
+        "new zone",
+        ["**A name and what it holds is enough to go ahead**",
+         "the instruction said both, so do not ask them back"],
+        ["wait for the yes"],
+    ),
 ]
 
 STILL_STOPS = [
@@ -143,6 +158,13 @@ STILL_STOPS = [
         "The same request, in the skill.",
         "threads skill",
         ["**More than one: ask in one line, naming the candidates.**"],
+    ),
+    case(
+        "a heard name is close to one that already exists",
+        "\"Rename Pricing to Renewals\" where Renewal exists; \"add a zone called Helth\" where "
+        "Health exists.",
+        "rename",
+        ["A name close to one that already exists may mean that one: ask, naming it."],
     ),
     case(
         "a heard zone name is close to a zone that exists",
@@ -312,6 +334,34 @@ class AutonomyTest(unittest.TestCase):
         for line in added:
             for sentence in re.split(r"(?<=[.:]) ", line):
                 self.assertLessEqual(len(sentence.split()), 40, sentence)
+
+
+class ThreadsSkillTest(unittest.TestCase):
+    def setUp(self):
+        self.text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_rename_keeps_its_steps_and_their_numbers(self):
+        """Step 2 changed its answer, not its place: resolving first, the script third."""
+        rename = section(self.text, '## Rename: "rename X to Y"')
+        numbers = [line.split(".", 1)[0] for line in rename.splitlines() if re.match(r"^\d+\. ", line)]
+        self.assertEqual(["1", "2", "3", "4", "5"], numbers)
+        self.assertIn("1. **Resolve X.** If it could be the project or one of its threads, ask which.",
+                      flat(rename))
+        self.assertIn("3. **Run the script.**", flat(rename))
+
+    def test_new_zone_keeps_its_steps_and_their_numbers(self):
+        new_zone = section(self.text, '## New zone: "add a zone called X", "new zone X"')
+        numbers = [line.split(".", 1)[0] for line in new_zone.splitlines() if re.match(r"^\d+\. ", line)]
+        self.assertEqual(["1", "2", "3", "4"], numbers)
+        flattened = flat(new_zone)
+        self.assertIn("2. **Run the script.**", flattened)
+        self.assertIn("If the user did not say what it holds, ask.", flattened)
+
+    def test_delete_still_wants_the_name_said_again(self):
+        """Deleting is the one of the three that cannot be undone, so it keeps its question."""
+        delete = flat(section(self.text, '## Delete: "delete X"'))
+        self.assertIn('ask: "Finish it, park it, or delete it?"', delete)
+        self.assertIn('Act on deletion only on "yes, delete <X>", with the name said again', delete)
 
 
 def print_cases() -> None:

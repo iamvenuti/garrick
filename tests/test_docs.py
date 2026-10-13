@@ -10,14 +10,26 @@ one folder, and folders here are compared without regard to case.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_TARGET = re.search(r'^DEFAULT_TARGET = "([^"]+)"', (REPO / "install.py").read_text(encoding="utf-8"),
                            re.M).group(1)
 CLONE = re.compile(r"git clone (\S+)(?:[ \t]+([^\s`<]+))?")
+
+
+def installer():
+    """install.py as a module: the commands it allows are documented, not guessed."""
+    spec = importlib.util.spec_from_file_location("garrick_install", REPO / "install.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 TARGET = re.compile(r"--target[ \t]+([^\s`<)]+)")
 CONFIG = re.compile(r"--config[ \t]+([^\s`<)]+)")
 
@@ -90,6 +102,22 @@ class FirstStepsTest(unittest.TestCase):
         self.assertGreaterEqual(len(scripts), 4)
         for script in scripts:
             self.assertTrue((REPO / "template" / script).is_file(), f"first-steps.md names {script}, which is not shipped")
+
+    def test_the_table_names_every_tool_the_installer_allows(self):
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        table = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        named = re.findall(r"`python3 (System/\S+\.py)`", table)
+        for tool in installer().ALLOWED_TOOLS:
+            self.assertIn(tool, named, "the installer allows %s, which first-steps.md does not name" % tool)
+
+    def test_the_account_says_what_it_refused_to_allow(self):
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        section = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        account = section.split("The installer's last question", 1)[1]
+        for word in installer().REFUSED_GIT:
+            self.assertIn("`%s`" % word, account, word)
+        for needle in ("git -C Zones/Work", "take it back", "release.py"):
+            self.assertIn(needle, account, needle)
 
     def test_the_git_commands_to_approve_are_named_by_what_they_do(self):
         # A folder after `git -C` says where a command works, not what it does:

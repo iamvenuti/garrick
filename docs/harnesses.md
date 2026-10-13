@@ -2,7 +2,7 @@
 
 Choose the interface separately from the workspace: [desktop apps](first-steps.md) for a guided start, or [CLI tools](terminal-setup.md) for terminal users. Obsidian and cmux are optional. A provider desktop app is not needed for local CLI work. [Phone access](extras/phone-access.md) differs by provider: Codex's remote voice goes through the ChatGPT desktop app as its host, and Claude Code's Remote Control runs from a terminal session.
 
-Garrick is written for both. No rule, template or skill names either one. The harness-specific pieces are two symlinks per repository and one warning about `CLAUDE.md` files, described below.
+Garrick is written for both. No rule, template or skill names either one. The harness-specific pieces are two symlinks per repository, the allow rules the installer offers to write for Claude Code, and one warning about `CLAUDE.md` files, described below.
 
 ## The entry point
 
@@ -56,4 +56,4 @@ Both assistants read the same `AGENTS.md` files, the same skills and the same no
 - **Conversation history stays with the assistant that recorded it.** Neither can open the other's conversations. Each resumes its own with its own command, typed in the folder the session ran in: `claude --resume <id>`, or `claude --continue` for the most recent conversation; `codex resume <id>`, or `codex resume --last`.
 - **"Open Acme pricing" works in either.** It rebuilds the context from the thread's Resume here block, which both read, so a fresh session in the other assistant starts where the last one wrapped.
 
-App settings and permissions also belong to each assistant separately. Set them once in each: [First steps](first-steps.md) has both.
+App settings and permissions also belong to each assistant separately. Set them once in each: [First steps](first-steps.md) has both. The installer writes allow rules for Claude Code alone, because it is the one of the two with a permission file of its own per workspace; Codex's approval setting belongs to your account, so the installer only says which to choose.

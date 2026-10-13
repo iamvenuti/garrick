@@ -2426,15 +2426,33 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     return out
 
 
+def help_button(name: str, key: str) -> str:
+    """A "?" that shows or hides the explanation help_text() makes for the
+    same key, where it stands. A button, so the keyboard reaches it, and
+    aria-expanded says whether the explanation is showing."""
+    return ('<button class="qhelp" type="button" aria-expanded="false" aria-controls="help-%s" aria-label="Explain %s" '
+            'title="Explain">?</button>' % (key, E(name)))
+
+
+def help_text(key: str, html: str) -> str:
+    """A Settings section's explanation, word for word, hidden until its "?" is pressed."""
+    return '<p class="hint sethelp" id="help-%s" hidden>%s</p>' % (key, html)
+
+
+def set_head(name: str, key: str) -> str:
+    """A Settings section's heading, with the "?" for its explanation."""
+    return '<h3>%s%s</h3>' % (E(name), help_button(name, key))
+
+
 def menu_settings() -> str:
     """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
     shortcut that opens either, the one that opens the Ask box (preview
     ask), and the dictation the box starts once it opens. The app keeps
     them all, so they hold when the window is closed."""
-    return ('<section class="setsec apponly" id="menu-settings" hidden><h3>Menu bar</h3><p class="hint">A menu of the live '
+    return ('<section class="setsec apponly" id="menu-settings" hidden>' + set_head("Menu bar", "menu") + help_text("menu", 'A menu of the live '
             'projects of the zone the graph shows, with their threads, kept at hand outside this window. Click one to open it as a '
-            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.</p>'
+            'thread&#39;s name would, or point at it for the other apps above. Close the window and the menu stays.') +
             '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="menu-show"> <span>Show the menu'
             '<small>Marked in red when something on the Status tab failed</small></span></label></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-style"><span>Shows as'
@@ -2548,6 +2566,10 @@ def release_notes(text: Optional[str], edge: bool = False) -> str:
                    % ("", E(title), md_block(lines)) for title, lines in parts)
 
 
+# Where a way past the wall check is reported: GitHub's private advisory form.
+BYPASS = "/security/advisories/new"
+
+
 def about_garrick(version: str, notes: str = "") -> str:
     """Settings › About Garrick: which Garrick this is, its release notes, and
     the ways to report a bug, suggest a change, ask, or hear about releases.
@@ -2559,26 +2581,31 @@ def about_garrick(version: str, notes: str = "") -> str:
     System/tools/release.py (release_ask)."""
     report = ("Garrick bug report\n\nWhich Garrick: %s\n\nWhat happened:\n\nHow to make it happen again:\n\n"
               "Assistant and its version:\n\nUse invented names (Acme, Birch), never a real client's." % version)
+    # The two forms that publish what you write warn, as their tooltip, what
+    # the paragraph behind the "?" says; a way past the wall check has a row
+    # of its own, so the private report is never deeper than the others.
+    invented = "Use invented names (Acme, Birch), never a real client's."
     links = [
         ("Report a bug", "/issues/new?" + urllib.parse.urlencode({"template": "bug.yml", "garrick": version}),
-         "The bug form on GitHub, with this version filled in"),
-        ("Report a wrong refusal", "/issues/new?template=wall-check.yml", "The wall check refused something it should allow"),
-        ("Suggest a change", "/discussions/new?category=ideas", "Something Garrick should do, or do differently"),
-        ("Ask a question", "/discussions/new?category=q-a", "How something works, or how it went for you"),
-        ("Announcements", "/discussions/categories/announcements", "News of each release; watch it on GitHub to hear of the next"),
-        ("All releases", "/releases", "Every release and what it changed"),
+         "The bug form on GitHub, with this version filled in", invented),
+        ("Report a wrong refusal", "/issues/new?template=wall-check.yml", "The wall check refused something it should allow", invented),
+        ("Report a bypass privately", BYPASS, "A way past the wall check, seen only by the maintainer", ""),
+        ("Suggest a change", "/discussions/new?category=ideas", "Something Garrick should do, or do differently", ""),
+        ("Ask a question", "/discussions/new?category=q-a", "How something works, or how it went for you", ""),
+        ("Announcements", "/discussions/categories/announcements", "News of each release; watch it on GitHub to hear of the next", ""),
+        ("All releases", "/releases", "Every release and what it changed", ""),
     ]
-    rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"><b>%s</b><small>%s</small></a>'
-                   % (E(PROJECT + path), E(label), E(about)) for label, path, about in links)
-    return ('<section class="setsec"><h3>About Garrick</h3><p class="setver" id="garrick-version">%s</p>'
-            '<div class="gacts">%s%s</div>%s<div class="setlinks">%s</div>'
-            '<p class="hint">These open GitHub in your browser. The page sends nothing: a report goes only when you submit it '
-            'there. Use invented names (Acme, Birch), never a real client&#39;s. No GitHub account? Copy a report and send '
-            'it to whoever set Garrick up for you. A way past the wall check: <a href="%s" target="_blank" rel="noopener">'
-            'report it privately</a>.</p></section>'
-            % (E(version), copy("Copy version", version, "Copied the version."),
+    rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b><small>%s</small></a>'
+                   % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label), E(about))
+                   for label, path, about, tip in links)
+    return ('<section class="setsec">%s<p class="setver" id="garrick-version">%s</p>'
+            '<div class="gacts">%s%s</div>%s<div class="setlinks">%s</div>%s</section>'
+            % (set_head("About Garrick", "about"), E(version), copy("Copy version", version, "Copied the version."),
                copy("Copy a report", report, "Copied a report. Fill it in and send it."), notes, rows,
-               E(PROJECT + "/security/advisories/new")))
+               help_text("about", 'These open GitHub in your browser. The page sends nothing: a report goes only when you submit it '
+                         'there. Use invented names (Acme, Birch), never a real client&#39;s. No GitHub account? Copy a report and send '
+                         'it to whoever set Garrick up for you. A way past the wall check: <a href="%s" target="_blank" rel="noopener">'
+                         'report it privately</a>.' % E(PROJECT + BYPASS))))
 
 
 def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False) -> str:
@@ -2593,23 +2620,30 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False) -> str:
                    % (k, "" if ok else " disabled", E(label), "The note&#39;s own link" if k == "note" else "Installed" if ok else "Not installed on this Mac",
                       k, "" if ok else " disabled")
                    for k, label, ok in rows)
-    return ('<section class="setsec"><h3>Opening a thread</h3><p class="hint">Tick what project and thread cards offer; the dot marks what '
-            'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app; Claude starts with the phrase that resumes the '
-            'thread typed in, for you to send, and Codex and cmux open in the folder with the phrase on the clipboard. Saved as you change it.</p>%s</section>' % html)
+    return ('<section class="setsec">%s%s%s</section>'
+            % (set_head("Opening a thread", "launchers"), help_text("launchers", 'Tick what project and thread cards offer; the dot marks what '
+               'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app; Claude starts with the phrase that resumes the '
+               'thread typed in, for you to send, and Codex and cmux open in the folder with the phrase on the clipboard. Saved as you change it.'),
+               html))
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
     rows = "".join('<div class="flagrow"><b>%s</b><span class="chip%s">%s</span><small>%s</small></div>'
                    % (E(FLAGS[k][0]), " on" if on else "", "on" if on else "off", E(FLAGS[k][1])) for k, on in flags.items())
-    return ('<section class="setsec"><h3>Preview features</h3>%s<p class="hint">In Garrick&#39;s source but not yet released, '
-            'so they may still change. Switch one on in <code>System/garrick-flags.json</code>, for example '
-            '<code>{"effort": true}</code>, and rebuild the page.</p></section>' % rows)
+    return ('<section class="setsec">%s%s%s</section>'
+            % (set_head("Preview features", "preview"), rows, help_text("preview", 'In Garrick&#39;s source but not yet released, '
+               'so they may still change. Switch one on in <code>System/garrick-flags.json</code>, for example '
+               '<code>{"effort": true}</code>, and rebuild the page.')))
 
 
-VIEW = ('<section class="setsec"><h3>View</h3><p class="hint">Cards dragged or hidden, folds, the graph&#39;s view and the open tab '
-        'are remembered in this window only.</p><div class="gacts"><button class="act" type="button" id="reset-view" '
-        'title="Every card back in place and shown, folds open, graph and filter as built">Reset view</button></div>'
-        '<div class="hiddencards" id="hidden-cards" hidden></div></section>')
+# The foot of Settings, under the last section: the cards hidden in this
+# window, when there are any, then Reset view, its explanation as its tooltip
+# and behind its "?".
+VIEW_HELP = "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."
+VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="hidden-cards" hidden></div><div class="gacts">'
+        '<button class="act" type="button" id="reset-view" title="%s">Reset view</button>%s</div>%s</div></div>'
+        % (E(VIEW_HELP + " Reset view puts every card back in place and shown, folds open, graph and filter as built."),
+           help_button("Reset view", "view"), help_text("view", E(VIEW_HELP))))
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
@@ -2622,11 +2656,15 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     except OSError:
         text = None
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
+    # Two columns where the window is wide enough, so every section fits in
+    # about one window height: what you choose on the left, Garrick on the
+    # right, with Reset view at the foot of it, level with the left's end.
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
-            '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s</dialog>'
+            '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
+            '<div class="setcol">%s</div></div></dialog>'
             % (launcher_choices(installed, bool(mac_app("Obsidian"))) + zone_settings(list(zones), styles or {}) + menu_settings(),
-               VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
+               about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
 
 SHARED_SETTINGS = ("System", "generated", "status-settings.json")
@@ -2756,7 +2794,7 @@ def zone_css() -> str:
             '.zi{width:1.15em;height:1.15em;flex:none;vertical-align:-.2em;margin-right:.4em}.seg button .zi{margin-right:0}\n'
             '.gzw{position:relative;display:inline-flex;align-items:center}.gzw .gzi{position:absolute;left:9px;display:flex;pointer-events:none}\n'
             '.gzw .gzi .zi{margin:0}.gzw.hasi .gzsel{padding-left:27px}\n'
-            '.zrow{display:flex;align-items:center;gap:8px;padding:5px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
+            '.zrow{display:flex;align-items:center;gap:8px;padding:3px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n'
             '.zpick{position:relative}.zbtn{display:inline-flex;align-items:center;gap:6px;min-width:112px;font:inherit;font-size:12px;'
             'color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 9px;cursor:pointer}'
@@ -2810,10 +2848,10 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
                    % (E(z), zone_class(z, styles), zone_name(z, styles),
                       pick("col", z, styles.get(z, {}).get("color")), pick("ico", z, styles.get(z, {}).get("icon")))
                    for z in zones)
-    return ('<section class="setsec apponly" id="zone-settings"><h3>Zones</h3><p class="hint">A colour and an icon for each zone, '
-            'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
-            'Saved for every viewer when you close Settings.</p>%s<script type="application/json" id="zone-icons">%s</script></section>'
-            % (rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+    return ('<section class="setsec apponly" id="zone-settings">%s%s%s<script type="application/json" id="zone-icons">%s</script></section>'
+            % (set_head("Zones", "zones"), help_text("zones", 'A colour and an icon for each zone, '
+               'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
+               'Saved for every viewer when you close Settings.'), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
 
 
 def script_json(data) -> str:
@@ -3049,7 +3087,7 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .nohost .tacts{display:none}.nohost .tadd-open{display:none}
 .tick{width:18px;height:18px;margin-top:1px;border-radius:5px;border:1.5px solid var(--base);background:var(--raise);cursor:pointer;padding:0;display:grid;place-items:center}
 .tick:hover{border-color:var(--accent)}
-.flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
 .flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
 @media (hover:none){.head .tools{opacity:1}}
@@ -3171,18 +3209,40 @@ SETTINGS_CSS = r"""
 dialog.settings{position:relative}dialog.settings .sclose{position:absolute;top:14px;right:14px;width:30px;height:30px;display:flex;align-items:center;
 justify-content:center;font-size:20px;line-height:1;border:0;background:none;color:var(--muted);border-radius:8px;cursor:pointer}
 dialog.settings .sclose:hover{background:var(--wash);color:var(--ink)}
-dialog.settings .setsec{margin-top:18px}dialog.settings .setsec:first-of-type{margin-top:0}
-.launcher-choice{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
+dialog.settings .setsec{margin-top:14px}dialog.settings .setsec:first-of-type{margin-top:0}
+.launcher-choice{display:flex;align-items:center;gap:12px;padding:3px 0;font-size:13px}
+/* Settings › Menu bar as one form: the name on the left, every control in one column on the right, of one width,
+   a tick at that column's left edge as a field starts there, and a hotkey's Clear as an × inside its field */
+#menu-settings .launcher-row{display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px;align-items:center;min-height:32px}
+#menu-settings .launcher-row>.launcher-choice:only-child{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) 232px;column-gap:14px}
+#menu-settings .launcher-choice:only-child>span{grid-column:1;grid-row:1}#menu-settings .launcher-choice:only-child>input{grid-column:2;grid-row:1;justify-self:start;margin:0}
+#menu-settings .menu-style{width:100%}#menu-settings .hotkey{position:relative;display:block;width:100%}
+#menu-settings .hotkey input{width:100%;box-sizing:border-box;padding-right:26px}
+#menu-settings .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
+#menu-settings .hotkey .act::after{content:"\00d7";font-size:15px}#menu-settings .hotkey .act:hover{background:var(--line);color:var(--ink)}
+#menu-settings .hotkey input:placeholder-shown+.act{display:none}
 .launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
 .launcher-choice input:disabled+span{color:var(--muted)}
-.notes{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:8px 12px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
+.notes{margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:6px 10px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
 .notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
 .notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
 dialog.settings{max-height:calc(100vh - 48px);overflow:auto;overscroll-behavior:contain}dialog.settings h2:focus{outline:none}
-dialog.settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:22px 24px;box-shadow:var(--shadow)}
-dialog.settings::backdrop{background:rgba(0,0,0,.35)}dialog.settings h2{margin:0 0 14px;font:600 20px/1.2 var(--display)}dialog.settings h3{margin:0 0 6px;font-size:13px}
+dialog.settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);padding:20px 24px;box-shadow:var(--shadow)}
+dialog.settings::backdrop{background:rgba(0,0,0,.35)}dialog.settings h2{margin:0 0 12px;font:600 20px/1.2 var(--display)}
+dialog.settings h3{display:flex;align-items:center;gap:6px;margin:0 0 4px;font-size:13px}
 dialog.settings .setver{margin:0;font-size:13px;color:var(--ink2)}dialog.settings .hint{margin-top:12px}dialog.settings .hint a{color:var(--accent)}
-.setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:9px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+dialog.settings .gacts{margin:8px 0 2px}
+/* two columns once the window is wide enough, so Settings fits in about one window height */
+.setcols{display:grid;grid-template-columns:minmax(0,1fr);gap:14px 28px}
+@media (min-width:760px){dialog.settings{max-width:860px}.setcols{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* a section's explanation, word for word, behind the "?" beside its heading */
+#settings .setsec:not(.explained) :is(.launcher-choice,.setlink,.flagrow) small{display:none}
+.qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:10.5px;font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
+.qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+dialog.settings .sethelp{margin:2px 0 6px}
+.setcol{display:flex;flex-direction:column;min-width:0}.setfoot{margin-top:auto;padding-top:14px}.setrule{padding-top:10px;border-top:1px solid var(--line)}
+dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hiddencards .gacts{margin:4px 0 0}.setfoot .hiddencards{margin:0 0 10px}
+.setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 """
 
@@ -3365,6 +3425,12 @@ b.onclick=function(e){e.stopPropagation();zshut(p);p.hidden=!p.hidden;b.setAttri
 p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
 p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()}}});
 sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
+/* each "?" shows or hides its section's explanation where it stands */
+sd.addEventListener('click',function(e){var q=e.target.closest('.qhelp'),p=q&&document.getElementById(q.getAttribute('aria-controls'));if(!p)return;
+p.hidden=!p.hidden;q.setAttribute('aria-expanded',String(!p.hidden));var sec=q.closest('.setsec');if(sec)sec.classList.toggle('explained',!p.hidden)});
+/* a row's own line shows with its section's explanation; until then it is the row's tooltip, read as it stands (some lines change) */
+sd.addEventListener('mouseover',function(e){var r=e.target.closest('.launcher-row,.setlink,.flagrow'),m=r&&r.querySelector('small');
+if(!m||!m.textContent.trim())return;if(!('tip0' in r.dataset))r.dataset.tip0=r.getAttribute('title')||'';r.title=m.textContent.trim()+(r.dataset.tip0?' '+r.dataset.tip0:'')});
 function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled

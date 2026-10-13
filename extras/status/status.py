@@ -44,6 +44,8 @@ Finder and Open in Claude, Codex or cmux, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
 does; `--no-cmux` leaves cmux out. A zone with no Todo.md gets no Open
 actions, and a workspace with none gets no card for them.
+A zone given a colour or an icon in Settings › Zones shows them wherever
+the page names it.
 
 The buttons that act are carried out by page_action.py beside this file, for
 the Mac app and the Obsidian plugin. Preview features (FLAGS) stay off until
@@ -657,11 +659,14 @@ def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
 
 
 def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
-                   projects: Optional[Dict[str, List[dict]]] = None, link: Optional["Links"] = None) -> str:
-    """The Todo tab: one zone at a time, picked above the list; All, Overdue
-    and No date to filter; A–Z or by due date to sort. In the app with
-    actions on, a box ticks a line (or reopens one ticked today), its date
-    opens a menu of dates, and ＋ Add writes a new one."""
+                   projects: Optional[Dict[str, List[dict]]] = None, link: Optional["Links"] = None,
+                   styles: Optional[Dict[str, dict]] = None) -> str:
+    """The Todo tab: one zone at a time, picked above the list, each in its
+    colour and with its icon from Settings › Zones; All, Overdue and No date
+    to filter; A–Z or by due date to sort. In the app with actions on, a box
+    ticks a line (or reopens one ticked today), its date opens a menu of
+    dates, and ＋ Add writes a new one."""
+    styles = styles or {}
     panes = ""
     for z in lists:
         body = ""
@@ -684,7 +689,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                 % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
         panes += '<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s%s</span></div>%s</div>' % (
             E(z["zone"]), summ, add, opener, body)
-    zones = "".join('<button type="button" data-tz="%s">%s<span class="n">%d</span></button>' % (E(z["zone"]), E(z["zone"]), z["open"])
+    zones = "".join('<button type="button" data-tz="%s"%s>%s<span class="n">%d</span></button>'
+                    % (E(z["zone"]), zone_attr(z["zone"], styles), zone_name(z["zone"], styles), z["open"])
                     for z in lists)
     bar = ('<div class="tbar"><div class="seg zseg" role="group" aria-label="Zone"%s>%s</div>'
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
@@ -2586,9 +2592,10 @@ VIEW = ('<section class="setsec"><h3>View</h3><p class="hint">Cards dragged or h
         '<div class="hiddencards" id="hidden-cards" hidden></div></section>')
 
 
-def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
-    """The Settings dialog: which apps to open projects in, About Garrick, and
-    the preview features with which are switched on."""
+def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
+             styles: Optional[Dict[str, dict]] = None) -> str:
+    """The Settings dialog: which apps to open projects in, each zone's colour
+    and icon, About Garrick, and the preview features with which are switched on."""
     stamp = workspace_stamp(ws)
     try:
         text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
@@ -2598,7 +2605,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = ()) -> str:
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2>%s%s</dialog>'
-            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + menu_settings(),
+            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + zone_settings(list(zones), styles or {}) + menu_settings(),
                VIEW + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws))))
 
 
@@ -2628,6 +2635,132 @@ def shared_launchers(ws: Path) -> Optional[dict]:
         return None
     default = data.get("default") if data.get("default") in LAUNCH_KEYS else "note"
     return {"launchers": chosen, "default": default}
+
+
+# A colour and an icon for each zone, chosen in Settings › Zones and saved
+# beside the launchers: {"zones": {"Work": {"color": "Teal", "icon": "briefcase"}}}.
+# The colours are cmux's sixteen named workspace colours, so a zone's labels
+# here and its workspace in cmux agree. Each has an ink for a label's text on
+# each ground: on light, cmux's own default value, at 4.9 to 1 or more against
+# the page; on dark, the same hue lightened to 4.8 to 1 or more, the darker of
+# cmux's colours staying the darker, so neighbours such as Red and Crimson
+# stay apart.
+ZONE_COLOURS = {
+    "Red": ("#C0392B", "#E9A39B"), "Crimson": ("#922B21", "#E1857C"), "Orange": ("#A04000", "#ED9960"),
+    "Amber": ("#7D6608", "#D6B018"), "Olive": ("#4A5C18", "#8EB12E"), "Green": ("#196F3D", "#2DC86E"),
+    "Teal": ("#006B6B", "#15C1C1"), "Aqua": ("#0E6B8C", "#3FBDEA"), "Blue": ("#1565C0", "#82B6F1"),
+    "Navy": ("#1A5276", "#50A3D9"), "Indigo": ("#283593", "#7380D9"), "Purple": ("#6A1B9A", "#BB74E7"),
+    "Magenta": ("#AD1457", "#F187B6"), "Rose": ("#880E4F", "#ED5CA9"), "Brown": ("#7B3F00", "#E6851F"),
+    "Charcoal": ("#3E4B5E", "#8798B0"),
+}
+# The icons a zone can take: a fixed set, so each stays legible at label size.
+# Drawn as the page's other icons are, a 16-unit square in one stroke of the
+# text's own colour, so an icon takes its zone's colour with the name.
+ZONE_ICONS = {
+    "briefcase": '<rect x="2.5" y="5" width="11" height="8.5" rx="1.5"/><path d="M6 5V3.8c0-.5.4-.8.8-.8h2.4c.5 0 .8.3.8.8V5M2.5 9h11"/>',
+    "house": '<path d="M2.5 7.5L8 3l5.5 4.5M4 6.5V13h8V6.5M6.7 13V9.8h2.6V13"/>',
+    "flask": '<path d="M6 2.5h4M6.8 2.5v4.2l-3.5 5.8c-.4.7.1 1.5.9 1.5h7.6c.8 0 1.3-.8.9-1.5L9.2 6.7V2.5M4.6 10.5h6.8"/>',
+    "rocket": '<path d="M8 1.8c2.1 1.5 3.1 3.8 2.9 6.7L9.6 11H6.4L5.1 8.5C4.9 5.6 5.9 3.3 8 1.8zM5.1 8.5l-1.6 2.2.4 2 2.5-1.7M10.9 8.5l1.6 2.2-.4 2-2.5-1.7M7 13.4l1 1.3 1-1.3"/>'
+              '<circle cx="8" cy="6.3" r="1.1"/>',
+    "book": '<path d="M8 4.5C6.8 3.6 5 3.2 2.5 3.3v9.2c2.5-.1 4.3.3 5.5 1.2 1.2-.9 3-1.3 5.5-1.2V3.3C11 3.2 9.2 3.6 8 4.5zM8 4.5v9.2"/>',
+    "globe": '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5C6.4 4.1 5.6 5.9 5.6 8s.8 3.9 2.4 5.5c1.6-1.6 2.4-3.4 2.4-5.5S9.6 4.1 8 2.5z"/>',
+    "heart": '<path d="M8 13.5S2.5 10.2 2.5 6.3c0-1.7 1.3-3 2.9-3 1.1 0 2 .6 2.6 1.5.6-.9 1.5-1.5 2.6-1.5 1.6 0 2.9 1.3 2.9 3 0 3.9-5.5 7.2-5.5 7.2z"/>',
+    "star": '<path d="M8 2.3l1.75 3.6 3.95.55-2.86 2.78.68 3.94L8 11.3l-3.52 1.87.68-3.94L2.3 6.45l3.95-.55z"/>',
+    "leaf": '<path d="M13.5 2.5C7 2.5 3 5.5 3 10c0 2.4 1.6 4 4 4 4.5 0 6.5-4.5 6.5-11.5zM2.5 13.5C5.5 10.5 8 8 11 5.5"/>',
+    "wrench": '<path d="M10.6 2.6a3.2 3.2 0 0 0-3.9 4.2l-3.9 3.8a1.5 1.5 0 0 0 2.1 2.1l3.9-3.9a3.2 3.2 0 0 0 4.2-3.9l-1.9 1.9-1.6-.5-.5-1.6z"/>',
+    "chart": '<path d="M2.5 2.5v11h11M5.5 11V8.5M8.5 11V5.5M11.5 11V7.5"/>',
+    "shield": '<path d="M8 2l5 2v3.8c0 3-2.1 5.4-5 6.2-2.9-.8-5-3.2-5-6.2V4z"/>',
+}
+
+
+def zone_icon(name: str) -> str:
+    """A zone's icon, drawn inline in its text's colour; "" for none."""
+    body = ZONE_ICONS.get(name)
+    if not body:
+        return ""
+    return ('<svg class="zi" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" '
+            'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % body)
+
+
+def zone_styles(ws: Path) -> Dict[str, dict]:
+    """Settings › Zones, as saved in System/generated/status-settings.json:
+    per zone, {"color": one of cmux's names, "icon": one of ZONE_ICONS}. A
+    colour is matched whatever its case; an unknown colour or icon is dropped,
+    and a zone left with neither is left out, so it looks as it always has."""
+    try:
+        data = json.loads(ws.joinpath(*SHARED_SETTINGS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    zones = data.get("zones") if isinstance(data, dict) else None
+    if not isinstance(zones, dict):
+        return {}
+    named = {k.lower(): k for k in ZONE_COLOURS}
+    out = {}
+    for zone, given in zones.items():
+        if not isinstance(given, dict):
+            continue
+        colour = named.get(given["color"].lower()) if isinstance(given.get("color"), str) else None
+        icon = given.get("icon") if given.get("icon") in ZONE_ICONS else None
+        style = {k: v for k, v in (("color", colour), ("icon", icon)) if v}
+        if style:
+            out[zone] = style
+    return out
+
+
+def zone_class(zone: str, styles: Dict[str, dict]) -> str:
+    """The classes that put a zone's colour on a label's text, with a space in front; "" for none."""
+    colour = styles.get(zone, {}).get("color")
+    return " zc zc-%s" % colour.lower() if colour else ""
+
+
+def zone_attr(zone: str, styles: Dict[str, dict]) -> str:
+    """zone_class() as a class attribute, for a label with no class of its own; "" for none."""
+    c = zone_class(zone, styles)
+    return ' class="%s"' % c.strip() if c else ""
+
+
+def zone_name(zone: str, styles: Dict[str, dict]) -> str:
+    """A zone's name as a label shows it: its icon, if it has one, then the name."""
+    return zone_icon(styles.get(zone, {}).get("icon", "")) + E(zone)
+
+
+def zone_css() -> str:
+    """Each colour's ink as a variable for each theme, set as the page sets its
+    own, and the rule that puts it on a label. Two classes and the root, so a
+    zone's colour holds over a button's own, selected or hovered."""
+    light = ";".join("--zc-%s:%s" % (k.lower(), on) for k, (on, _) in ZONE_COLOURS.items())
+    dark = ";".join("--zc-%s:%s" % (k.lower(), on) for k, (_, on) in ZONE_COLOURS.items())
+    rules = "".join(":root .zc.zc-%s{color:var(--zc-%s)}" % (k.lower(), k.lower()) for k in ZONE_COLOURS)
+    return ('\n:root{%s}\n@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){%s}}\n'
+            ':root[data-theme="dark"]{%s}\n%s\n'
+            '.zi{width:1.15em;height:1.15em;flex:none;vertical-align:-.2em;margin-right:.4em}.seg button .zi{margin-right:0}\n'
+            '.gzw{position:relative;display:inline-flex;align-items:center}.gzw .gzi{position:absolute;left:9px;display:flex;pointer-events:none}\n'
+            '.gzw .gzi .zi{margin:0}.gzw.hasi .gzsel{padding-left:27px}\n'
+            '.zrow{display:flex;align-items:center;gap:8px;padding:5px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n' % (light, dark, dark, rules))
+
+
+def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
+    """Settings › Zones: a row per zone, its name drawn as chosen, a colour
+    and an icon. In the app only: what is chosen is saved for every viewer,
+    and for the cmux desk, through page_action.py when Settings closes."""
+    if not zones:
+        return ""
+    def options(none, names, chosen):
+        return '<option value="">%s</option>' % none + "".join(
+            '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(n[:1].upper() + n[1:]))
+            for n in names)
+    rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>'
+                   '<select class="menu-style zcol" aria-label="Colour for %s">%s</select>'
+                   '<select class="menu-style zico" aria-label="Icon for %s">%s</select></div>'
+                   % (E(z), zone_class(z, styles), zone_name(z, styles), E(z),
+                      options("No colour", ZONE_COLOURS, styles.get(z, {}).get("color")), E(z),
+                      options("No icon", ZONE_ICONS, styles.get(z, {}).get("icon")))
+                   for z in zones)
+    return ('<section class="setsec apponly" id="zone-settings"><h3>Zones</h3><p class="hint">A colour and an icon for each zone, '
+            'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
+            'Saved for every viewer when you close Settings.</p>%s<script type="application/json" id="zone-icons">%s</script></section>'
+            % (rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
 
 
 def script_json(data) -> str:
@@ -3144,9 +3277,10 @@ var sd=document.getElementById('settings');
 function sdShut(){sd.close()}
 var sdChanged=false,lpChanged=false;sd.addEventListener('change',function(){sdChanged=true});
 /* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once; a change
-   to the apps is saved for every viewer first, through page_action.py, which rebuilds the page after it */
+   to the apps or the zones is saved for every viewer first, through page_action.py, which rebuilds the page after it */
 sd.addEventListener('close',function(){document.body.appendChild(toast);if(sdChanged&&host){sdChanged=false;
-if(lpChanged){lpChanged=false;host.postMessage({act:GarrickPrefs.request()})}else host.postMessage({rebuild:true})}});
+if(lpChanged||zChanged){var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();lpChanged=zChanged=false;host.postMessage({act:q})}
+else host.postMessage({rebuild:true})}});
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 window.StatusSettings={open:function(){if(sd.open)return;sd.appendChild(toast);sd.showModal()}};
@@ -3161,6 +3295,13 @@ say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').f
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
 c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
 say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.')}});radios();
+/* Settings › Zones: each row draws its zone as chosen; every zone's choice goes with the request when Settings closes */
+var zChanged=false,zIcons={};try{zIcons=JSON.parse(document.getElementById('zone-icons').textContent)}catch(e){}
+function zpick(r,k){return r.querySelector(k).value}
+sd.querySelectorAll('.zrow').forEach(function(r){r.querySelectorAll('select').forEach(function(s){s.onchange=function(){zChanged=true;
+var c=zpick(r,'.zcol'),p=r.querySelector('.zprev');p.className='zprev'+(c?' zc zc-'+c.toLowerCase():'');p.innerHTML=zIcons[zpick(r,'.zico')]||'';
+p.appendChild(document.createTextNode(r.dataset.zone))}})});
+function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -3356,6 +3497,9 @@ function cost(o){var c=0,n=o.length;for(var i=0;i<n;i++)for(var j=i+1;j<n;j++){v
 (function perm(o,rest){if(!rest.length){var c=cost(o);if(c<score){score=c;best=o}return}
 rest.forEach(function(p,i){perm(o.concat([p]),rest.slice(0,i).concat(rest.slice(i+1)))})})(row?[]:[live[0]],row?live:live.slice(1));return best}
 function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.ax=a[0];n.ay=a[1]})}
+/* the place shown in its zone's colour, from Settings › Zones, with its icon over the drop-down's left edge */
+function zmark(zs){var o=zs.options[zs.selectedIndex],w=zs.parentNode,on=false;zs.className='gzsel'+(o&&o.className?' '+o.className:'');
+w.querySelectorAll('.gzi').forEach(function(i){i.hidden=i.dataset.z!==zs.value;on=on||!i.hidden});w.classList.toggle('hasi',on)}
 /* parked threads and projects stay off the graph unless asked for, as in the lists */
 function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)&&(zsel==='*'||n.z===zsel)}
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(mode==='all'?G.edges:G.edges.concat(G.ce||[])).filter(function(e){return on[e[0]]&&on[e[1]]});
@@ -3364,7 +3508,7 @@ var drawn={},dg={};V.forEach(function(n){if(n.g>=0)dg[n.g]=1;else drawn[n.g===-1
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
 document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
 document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode);if(b.dataset.m==='core')b.textContent=(G.cl&&G.cl[zsel])||'Projects and threads'});
-var zs=document.querySelector('.gzsel');if(zs)zs.value=zsel;
+var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
 var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
 /* Every note pushes every other away, which costs the square of the notes a
    step. Past BIG notes a quadtree stands in for each far group by its centre,
@@ -3598,6 +3742,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     flags_on = preview_flags(ws)
     acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
     lists = todo_list(ws, link, now.date())
+    ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
@@ -3768,8 +3913,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                         % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
         meta = "%d live" % len(data["rows"]) + (" · %d aging" % cnt["warning"] if cnt["warning"] else "") + \
             (" · %d stale" % cnt["critical"] if cnt["critical"] else "") + (" · %d done" % data["done"] if data["done"] else "")
-        cols += ('<details class="zone tsort" id="zone-%s" open><summary>%s<h3>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
-                 % (slug, CHEV, E(z), E(meta), EV.zone_meta(z) if EV else "",
+        cols += ('<details class="zone tsort" id="zone-%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
+                 % (slug, CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend mu"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
               '<span><i class="critical"></i>Over 45 days</span></div>')
@@ -3805,15 +3950,16 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         scale = max(list(t["counts"].values()) + [1]) * 1.08
         opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open the list</a>' % (E(z), E(z))
                   if lists else '<a class="act" href="%s" title="Open %s/Todo.md">Open</a>' % (E(link(t["file"])), E(z)))
-        tb += ('<div class="zt"><b><a href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>%s</div>'
-               % (E(link(t["file"])), E(z), age(t["when"], now), opener))
+        tb += ('<div class="zt"><b><a%s href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>%s</div>'
+               % (zone_attr(z, ZS), E(link(t["file"])), zone_name(z, ZS), age(t["when"], now), opener))
         if not t["counts"]:
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
     todo_card = card("todo", "Open actions", "unticked items in each zone's Todo.md", tb) if TD else ""
-    ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name">%s<small>%s</small></div></a>' % (
-        0 if n else 1, E(link(f)), ICON["warning" if n else "good"], E(name), "%d waiting" % n if n else "empty") for name, f, n in IB)
+    ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
+        0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
+        "%d waiting" % n if n else "empty") for name, f, n in IB)
     inbox_card = card("inboxes", "Inboxes", "files waiting to be filed; say \"process the inbox\"", '<div class="tiles">%s</div>' % ib)
 
     # ---- jobs and calls, only when the jobs extra is in use
@@ -3899,17 +4045,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
-        switch = "".join('<option value="%s">%s</option>' % (E(z), E(z)) for z in places) + '<option value="*">All</option>'
+        switch = "".join('<option value="%s"%s>%s</option>' % (E(z), zone_attr(z, ZS), E(z)) for z in places) + '<option value="*">All</option>'
+        # a select cannot draw an icon in its options, so the chosen place's icon sits over its left edge
+        marks = "".join('<span class="gzi%s" data-z="%s" hidden>%s</span>' % (zone_class(z, ZS), E(z), zone_icon(ZS[z]["icon"]))
+                        for z in places if ZS.get(z, {}).get("icon"))
         graph_card = card("graph", "Graph", "",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
-                          '<div class="gbar"><select class="gzsel" aria-label="Place">' + switch + '</select>'
+                          '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button></div>'
                           '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data))
 
-    todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link) if lists else ""
+    todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
     # Three tabs: Overview for where the work stands, Todo for the list, Status
     # for the machinery behind it. Cards can be moved between Overview and
     # Status from their headers, and Reset view puts them back. The figures at
@@ -3959,7 +4108,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS, now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
                 "".join("<script>%s</script>" % js for js in scripts if js)))
 
 

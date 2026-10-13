@@ -257,7 +257,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(8, html.count("</script>"))          # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the page's, the dialogs', the menu's, the graph's
+        self.assertEqual(9, html.count("</script>"))          # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the zone icons Settings offers, the page's, the dialogs', the menu's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))

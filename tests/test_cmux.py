@@ -62,6 +62,13 @@ elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
 elif a[:1] == ["top"]:
     print(json.dumps(state.get("top", {})))
+elif a[:1] == ["new-workspace"]:
+    state.setdefault("workspaces", []).append({"id": "ws-new", "title": a[a.index("--name") + 1]})
+    json.dump(state, open(os.environ["FAKE_CMUX_STATE"], "w"))
+    print("OK workspace:9")
+elif a[:1] == ["workspace-action"] and state.get("refuse_colour"):
+    sys.stderr.write("Error: no such workspace\\n")
+    sys.exit(1)
 elif a[:1] == ["restore-session"] and "after_restore" in state:
     state.update(state.pop("after_restore"))
     json.dump(state, open(os.environ["FAKE_CMUX_STATE"], "w"))
@@ -684,6 +691,68 @@ class DeskVerbTest(CmuxCase):
                     code, out, _ = self.run_desk("start")
                 self.assertEqual((code, self.typed()), (0, []))
                 self.assertIn(said, out)
+
+
+class ZoneColourTest(CmuxCase):
+    """A tab's workspace in its zone's colour, from the status page's Settings › Zones (#67)."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.ws / "System" / "generated" / "status-settings.json",
+              json.dumps({"launchers": {"note": True}, "zones": {"Work": {"color": "teal", "icon": "briefcase"},
+                                                                 "Personal": {"color": "Mauve"}}}))
+
+    def colours(self):
+        return [c["argv"][1:] for c in self.calls() if c["argv"][0] == "workspace-action"]
+
+    def test_read_from_the_shared_settings(self):
+        self.assertEqual({"Work": "Teal"}, desk.zone_colours(self.ws))         # cmux's name; an unknown one dropped
+        (self.ws / "System" / "generated" / "status-settings.json").write_text("{", encoding="utf-8")
+        self.assertEqual({}, desk.zone_colours(self.ws))
+
+    def test_a_thread_tab_colours_its_zones_workspace(self):
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}]})
+        self.assertEqual(self.run_desk("open", "pricing")[0], 0)
+        self.assertEqual([["--action", "set-color", "--color", "Teal", "--workspace", "ws-work"]], self.colours())
+
+    def test_and_a_workspace_it_makes(self):
+        self.assertEqual(self.run_desk("open", "acme review")[0], 0)
+        self.assertEqual([["--action", "set-color", "--color", "Teal", "--workspace", "ws-new"]], self.colours())
+
+    def test_no_colour_at_the_root_in_a_wiki_elsewhere_or_without_one(self):
+        self.run_desk("open", str(self.ws), "--prompt", "process the inbox")
+        self.run_desk("open", str(self.ws / "Wikis" / "Meetings"))
+        self.run_desk("open", "pricing", "--workspace", "Scratch")              # not the zone's own workspace
+        write(self.ws / "System" / "generated" / "status-settings.json", json.dumps({"zones": {}}))
+        self.run_desk("open", "pricing", "--new")
+        self.assertTrue({"new-surface", "new-workspace"} & set(self.verbs()))
+        self.assertEqual([], self.colours())
+
+    def test_a_colour_cmux_refuses_never_stops_the_tab(self):
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}], "refuse_colour": True})
+        code, out, err = self.run_desk("open", "pricing")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("a new tab in Work", out)
+
+    def test_colour_recolours_or_clears_the_zones_named(self):
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}, {"id": "ws-personal", "title": "Personal"},
+                                   {"id": "ws-system", "title": "System"}]})
+        code, out, _ = self.run_desk("colour", "Work", "Personal")
+        self.assertEqual(code, 0)
+        self.assertEqual([["--action", "set-color", "--color", "Teal", "--workspace", "ws-work"],
+                          ["--action", "clear-color", "--workspace", "ws-personal"]], self.colours())
+        self.assertIn("coloured Work teal, Personal uncoloured", out)
+        self.log.unlink()
+        self.assertEqual(self.run_desk("colour")[0], 0)                        # every zone with a colour, none cleared
+        self.assertEqual([["--action", "set-color", "--color", "Teal", "--workspace", "ws-work"]], self.colours())
+        code, _, err = self.run_desk("colour", "Nowhere")
+        self.assertEqual(code, 2)
+        self.assertIn("no zone called Nowhere", err)
+
+    def test_the_page_asks_the_desk_to_recolour(self):
+        self.state({"workspaces": [{"id": "ws-personal", "title": "Personal"}]})
+        pa.save_settings(self.ws, {"zones": {"Personal": {"color": "Rose"}, "Work": {"color": "Teal"}}})
+        self.assertEqual([["--action", "set-color", "--color", "Rose", "--workspace", "ws-personal"]], self.colours())
 
 
 class PageVerbTest(CmuxCase):

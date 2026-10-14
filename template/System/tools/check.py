@@ -3374,12 +3374,16 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
 # for no repository here.
 _COMMITTING: Optional[Path] = None
 
+# The top of the repository each folder belongs to, once looked up (see _own_top).
+_OWN_TOP: Dict[Path, Optional[Path]] = {}
+
 
 def _committing(repo: Optional[Path]) -> None:
     """Remember whose commit this run is checking, as the top of its repository.
     `None` forgets it: every git process then runs without git's
     repository-local variables."""
     global _COMMITTING
+    _OWN_TOP.clear()        # a repository may have been made since the last run
     _COMMITTING = Path(repo).resolve() if repo is not None else None
     if _COMMITTING is None:
         return
@@ -3389,15 +3393,36 @@ def _committing(repo: Optional[Path]) -> None:
         _COMMITTING = Path(top.strip()).resolve()
 
 
+def _own_top(folder: Path) -> Optional[Path]:
+    """The nearest folder at `folder` or above it holding a `.git`: the top of
+    the repository that folder belongs to, as far as the filesystem can say,
+    and None when there is none above it. Kept per folder, and a walk, so it
+    costs no git process.
+
+    Which repository a folder belongs to is the question, and containment is no
+    answer to it: the workspace's root repository holds every zone and both
+    wikis, and each of those is a repository of its own."""
+    resolved = Path(folder).resolve()
+    if resolved not in _OWN_TOP:
+        _OWN_TOP[resolved] = next((c for c in [resolved, *resolved.parents] if (c / ".git").exists()), None)
+    return _OWN_TOP[resolved]
+
+
 def _git_env(repo: Path) -> Optional[Dict[str, str]]:
     """The environment for a git process to be run against `repo`: this
     process's own for the repository being committed, whose temporary index the
     hook has to read, and one stripped of git's repository-local variables for
     every other repository (`foreign_git_env`). None leaves the child to
-    inherit this process's environment."""
+    inherit this process's environment.
+
+    A folder goes with the commit when the repository it belongs to is the one
+    being committed, which is its own top and not merely a folder above it. A
+    project or a thread inside the committing zone is the zone's and keeps the
+    variables; a zone inside the root repository, or a repository inside a
+    project, is its own and does not."""
     if _COMMITTING is not None:
         resolved = Path(repo).resolve()
-        if resolved == _COMMITTING or _COMMITTING in resolved.parents:
+        if resolved == _COMMITTING or _own_top(resolved) == _COMMITTING:
             return None
     return foreign_git_env()
 

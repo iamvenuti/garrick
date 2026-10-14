@@ -98,6 +98,73 @@ class PathspecCase(unittest.TestCase):
         args = ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "A line"]
         return _run(args + ["--", *pathspec], self.zone, env=env)
 
+    def real_root(self) -> None:
+        """The root as its own repository, holding the zones and the wikis as
+        repositories of their own and leaving them out of its history, as the
+        installer makes it.
+
+        Garrick installs no wall hook at the root (`check.py --install-hooks`
+        writes one into each zone and each repository inside a project, and the
+        installer the same), so the one put here stands for whatever runs the
+        check for a commit at the root: the check run by hand, or a hook added
+        later. `scaffold.py party` leaves a `System/context.md` row to commit,
+        which is how such a commit comes about."""
+        write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
+        for i in range(FILLER):
+            write(self.root / "System" / "filler" / ("note-%02d.md" % i), "Nordic demand, three scenarios.\n")
+        git(self.root, "init", "-q")
+        install_wall_hook(self.root, nested=True)
+        commit_all(self.root, "Workspace")
+
+    def foreign_index(self, repo: Path) -> Path:
+        """A copy of `repo`'s index where git puts the temporary one for a
+        commit of named files, named as git names it."""
+        temp = repo / ".git" / "next-index-0.lock"
+        shutil.copy2(repo / ".git" / "index", temp)
+        return temp
+
+    def view(self, committing: Path, foreign: bool):
+        """`git_view` for a commit in `committing`, with and without that
+        repository's temporary index in the environment, as git sets it for a
+        commit of named files."""
+        before = os.environ.get("GIT_INDEX_FILE")
+        if foreign:
+            os.environ["GIT_INDEX_FILE"] = str(self.foreign_index(committing))
+        else:
+            os.environ.pop("GIT_INDEX_FILE", None)
+        try:
+            check._committing(committing)
+            ws = check.discover(self.root)
+            seen = check.git_view(ws, committing.resolve())
+            return {p.relative_to(self.root).as_posix(): t for p, t in seen.items()}
+        finally:
+            check._committing(None)
+            if before is None:
+                os.environ.pop("GIT_INDEX_FILE", None)
+            else:
+                os.environ["GIT_INDEX_FILE"] = before
+
+    def counted(self, repo: Path, name: str):
+        """How many git processes a commit of `name` in `repo` starts, each kind:
+        {"plain": n, "pathspec": n}, counted from git's own trace."""
+        counts = {}
+        for kind in ("plain", "pathspec"):
+            path = repo / name
+            path.write_text(path.read_text(encoding="utf-8") + "\n<!-- A line, %s -->\n" % kind, encoding="utf-8")
+            trace = Path(self._tmp.name) / ("trace-%s-%s.txt" % (repo.name, kind))
+            args = ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "A line"]
+            if kind == "plain":
+                git(repo, "add", "--", name)
+            else:
+                args += ["--", name]
+            res = _run(args, repo, env=dict(ENV, GIT_TRACE=str(trace)))
+            self.assertEqual(0, res.returncode, res.stdout + res.stderr)
+            lines = trace.read_text(errors="replace").splitlines() if trace.exists() else []
+            counts[kind] = sum(1 for line in lines if "built-in: git" in line)
+        if not counts["plain"]:
+            self.skipTest("this git does not write GIT_TRACE")
+        return counts
+
     def head(self):
         return git(self.zone, "rev-parse", "HEAD")
 
@@ -116,63 +183,99 @@ class TestTheOtherRepository(PathspecCase):
     """What the hook reads from a repository it is not committing must not depend
     on how the commit was made."""
 
-    def foreign_index(self) -> Path:
-        """A copy of the zone's index where git puts the temporary one for a
-        pathspec commit, named as git names it."""
-        index = self.zone / ".git" / "index"
-        temp = self.zone / ".git" / "next-index-0.lock"
-        shutil.copy2(index, temp)
-        return temp
-
-    def view(self, foreign: bool):
-        """`git_view` for a commit in the zone, with and without the temporary
-        index in the environment, as git sets it for a pathspec commit."""
-        before = os.environ.get("GIT_INDEX_FILE")
-        if foreign:
-            os.environ["GIT_INDEX_FILE"] = str(self.foreign_index())
-        else:
-            os.environ.pop("GIT_INDEX_FILE", None)
-        try:
-            check._committing(self.zone)
-            ws = check.discover(self.root)
-            return {p.relative_to(self.root).as_posix(): t for p, t in check.git_view(ws, self.zone.resolve()).items()}
-        finally:
-            check._committing(None)
-            if before is None:
-                os.environ.pop("GIT_INDEX_FILE", None)
-            else:
-                os.environ["GIT_INDEX_FILE"] = before
-
     def test_it_is_read_the_same_either_way(self):
         page = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
         write(page, meeting_page("Work", "[birch]", "Birch kick-off").replace("Decisions.", "Rewritten on disk.\n"))
-        plain = self.view(foreign=False)
+        plain = self.view(self.zone, foreign=False)
         self.assertEqual(["Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"], sorted(plain))
         self.assertIn("Decisions.", plain["Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"])
-        self.assertEqual(plain, self.view(foreign=True))       # and not the whole Wikis repository
+        self.assertEqual(plain, self.view(self.zone, foreign=True))       # and not the whole Wikis repository
 
     def test_a_pathspec_commit_starts_no_more_git_processes_than_a_plain_one(self):
         """The fault was 2,019 git processes for one line. The hook's work must
         not depend on which kind of commit it is."""
-        counts = {}
-        for kind in ("plain", "pathspec"):
-            todo = self.zone / "Todo.md"
-            todo.write_text(todo.read_text() + "- [ ] A line, %s\n" % kind, encoding="utf-8")
-            trace = Path(self._tmp.name) / ("trace-%s.txt" % kind)
-            env = dict(ENV, GIT_TRACE=str(trace))
-            if kind == "plain":
-                git(self.zone, "add", "--", "Todo.md")
-                res = _run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "A line"], self.zone, env=env)
-            else:
-                res = self.commit("Todo.md", env=env)
-            self.assertEqual(0, res.returncode, res.stderr)
-            lines = trace.read_text(errors="replace").splitlines() if trace.exists() else []
-            counts[kind] = sum(1 for line in lines if "built-in: git" in line)
-        if not counts["plain"]:
-            self.skipTest("this git does not write GIT_TRACE")
+        counts = self.counted(self.zone, "Todo.md")
         self.assertLessEqual(counts["pathspec"], counts["plain"] + 8,
-                             "%d git processes for a pathspec commit against %d for a plain one; the temporary "
-                             "index is reaching the other repositories again" % (counts["pathspec"], counts["plain"]))
+                             "%d git processes for a pathspec commit in the zone against %d for a plain one; the "
+                             "temporary index is reaching the other repositories again"
+                             % (counts["pathspec"], counts["plain"]))
+
+
+class TestTheRootRepository(PathspecCase):
+    """The root repository holds every zone and both wikis, each its own
+    repository. Containment is therefore no answer to which repository a folder
+    belongs to, and a commit at the root must leave the others alone."""
+
+    def setUp(self):
+        super().setUp()
+        self.real_root()
+
+    def test_the_zones_and_the_wikis_are_read_the_same_either_way(self):
+        page = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        write(page, meeting_page("Work", "[birch]", "Birch kick-off").replace("Decisions.", "Rewritten on disk.\n"))
+        note = self.birch / "Threads" / "Market Sizing" / "Notes.md"
+        write(note, "Three scenarios.\n")
+        git(self.zone, "add", "--", str(note.relative_to(self.zone)))
+        commit_all(self.zone, "Market sizing notes")
+        write(note, "Rewritten on disk.\n")
+        plain = self.view(self.root, foreign=False)
+        self.assertEqual(["Wikis/Meetings/wiki/sources/260312-birch-kickoff.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"], sorted(plain))
+        self.assertEqual(plain, self.view(self.root, foreign=True))   # and not both repositories whole
+
+    def test_a_pathspec_commit_at_the_root_starts_no_more_git_processes_than_a_plain_one(self):
+        counts = self.counted(self.root, "System/context.md")
+        self.assertLessEqual(counts["pathspec"], counts["plain"] + 8,
+                             "%d git processes for a pathspec commit at the root against %d for a plain one; the "
+                             "zones and the wikis are inheriting the root's temporary index"
+                             % (counts["pathspec"], counts["plain"]))
+
+
+class TestWhichRepositoryAFolderBelongsTo(PathspecCase):
+    """`_git_env` keeps git's repository-local variables for the repository
+    being committed, which is decided by the repository a folder belongs to and
+    never by what contains it."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["GIT_INDEX_FILE"] = str(self.foreign_index(self.zone))
+        self.addCleanup(os.environ.pop, "GIT_INDEX_FILE", None)
+
+    def assertKeeps(self, folder: Path):
+        self.assertIsNone(check._git_env(folder), "%s should keep git's own environment" % folder)
+
+    def assertStrips(self, folder: Path):
+        env = check._git_env(folder)
+        self.assertIsInstance(env, dict, "%s should not keep git's own environment" % folder)
+        self.assertNotIn("GIT_INDEX_FILE", env)
+
+    def test_a_project_or_a_thread_inside_the_committing_zone_keeps_them(self):
+        check._committing(self.zone)
+        self.assertKeeps(self.zone)
+        self.assertKeeps(self.acme)                                   # a project folder, not the top
+        self.assertKeeps(self.acme / "Threads" / "Pricing")           # nor is a thread folder
+        self.assertKeeps(self.acme / "Sources")
+        self.assertStrips(self.wikis)
+        self.assertStrips(self.meetings)
+
+    def test_a_zone_inside_the_committing_root_does_not(self):
+        self.real_root()
+        check._committing(self.root)
+        self.assertKeeps(self.root)
+        self.assertKeeps(self.root / "System" / "tools")              # the root's own folders
+        self.assertStrips(self.zone)                                  # its own repository, though below the root
+        self.assertStrips(self.acme)
+        self.assertStrips(self.wikis)
+        self.assertStrips(self.meetings)
+
+    def test_a_repository_inside_a_project_does_not(self):
+        site = self.acme / "Site"
+        site.mkdir(parents=True)
+        git(site, "init", "-q")
+        check._committing(self.zone)
+        self.assertStrips(site)
+        self.assertStrips(site / "src")
+        self.assertKeeps(self.acme)
 
 
 class TestTheWallStillHolds(PathspecCase):

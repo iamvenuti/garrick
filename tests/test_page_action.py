@@ -222,7 +222,32 @@ class TestPark(ActionCase):
         self.assertEqual("Acme Review, Pricing is awake again", self.act(verb="wake", zone="Work", file=rel))
         self.assertIn("\nstatus: active\n", self.thread.read_text())
         self.assertEqual("Acme Review, Pricing: woken", self.last_commit()[0])
-        self.assertEqual("Pricing is already active", self.act(verb="wake", zone="Work", file=rel))
+        with self.assertRaisesRegex(pa.Refused, "^Pricing is active already, so nothing was changed$"):
+            self.act(verb="wake", zone="Work", file=rel)
+
+    def test_a_second_park_says_so_instead_of_writing_another_entry(self):
+        """The precheck operations.py declares for park and wake: the note's
+        status as it stands now, read under the zone's lock."""
+        rel = "Acme Review/Threads/Pricing/Pricing.md"
+        self.act(verb="park", zone="Work", file=rel)
+        parked, commit = self.thread.read_bytes(), self.last_commit()
+        with self.assertRaisesRegex(pa.Refused, "^Pricing was set aside already, so nothing was changed$"):
+            self.act(verb="park", zone="Work", file=rel)
+        self.assertEqual(parked, self.thread.read_bytes())               # no second dated entry
+        self.assertEqual(commit, self.last_commit())                     # and no second commit
+        self.assertEqual(1, self.thread.read_text().count("Parked."))
+
+    def test_a_second_park_of_a_project_by_name_says_so_too(self):
+        self.act(verb="park", zone="Work", project="Acme Review")
+        with self.assertRaisesRegex(pa.Refused, "^Acme Review was set aside already"):
+            self.act(verb="park", zone="Work", project="Acme Review")
+
+    def test_a_field_park_does_not_declare_is_refused_by_name(self):
+        before = self.thread.read_bytes()
+        with self.assertRaisesRegex(pa.Refused, "^park takes no field called confirm$"):
+            self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md", confirm="Pricing")
+        self.assertEqual(before, self.thread.read_bytes())
+        self.assertEqual("start", self.last_commit()[0])
 
     def test_a_parked_single_thread_project_passes_the_check(self):
         import check
@@ -487,18 +512,21 @@ class TestAudit(ActionCase):
 
     def test_one_line_each_done_or_refused(self):
         self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
-        self.run_script(json.dumps({"verb": "todo-add", "zone": "Work", "text": "Book the room " + "x" * 200,
-                                    "password": "hunter2", "session": "abc"}))
+        self.run_script(json.dumps({"verb": "todo-add", "zone": "Work", "text": "Book the room " + "x" * 200}))
         self.run_script("not json")
+        # A field the verb does not declare is refused by name, and its value
+        # reaches the log no more than it did when such a field was ignored.
+        self.run_script(json.dumps({"verb": "todo-add", "zone": "Work", "text": "x",
+                                    "password": "hunter2", "session": "abc"}))
         lines = self.lines()
-        self.assertEqual(3, len(lines))
+        self.assertEqual(4, len(lines))
         self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September$")
         self.assertIn('todo-add zone="Work" text="Book the room xxx', lines[1])
         self.assertIn("…\"  ->  ok: Added to Inbox", lines[1])
         self.assertLess(len(lines[1]), 320)
-        self.assertNotIn("hunter2", "\n".join(lines))
-        self.assertNotIn("abc", lines[1])
         self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
+        self.assertIn("refused: Not done. Todo-add takes no field called password and no field called session.", lines[3])
+        self.assertNotIn("hunter2", "\n".join(lines))
 
     def test_an_open_by_folder_logs_the_folder_and_the_prompt_cut_short(self):
         pa.audit({"verb": "open", "folder": str(self.root), "prompt": "process the inbox " + "y" * 200}, False, "no")
@@ -628,10 +656,19 @@ class TestJournal(ActionCase):
         self.assertEqual({"ok": False, "say": "not an operation id"}, reply)
         self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
 
-    def test_the_fields_a_page_adds_change_nothing(self):
-        reply = self.run_script(dict(self.requests()["todo-add"], op="a19f3c80", retry_of="b29f3c80", host="app", extra=[1]))
+    def test_the_only_field_a_page_adds_is_the_op(self):
+        reply = self.run_script(dict(self.requests()["todo-add"], op="a19f3c80"))
         self.assertEqual("saved", reply["outcome"])
         self.assertEqual("Added to Inbox: Book the room", reply["say"])
+
+    def test_anything_else_a_request_carries_is_refused_by_name(self):
+        """Closed validation: until 0.26.0 these were ignored, so a request
+        could carry anything and still be accepted."""
+        reply = self.run_script(dict(self.requests()["todo-add"], op="b29f3c80", retry_of="a19f3c80", host="app"))
+        self.assertEqual({"ok": False, "say": "Not done. Todo-add takes no field called host and no field called retry_of."},
+                         {k: reply[k] for k in ("ok", "say")})
+        self.assertEqual("refused", reply["outcome"])
+        self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
 
     def test_a_second_identical_request_joins_and_makes_one_edit(self):
         mark = Path(self._tmp.name) / "in-the-hook"
@@ -786,9 +823,13 @@ class TestFlag(ActionCase):
         real = pa.CMUX_EXTRA
         pa.CMUX_EXTRA = Path(self._tmp.name) / "no-cmux-extra"       # never the real desk
         try:
-            for verb in ("open", "close", "startup", "shutdown"):
-                with self.assertRaisesRegex(pa.Refused, "need the cmux extra", msg=verb):
-                    pa.act(self.root, {"verb": verb, "zone": "Nowhere", "project": "Acme Review"})
+            # each verb in the shape the table declares for it: startup and
+            # shutdown carry nothing, so they cannot be asked about a project
+            for req in ({"verb": "open", "zone": "Nowhere", "project": "Acme Review"},
+                        {"verb": "close", "zone": "Nowhere", "project": "Acme Review"},
+                        {"verb": "startup"}, {"verb": "shutdown"}):
+                with self.assertRaisesRegex(pa.Refused, "need the cmux extra", msg=req["verb"]):
+                    pa.act(self.root, req)
         finally:
             pa.CMUX_EXTRA = real
 

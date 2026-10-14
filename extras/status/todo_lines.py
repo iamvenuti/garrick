@@ -150,6 +150,18 @@ def _save(path, lines):
     os.replace(tmp, path)
 
 
+def live_key(zone_dir, rel, k, reopen=False):
+    """`k` itself if a line in the note still has that key, or None: the
+    precheck operations.py declares for the Todo verbs, answered with the
+    same hash and the same reading of the file as the edits below make, so a
+    request that passes it cannot then land on another line."""
+    try:
+        _find(_load(os.path.join(zone_dir, rel)), k, reopen)
+    except (NotFound, OSError):
+        return None
+    return k
+
+
 def _find(lines, k, reopen=False):
     for i, l in enumerate(lines):
         if not reopen and l.startswith("- [ ] ") and key(l) == k:

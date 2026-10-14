@@ -452,7 +452,9 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
 ```
 
 1. **Resolve X.** If it could be the project or one of its threads, ask which.
-2. **Confirm in one line** before acting: "Rename Acme pricing to Renewal?"
+2. **One match goes ahead**, and the reply says what moved: the instruction
+   named it, so do not ask it back. A name close to one that already exists
+   may mean that one: ask, naming it.
 3. **Run the script.** It refuses a name that will not work, that sounds
    like a sibling or is taken, and a rename while the files it would change
    have changes not committed, or while a session is mid-turn there; relay
@@ -513,10 +515,10 @@ workspace root.
 python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"
 ```
 
-1. **Confirm the name and what it holds**, in one line, and wait for the
-   yes: "A new zone called Health, for appointments and records. Right?" If
-   the user did not say what it holds, ask. A heard name close to a zone that
-   exists may mean that one: ask, naming it.
+1. **A name and what it holds is enough to go ahead**: the instruction said
+   both, so do not ask them back. If the user did not say what it holds,
+   ask. A heard name close to a zone that exists may mean that one: ask,
+   naming it.
 2. **Run the script.** When it refuses, relay the one-line reason in plain
    words and suggest a fix: a zone has no note to carry a spoken form, so its
    name has to say how it is said; offer a spoken version of one that does

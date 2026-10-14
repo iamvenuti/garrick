@@ -9,10 +9,12 @@ This file is Garrick's, as shipped, and an update replaces it. Read `System/rule
 **Go ahead without asking:** reading, searching, creating and editing files inside the zone or wiki the task is about, and anything else you can undo.
 
 **Stop and ask first:**
-- Anything you cannot undo: deleting, overwriting a file you did not create, rewriting git history.
+- Anything you cannot undo: deleting, rewriting git history, and overwriting a file whose content cannot be recovered, meaning one outside the workspace's history or a copy in a shared folder that is somebody's working file. A note a zone's git history holds can be recovered, so revising one goes ahead, whoever wrote it.
 - Anything that leaves the machine: sending, posting, sharing, publishing. Confirm what and where, every time. Yes once is not yes next time.
 - Which zone applies, when the task does not make it obvious.
 - Writing outside the project the session was opened in: another project, another zone, a wiki, `System/`. Say where the file belongs and ask; that place's own session is usually the right one. A session opened at the workspace root belongs to no project, and one opened in `System/` may write in every zone and wiki: it governs them all.
+
+**A request carries its scope through the workflow it names.** Filing a conversation for a project you can name authorises the writes that filing needs: the wiki page, that project's notes, the zone's `Todo.md`. Stop and ask as before for an unresolved party, a destination nobody has named, or a wall between the conversation and the project.
 
 When there are several good ways to do something, name two or three, recommend one, and go ahead with it.
 

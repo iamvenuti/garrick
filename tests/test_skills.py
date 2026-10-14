@@ -176,14 +176,14 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, rules, needle)
 
     def test_a_new_zone_goes_through_the_scaffold(self):
-        """A zone is made as the installer makes one, by the scaffold script, after
-        the name and what it holds are confirmed; the interview hands over to it."""
+        """A zone is made as the installer makes one, by the scaffold script, once the
+        name and what it holds are given; the interview hands over to it."""
         for phrase in ("add a zone called x", "new zone x"):
             self.assertIn(phrase, triggers(SKILLS / "threads"), phrase)
         text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
         new_zone = flat(section(text, '## New zone: "add a zone called X", "new zone X"'))
         for needle in ('python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"',
-                       "**Confirm the name and what it holds**", "wait for the yes", "never `git add -A`",
+                       "**A name and what it holds is enough to go ahead**", "never `git add -A`",
                        "python3 System/tools/check.py"):
             self.assertIn(needle, new_zone, needle)
         self.assertIn("offer to add it (*New zone*, below)", flat(text))

@@ -733,9 +733,9 @@ def project_cards(html):
 
 PANEL_HARNESS = r"""
 const vm = require("vm");
-const [js, hosted, calls] = JSON.parse(process.argv[1]);
+const [js, hosted, calls, launchers] = JSON.parse(process.argv[1]);
 const ctx = { JSON, String, Array, localStorage: { getItem: () => null, setItem: () => {} },
-              document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers: "" } } } };
+              document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers } } } };
 ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
 vm.createContext(ctx);
 vm.runInContext(js + ";this.out=" + JSON.stringify(calls) + ".map(function(c){return Panel[c[0]](c[1],c[2])})", ctx);
@@ -743,11 +743,13 @@ process.stdout.write(JSON.stringify(ctx.out));
 """
 
 
-def panel(hosted, *calls):
+def panel(hosted, *calls, launchers=""):
     """Panel.head or Panel.acts, run in Node as the app (hosted) or a browser would.
-    A call is (name, card) or, for a row's card, ("head", card, 1)."""
+    A call is (name, card) or, for a row's card, ("head", card, 1). `launchers`
+    is what the page's body carries: the ways to open a thread this Mac has."""
     import subprocess
-    done = subprocess.run(["node", "-e", PANEL_HARNESS, json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls]])],
+    done = subprocess.run(["node", "-e", PANEL_HARNESS,
+                           json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls], launchers])],
                           capture_output=True, text=True, timeout=30)
     if done.returncode:
         raise AssertionError(done.stderr)
@@ -1528,3 +1530,132 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         self.assertIn("if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme'&&k!=='garrick-launchers')ks.push(k)",
                       status.LAYOUT_JS)                              # the layout goes with the window's own storage
         self.assertIn("in the order this Garrick builds", self.page())
+
+
+class TestWhatALaunchSays(StatusCase):
+    """Every launcher reports what it achieved, and no launcher replaces the
+    clipboard without saying so in the same breath. The page says only that it
+    is opening; the host, which alone knows how it went, says what opened.
+    Issue #104."""
+
+    SWIFT = REPO / "extras" / "status" / "app" / "Garrick.swift"
+    PLUGIN = REPO / "extras" / "status" / "obsidian" / "main.js"
+
+    def swift(self):
+        return self.SWIFT.read_text(encoding="utf-8")
+
+    def plugin(self):
+        return self.PLUGIN.read_text(encoding="utf-8")
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_page_says_it_is_opening_never_that_it_opened(self):
+        html = self.page(launchers=("finder", "cmux", "codex", "claude"))
+        self.assertIn('data-launchers="finder,cmux,codex,claude"', html)
+        # The desk marker is set here on purpose. Whether a real card carries
+        # one depends on whether the cmux extra and cmux itself are installed
+        # on the machine, and with no desk cmux is a fourth `data-launch`
+        # button rather than a desk button: that branch is the `plain` case
+        # below. Reading the ambient machine instead would make this pass on
+        # one and fail on the other, which is what it did.
+        desk_card = dict(cards(html)[("Acme Review", "Pricing")], dk=["Work", "Acme Review", "Pricing"])
+        acts = panel(True, ("acts", desk_card), launchers="finder,cmux,codex,claude")[0]
+        said = dict(re.findall(r'data-launch="(\w+)"[^>]*?data-say="([^"]*)"', acts))
+        self.assertEqual({"finder": "Showing Pricing in Finder…", "codex": "Opening Pricing in Codex…",
+                          "claude": "Opening Pricing in Claude…"}, said)
+        # cmux here goes through the cmux extra's desk, which has always said this
+        self.assertIn('data-k="cmux"', acts)
+        self.assertIn('data-say="Opening Pricing in cmux…"', acts)
+        for claim in ("Opened Claude in", "Opened Codex in", "Showed Pricing in Finder.", "Paste “open Pricing”"):
+            self.assertNotIn(claim, acts, "the page claims an outcome it cannot know")
+        # a plain cmux, with no desk, says the same and leaves the outcome to the host
+        plain = panel(True, ("acts", dict(cards(html)[("Acme Review", "Pricing")], dk=None)),
+                      launchers="finder,cmux,codex,claude")[0]
+        self.assertIn('data-launch="cmux"', plain)
+        self.assertIn('data-say="Opening Pricing in cmux…"', plain)
+
+    def test_both_hosts_say_the_same_words(self):
+        # One page, two hosts: the sentences are the same in each, so what a
+        # launcher tells you does not depend on where the page is being shown.
+        swift, plugin = self.swift(), self.plugin()
+        for sentence in ('” typed in. Send it to resume.',                      # Claude: the phrase is in the session
+                         '. The clipboard now holds “',                          # Codex and cmux: replaced, and said
+                         '; paste it to resume.',
+                         ' in Finder. Nothing was copied; the phrase that resumes it is “',
+                         '. The phrase that resumes it is “',                    # a failure still names the phrase
+                         'Starting Claude, then opening ',                       # while a cold Claude loads
+                         '. This takes a few seconds.',
+                         'Claude did not say its window was ready within forty seconds. Opened ',
+                         'if the session came up empty, the phrase that resumes it is “'):
+            self.assertIn(sentence, swift, sentence)
+            self.assertIn(sentence, plugin, sentence)
+        # and the same waits, so one host does not give up where the other goes on
+        self.assertIn('let claudeReadyMark = "boot: done"', swift)
+        self.assertIn('const CLAUDE_READY = "boot: done"', plugin)
+        self.assertIn("let claudeReadyCeiling: TimeInterval = 40", swift)
+        self.assertIn("ceiling: 40000", plugin)
+        self.assertIn("let claudeReadyFallback: TimeInterval = 15", swift)
+        self.assertIn("fallback: 15000", plugin)
+
+    def test_a_cold_claude_is_started_and_waited_for(self):
+        swift = self.swift()
+        claude = swift[swift.index('case "claude":'):swift.index('case "codex":')]
+        self.assertIn("if NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {", claude)
+        self.assertIn("startClaude(url, name: name, phrase: phrase)", claude)
+        self.assertIn("sendToClaude(url, name: name, phrase: phrase, window: nil)", claude)   # running: at once, as before
+        self.assertNotIn("return NSWorkspace.shared.open(url)", claude)                       # never the bare link again
+        start = swift[swift.index("func startClaude("):swift.index("// Whether the page says the desk")]
+        self.assertLess(start.index("let from = claudeLogSize()"), start.index("openApplication(at: app"))
+        self.assertIn("toast(startingClaude(name))", start)                                   # said before the wait
+        self.assertIn("let window = awaitClaudeWindow(from: from)", start)
+        wait = swift[swift.index("func awaitClaudeWindow("):swift.index("// What the app keeps between launches")]
+        self.assertIn("sleep(claudeReadyFallback)", wait)                                      # no log: the fixed delay
+        self.assertIn("while waited < claudeReadyCeiling {", wait)
+        self.assertIn("contains(claudeReadyMark)", wait)
+        self.assertIn("return .late", wait)                                                    # and it always ends
+
+    def test_the_clipboard_is_replaced_in_one_place_and_said(self):
+        swift = self.swift()
+        launch = swift[swift.index("func launch(_ app: String"):swift.index("func sendToClaude(")]
+        # Codex copies only once it has opened, and the toast beside it says so.
+        codex = launch[launch.index('case "codex":'):launch.index('case "cmux":')]
+        self.assertLess(codex.index("try p.run()"), codex.index("copyText(phrase)"))
+        self.assertIn('toast(opened("Codex", folder.lastPathComponent, phrase), alsoNotify: false)', codex)
+        self.assertEqual(1, launch.count("copyText("))               # cmux copies in openInCmux(), after its open
+        cmux = swift[swift.index("func openInCmux("):swift.index("// MARK: the menu bar")]
+        self.assertLess(cmux.index("guard error == nil"), cmux.index("self.copyText(phrase)"))
+        self.assertIn('self.toast(self.opened("cmux", folder.lastPathComponent, phrase), alsoNotify: false)', cmux)
+        # Finder takes neither, so nothing is copied and the phrase is named instead.
+        self.assertNotIn("copyText", launch[launch.index('case "finder":'):])
+        self.assertIn("Nothing was copied; the phrase that resumes it is", swift)
+        # A launch's own phrase is never copied twice: the handler leaves it to the launcher.
+        self.assertIn('if let text = body["copy"] as? String, !text.isEmpty, body["launch"] == nil {', swift)
+        self.assertIn('typeof body.copy === "string" && body.copy && typeof body.launch !== "string"', self.plugin())
+
+    def test_no_launcher_route_passes_without_saying_what_it_did(self):
+        # Every arm of the switch reports, and so does every failure in it.
+        swift = self.swift()
+        launch = swift[swift.index("func launch(_ app: String"):swift.index("func sendToClaude(")]
+        for arm, says in (('case "codex":', ('notOpened("Codex"', 'opened("Codex"')),
+                          ('case "cmux":', ("openInCmux(folder.path, phrase: phrase)",)),
+                          ('case "finder":', ("showedInFinder(folder.lastPathComponent, phrase)",))):
+            body = launch[launch.index(arm):]
+            for said in says:
+                self.assertIn(said, body[:body.index("\n\t\tcase ") if "\n\t\tcase " in body else len(body)], arm)
+        self.assertIn('toast(notOpened("Claude", name, phrase))', swift)
+        self.assertIn('toast(window == .late ? claudeWasLate(name, phrase) : opened("Claude", name, phrase)', swift)
+
+    def test_the_docs_hold_a_scenario_for_every_launcher_and_host_state(self):
+        # What cannot be driven from this suite is written down instead, one row
+        # per launcher and host state, in docs/extras/status-page.md.
+        page = (REPO / "docs" / "extras" / "status-page.md").read_text(encoding="utf-8")
+        table = page[page.index("#### What each launcher does"):]
+        table = table[:table.index("\n\n", table.index("|"))]
+        rows = [r.strip("| ").split(" | ") for r in table.splitlines() if r.startswith("| *") or r.startswith("| ")]
+        states = {(r[0].strip(), r[1].strip()) for r in rows if len(r) >= 3}
+        for launcher in ("*Open in Claude*", "*Open in Codex*", "*Open in cmux*", "*Reveal in Finder*"):
+            self.assertTrue([s for s in states if s[0] == launcher], launcher)
+        for state in ("Running", "Not running", "Not installed"):
+            self.assertIn(("*Open in Claude*", state), states, state)
+        self.assertIn(("*Open in Codex*", "Installed without its own launcher"), states)
+        self.assertIn("boot: done", page)                      # the mark the wait watches for
+        self.assertIn("forty seconds", page)                   # and the ceiling, in words

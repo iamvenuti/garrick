@@ -31,6 +31,8 @@ REPO = Path(__file__).resolve().parent.parent
 PLUGIN = REPO / "extras" / "status" / "obsidian"
 STATUS = REPO / "extras" / "status" / "status.py"
 MAIN = (PLUGIN / "main.js").read_text(encoding="utf-8")
+# The first of the launchers a Codex app may carry, as main.js lists them.
+CODEX_CLI_REL = json.loads(re.search(r"const CODEX_CLI = (\[[^\]]*\]);", MAIN).group(1))[0]
 
 
 def kinds_posted() -> set:
@@ -235,11 +237,216 @@ class TestDeskRoute(ActionCase):
         for name in ("inbox", "thread"):
             self.assertNotIn("clipboard", [r[0] for r in ran[name]])             # the tab starts on it: nothing to paste
             self.assertFalse([r for r in ran[name] if r[0] == "exec" and r[1] == "open"])
-        self.assertEqual([["clipboard", "open Pricing"], ["exec", "open", ["-b", "com.cmuxterm.app", pricing]]], ran["plain"])
-        self.assertEqual("open", ran["claude"][0][1])                           # Claude keeps its deep link, with the phrase
-        self.assertIn("q=process%20the%20inbox", ran["claude"][0][2][0])
+        # A plain cmux looks the app up first, as Garrick.swift does, and copies
+        # nothing until it has opened; this stub never answers, so neither follows here.
+        self.assertEqual([["exec", "mdfind", ["kMDItemCFBundleIdentifier == 'com.cmuxterm.app'"]]], ran["plain"])
+        self.assertEqual([["exec", "mdfind", ["kMDItemCFBundleIdentifier == 'com.anthropic.claudefordesktop'"]]],
+                         ran["claude"])                                         # Claude is looked up, then asked if it is running
         self.assertEqual("toast", ran["outside"][0][0])                          # not in the workspace: nothing runs
         self.assertEqual(1, len(ran["outside"]))
+
+
+# The plugin's launch() with every child process answered, so a whole route
+# runs: what it ran, what it copied and what it said, in order. ANSWERS is a
+# list of {match, out, err, append}: the first whose `match` is in the command
+# line answers it, and `append` writes a line to a file first, which is how
+# Claude's log gets its window-is-up mark part way through a wait.
+LAUNCHES = textwrap.dedent(r"""
+    const Module = require("module");
+    const fs = require("fs");
+    const [plugin_path, root, out_path] = process.argv.slice(2);
+    const ran = [];
+    const answers = JSON.parse(process.env.ANSWERS || "[]");
+    function reply(cmd, args) {
+      const line = cmd + " " + (args || []).join(" ");
+      return answers.find((a) => line.includes(a.match)) || {};
+    }
+    const stubs = {
+      obsidian: { Plugin: class {}, ItemView: class {}, PluginSettingTab: class {}, Setting: class {}, Notice: class {}, addIcon: () => {} },
+      electron: { shell: {}, clipboard: { writeText: (t) => ran.push(["clipboard", t]) } },
+      child_process: {
+        execFile: (cmd, args, opts, done) => {
+          if (typeof opts === "function") { done = opts; opts = {}; }
+          ran.push(["exec", cmd, args]);
+          const a = reply(cmd, args);
+          if (a.append) fs.appendFileSync(a.append[0], a.append[1]);
+          if (done) setTimeout(() => done(a.err ? new Error(a.err) : null, a.out || ""), 0);
+          return { stdin: { end: (s) => ran.push(["stdin", JSON.parse(s)]) } };
+        },
+        spawn: (cmd, args) => {
+          ran.push(["spawn", cmd, args]);
+          const a = reply(cmd, args);
+          return { on(ev, cb) { if (ev === (a.err ? "error" : "spawn")) setTimeout(cb, 0); }, unref() {} };
+        },
+      },
+    };
+    const load = Module._load;
+    Module._load = function (req, ...rest) { return stubs[req] || load.call(this, req, ...rest); };
+    const Plugin = require(plugin_path);
+    const p = new Plugin();
+    p.settings = { workspace: root, python: "/usr/bin/python3", script: "", flags: "", hideParked: true };
+    p.rebuild = () => { ran.push(["rebuild"]); return Promise.resolve(); };
+    p.claudeLogPath = () => process.env.CLAUDE_LOG;
+    if (process.env.NO_APP) p.appPath = (bundle, names, done) => done(null);   // nothing installed anywhere
+    p.waitTimes = () => ({ poll: 20, ceiling: 300, settle: 10, fallback: 60 });
+    const view = { toast: (t) => ran.push(["toast", t]) };
+    (async () => {
+      const out = {};
+      for (const [name, body] of JSON.parse(process.env.MESSAGES)) {
+        ran.length = 0;
+        p.handle(view, body);
+        await (p.launching || Promise.resolve());
+        out[name] = ran.slice();
+      }
+      fs.writeFileSync(out_path, JSON.stringify(out));
+    })();
+""")
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestWhatALaunchSays(ActionCase):
+    """Issue #104: a cold Claude is started and waited for, the clipboard is
+    never replaced without the user being told in the same breath, and every
+    launcher says what it achieved. Garrick.app says the same words; the
+    sentences are held against each other in tests/test_status_more.py."""
+
+    def fake_app(self, name, cli=None):
+        """An app bundle of this test's own, so what the plugin finds does not
+        depend on what this Mac has installed."""
+        app = Path(self._tmp.name) / "Applications" / (name + ".app")
+        (app / "Contents").mkdir(parents=True, exist_ok=True)
+        if cli:
+            (app / cli).parent.mkdir(parents=True, exist_ok=True)
+            (app / cli).write_text("#!/bin/sh\n")
+            (app / cli).chmod(0o755)
+        return str(app)
+
+    def run_routes(self, messages, answers, log=None, no_app=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            harness, out = Path(tmp) / "launches.js", Path(tmp) / "out.json"
+            harness.write_text(LAUNCHES)
+            env = dict(os.environ, MESSAGES=json.dumps(messages), ANSWERS=json.dumps(answers),
+                       CLAUDE_LOG=str(log if log is not None else Path(tmp) / "no-such.log"))
+            if no_app:
+                env["NO_APP"] = "1"
+            done = subprocess.run(["node", str(harness), str(PLUGIN / "main.js"), str(self.root), str(out)],
+                                  capture_output=True, text=True, env=env, timeout=120)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return json.loads(out.read_text())
+
+    def pricing(self):
+        return str(self.work / "Acme Review" / "Threads" / "Pricing")
+
+    def claude_message(self):
+        return {"launch": "claude", "folder": self.pricing(), "phrase": "open Pricing"}
+
+    OPENED = "Opened Claude in Pricing with “open Pricing” typed in. Send it to resume."
+
+    def found(self, name="Claude", cli=None):
+        return {"match": "mdfind", "out": self.fake_app(name, cli) + "\n"}
+
+    def test_a_running_claude_gets_the_link_at_once(self):
+        claude = self.found()
+        ran = self.run_routes([["warm", self.claude_message()]],
+                              [claude, {"match": "pgrep", "out": "4213\n"}])["warm"]
+        self.assertEqual(["exec", "mdfind", ["kMDItemCFBundleIdentifier == 'com.anthropic.claudefordesktop'"]], ran[0])
+        # Asked by its own executable, so an app called "Usage for Claude" is not taken for Claude.
+        self.assertEqual(["exec", "pgrep", ["-f", claude["out"].strip() + "/Contents/MacOS/"]], ran[1])
+        self.assertEqual("open", ran[2][1])                 # straight to the link: nothing started, nothing waited for
+        self.assertIn("q=open%20Pricing", ran[2][2][0])
+        self.assertEqual(["toast", self.OPENED], ran[3])
+        self.assertEqual(4, len(ran))
+        self.assertNotIn("clipboard", [r[0] for r in ran])  # the phrase is in the session, not on the clipboard
+
+    def test_a_cold_claude_is_started_and_the_link_waits_for_its_window(self):
+        log = Path(self._tmp.name) / "claude-main.log"
+        log.write_text("2026-10-14 16:40:12 [info] starting\n")
+        answers = [self.found(), {"match": "pgrep", "out": ""},      # nothing running
+                   # starting it writes the line its window-is-up mark sits on
+                   {"match": "open -b com.anthropic",
+                    "append": [str(log), "[info] mainView backgroundThrottling restored (boot: done)\n"]}]
+        ran = self.run_routes([["cold", self.claude_message()]], answers, log=log)["cold"]
+        said = [r for r in ran if r[0] == "toast"]
+        self.assertEqual(["toast", "Starting Claude, then opening Pricing. This takes a few seconds."], said[0])
+        self.assertEqual(["exec", "open", ["-b", "com.anthropic.claudefordesktop"]], ran[3])
+        link = [r for r in ran if r[0] == "exec" and r[1] == "open" and r[2][0].startswith("claude://")]
+        self.assertEqual(1, len(link))
+        self.assertIn("q=open%20Pricing", link[0][2][0])
+        self.assertLess(ran.index(said[0]), ran.index(link[0]))       # it said so before the gap, not after
+        self.assertEqual(["toast", self.OPENED], said[-1])
+
+    def test_a_window_that_never_reports_still_gets_the_link_and_says_so(self):
+        log = Path(self._tmp.name) / "silent.log"
+        log.write_text("[info] starting\n")
+        ran = self.run_routes([["late", self.claude_message()]],
+                              [self.found(), {"match": "pgrep", "out": ""}], log=log)["late"]
+        self.assertTrue([r for r in ran if r[0] == "exec" and r[1] == "open" and r[2][0].startswith("claude://")])
+        self.assertEqual(["toast", "Claude did not say its window was ready within forty seconds. Opened Pricing "
+                                   "anyway; if the session came up empty, the phrase that resumes it is "
+                                   "“open Pricing”."],
+                         [r for r in ran if r[0] == "toast"][-1])
+        self.assertNotIn("clipboard", [r[0] for r in ran])           # nothing replaced: the phrase is in the message
+
+    def test_a_log_that_cannot_be_read_falls_back_to_the_fixed_delay(self):
+        ran = self.run_routes([["nolog", self.claude_message()]],
+                              [self.found(), {"match": "pgrep", "out": ""}])["nolog"]   # CLAUDE_LOG is not there
+        self.assertTrue([r for r in ran if r[0] == "exec" and r[1] == "open" and r[2][0].startswith("claude://")])
+        self.assertEqual(["toast", self.OPENED], [r for r in ran if r[0] == "toast"][-1])
+
+    def test_claude_not_installed_rebuilds_the_page_instead_of_opening(self):
+        ran = self.run_routes([["gone", self.claude_message()]], [], no_app=True)["gone"]
+        self.assertEqual(["toast", "Claude is not installed here any more. Rebuilding the page without it."], ran[0])
+        self.assertEqual(["rebuild"], ran[1])
+        self.assertFalse([r for r in ran if r[0] == "exec" and r[1] == "open"])
+
+    def test_codex_and_cmux_copy_only_once_they_have_opened_and_say_so(self):
+        folder = self.pricing()
+        messages = [["codex", {"launch": "codex", "folder": folder, "phrase": "open Pricing"}],
+                    ["cmux", {"launch": "cmux", "folder": folder, "phrase": "open Pricing"}],
+                    ["finder", {"launch": "finder", "folder": folder, "phrase": "open Pricing"}]]
+        ran = self.run_routes(messages, [self.found("Codex", cli=CODEX_CLI_REL)])
+        codex = ran["codex"]
+        self.assertEqual("spawn", codex[1][0])
+        self.assertEqual(["clipboard", "open Pricing"], codex[2])    # after it started, never before
+        self.assertEqual(["toast", "Opened Codex in Pricing. The clipboard now holds “open Pricing”; "
+                                   "paste it to resume."], codex[3])
+        cmux = ran["cmux"]
+        self.assertEqual(["exec", "open", ["-b", "com.cmuxterm.app", folder]], cmux[1])
+        self.assertEqual(["clipboard", "open Pricing"], cmux[2])
+        self.assertEqual(["toast", "Opened cmux in Pricing. The clipboard now holds “open Pricing”; "
+                                   "paste it to resume."], cmux[3])
+        finder = ran["finder"]
+        self.assertEqual(["exec", "open", ["-R", folder]], finder[0])
+        self.assertEqual(["toast", "Showed Pricing in Finder. Nothing was copied; the phrase that resumes it is "
+                                   "“open Pricing”."], finder[1])
+        self.assertNotIn("clipboard", [r[0] for r in finder])        # Finder takes neither: nothing is replaced
+
+    def test_a_launch_never_replaces_the_clipboard_twice(self):
+        # The page sends the phrase as `copy` as well, for a host older than this
+        # one. Here the launcher owns the clipboard, so only the launcher copies.
+        folder = self.pricing()
+        ran = self.run_routes([["both", {"launch": "cmux", "folder": folder, "phrase": "open Pricing",
+                                         "cmux": folder, "copy": "open Pricing"}]],
+                              [self.found("cmux")])["both"]
+        self.assertEqual(1, len([r for r in ran if r[0] == "clipboard"]))
+        self.assertEqual(["exec", "mdfind", ["kMDItemCFBundleIdentifier == 'com.cmuxterm.app'"]], ran[0])
+
+    def test_a_failure_names_the_phrase_and_leaves_the_clipboard_alone(self):
+        folder = self.pricing()
+        messages = [["codex", {"launch": "codex", "folder": folder, "phrase": "open Pricing"}],
+                    ["cmux", {"launch": "cmux", "folder": folder, "phrase": "open Pricing"}]]
+        answers = [self.found("Codex", cli=CODEX_CLI_REL),
+                   {"match": "codex app", "err": "no such thing"},
+                   {"match": "open -b com.cmuxterm", "err": "cannot open"}]
+        ran = self.run_routes(messages, answers)
+        self.assertEqual(["toast", "Codex did not open Pricing. The phrase that resumes it is "
+                                   "“open Pricing”."],
+                         [r for r in ran["codex"] if r[0] == "toast"][-1])
+        self.assertEqual(["toast", "cmux did not open Pricing. The phrase that resumes it is "
+                                   "“open Pricing”."],
+                         [r for r in ran["cmux"] if r[0] == "toast"][-1])
+        for name in ("codex", "cmux"):
+            self.assertNotIn("clipboard", [r[0] for r in ran[name]], name)
 
 
 if __name__ == "__main__":

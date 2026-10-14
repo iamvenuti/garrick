@@ -68,7 +68,7 @@ That clone gives you `main`, the branch under development; [Desktop first steps]
 
 Open `~/Garrick-demo` in your chosen app or terminal assistant and say “what's open”. The [first-session guide](docs/first-session.md#try-the-wall-with-fictional-data) gives you a short wall demonstration. The demo builder writes only inside that target folder; your assistant keeps its own session data separately. [Try it safely](docs/try-it-safely.md) explains removal.
 
-When you want your own, run `python3 install.py` in `~/garrick-source`. It asks one question at a time and writes into a new folder, `~/Garrick` by default. [Getting started](docs/getting-started.md) is the command reference.
+When you want your own, run `python3 install.py` in `~/garrick-source`. It asks one question at a time and writes into a new folder, `~/Garrick` by default. The [command reference](docs/commands.md) documents each command.
 
 ## How the files fit together
 
@@ -95,7 +95,7 @@ Early, for macOS. See the [changelog](CHANGELOG.md).
 
 - [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
 - [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).
-- [Command reference](docs/getting-started.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
+- [Command reference](docs/commands.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
 - [Updating to a newer Garrick](docs/updating.md), keeping what you changed.
 - [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (open it in a browser from your downloaded copy, which holds its images).
 

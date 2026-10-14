@@ -384,7 +384,7 @@ class RefusalTest(unittest.TestCase):
         # Nothing is required. The one way to use your own address is the one documented, and it works.
         self.assertIn("garrick@localhost. Nothing needs changing.", r.stdout)
         command = r.stdout.split(f"run this in {target}:\n", 1)[1].splitlines()[0].strip()
-        self.assertIn(f"\n{command}\n", (REPO / "docs" / "getting-started.md").read_text())
+        self.assertIn(f"\n{command}\n", (REPO / "docs" / "commands.md").read_text())
         subprocess.run(["/bin/sh", "-c", command], cwd=target, env=env, check=True)
         for repo in repos(target):
             self.assertEqual(git(repo, "config", "user.email"), "you@example.com", repo)
@@ -883,10 +883,10 @@ class ScaffoldTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
-# The command docs/getting-started.md gives for a zone added after install. The tests run
+# The command docs/commands.md gives for a zone added after install. The tests run
 # it as written, with this interpreter, so the page and the script cannot drift apart.
 ZONE_COMMAND = re.search(r'^python3 (System/tools/scaffold\.py zone "([^"]+)" --holds "[^"]+")$',
-                         (REPO / "docs" / "getting-started.md").read_text(encoding="utf-8"), re.M)
+                         (REPO / "docs" / "commands.md").read_text(encoding="utf-8"), re.M)
 
 
 def first_commit(repo):
@@ -901,7 +901,7 @@ class ZoneTest(unittest.TestCase):
         cls.box = Sandbox()
         cls.root, r = cls.box.install("ws")
         assert r.returncode == 0, r.stderr
-        assert ZONE_COMMAND, "docs/getting-started.md gives no scaffold.py zone command"
+        assert ZONE_COMMAND, "docs/commands.md gives no scaffold.py zone command"
         cls.name = ZONE_COMMAND.group(2)
         cls.zone = cls.root / "Zones" / cls.name
         cls.made = run(shlex.split(ZONE_COMMAND.group(1)), cls.box.env, cwd=cls.root)

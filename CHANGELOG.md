@@ -2,7 +2,7 @@
 
 What changed in each release. Dates are when the release was tagged. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.28.0] - 2026-10-15
 
 ### Added
 
@@ -704,7 +704,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/iamvenuti/garrick/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/iamvenuti/garrick/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/iamvenuti/garrick/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/iamvenuti/garrick/compare/v0.24.0...v0.25.0

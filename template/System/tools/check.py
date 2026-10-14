@@ -2614,6 +2614,11 @@ def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, st
     return ws.forms[key]
 
 
+def _in_near_side(form: str, near_side: set) -> bool:
+    padded = " %s " % form
+    return any(padded in (" %s " % ns) for ns in near_side)
+
+
 def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
     ctx = ws.context
     forms: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
@@ -2649,8 +2654,8 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
     for tag in sorted(walled_tags):
         if tag not in forms:
             continue
-        found = [(False, f) for f in sorted(forms[tag]) if f not in near_side]
-        found += [(True, f) for f in sorted(firsts[tag]) if f.lower() not in near_side and f.lower() not in forms[tag]]
+        found = [(False, f) for f in sorted(forms[tag]) if not _in_near_side(f, near_side)]
+        found += [(True, f) for f in sorted(firsts[tag]) if not _in_near_side(f.lower(), near_side) and f.lower() not in forms[tag]]
         out[tag] = found
     return out
 
@@ -2660,7 +2665,7 @@ def padded_words(text: str) -> str:
     return " %s " % " ".join(words(text))
 
 
-def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
+def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> Optional[str]:
     """Does `text` hold one of `forms`? `padded` is padded_words(text), when
     the caller has it already."""
     if padded is None:
@@ -2668,10 +2673,10 @@ def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = 
     for case_sensitive, form in forms:
         if case_sensitive:
             if re.search(r"(?<![\w])%s(?![\w])" % re.escape(form), text):
-                return True
+                return form
         elif " %s " % form in padded:
-            return True
-    return False
+            return form
+    return None
 
 
 def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
@@ -2748,12 +2753,14 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
         scanned = without_party_field(text) + "\n" + path.name
         padded = padded_words(scanned)
         for b, forms in name_forms(ws, far).items():
-            if b in reported or not forms or not names_hit(scanned, forms, padded):
+            hit = names_hit(scanned, forms, padded)
+            if b in reported or not forms or not hit:
                 continue
             a = sorted(t for t in tags if walled(ws.context, t, b))[0]
             reported.add(b)
+            as_tag = ' (as "%s")' % hit if hit == " ".join(words(b)) else ""
             out.append(Finding(ERROR, "walls", r,
-                               "names %s, or one of its people; a wall stands between %s and %s" % (party_name(ws, b), a, b),
+                               "names %s%s, or one of its people; a wall stands between %s and %s" % (party_name(ws, b), as_tag, a, b),
                                "A note in %s names %s" % (where, party_name(ws, b))))
 
     # Quotes: a run of words held only across a wall, by a meeting page or its

@@ -725,7 +725,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
 				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
-				self.freshen(force: true)
+				if !self.reading(request) { self.freshen(force: true) }
 			}
 		}
 		do {
@@ -737,10 +737,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// The page asking what is running (page_action.py's "operations") only reads:
+	// the reply goes to the page, with no toast and no rebuild, or asking would
+	// rebuild the page it asks from.
+	func reading(_ request: [String: Any]) -> Bool { request["verb"] as? String == "operations" }
+
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
 	func acted(_ request: [String: Any], _ said: [String: Any]) {
-		toast(said["say"] as? String ?? "That did not work.")
+		if !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
 		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
 		   let text = String(data: both, encoding: .utf8) {
 			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
@@ -798,9 +803,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return (try? JSONSerialization.data(withJSONObject: urls)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 	}()
 
+	// GarrickReads tells the page this app answers a request that only reads, so
+	// it may ask what is running (page_action.py's "operations"). An app without
+	// it is never asked, and the page works as it did before the record. It is
+	// set at document start, before the page's own scripts run.
 	func appScript() -> WKUserScript {
 		WKUserScript(source: """
-			window.GarrickApp=\(appJSON());(function(i){var r=document.documentElement;r.classList.add('appicons');
+			window.GarrickApp=\(appJSON());window.GarrickReads=true;
+			(function(i){var r=document.documentElement;r.classList.add('appicons');
 			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
 			window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:{line:e.lineno||0,
 			col:e.colno||0,msg:String(e.message||'').replace(/(["'`]).*?\\1/g,'…').slice(0,160)}})}catch(x){}});

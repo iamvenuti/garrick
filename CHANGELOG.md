@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- Page actions survive a reload, and a refusal can never read as saved. Park, wake and the four Todo requests each leave a durable record in `operations.jsonl` in the jobs folder, outside the workspace: queued, running with a phase, then completed, or failed with an outcome of refused, crashed or unknown. The status page asks for the open set when it loads and every few seconds while something runs, so a reloaded page, or a reopened app, finds an action still under way with its phase, shows the result of one that finished while it was away, and gives up an entry the record does not know as lost instead of leaving a spinner. A worker that was killed is reported as unknown the next time the page asks, with what to check and that trying again is safe. Only the outcome `saved` reads as done: every other sentence comes from one table, and a test asserts that none says a thing was saved, parked, ticked, added, renamed, made or committed. The same request sent twice within two minutes makes one edit, and the second click is told the first is under way. With no `System/tools/operations.py`, or a jobs folder that cannot be written, every reply is what it was and the page says once that actions are not recoverable. The page asks only an app or plugin that declares it answers a request that reads, so a page built from this release and shown in the Mac app from 0.26.0 behaves exactly as it did, and the record it writes meanwhile is read as soon as the app is rebuilt. The Mac app and the Obsidian plugin declare themselves as the page loads, and no longer toast or rebuild the page for the read-only `operations` request. ([#93](https://github.com/iamvenuti/garrick/issues/93))
+
 ## [0.26.0] - 2026-10-14
 
 When something cuts in, you can hold the thread you were in and come back to it later, in order; a commit from the status page waits for the wall check however long it takes; and the page shows an action is still working until it is done.

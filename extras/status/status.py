@@ -2401,20 +2401,49 @@ def bundle_id(app: Path) -> Optional[str]:
         return None
 
 
-def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
-    """Which of LAUNCHERS this Mac has. An app is known by its bundle id, so
-    the ChatGPT app is not taken for Codex; one with no readable Info.plist is
-    taken at its name."""
+# Codex opens a folder through its own launcher inside the app bundle, as
+# Garrick.app and the Obsidian plugin both run it. An app without one is
+# installed but cannot be opened into a folder, so the page does not offer it:
+# a launcher that cannot work is disabled with its reason on it, rather than
+# offered and refused after the click.
+CODEX_CLI = ("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+             "Contents/Resources/codex", "Contents/Resources/bin/codex")
+NOT_ON_A_MAC = "Opening an app is a Mac's own; this page was built elsewhere"
+NOT_INSTALLED = "Not installed on this Mac"
+NO_CODEX_CLI = "Installed, but its own launcher is missing: reinstall the Codex app"
+# Installed and able to work, but this build was told to leave it out (--no-cmux).
+LEFT_OUT = "Left out when this page was built"
+
+
+def launcher_state(apps: Optional[List[Path]] = None) -> Dict[str, Optional[str]]:
+    """Every launcher of LAUNCHERS, to None where it will work on this Mac or
+    to why it will not. An app is known by its bundle id, so the ChatGPT app is
+    not taken for Codex; one with no readable Info.plist is taken at its name.
+    Settings puts the reason on the row it greys out, and the page offers only
+    the ones with none."""
     if sys.platform != "darwin":
-        return ()
-    found = ["finder"]                          # every Mac has it
+        return {key: NOT_ON_A_MAC for key, _, _, _ in LAUNCHERS}
+    state: Dict[str, Optional[str]] = {}
     for key, _, bundle, names in LAUNCHERS:
-        for name in names:
-            app = mac_app(name, apps)
-            if app is not None and bundle_id(app) in (bundle, None):
-                found.append(key)
-                break
-    return tuple(found)
+        if key == "finder":
+            state[key] = None                   # every Mac has it
+            continue
+        app = next((a for a in (mac_app(name, apps) for name in names)
+                    if a is not None and bundle_id(a) in (bundle, None)), None)
+        if app is None:
+            state[key] = NOT_INSTALLED
+        elif key == "codex" and not any(os.access(app / rel, os.X_OK) for rel in CODEX_CLI):
+            state[key] = NO_CODEX_CLI
+        else:
+            state[key] = None
+    return state
+
+
+def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
+    """Which of LAUNCHERS will work on this Mac: the ones launcher_state()
+    found nothing wrong with, in the order the page offers them."""
+    state = launcher_state(apps)
+    return tuple(key for key, _, _, _ in LAUNCHERS if state[key] is None)
 
 
 class Links:
@@ -2806,22 +2835,29 @@ def about_garrick(version: str, notes: str = "") -> str:
                          'report it privately</a>.' % E(PROJECT + BYPASS))))
 
 
-def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False) -> str:
+def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
+                     why: Optional[Dict[str, Optional[str]]] = None) -> str:
     """Settings › Opening a thread: the note's own link, then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
-    (what clicking a thread's name does). Greyed where not installed. Kept in
-    this viewer's own storage, so the page still writes nothing."""
-    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True)]
-    rows += [(k, VERB[k], k in installed) for k, _, _, _ in LAUNCHERS]
+    (what clicking a thread's name does). A launcher that cannot work here is
+    disabled with the reason on it, before any click rather than after: not
+    installed, or installed without the launcher it opens a folder through.
+    Kept in this viewer's own storage, so the page still writes nothing."""
+    why = launcher_state() if why is None else why
+    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "The note&#39;s own link")]
+    rows += [(k, VERB[k], k in installed,
+              "Installed" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT)
+             for k, _, _, _ in LAUNCHERS]
     html = "".join('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
                    '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>'
-                   % (k, "" if ok else " disabled", E(label), "The note&#39;s own link" if k == "note" else "Installed" if ok else "Not installed on this Mac",
-                      k, "" if ok else " disabled")
-                   for k, label, ok in rows)
+                   % (k, "" if ok else " disabled", E(label), note, k, "" if ok else " disabled")
+                   for k, label, ok, note in rows)
     return ('<section class="setsec">%s%s%s</section>'
             % (set_head("Opening a thread", "launchers"), help_text("launchers", 'Tick what project and thread cards offer; the dot marks what '
-               'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app; Claude starts with the phrase that resumes the '
-               'thread typed in, for you to send, and Codex and cmux open in the folder with the phrase on the clipboard. Saved as you change it.'),
+               'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app, which says what opened. Claude starts with the phrase '
+               'that resumes the thread typed in, for you to send, and is started first and waited for when it is not running; Codex and cmux open '
+               'in the folder and say that the phrase is now on the clipboard; Finder, which can take neither, names the phrase instead. A greyed '
+               'row says why it cannot work here. Saved as you change it.'),
                html))
 
 
@@ -3661,8 +3697,12 @@ var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
 function prefs(){return GarrickPrefs.launchers()}
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
 function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
-function launch(k,o){var p=phrase(o),say=k==='finder'?'Showed '+o.n+' in Finder.':k==='claude'?(p?'Opened Claude in '+o.n+' with “'+p+'” typed in. Send it to resume.':'Opened Claude in '+o.n+'.')
-:(p?'Opened '+LABEL[k]+' in '+o.n+'. Paste “'+p+'” to your assistant.':'Opened '+LABEL[k]+' in '+o.n+'.');
+/* What the page says the moment the button is pressed: that it is opening, never that it
+   opened. The host says what opened, and only it can: a cold Claude is started and waited
+   for, Codex and cmux say the clipboard now holds the phrase, Finder names the phrase it
+   cannot take, and a failure says what is left to do. An app built before 0.28.0 says
+   nothing back, and then this line is all there is. */
+function launch(k,o){var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
 var l=k==='finder'?'Reveal in Finder':'Open in '+LABEL[k];
 if(k==='cmux'&&o.dk)return'<button class="act" type="button" data-k="cmux"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
 +(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+l+'</button>';

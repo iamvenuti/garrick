@@ -43,6 +43,35 @@ const KINDS = ["act", "app", "copy", "cmux", "launch", "menu", "rebuild"];
 const BUNDLES = { claude: "com.anthropic.claudefordesktop", codex: "com.openai.codex", cmux: "com.cmuxterm.app" };
 const NAMES = { claude: "Claude", codex: "Codex", cmux: "cmux" };
 const CODEX_CLI = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"];
+// A Claude that is not running drops a deep link while its window is still
+// loading, so a cold Claude is started and the link waits for the window.
+// Claude's own log writes `boot: done` once the window has loaded; where that
+// log cannot be read, the fallback stands in and the link goes anyway. The
+// same marks and the same waits as Garrick.swift's, which a test compares.
+const CLAUDE_LOG = path.join(os.homedir(), "Library", "Logs", "Claude", "main.log");
+const CLAUDE_READY = "boot: done";
+const WAITS = { poll: 500, ceiling: 40000, settle: 1000, fallback: 15000 };
+// What a launcher says when it is done, in Garrick.swift's words: every
+// sentence names the phrase one way or another, so no launcher leaves the
+// phrase to be rebuilt. Claude types it into the session, Codex and cmux put
+// it on the clipboard and say so, and Finder, which can take neither, names
+// it. tests/test_status_more.py compares the two hosts' sentences.
+const SAYS = {
+	opened: (app, name, phrase) =>
+		!phrase ? `Opened ${app} in ${name}.`
+			: app === "Claude" ? `Opened Claude in ${name} with “${phrase}” typed in. Send it to resume.`
+				: `Opened ${app} in ${name}. The clipboard now holds “${phrase}”; paste it to resume.`,
+	notOpened: (app, name, phrase) =>
+		phrase ? `${app} did not open ${name}. The phrase that resumes it is “${phrase}”.` : `${app} did not open ${name}.`,
+	finder: (name, phrase) =>
+		phrase ? `Showed ${name} in Finder. Nothing was copied; the phrase that resumes it is “${phrase}”.`
+			: `Showed ${name} in Finder.`,
+	starting: (name) => `Starting Claude, then opening ${name}. This takes a few seconds.`,
+	late: (name, phrase) =>
+		phrase ? `Claude did not say its window was ready within forty seconds. Opened ${name} anyway; `
+			+ `if the session came up empty, the phrase that resumes it is “${phrase}”.`
+			: `Claude did not say its window was ready within forty seconds. Opened ${name} anyway.`,
+};
 // Garrick's mark, from docs/assets/garrick-mark-favicon.svg on its 64-unit
 // grid, scaled to Obsidian's 100-unit icons. The walls take the ribbon's text
 // colour, light or dark; the open compartment keeps the mark's blue.
@@ -309,9 +338,12 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	handle(view, body) {
 		if (body.menu !== undefined) return;            // Garrick.app's menu bar: nothing to do here
 		if (body.app) return view.toast("That setting is Garrick.app's own.");
-		if (typeof body.copy === "string" && body.copy) clipboard.writeText(body.copy);
+		// A Copy button's own text. A launch carries the phrase too, for a host
+		// older than this one; here the launcher owns the clipboard and says
+		// when it replaced it, so the copy is left to it and never happens twice.
+		if (typeof body.copy === "string" && body.copy && typeof body.launch !== "string") clipboard.writeText(body.copy);
 		if (typeof body.launch === "string" && typeof body.folder === "string") {
-			this.launch(view, body.launch, body.folder, typeof body.phrase === "string" ? body.phrase : "", !!body.dk);
+			this.launching = this.launch(view, body.launch, body.folder, typeof body.phrase === "string" ? body.phrase : "", !!body.dk);
 		} else if (typeof body.cmux === "string") {
 			this.launch(view, "cmux", body.cmux, "");   // a page built before the other apps
 		}
@@ -344,29 +376,135 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	// command is typed into a terminal. cmux with the cmux extra's desk ready
 	// (desk: the message says so) goes through page_action.py instead: a tab
 	// in the folder that starts the assistant on the phrase.
+	// Every route says on the page what it achieved, a failure included, and
+	// the clipboard is replaced in one place only: where the launcher cannot
+	// take the phrase itself and did open the folder, with the toast saying so.
+	// Returns a promise that settles when there is nothing left to say, which
+	// is what the tests wait on; handle() keeps it as this.launching.
 	launch(view, app, p, phrase, desk) {
 		const folder = this.inWorkspace(view, p);
-		if (!folder) return;
-		if (app === "cmux" && desk) return this.act(view, { verb: "open", folder, prompt: phrase });
+		if (!folder) return Promise.resolve();
+		const name = path.basename(folder);
+		if (app === "cmux" && desk) return Promise.resolve(this.act(view, { verb: "open", folder, prompt: phrase }));
 		if (app === "claude") {
 			const url = "claude://code/new?folder=" + encodeURIComponent(folder) + (phrase ? "&q=" + encodeURIComponent(phrase) : "");
-			execFile("open", [url], (err) => { if (err) this.gone(view, "claude"); });
-		} else if (app === "codex") {
-			if (phrase) clipboard.writeText(phrase);
-			this.appPath(BUNDLES.codex, ["Codex", "ChatGPT"], (found) => {
-				if (!found) return this.gone(view, "codex");
-				const cli = CODEX_CLI.map((r) => path.join(found, r)).find((c) => { try { fs.accessSync(c, fs.constants.X_OK); return true; } catch (e) { return false; } });
-				if (!cli) return view.toast("Codex's own launcher is missing; reinstall the Codex app.");
-				const child = spawn(cli, ["app", folder], { detached: true, stdio: "ignore" });
-				child.on("error", () => view.toast("Codex did not open that folder."));
-				child.unref();
-			});
-		} else if (app === "cmux") {
-			if (phrase) clipboard.writeText(phrase);
-			execFile("open", ["-b", BUNDLES.cmux, folder], (err) => { if (err) this.gone(view, "cmux"); });
-		} else if (app === "finder") {
-			execFile("open", ["-R", folder], () => {});
+			return this.openInClaude(view, url, name, phrase);
 		}
+		if (app === "codex") {
+			return new Promise((resolve) => this.appPath(BUNDLES.codex, ["Codex", "ChatGPT"], (found) => {
+				if (!found) { this.gone(view, "codex"); return resolve(); }
+				const cli = CODEX_CLI.map((r) => path.join(found, r)).find((c) => { try { fs.accessSync(c, fs.constants.X_OK); return true; } catch (e) { return false; } });
+				if (!cli) {
+					// Each build checks for this launcher, so the page does not offer
+					// Codex without it; a page built before it went missing still can.
+					view.toast("Codex's own launcher is missing; reinstall the Codex app. Rebuilding the page without it.");
+					this.rebuild();
+					return resolve();
+				}
+				const child = spawn(cli, ["app", folder], { detached: true, stdio: "ignore" });
+				child.on("error", () => { view.toast(SAYS.notOpened("Codex", name, phrase)); resolve(); });
+				child.on("spawn", () => {
+					if (phrase) clipboard.writeText(phrase);   // it opened: the toast says the clipboard holds it
+					view.toast(SAYS.opened("Codex", name, phrase));
+					resolve();
+				});
+				child.unref();
+			}));
+		}
+		if (app === "cmux") {
+			return new Promise((resolve) => this.appPath(BUNDLES.cmux, ["cmux"], (found) => {
+				if (!found) { this.gone(view, "cmux"); return resolve(); }
+				execFile("open", ["-b", BUNDLES.cmux, folder], (err) => {
+					if (err) { view.toast(SAYS.notOpened("cmux", name, phrase)); return resolve(); }
+					if (phrase) clipboard.writeText(phrase);
+					view.toast(SAYS.opened("cmux", name, phrase));
+					resolve();
+				});
+			}));
+		}
+		if (app === "finder") {
+			return new Promise((resolve) => execFile("open", ["-R", folder], (err) => {
+				view.toast(err ? SAYS.notOpened("Finder", name, phrase) : SAYS.finder(name, phrase));
+				resolve();
+			}));
+		}
+		return Promise.resolve();
+	}
+
+	// A running Claude takes the link at once, as it always has. A cold one
+	// would drop it while its window loads, so it is started first, its window
+	// waited for, and the link sent then. It says it is starting, so a
+	// ten-second gap does not look like nothing happened. Nothing is sent to
+	// anybody: the phrase is typed into the new session, for you to send.
+	openInClaude(view, url, name, phrase) {
+		return new Promise((resolve) => this.appPath(BUNDLES.claude, ["Claude"], (found) => {
+			if (!found) { this.gone(view, "claude"); return resolve(); }
+			// Its own executable, not its name: "Usage for Claude" must not read as Claude.
+			const exe = path.join(found, "Contents", "MacOS") + path.sep;
+			execFile("pgrep", ["-f", exe], { timeout: 3000 }, (err, out) => {
+				if ((out || "").trim()) return this.sendToClaude(view, url, name, phrase, null).then(resolve);
+				const from = this.claudeLogSize();           // before it starts: only what it writes from here counts
+				view.toast(SAYS.starting(name));
+				execFile("open", ["-b", BUNDLES.claude], (e) => {
+					if (e) { view.toast(SAYS.notOpened("Claude", name, phrase)); return resolve(); }
+					this.claudeWindow(from, (how) => this.sendToClaude(view, url, name, phrase, how).then(resolve));
+				});
+			});
+		}));
+	}
+
+	// Sends the link to a Claude whose window is up, and says what happened.
+	// `how` is how a cold Claude's window was found, null for one already
+	// running; a wait that ran out says the session may have come up empty.
+	sendToClaude(view, url, name, phrase, how) {
+		return new Promise((resolve) => execFile("open", [url], (err) => {
+			view.toast(err ? SAYS.notOpened("Claude", name, phrase)
+				: how === "late" ? SAYS.late(name, phrase) : SAYS.opened("Claude", name, phrase));
+			resolve();
+		}));
+	}
+
+	// Claude's log and how long the wait allows, as methods so a test can stand
+	// in for them without reaching the real log or waiting forty seconds.
+	claudeLogPath() { return CLAUDE_LOG; }
+
+	waitTimes() { return WAITS; }
+
+	// Where Claude's log stands now, so only what it writes after the app is
+	// started is read. null where the log is not there at all.
+	claudeLogSize() {
+		try { return fs.statSync(this.claudeLogPath()).size; } catch (e) { return null; }
+	}
+
+	// Waits for a cold Claude's window, as Garrick.swift's awaitClaudeWindow():
+	// the mark its log writes when the window has loaded, read from where the
+	// log stood before the app was started, up to the ceiling. Never waits for
+	// ever: every ending sends the link, and says which ending it was.
+	claudeWindow(from, done) {
+		const w = this.waitTimes();
+		if (from === null) return setTimeout(() => done("assumed"), w.fallback);
+		let waited = 0;
+		const look = () => {
+			waited += w.poll;
+			let tail = "";
+			try {
+				const fd = fs.openSync(this.claudeLogPath(), "r");
+				try {
+					const size = fs.fstatSync(fd).size;
+					if (size > from) {
+						const buf = Buffer.alloc(size - from);
+						fs.readSync(fd, buf, 0, buf.length, from);
+						tail = buf.toString("utf8");
+					}
+				} finally { fs.closeSync(fd); }
+			} catch (e) {
+				return setTimeout(() => done("assumed"), w.fallback);   // rotated or gone: nothing to find
+			}
+			if (tail.includes(CLAUDE_READY)) return setTimeout(() => done("ready"), w.settle);
+			if (waited >= w.ceiling) return done("late");
+			setTimeout(look, w.poll);
+		};
+		setTimeout(look, w.poll);
 	}
 
 	// An app by its bundle id, as Launch Services finds it, or in an Applications folder.

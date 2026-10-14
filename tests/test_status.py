@@ -928,12 +928,16 @@ class TestSettings(StatusCase):
 class TestLaunchers(StatusCase):
     """Open in Claude, Codex or cmux: offered for what is installed, chosen in Settings."""
 
-    def app(self, folder, name, bundle=None):
+    def app(self, folder, name, bundle=None, cli=None):
         app = folder / (name + ".app")
         (app / "Contents").mkdir(parents=True)
         if bundle:
             with (app / "Contents" / "Info.plist").open("wb") as f:
                 plistlib.dump({"CFBundleIdentifier": bundle}, f)
+        if cli:                                  # the launcher inside the bundle, as Codex's own is
+            (app / cli).parent.mkdir(parents=True, exist_ok=True)
+            (app / cli).write_text("#!/bin/sh\n")
+            (app / cli).chmod(0o755)
         return app
 
     @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
@@ -943,8 +947,33 @@ class TestLaunchers(StatusCase):
         self.app(apps, "Claude", "com.anthropic.claudefordesktop")
         self.app(apps, "cmux")                                           # no Info.plist: taken at its name
         self.assertEqual(("finder", "cmux", "claude"), status.launchers_installed([apps]))   # Finder: every Mac has it
-        self.app(apps, "Codex", "com.openai.codex")
+        self.app(apps, "Codex", "com.openai.codex", cli=status.CODEX_CLI[0])
         self.assertEqual(("finder", "cmux", "codex", "claude"), status.launchers_installed([apps]))
+
+    @unittest.skipUnless(sys.platform == "darwin", "the launchers are Mac apps")
+    def test_a_launcher_that_cannot_work_is_not_offered(self):
+        # Codex opens a folder through its own launcher inside the bundle. Without
+        # one it was offered, clicked, and only then refused; now it is never offered.
+        apps = Path(self._tmp.name) / "Applications"
+        self.app(apps, "Codex", "com.openai.codex")                      # installed, no launcher in it
+        self.assertEqual(("finder",), status.launchers_installed([apps]))
+        self.assertEqual({"finder": None, "cmux": status.NOT_INSTALLED, "codex": status.NO_CODEX_CLI,
+                          "claude": status.NOT_INSTALLED}, status.launcher_state([apps]))
+        for rel in status.CODEX_CLI:                                     # any of the three it may carry will do
+            shutil.rmtree(apps)
+            self.app(apps, "Codex", "com.openai.codex", cli=rel)
+            self.assertIsNone(status.launcher_state([apps])["codex"], rel)
+
+    def test_a_greyed_row_says_why_it_cannot_work(self):
+        # The reason sits on the row, before any click rather than after it.
+        dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_CODEX_CLI,
+                                                                   "cmux": status.NOT_INSTALLED})
+        self.assertIn('<input type="checkbox" data-launcher="codex" disabled> <span>Open in Codex<small>%s</small>'
+                      % htmllib.escape(status.NO_CODEX_CLI, quote=False), dialog)
+        self.assertIn('<input type="checkbox" data-launcher="cmux" disabled> <span>Open in cmux<small>%s</small>'
+                      % status.NOT_INSTALLED, dialog)
+        self.assertIn('data-launcher="claude"> <span>Open in Claude<small>Installed</small>', dialog)
+        self.assertIn('data-launcher="finder"> <span>Reveal in Finder<small>Installed</small>', dialog)
 
     def test_the_page_names_what_is_installed(self):
         html = self.page(launchers=("claude", "cmux"))

@@ -38,9 +38,28 @@ non-blocking exclusive flock for the whole run: it survives pid reuse and
 goes with the process on SIGKILL. A record that is not terminal whose lock
 can be taken has no worker, and the next reader writes `unknown` for it.
 
-This file declares only what the journal needs: the `fields` a request may
-carry and the `identity` among them, for park, wake and the four Todo verbs.
-It does not validate requests, run anything, or choose what happens next.
+`DECLARED` is the table every operation is declared in, one row per verb,
+whichever way the request arrives: the page's buttons, the ask box, a skill
+piping JSON into page_action.py, or scaffold.py on the command line. A row
+names the `fields` a request may carry, the `identity` among them, the
+`scope` it touches, whether it `commits`, whether a `retry` of it is safe,
+and the `precheck` that says what must still be true for it to run.
+
+Validation is closed: `validate()` refuses a field the verb does not declare,
+by name, rather than ignoring it, so an unknown field can never widen what an
+action touches. The reason comes from this file, so the sentence read for a
+refusal is the same whichever way the request arrived.
+
+`stale()` is the other half: given the fingerprint read from the world now,
+it says whether the request still means what it did. Nothing here computes a
+fingerprint. The Todo verbs' is the hash of the line's exact text, which
+todo_lines keeps; park's and wake's is the note's own `status:`.
+
+`OPS` stays what it has been since 0.26.0: the six verbs that keep a durable
+record, derived from the table. A newer copy of this file found by an older
+status extra must not start recording verbs that extra knows nothing about.
+
+The table declares; the handlers do the work, and do not move here.
 Standard library only; Python 3.9.
 """
 
@@ -76,20 +95,86 @@ STATES = ("queued", "running", "completed", "failed")
 OUTCOMES = ("saved", "refused", "crashed", "unknown", "lost")
 SUCCESS_VERBS = ("saved", "parked", "ticked", "added", "renamed", "made", "committed")
 
-Op = collections.namedtuple("Op", "fields identity")
-# Per verb: the fields a request may carry besides `verb` and `op`, and which
-# of them (besides the zone, which is always part of it) say what the request
-# is, so that the same request twice has the same key.
-OPS: Dict[str, Op] = {
-    "park": Op(fields=("zone", "project", "thread", "file"), identity=("project", "thread", "file")),
-    "wake": Op(fields=("zone", "project", "thread", "file"), identity=("project", "thread", "file")),
-    "todo-done": Op(fields=("zone", "file", "key"), identity=("file", "key")),
-    "todo-undo": Op(fields=("zone", "file", "key"), identity=("file", "key")),
-    "todo-date": Op(fields=("zone", "file", "key", "date"), identity=("file", "key", "date")),
-    "todo-add": Op(fields=("zone", "text", "target", "date"), identity=("text", "target", "date")),
+# ---- the declared operations ---------------------------------------------
+
+Op = collections.namedtuple("Op", "fields identity scope commits retry precheck")
+# Per verb:
+#   fields    every field a request may carry besides those in ALWAYS. A field
+#             not here is refused by name (validate), never ignored.
+#   identity  which of them say what the request is, so that the same request
+#             twice has the same key. The zone is always part of it besides.
+#   scope     what a request of this verb may touch: one zone's notes, the
+#             workspace outside a zone, the machine, or nothing (it reads).
+#   commits   whether it makes a commit in a zone's repository.
+#   retry     whether sending it again after it failed can do a second thing.
+#             "safe": the handler checks the world before it changes it.
+#   precheck  the fingerprint the request must still match (stale), or None
+#             where the handler checks for itself.
+SCOPES = ("zone", "workspace", "machine", "none")
+RETRIES = ("safe", "unsafe")
+PRECHECKS = (None, "line", "status")
+# The fields every request may carry, whatever its verb: what it is, and the
+# correlation id the caller mints for it.
+ALWAYS = ("verb", "op")
+
+
+def _op(fields, identity=(), scope="none", commits=False, retry="unsafe", precheck=None) -> Op:
+    return Op(fields=tuple(fields), identity=tuple(identity), scope=scope, commits=commits,
+              retry=retry, precheck=precheck)
+
+
+DECLARED: Dict[str, Op] = {
+    # The six the page sends under the zone lock, and the only ones that keep
+    # a record. Their prechecks are this file's; the rest check for themselves.
+    "park": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"),
+                "zone", True, "safe", "status"),
+    "wake": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"),
+                "zone", True, "safe", "status"),
+    "todo-done": _op(("zone", "file", "key"), ("file", "key"), "zone", True, "safe", "line"),
+    "todo-undo": _op(("zone", "file", "key"), ("file", "key"), "zone", True, "safe", "line"),
+    "todo-date": _op(("zone", "file", "key", "date"), ("file", "key", "date"), "zone", True, "safe", "line"),
+    # The line it adds has no key yet: a line already in the note is refused
+    # by the handler, which is that verb's own check.
+    "todo-add": _op(("zone", "text", "target", "date"), ("text", "target", "date"), "zone", True, "safe"),
+    # Declared, and nothing else: each of these keeps the validation it has.
+    # They are here so that one table answers what a verb accepts, and so the
+    # test that enumerates what the page sends has something to check against.
+    "new-project": _op(("zone", "name", "party", "thread"), ("name",), "zone", True, "safe"),
+    "new-thread": _op(("zone", "project", "name"), ("project", "name"), "zone", True, "safe"),
+    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to"), ("kind", "name", "to"), "none"),
+    "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
+    "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
+    "undo": _op(("zone", "commit"), ("commit",), "zone", True),
+    "interrupt": _op(("zone", "project", "thread", "file", "where", "next", "keep", "by"),
+                     ("project", "thread", "file"), "zone", True),
+    # The interruption stack is in System/generated/, which is never committed.
+    "back": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"), "workspace"),
+    "stack": _op((), (), "none", retry="safe"),
+    "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
+    # The settings file is in the workspace's own repository, committed with it.
+    "settings": _op(("launchers", "default", "zones"), (), "workspace"),
+    # launchd starts the job; nothing in the workspace is touched here.
+    "run": _op(("job",), ("job",), "machine"),
+    # The cmux verbs: a tab in a folder, by name or by the folder itself.
+    "open": _op(("zone", "project", "thread", "folder", "prompt"), ("project", "thread", "folder"), "machine"),
+    "close": _op(("zone", "project", "thread"), ("project", "thread"), "machine"),
+    "startup": _op((), (), "machine"),
+    "shutdown": _op((), (), "machine"),
+    # The one verb that only reads: the open set of records, for a page that
+    # was reloaded. It carries nothing but its own name.
+    "operations": _op((), (), "none", retry="safe"),
 }
+# The verbs that keep a durable record: what the page sends under the zone
+# lock and commits a note. `OPS` is the name page_action.py has used since
+# 0.26.0, and the name read() reports, so it keeps meaning exactly that.
+RECORDED = ("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add")
+OPS: Dict[str, Op] = {verb: DECLARED[verb] for verb in RECORDED}
 # What an absent field means, so that leaving it out and sending it say the same.
 DEFAULTS = {"target": "-", "date": "-"}
+# For park and wake, the status the verb would set, and so the one a note
+# already has nothing to do about. This is their precheck's whole content.
+SETS = {"park": "parked", "wake": "active"}
+FIELD_MAX = 40                  # of a field's name, in the sentence that refuses it
 
 
 class BadOp(Exception):
@@ -121,6 +206,61 @@ def identity_key(verb: str, req: dict) -> str:
             "fields": {k: _norm(k, req.get(k)) for k in sorted(spec.identity)}}
     canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+# Closed validation, and the precheck --------------------------------------
+
+
+def _field_name(key) -> str:
+    """A field's name as a sentence may carry it: one line, cut short."""
+    name = " ".join(str(key).split())
+    if len(name) > FIELD_MAX:
+        name = name[:FIELD_MAX] + "…"
+    return name or "(nothing)"
+
+
+def undeclared(verb: str, req: dict) -> List[str]:
+    """The fields of the request the verb does not declare, sorted. Empty for
+    a verb the table does not know: that is the caller's refusal to make."""
+    spec = DECLARED.get(verb)
+    if spec is None or not isinstance(req, dict):
+        return []
+    return sorted(k for k in req if k not in spec.fields and k not in ALWAYS)
+
+
+def validate(verb: str, req: dict) -> Optional[str]:
+    """Why a request is refused before anything runs, or None to carry on.
+
+    Closed: a field the verb does not declare is refused by name, rather than
+    ignored, which is what stops an unknown field widening what an action
+    touches. A verb the table does not declare is not judged here; the
+    caller's own list of what it does says no first."""
+    extra = undeclared(verb, req)
+    if not extra:
+        return None
+    # The negation is repeated before every name on purpose: affirms() reads
+    # the words before a success verb, so a field spelled `saved` still has
+    # a `no` in front of it and the refusal cannot be read as a success.
+    return NO_FIELD.format(verb=verb, names=" and ".join(ONE_FIELD.format(name=_field_name(k)) for k in extra))
+
+
+def stale(verb: str, req: dict, found) -> Optional[str]:
+    """Why the request no longer means what it did, or None to carry on.
+
+    `found` is the fingerprint the verb's `precheck` names, read from the
+    world now: for the Todo verbs the key of the line the request still
+    points at, falsy when no live line has it; for park and wake the note's
+    `status:` as its frontmatter has it, "" for a note with none. Nothing
+    here computes a fingerprint, so there is one hash of a Todo line in the
+    workspace and one reading of a note's status, not a second of each."""
+    kind = DECLARED[verb].precheck if verb in DECLARED else None
+    if kind is None:
+        return None
+    if kind == "line":
+        return None if found else STALE_WHY[("line", None)]
+    if str(found or "").strip().lower() != SETS[verb]:
+        return None
+    return STALE_WHY[("status", verb)].format(name=name_of(verb, req))
 
 
 # The words ----------------------------------------------------------------
@@ -168,6 +308,19 @@ SAYINGS = {
             "Run git log -1 in {zone}, then try again: it checks first.",
 }
 FALLBACK_WHY = {"refused": "A check refused it.", "crashed": "The action stopped with an error."}
+# The two refusals this file makes itself, which say() then puts in its
+# sentence. Validation: the field, named. The precheck: what the world says
+# now, keyed by the fingerprint and the verb. Both are read by whoever sent
+# the request, so the words are here rather than in each caller.
+# The name comes straight after the `no` on purpose: a field spelled `saved`
+# must still read as a refusal, and both guards on that read two words back.
+NO_FIELD = "{verb} takes {names}"
+ONE_FIELD = "no {name} field"
+STALE_WHY = {
+    ("line", None): "that line has changed since the page was built; it rebuilds now, try again",
+    ("status", "park"): "{name} was set aside already, so nothing was changed",
+    ("status", "wake"): "{name} is active already, so nothing was changed",
+}
 
 
 def label(verb: str, req: dict, already: bool = False) -> str:

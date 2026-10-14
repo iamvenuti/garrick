@@ -1,11 +1,13 @@
-"""Making, renaming and deleting projects and threads: scaffold.py's
-`--check`, `rename` and `delete`, in a workspace the installer made.
+"""Making, renaming, parking and deleting projects and threads: scaffold.py's
+`--check`, `park`, `wake`, `rename` and `delete`, in a workspace the installer
+made, each of them also run the way the status page runs it.
 
     python3 -m unittest discover -s tests
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 import sys
@@ -398,6 +400,135 @@ class TestFromThePage(ManageCase):
         root = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=str(self.root),
                               capture_output=True, text=True, env=self.env).stdout
         self.assertNotIn("interrupted.json", root)
+
+
+class TestParkBothWays(ManageCase):
+    """One request run both ways. The page and the command line must make the
+    same change and give the same refusal, word for word, which is what the
+    ticket asks of every operation the two share."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+        self.note = self.work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
+        self.today = datetime.date.today().isoformat()
+
+    def cli(self, verb, *args):
+        """scaffold.py, as the threads skill runs it."""
+        return self.scaffold("--today", self.today, verb, "--zone", "Work", "--project", "Acme", *args)
+
+    def page(self, **req):
+        """page_action.py, as the status page's host runs it: one JSON request
+        on stdin, one JSON reply, the whole way through main()."""
+        done = subprocess.run([sys.executable, str(REPO / "extras" / "status" / "page_action.py"),
+                               "--workspace", str(self.root)], input=json.dumps(req), capture_output=True,
+                              text=True, env=dict(self.env, GARRICK_JOBS_DIR=str(self.base / "jobs")))
+        self.assertTrue(done.stdout, done.stderr)
+        return json.loads(done.stdout)
+
+    def restore(self):
+        self.git("checkout", "--", "Acme")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_a_park_both_ways_makes_the_same_change(self):
+        r = self.cli("park", "--thread", "Pricing")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("Acme, Pricing is parked", r.stdout.strip())
+        by_cli = self.note.read_text()
+        self.assertIn("\nstatus: parked\n", by_cli)
+        self.assertIn("**%d " % datetime.date.today().day, by_cli)
+        self.assertEqual(["Acme/Threads/Pricing/Pricing.md"],                  # left for the caller to commit
+                         [l[3:] for l in self.git("status", "--porcelain").stdout.splitlines()])
+        self.restore()
+        reply = self.page(verb="park", zone="Work", project="Acme", thread="Pricing")
+        self.assertEqual({"ok": True, "say": "Acme, Pricing is parked"}, {k: reply[k] for k in ("ok", "say")})
+        self.assertEqual(by_cli, self.note.read_text())                        # the same note, to the byte
+        self.assertEqual("Acme, Pricing: parked", self.git("log", "-1", "--format=%s").stdout.strip())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)         # and committed, which the page does
+
+    def test_a_wake_both_ways_makes_the_same_change(self):
+        self.cli("park", "--thread", "Pricing")
+        self.commit("Pricing parked")
+        r = self.cli("wake", "--thread", "Pricing")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("Acme, Pricing is awake again", r.stdout.strip())
+        by_cli = self.note.read_text()
+        self.restore()
+        reply = self.page(verb="wake", zone="Work", project="Acme", thread="Pricing")
+        self.assertEqual("Acme, Pricing is awake again", reply["say"])
+        self.assertEqual(by_cli, self.note.read_text())
+
+    def test_a_second_park_is_refused_in_the_same_words_both_ways(self):
+        self.cli("park", "--thread", "Pricing")
+        self.commit("Pricing parked")
+        again = self.cli("park", "--thread", "Pricing")
+        self.assertEqual(1, again.returncode, again.stdout)
+        self.assertEqual("Not done. Pricing was set aside already, so nothing was changed.", again.stderr.strip())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)          # the refusal changed nothing
+        reply = self.page(verb="park", zone="Work", project="Acme", thread="Pricing")
+        self.assertEqual(False, reply["ok"])
+        self.assertEqual(again.stderr.strip(), reply["say"])                    # the same sentence, to the byte
+        self.assertEqual(("failed", "refused"), (reply["state"], reply["outcome"]))
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual(1, self.note.read_text().count("Parked."))             # and no second dated entry
+
+    def test_a_project_and_a_thread_of_it_are_told_apart_both_ways(self):
+        r = self.cli("park")                                                    # the project, by name alone
+        self.assertEqual("Acme is parked", r.stdout.strip())
+        self.assertIn("\nstatus: parked\n", (self.work / "Acme" / "Acme.md").read_text())
+        self.assertNotIn("\nstatus: parked\n", self.note.read_text())          # its threads keep their own
+        by_cli = (self.work / "Acme" / "Acme.md").read_text()
+        self.restore()
+        self.assertEqual("Acme is parked", self.page(verb="park", zone="Work", project="Acme")["say"])
+        self.assertEqual(by_cli, (self.work / "Acme" / "Acme.md").read_text())
+
+    def test_what_neither_way_will_do(self):
+        r = self.cli("park", "--thread", "Nope")
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("There is no thread called Nope", r.stderr)
+        r = self.scaffold("park", "--zone", "Work", "--project", "Nothing")
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn("There is no project called Nothing", r.stderr)
+        for req in ({"verb": "park", "zone": "Work", "project": "Acme", "thread": "Nope"},
+                    {"verb": "park", "zone": "Work", "project": "Nothing"}):
+            with self.assertRaises(pa.Refused, msg=req):
+                pa.act(self.root, req)
+        # a field the table does not declare, the one refusal the two make
+        # differently: argparse names the flag, operations.py names the field
+        bad = self.cli("park", "--thread", "Pricing", "--confirm", "Pricing")
+        self.assertEqual(2, bad.returncode)
+        self.assertIn("--confirm", bad.stderr)
+        reply = self.page(verb="park", zone="Work", project="Acme", thread="Pricing", confirm="Pricing")
+        self.assertEqual("Not done. Park takes no confirm field.", reply["say"])
+
+    def test_the_two_dated_entry_copies_agree_where_a_note_has_an_anchor(self):
+        """scaffold.py's dated_entry writes rename's entry and now park's;
+        page_action.py keeps its own for `interrupt`. The two already read a
+        note with no anchor differently, so park asks for the page's reading
+        of that one, and the other difference is pinned here rather than
+        left to be found by a note."""
+        scaffold = self.tool("scaffold.py")
+        today, iso = datetime.date(2026, 10, 5), "2026-10-05"
+        for body in ("### Resume here\n\n| Next action | x |\n\n---\n\n<Dated entries, newest first.>\n\n**1 March 2026.** Started.\n",
+                     "## State of play\n\n**1 March 2026.** Started.\n",
+                     "### Resume here\n\n---\n**1 March 2026.** Started.\n"):
+            for said in ("Parked.", "Woken."):
+                self.assertEqual(scaffold.dated_entry(body, said, iso, append=False),
+                                 pa.dated_entry(body, today, said), body)
+        bare = "Nothing to add to.\n"                      # no block of either kind
+        self.assertEqual(bare, pa.dated_entry(bare, today, "Parked."))
+        self.assertEqual(bare, scaffold.dated_entry(bare, "Parked.", iso, append=False))
+        self.assertIn("**5 October 2026.** Renamed.", scaffold.dated_entry(bare, "Renamed.", iso))
+        odd = "### Resume here\n\nWhere it stands.\n\n## State of play\n\n**1 March 2026.** Started.\n"
+        self.assertEqual(odd, pa.dated_entry(odd, today, "Parked."))          # a block with no rule under it
+        self.assertIn("## State of play\n\n**5 October 2026.** Parked.",
+                      scaffold.dated_entry(odd, "Parked.", iso, append=False))
+
+    def tool(self, name):
+        spec = importlib.util.spec_from_file_location("garrick_" + name[:-3], str(self.root / "System" / "tools" / name))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
 
 
 if __name__ == "__main__":

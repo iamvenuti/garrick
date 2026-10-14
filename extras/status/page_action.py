@@ -19,7 +19,10 @@ zone's repository, as the skills would:
                 dated line goes; a line already there is refused
     park        a thread note's status to parked, with a dated entry:
                 {"zone", "file"}, or by name {"zone", "project", "thread"?};
-                with no thread, the project's hub, and all of it is parked
+                with no thread, the project's hub, and all of it is parked.
+                The edit is System/tools/scaffold.py's, as a new project's
+                is; the commit is this file's, so a wall refusal puts the
+                note back. A thread already parked is refused
     wake        and back to active
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
@@ -80,6 +83,20 @@ in the jobs folder) and holds it from reading the note to committing it; a
 second request waits for the first. The rekey map has a lock of its own.
 
 The cmux verbs need the cmux extra and cmux itself.
+
+Every verb is declared in one table, System/tools/operations.py's DECLARED,
+found as ops_lib() finds it: the fields a request may carry, which of them
+say what it is, what it touches, whether it commits, whether retrying it is
+safe, and what must still be true for it to run. Two things come of that
+here. A field the verb does not declare is refused by name, rather than
+ignored as it was before, so a request cannot carry something that widens
+what the action touches; and park, wake and the three Todo verbs with a key
+check their fingerprint first: the note's `status:` for park and wake, so a
+second park of an already parked thread says so instead of writing another
+dated entry, and the hash of the line's exact text for the Todo verbs, which
+todo_lines keeps. Both refusals take their words from that module, so the
+sentence read is the same whichever way the request arrived. Without it,
+nothing is validated and park and wake say what they said before.
 
 Park, wake and the four Todo verbs also leave a durable record, so a page
 that was reloaded, or an app that was quit, can find the action again and
@@ -200,6 +217,34 @@ def ops_lib(ws: Optional[Path] = None):
                 break
         _OPS_LIBS[key] = found
     return _OPS_LIBS[key]
+
+
+def refuse_undeclared(ws: Path, req: dict) -> None:
+    """Closed validation, from the one table (operations.py): a field the verb
+    does not declare is refused by name rather than ignored, so a request
+    cannot carry something that widens what the action touches. Without that
+    module nothing is checked here, which is what every release before it did."""
+    ops = ops_lib(ws)
+    why = ops.validate(req["verb"], req) if ops is not None and callable(getattr(ops, "validate", None)) else None
+    if why:
+        raise Refused(why)
+
+
+def stale_why(ws: Path, verb: str, req: dict, found) -> Optional[str]:
+    """What operations.py's precheck makes of the fingerprint read from the
+    world now: why the request no longer means what it did, or None to carry
+    on. Without the module, the words this file used before it for a line
+    that has moved, and nothing for park and wake, whose own handler says
+    when there is nothing left to do."""
+    ops = ops_lib(ws)
+    if ops is not None and callable(getattr(ops, "stale", None)):
+        try:
+            return ops.stale(verb, req, found)
+        except Exception:               # the table is best effort, as the record is
+            pass
+    if verb.startswith("todo-") and verb != "todo-add" and not found:
+        return "that line has changed since the page was built; it rebuilds now, try again"
+    return None
 
 
 def note_event(event: str, *args) -> None:
@@ -461,18 +506,30 @@ def todo(ws: Path, req: dict) -> str:
             raise Refused("not a date: %r" % raw)
     with zone_lock(zone):
         before = note.read_bytes()
+        found = live_key(tl, zone, rel, key, req["verb"])
+        why = stale_why(ws, req["verb"], req, found)
+        if why:
+            raise Refused(why)
         try:
-            try:
-                said, message = todo_edit(tl, zone, rel, key, req["verb"], when)
-            except tl.NotFound:
-                newer = rekeys(zone.name, rel).get(key)      # a second click before the page rebuilt
-                if not newer:
-                    raise
-                said, message = todo_edit(tl, zone, rel, newer, req["verb"], when)
-        except tl.NotFound:
-            raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+            said, message = todo_edit(tl, zone, rel, found, req["verb"], when)
+        except tl.NotFound:             # the line went between the precheck and the edit
+            raise Refused(stale_why(ws, req["verb"], req, None) or "that line has changed since the page was built")
         commit(zone, note, before, message[:200])
     return said
+
+
+def live_key(tl, zone: Path, rel: str, key: str, verb: str) -> Optional[str]:
+    """operations.py's `line` precheck, answered by the file itself: the key
+    of the line this request still points at, or None when no live line has
+    it. Where a date has changed a line since the page was built, the rekey
+    map says which key that one became and the request follows it. The hash
+    is todo_lines', here as everywhere: nothing computes a second one."""
+    reopen = verb == "todo-undo"
+    found = tl.live_key(str(zone), rel, key, reopen)
+    if found is None:
+        newer = rekeys(zone.name, rel).get(key)         # a second click before the page rebuilt
+        found = tl.live_key(str(zone), rel, newer, reopen) if newer else None
+    return found
 
 
 def todo_edit(tl, zone: Path, rel: str, key: str, verb: str, when):
@@ -535,7 +592,12 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
     project that is one thread. Or by name, {"zone", "project", "thread"?}:
     a thread, or a whole project, whose hub then says parked and every
     thread in it counts as parked with it. Waking the project leaves a thread
-    parked on its own as it was."""
+    parked on its own as it was.
+
+    The edit is System/tools/scaffold.py's, run as a new project's is, so the
+    page, the voice command and the script set a status the same way; the
+    commit stays here, because this is the path that puts the note back when
+    the zone's wall check refuses it."""
     zone = zone_dir(ws, req.get("zone"))
     if req.get("file") is None and req.get("project") is not None:
         folder, _ = cmux_folder(ws, req)
@@ -551,39 +613,33 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
             raise Refused("only a thread note, or a single-thread project's hub, can be parked by its path; "
                           "name the project to park all of it")
     status = "parked" if req["verb"] == "park" else "active"
+    name = "%s, %s" % (parts[0], parts[2]) if is_thread else parts[0]
     with zone_lock(zone):
-        said = park_note(zone, note, parts, is_thread, status, today)
+        why = stale_why(ws, req["verb"], req, note_status(note))     # the note's status, read under the lock
+        if why:
+            raise Refused(why)
+        before = note.read_bytes()
+        said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
+                        *(["--thread", parts[2]] if is_thread else []))
+        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
         if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
             drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
         return said
 
 
-def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str, today: dt.date) -> str:
-    """The edit and its commit, under the zone's lock."""
-    before = note.read_bytes()
-    try:
-        text = before.decode("utf-8")
-    except UnicodeDecodeError:
-        raise Refused("the note is not UTF-8 text")
-    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
-    if not m:
-        raise Refused("the note has no frontmatter to set its status in")
-    fm = m.group(1)
-    if re.search(r"(?m)^status:\s*%s\s*$" % status, fm):
-        return "%s is already %s" % (note.stem, status)
-    fm = re.sub(r"(?m)^status:.*$", "status: " + status, fm) if re.search(r"(?m)^status:", fm) else fm + "\nstatus: " + status
-    fm = re.sub(r"(?m)^updated:.*$", "updated: " + today.isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
-        else fm + "\nupdated: " + today.isoformat()
-    body = dated_entry(text[m.end():], today, "Parked." if status == "parked" else "Woken.")
-    note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
-    name = "%s, %s" % (parts[0], parts[2]) if is_thread else parts[0]
-    commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
-    return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
+def note_status(note: Path) -> str:
+    """A note's `status:`, lower-cased, as front() reads it; "" where it has
+    none. This is the fingerprint operations.py declares for park and wake."""
+    return front(note).get("status", "")
 
 
 def dated_entry(body: str, today: dt.date, said: str) -> str:
     """The body with a dated entry added, newest first: below the Resume here
-    block's rule, or, with no block, under ## State of play. Neither: as it was."""
+    block's rule, or, with no block, under ## State of play. Neither: as it
+    was. Park's copy of this moved into System/tools/scaffold.py, whose own
+    one it joined; this stays for `interrupt`, which no tool writes.
+    tests/test_scaffold_manage.py holds the two to the same text wherever a
+    note has a block to write under, and names where they differ."""
     entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, said)
     resume = body.find("### Resume here")
     rule = body.find("\n---\n", resume) if resume >= 0 else -1
@@ -1395,6 +1451,7 @@ def act(ws: Path, req, today=None, now=None):
     and stack, a reply whose "say" comes with what the caller reads back."""
     if not isinstance(req, dict) or req.get("verb") not in VERBS + CMUX_VERBS:
         raise Refused("unknown action")
+    refuse_undeclared(ws, req)      # before anything reads the request's own fields
     if req["verb"] in CMUX_VERBS:
         cmux_desk()                 # the cmux extra and cmux itself, before anything else
         return cmux_act(ws, req)

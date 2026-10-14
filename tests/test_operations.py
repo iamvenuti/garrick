@@ -61,6 +61,15 @@ def only_in_the_negative(sentence):
     return all(re.search(r"\b(not|no)\s+$", sentence[:m.start()], re.I) for m in SUCCESS.finditer(sentence))
 
 
+def status_py():
+    sys.path.insert(0, str(REPO / "extras" / "status"))
+    try:
+        import status
+        return status
+    finally:
+        sys.path.pop(0)
+
+
 class TestDeclared(unittest.TestCase):
     def test_every_verb_it_declares_is_one_the_page_sends(self):
         self.assertEqual(sorted(REQUESTS), sorted(ops.OPS))
@@ -72,17 +81,365 @@ class TestDeclared(unittest.TestCase):
             self.assertNotIn("zone", spec.identity, verb)                 # the zone is always in the key, apart from them
             self.assertTrue(set(REQUESTS[verb]) - {"verb"} <= set(spec.fields), verb)   # nothing a real request carries is undeclared
 
+    def test_the_table_declares_every_verb_and_nothing_else(self):
+        self.assertEqual(set(pa.VERBS) | set(pa.CMUX_VERBS) | {pa.JOURNAL_VERB}, set(ops.DECLARED))
+        self.assertEqual(sorted(ops.RECORDED), sorted(ops.OPS))
+        self.assertTrue(set(ops.RECORDED) <= set(ops.DECLARED))
+        for verb, spec in ops.DECLARED.items():
+            self.assertTrue(set(spec.identity) <= set(spec.fields), verb)
+            self.assertIn(spec.scope, ops.SCOPES, verb)
+            self.assertIn(spec.retry, ops.RETRIES, verb)
+            self.assertIn(spec.precheck, ops.PRECHECKS, verb)
+            self.assertIsInstance(spec.commits, bool, verb)
+            self.assertEqual(len(set(spec.fields)), len(spec.fields), verb)
+            self.assertFalse(set(spec.fields) & set(ops.ALWAYS), verb)    # verb and op belong to every verb
+            if spec.commits:
+                self.assertEqual("zone", spec.scope, verb)                # only a zone's repository is committed in
+
+    def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):
+        """`OPS` is what page_action.py has read since 0.26.0. A newer copy of
+        this file found by an older extra must not start recording verbs that
+        extra knows nothing of, so the table grew and `OPS` did not."""
+        self.assertEqual(("park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add"), ops.RECORDED)
+        for verb in ops.RECORDED:
+            self.assertEqual(("zone", True), (ops.DECLARED[verb].scope, ops.DECLARED[verb].commits), verb)
+            self.assertEqual("safe", ops.DECLARED[verb].retry, verb)
+
     def test_the_page_script_zones_cover_them(self):
-        sys.path.insert(0, str(REPO / "extras" / "status"))
-        try:
-            import status
-        finally:
-            sys.path.pop(0)
-        self.assertTrue(set(ops.OPS) <= set(status.ZONE_VERBS))
+        self.assertTrue(set(ops.OPS) <= set(status_py().ZONE_VERBS))
 
     def test_a_worker_and_a_reader_agree_on_the_words(self):
         self.assertEqual(("saved", "refused", "crashed", "unknown", "lost"), ops.OUTCOMES)
         self.assertEqual(("queued", "running", "completed", "failed"), ops.STATES)
+
+
+# ---- what the page actually sends ----------------------------------------
+# Closed validation means one field nobody enumerated stops a button working
+# on every installed page the moment the extra updates. The page builds its
+# requests three ways, and a test that read only the JavaScript would miss
+# two of them, so the scanners below walk all three:
+#
+#   1. object literals in the page's own script (MANAGE_JS, PANEL_JS, TODO_JS,
+#      WORK_JS): `{verb:'park',…}`, and the fields added after it as `q.x=…`;
+#   2. `data-act` attributes assembled in Python with json.dumps, which is
+#      where startup, shutdown and run come from;
+#   3. `data-act` attributes built by the desk() helper for the cmux verbs,
+#      and the one built in JS with JSON.stringify(q) in the dialogs — both
+#      object literals, so scanner 1 finds them, and REGIONS below asserts
+#      that the region they live in was really walked.
+#
+# A shape whose verb is a literal is checked against that verb. A shape whose
+# verb is a variable is listed in SHAPES by the text of the value, with the
+# verbs it can carry and any field added in a way no scanner can read. A new
+# `verb:` or `json.dumps({"verb"` that SHAPES does not name fails the test.
+
+KEY_RE = re.compile(r"\s*(?:'([A-Za-z_][\w-]*)'|\"([A-Za-z_][\w-]*)\"|([A-Za-z_][\w-]*))\s*:")
+VERB_RE = re.compile(r"\{\s*(?:'verb'|\"verb\"|verb)\s*:")
+VAR_RE = re.compile(r"(?:var\s+)?([A-Za-z_]\w*)\s*=\s*[^=;{]*$")
+
+
+def _literal(text, start):
+    """The object literal that begins at text[start] == '{', to its matching
+    brace, with what is inside quotes skipped."""
+    depth, i, quote = 0, start, None
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+        i += 1
+    raise AssertionError("an object literal with no end at %d" % start)
+
+
+def _pairs(literal):
+    """[(name, the value's text)] for the top level of an object literal."""
+    out, i, end = [], 1, len(literal) - 1
+    while i < end:
+        while i < end and literal[i] in " \t\r\n,":
+            i += 1
+        m = KEY_RE.match(literal, i)
+        if not m:
+            break
+        name, i = m.group(1) or m.group(2) or m.group(3), m.end()
+        start, depth, quote = i, 0, None
+        while i < end:
+            c = literal[i]
+            if quote:
+                if c == "\\":
+                    i += 1
+                elif c == quote:
+                    quote = None
+            elif c in "'\"":
+                quote = c
+            elif c in "{[(":
+                depth += 1
+            elif c in "}])":
+                depth -= 1
+            elif c == "," and depth == 0:
+                break
+            i += 1
+        out.append((name, literal[start:i].strip()))
+        i += 1
+    return out
+
+
+SCRIPT_RE = re.compile(r'(?m)^([A-Z][A-Z_]*) = r"""\n')
+
+
+def scripts(text):
+    """The page's scripts, by the name status.py keeps each in: {name: (the
+    text, where it starts in the file)}. Everything else is the Python half."""
+    out, ends = {}, []
+    for m in SCRIPT_RE.finditer(text):
+        end = text.index('\n"""', m.end())
+        out[m.group(1)] = (text[m.end():end], m.end())
+        ends.append((m.start(), end))
+    rest = text
+    for start, end in reversed(ends):               # the Python half, the scripts cut out
+        rest = rest[:start] + rest[end:]
+    return out, rest
+
+
+FUNC_RE = re.compile(r"(?:function\s+([A-Za-z_]\w*)\s*\(|([A-Za-z_][\w.]*)\s*=\s*function\s*\()")
+
+
+def shapes(text, line0=1):
+    """Every request shape built in `text`: (the function it is built in and
+    the verb value's text, the field names, the line it is on). A shape's
+    fields are what the literal holds plus what the next two lines add to the
+    variable it was assigned to."""
+    funcs = [(m.start(), m.group(1) or m.group(2)) for m in FUNC_RE.finditer(text)]
+    found = []
+    for m in VERB_RE.finditer(text):
+        literal = _literal(text, m.start())
+        pairs = dict(_pairs(literal))
+        fields = set(pairs)
+        line = line0 + text.count("\n", 0, m.start())
+        head = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
+        var = VAR_RE.search(head)
+        if var:            # `if(mg[2])q.thread=mg[2]`, `if(zChanged)q.zones=zreq()`
+            after = text[m.start() + len(literal):]
+            after = "\n".join(after.split("\n")[:3])
+            fields |= set(re.findall(r"\b%s\.([A-Za-z_]\w*)\s*=[^=]" % re.escape(var.group(1)), after))
+        where = next((name for at, name in reversed(funcs) if at < m.start()), "(top level)")
+        found.append(("%s: %s" % (where, pairs["verb"]), frozenset(fields), line))
+    return found
+
+
+# The verbs each shape can carry, and the fields it adds where no scanner can
+# read them. Keyed by the text of the `verb` value, exactly as the file has it.
+ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+         "rename", "delete", "undo", "interrupt")
+SHAPES = {
+    # --- 1. object literals in the page's own script ----------------------
+    # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
+    "onclick: 'new-thread'": {"new-thread": ()},
+    "onclick: 'new-project'": {"new-project": ()},
+    "onclick: 'rename'": {"rename": ()},
+    "onclick: 'park'": {"park": ()},                     # del(): Park instead
+    "onclick: 'delete'": {"delete": ()},
+    "onclick: 'undo'": {"undo": ()},                     # offer(): the undo bar
+    "poll: 'operations'": {"operations": ()},            # WORK_JS: the one verb that reads
+    # TODO_JS send(verb,r,more,said); `more` is {date:v} from the date menu,
+    # merged by `for(var k in more)`, which no scanner of the literal sees
+    "send: verb": {"todo-done": (), "todo-undo": (), "todo-date": ("date",)},
+    "held: verb": {"todo-done": (), "todo-date": ()},    # TODO_JS: the busy check, not a request
+    "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
+    "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
+    "sdShut: 'settings'": {"settings": ()},              # JS: Settings closed, zones alone
+    # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
+    "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
+    "park: v": {"park": (), "wake": ()},                 # PANEL_JS park(o): by name, or by file
+    # the page's own cache entries, which are never sent back: their verbs
+    # are the zoned ones, and `op` is what GarrickAct adds to what it sends
+    "reconcile: r.verb": {verb: () for verb in ZONED},           # WORK_JS
+    "window.GarrickActed: q.verb": {verb: () for verb in ZONED},  # WORK_JS
+}
+# --- 2. assembled in Python with json.dumps, straight into data-act -------
+PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",)}
+# Which script each shape is built in, so that a script gaining a shape, or
+# losing the one it had, is a failure rather than a quiet gap.
+SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
+                         "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
+           "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb"},
+           "TODO_JS": {"send: verb", "held: verb"},
+           "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
+           "JS": {"window.TaddSend: 'todo-add'", "sdShut: 'settings'"}}
+
+
+class TestWhatThePageSends(unittest.TestCase):
+    """The obligation that comes with refusing an unknown field."""
+
+    def setUp(self):
+        self.text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.scripts, self.python = scripts(self.text)
+        self.found = {}                         # script name -> the shapes in it
+        for name, (body, at) in self.scripts.items():
+            self.found[name] = shapes(body, line0=self.text.count("\n", 0, at) + 1)
+
+    def declared(self, verb):
+        return set(ops.DECLARED[verb].fields) | set(ops.ALWAYS)
+
+    def check(self, verbs, fields, where):
+        """`verbs` is {verb: the fields it adds where no scanner can read them}."""
+        for verb, added in (verbs.items() if isinstance(verbs, dict) else ((v, ()) for v in verbs)):
+            undeclared = (set(fields) | set(added)) - self.declared(verb)
+            self.assertEqual(set(), undeclared, "%s sends %s to %s" % (where, sorted(undeclared), verb))
+
+    def test_every_field_the_page_script_sends_is_declared(self):
+        seen = 0
+        for name, found in self.found.items():
+            for value, fields, line in found:
+                self.check(SHAPES[value], fields, "status.py:%d (%s)" % (line, name))
+                seen += 1
+        self.assertGreaterEqual(seen, len(SHAPES))
+
+    def test_every_shape_assembled_in_python_is_declared_too(self):
+        found = {}
+        for m in re.finditer(r"json\.dumps\(\{\s*\"verb\"\s*:", self.python):
+            pairs = dict(_pairs(_literal(self.python, m.start() + len("json.dumps("))))
+            found[pairs["verb"]] = set(pairs)
+        self.assertEqual(set(PY_SHAPES), set(found), 'a json.dumps({"verb"…}) shape this test does not name')
+        for value, fields in found.items():
+            self.check(PY_SHAPES[value], fields, 'json.dumps({"verb": %s…})' % value)
+
+    def test_nothing_else_in_the_python_half_builds_a_request(self):
+        """Source 2 is json.dumps and nothing else. A request assembled any
+        other way in Python would not be walked above."""
+        for line in self.python.splitlines():
+            if '{"verb"' in line and not line.lstrip().startswith("#"):
+                self.assertIn("json.dumps({\"verb\"", line.replace(" ", "").replace('{"verb":', '{"verb"'), line)
+
+    def test_a_shape_the_test_does_not_name_is_a_failure(self):
+        found = {value for found in self.found.values() for value, _, _ in found}
+        self.assertEqual(set(SHAPES), found, "a `verb:` in a page script that SHAPES does not account for")
+
+    def test_each_script_holds_the_shapes_it_is_said_to(self):
+        """Which is what fails when a scanner walks past a region: a shape
+        that moved, or a script that gained one, shows up here."""
+        for name, found in self.found.items():
+            self.assertEqual(SCRIPTS.get(name, set()), {value for value, _, _ in found}, name)
+        self.assertEqual(set(SCRIPTS), {n for n, f in self.found.items() if f})
+
+    def test_the_op_every_sent_request_carries_is_declared_for_all_of_them(self):
+        """WORK_JS's GarrickAct adds `op` to each request it sends, through
+        Object.assign, which no scanner of the literals sees."""
+        self.assertIn("op", ops.ALWAYS)
+        self.assertRegex(self.text, r"Object\.assign\(\{\},q,\{op:q\.op\|\|mint\(\)\}\)")
+        # `retry_of`, which a retry button would add (the design's §2), is not
+        # declared yet: whoever adds the button adds it to ALWAYS here first.
+        self.assertNotIn("retry_of", ops.ALWAYS)
+        self.assertNotIn("retry_of", self.text)
+
+    def test_what_is_built_outside_status_py_is_declared(self):
+        """The hosts and the ask box build their own, where no scan of
+        status.py reaches: an open by folder from the app and the plugin, and
+        what ask.py proposes. The threads skill's JSON is checked by hand
+        against its SKILL.md below."""
+        host = {"verb", "folder", "prompt"}                    # Garrick.swift act(), obsidian/main.js
+        self.assertEqual(set(), host - self.declared("open"))
+        for name, text in (("app/Garrick.swift", (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text()),
+                           ("obsidian/main.js", (REPO / "extras" / "status" / "obsidian" / "main.js").read_text())):
+            self.assertIn("verb", text, name)
+        ask = (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8")
+        for m in re.finditer(r"\{\s*\"verb\"\s*:", ask):
+            pairs = dict(_pairs(_literal(ask, m.start())))
+            verbs = ("park", "wake") if pairs["verb"] == "verb" else (pairs["verb"].strip('"'),)
+            for verb in verbs:
+                self.assertEqual(set(), set(pairs) - self.declared(verb), (verb, sorted(pairs)))
+
+    def test_the_threads_skill_sends_what_the_table_declares(self):
+        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        for m in re.finditer(r"\{\s*\"verb\"\s*:", skill):
+            line = skill[m.start():skill.index("\n", m.start())]
+            verb = re.search(r"\"verb\"\s*:\s*\"([\w-]+)\"", line).group(1)
+            # the keys as the skill writes them, with or without a value
+            fields = set(re.findall(r"\"([a-z_]+)\"", line)) - {"verb", verb}
+            self.assertEqual(set(), fields - self.declared(verb), (verb, line))
+
+
+class TestValidation(unittest.TestCase):
+    """Closed from the first slice: a field the verb does not declare is
+    refused by name, rather than logged and allowed."""
+
+    def test_a_real_request_of_every_verb_passes(self):
+        for verb, req in REQUESTS.items():
+            self.assertIsNone(ops.validate(verb, req), verb)
+            self.assertIsNone(ops.validate(verb, dict(req, op="a19f3c80")), verb)
+
+    def test_an_undeclared_field_is_refused_by_name(self):
+        why = ops.validate("park", dict(REQUESTS["park"], scope="everything"))
+        self.assertEqual("park takes no scope field", why)
+        self.assertEqual(["scope"], ops.undeclared("park", dict(REQUESTS["park"], scope="x")))
+
+    def test_several_are_all_named_in_one_sentence(self):
+        why = ops.validate("todo-add", dict(REQUESTS["todo-add"], password="hunter2", host="app"))
+        self.assertEqual("todo-add takes no host field and no password field", why)
+
+    def test_the_refusal_names_a_field_even_when_the_field_is_called_saved(self):
+        """The sentence must name it and still not read as a success, however
+        the field is spelled: the negation is repeated before each name."""
+        for name in ops.SUCCESS_VERBS:
+            why = ops.validate("park", dict(REQUESTS["park"], **{name: 1}))
+            said = ops.say("refused", "park", REQUESTS["park"], why=why)
+            self.assertIn(name, said, name)
+            self.assertFalse(ops.affirms(said), said)
+            self.assertTrue(only_in_the_negative(said), said)
+
+    def test_a_field_name_is_cut_short_and_put_on_one_line(self):
+        why = ops.validate("park", dict(REQUESTS["park"], **{"x" * 200: 1, "two\nlines": 2}))
+        self.assertNotIn("\n", why)
+        self.assertLess(len(why), 140)
+
+    def test_a_verb_the_table_does_not_declare_is_not_judged_here(self):
+        self.assertIsNone(ops.validate("rm", {"verb": "rm", "anything": 1}))
+        self.assertIsNone(ops.validate("park", ["not", "a", "dict"]))
+
+
+class TestPrecheck(unittest.TestCase):
+    """What must still be true for a request to run. The fingerprint is read
+    by the caller, from the file: nothing here computes one."""
+
+    def test_a_todo_line_that_has_moved_is_refused(self):
+        for verb in ("todo-done", "todo-undo", "todo-date"):
+            req = REQUESTS[verb]
+            self.assertIsNone(ops.stale(verb, req, req["key"]), verb)              # a line still has it
+            why = ops.stale(verb, req, None)                                       # none does
+            self.assertEqual("that line has changed since the page was built; it rebuilds now, try again", why)
+            self.assertTrue(only_in_the_negative(ops.say("refused", verb, req, why=why)))
+
+    def test_a_second_park_of_a_parked_thread_says_so(self):
+        req = REQUESTS["park"]
+        self.assertEqual("Pricing was set aside already, so nothing was changed", ops.stale("park", req, "parked"))
+        self.assertEqual("Pricing is active already, so nothing was changed",
+                         ops.stale("wake", dict(req, verb="wake"), "ACTIVE "))     # as the frontmatter spells it
+        for status in ("active", "done", "", None, "parked-ish"):
+            self.assertIsNone(ops.stale("park", req, status), status)
+        for status in ("parked", "done", "", None):
+            self.assertIsNone(ops.stale("wake", req, status), status)
+
+    def test_neither_refusal_reads_as_a_success(self):
+        for verb, found in (("park", "parked"), ("wake", "active")):
+            said = ops.say("refused", verb, REQUESTS[verb], why=ops.stale(verb, REQUESTS[verb], found))
+            self.assertTrue(only_in_the_negative(said), said)
+            self.assertFalse(ops.affirms(said), said)
+            self.assertIn("nothing was changed", said)
+
+    def test_a_verb_whose_handler_checks_for_itself_has_none(self):
+        self.assertIsNone(ops.DECLARED["todo-add"].precheck)     # a line already there is refused by the handler
+        self.assertIsNone(ops.stale("todo-add", REQUESTS["todo-add"], None))
+        self.assertIsNone(ops.stale("new-project", {"verb": "new-project"}, None))
+        self.assertIsNone(ops.stale("rm", {}, None))
 
 
 class TestIdentityKey(unittest.TestCase):

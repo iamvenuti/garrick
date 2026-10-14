@@ -6,6 +6,8 @@
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
+    python3 System/tools/scaffold.py park    --zone Work --project Acme [--thread Pricing]
+    python3 System/tools/scaffold.py wake    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
     python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
     python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
@@ -22,6 +24,14 @@ with a first commit, its inbox, the skill links and the wall check, and a row in
 System/context.md, which is left for you to commit. A project always starts with its
 first thread. A thread inherits its project's party. `--check` applies every refusal
 and makes nothing, so a form can check a name as it is typed.
+
+`park` sets a project or a thread aside and `wake` brings it back: `status:`,
+`updated:` today and a dated entry, "Parked." or "Woken.", in the note the
+names resolve to. A second park of a thread already set aside is refused,
+and so is waking one that is active. Neither commits: the change is left for
+you to commit, as a new project's files are, which is how the status page can
+put the note back when the zone's wall check refuses the commit. Parking a
+project parks every thread in it, whatever each thread's note says.
 
 `rename` moves the folder and its note with git, renames the note's title and
 heading, and points every link to it in the zone at the new name: the hub's
@@ -523,9 +533,12 @@ def relink(text, swaps, prefixes, old_name, new_name, heads=("",)):
     return re.sub(r"\[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]", one, text)
 
 
-def dated_entry(text, line, today):
+def dated_entry(text, line, today, append=True):
     """`line` as today's dated entry, newest first, below the Resume here
-    block's rule, as the threads skill writes one."""
+    block's rule, as the threads skill writes one. A note with no block of
+    either kind takes it at the end, unless `append` is off, when the note is
+    left as it is: that is what park did while its own copy of this lived in
+    page_action.py, which keeps one for `interrupt`."""
     d = datetime.date.fromisoformat(today)
     entry = f"**{d.day} {MONTHS[d.month - 1]} {d.year}.** {line}"
     resume = text.find("### Resume here")
@@ -533,7 +546,7 @@ def dated_entry(text, line, today):
     play = re.search(r"(?m)^## State of play[ \t]*\n", text) if rule < 0 else None
     at = rule + 5 if rule >= 0 else play.end() if play else -1
     if at < 0:
-        return text.rstrip("\n") + "\n\n" + entry + "\n"
+        return text.rstrip("\n") + "\n\n" + entry + "\n" if append else text
     lead = re.match(r"\n*(?:<Dated entries[^\n]*>\n)?\n*", text[at:])
     at += lead.end()
     return text[:at] + entry + "\n\n" + text[at:]
@@ -557,6 +570,70 @@ def add_alias(root, heard, means):
     lines.insert(rows[-1] + 1, table_row([heard.lower(), means]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
+
+
+# --------------------------------------------------------------------------- park and wake
+
+
+def operations():
+    """operations.py, beside this file: the table every operation is declared
+    in, and the words for refusing one. None where System/tools is older than
+    this script, and then the refusal below is this file's own."""
+    try:
+        import operations as ops
+    except ImportError:
+        return None
+    return ops if callable(getattr(ops, "stale", None)) and callable(getattr(ops, "say", None)) else None
+
+
+def refuse_stale(verb, request, status):
+    """operations.py's precheck for park and wake: the note's `status:` as it
+    stands now. A second park of a thread already set aside is refused in the
+    words that module keeps, which are the words the status page reads for it
+    too, so the two cannot drift apart."""
+    ops = operations()
+    if ops is None:
+        if status == ("parked" if verb == "park" else "active"):
+            raise Refusal(f"Nothing was changed: {request.get('thread') or request.get('project')} is not for "
+                          f"{verb} to do anything about now.")
+        return
+    why = ops.stale(verb, request, status)
+    if why:
+        raise Refusal(ops.say("refused", verb, request, why=why))
+
+
+def cmd_park(root, args, today):
+    """Park a project or a thread, or wake it: `status:`, `updated:` today and
+    a dated entry, which is steps 3 and 4 of the threads skill's Park.
+
+    The change is left uncommitted, as a new project's files are. The caller
+    commits it: the skill as its own next step, and the status page through
+    page_action.py, whose commit puts the note back as it was when the zone's
+    wall check refuses. So one script makes the edit however it was asked
+    for, and the page keeps the one path that can undo it."""
+    zone_dir, project_dir, thread_dir, note = target_of(root, args)
+    status = "parked" if args.command == "park" else "active"
+    name = f"{project_dir.name}, {thread_dir.name}" if thread_dir else project_dir.name
+    request = {"verb": args.command, "zone": zone_dir.name, "project": project_dir.name,
+               "thread": thread_dir.name if thread_dir else None}
+    try:
+        text = note.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise Refusal("the note is not UTF-8 text")
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        raise Refusal("the note has no frontmatter to set its status in")
+    fm = m.group(1)
+    was = re.search(r"(?m)^status:[ \t]*(\S*)", fm)
+    refuse_stale(args.command, request, was.group(1).lower() if was else "")
+    when = today if isinstance(today, datetime.date) else datetime.date.fromisoformat(today)
+    fm = re.sub(r"(?m)^status:.*$", "status: " + status, fm) if was else fm + "\nstatus: " + status
+    fm = re.sub(r"(?m)^updated:.*$", "updated: " + when.isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
+        else fm + "\nupdated: " + when.isoformat()
+    body = dated_entry(text[m.end():], "Parked." if status == "parked" else "Woken.", when.isoformat(),
+                       append=False)                           # as the page's own copy left such a note
+    note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
+    return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
 
 
 def cmd_rename(root, args, today):
@@ -796,6 +873,12 @@ def main(argv=None):
     d.add_argument("--project", required=True)
     d.add_argument("--thread", help="the thread to delete; without it, the whole project")
     d.add_argument("--confirm", help="the name of what is deleted, typed again")
+    for verb, what in (("park", "set a project or a thread aside, without finishing it"),
+                       ("wake", "bring a parked project or thread back")):
+        k = sub.add_parser(verb, help=what + "; commit it afterwards")
+        k.add_argument("--zone", required=True)
+        k.add_argument("--project", required=True)
+        k.add_argument("--thread", help="the thread; without it, the project, and every thread in it with it")
     u = sub.add_parser("undo", help="revert a rename or a deletion, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
@@ -813,7 +896,7 @@ def main(argv=None):
             raise Refusal(f"{root} is not an installed workspace: System/templates is missing.")
         today = args.today or datetime.date.today().isoformat()
         run = {"zone": cmd_zone, "project": cmd_project, "thread": cmd_thread, "rename": cmd_rename,
-               "delete": cmd_delete, "undo": cmd_undo}[args.command]
+               "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park, "wake": cmd_park}[args.command]
         print(run(root, args, today))
     except Refusal as exc:
         print(exc, file=sys.stderr)

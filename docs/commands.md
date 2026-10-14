@@ -44,7 +44,7 @@ System/
   garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
   tools/                scaffold.py, check.py, probe.py, release.py, and garrick_lib.py, which they share
-  skills/               threads, intake, meetings, knowledge, interview, setup, update
+  skills/               threads, intake, meetings, knowledge, todo, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
   Knowledge/            published material you study, empty until you feed it

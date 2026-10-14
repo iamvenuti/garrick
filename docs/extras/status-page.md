@@ -252,8 +252,8 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `todo-undo` | Reopens a line ticked from the page |
 | `todo-date` | Sets or clears a line's date: `📅`, or `⏳` on a `#waiting` line |
 | `todo-add` | Writes a new line in a zone's `Todo.md`, and refuses one already there |
-| `park` | Sets a thread's `status:` to `parked`, with a dated entry; named by its project alone, the hub's, which parks every thread in it |
-| `wake` | Sets it back to `active`, with a dated entry |
+| `park` | Sets a thread's `status:` to `parked`, with a dated entry, through `scaffold.py park`, and commits it in the zone; named by its project alone, the hub's, which parks every thread in it. A thread already set aside is refused |
+| `wake` | Sets it back to `active`, with a dated entry, through `scaffold.py wake` |
 | `interrupt` | Saves a thread's place when something cuts in: *where*, the *next* step and, if given, what to *keep* in mind, written into its Resume here block with the time, a dated entry and a commit, then the thread on top of the interruption stack. It stays `active` |
 | `back` | Takes the top thread off the stack, or the one named from anywhere in it, and replies with its note's path and the three saved lines; it writes no note. An empty stack says so and offers the most recent live thread |
 | `stack` | Lists the stack, top first; changes nothing |

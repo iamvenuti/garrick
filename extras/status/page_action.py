@@ -19,7 +19,10 @@ zone's repository, as the skills would:
                 dated line goes; a line already there is refused
     park        a thread note's status to parked, with a dated entry:
                 {"zone", "file"}, or by name {"zone", "project", "thread"?};
-                with no thread, the project's hub, and all of it is parked
+                with no thread, the project's hub, and all of it is parked.
+                The edit is System/tools/scaffold.py's, as a new project's
+                is; the commit is this file's, so a wall refusal puts the
+                note back. A thread already parked is refused
     wake        and back to active
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
@@ -589,7 +592,12 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
     project that is one thread. Or by name, {"zone", "project", "thread"?}:
     a thread, or a whole project, whose hub then says parked and every
     thread in it counts as parked with it. Waking the project leaves a thread
-    parked on its own as it was."""
+    parked on its own as it was.
+
+    The edit is System/tools/scaffold.py's, run as a new project's is, so the
+    page, the voice command and the script set a status the same way; the
+    commit stays here, because this is the path that puts the note back when
+    the zone's wall check refuses it."""
     zone = zone_dir(ws, req.get("zone"))
     if req.get("file") is None and req.get("project") is not None:
         folder, _ = cmux_folder(ws, req)
@@ -605,11 +613,15 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
             raise Refused("only a thread note, or a single-thread project's hub, can be parked by its path; "
                           "name the project to park all of it")
     status = "parked" if req["verb"] == "park" else "active"
+    name = "%s, %s" % (parts[0], parts[2]) if is_thread else parts[0]
     with zone_lock(zone):
         why = stale_why(ws, req["verb"], req, note_status(note))     # the note's status, read under the lock
         if why:
             raise Refused(why)
-        said = park_note(zone, note, parts, is_thread, status, today)
+        before = note.read_bytes()
+        said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
+                        *(["--thread", parts[2]] if is_thread else []))
+        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
         if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
             drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
         return said
@@ -621,32 +633,13 @@ def note_status(note: Path) -> str:
     return front(note).get("status", "")
 
 
-def park_note(zone: Path, note: Path, parts: tuple, is_thread: bool, status: str, today: dt.date) -> str:
-    """The edit and its commit, under the zone's lock."""
-    before = note.read_bytes()
-    try:
-        text = before.decode("utf-8")
-    except UnicodeDecodeError:
-        raise Refused("the note is not UTF-8 text")
-    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
-    if not m:
-        raise Refused("the note has no frontmatter to set its status in")
-    fm = m.group(1)
-    if re.search(r"(?m)^status:\s*%s\s*$" % status, fm):
-        return "%s is already %s" % (note.stem, status)
-    fm = re.sub(r"(?m)^status:.*$", "status: " + status, fm) if re.search(r"(?m)^status:", fm) else fm + "\nstatus: " + status
-    fm = re.sub(r"(?m)^updated:.*$", "updated: " + today.isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
-        else fm + "\nupdated: " + today.isoformat()
-    body = dated_entry(text[m.end():], today, "Parked." if status == "parked" else "Woken.")
-    note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
-    name = "%s, %s" % (parts[0], parts[2]) if is_thread else parts[0]
-    commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
-    return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
-
-
 def dated_entry(body: str, today: dt.date, said: str) -> str:
     """The body with a dated entry added, newest first: below the Resume here
-    block's rule, or, with no block, under ## State of play. Neither: as it was."""
+    block's rule, or, with no block, under ## State of play. Neither: as it
+    was. Park's copy of this moved into System/tools/scaffold.py, whose own
+    one it joined; this stays for `interrupt`, which no tool writes.
+    tests/test_scaffold_manage.py holds the two to the same text wherever a
+    note has a block to write under, and names where they differ."""
     entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, said)
     resume = body.find("### Resume here")
     rule = body.find("\n---\n", resume) if resume >= 0 else -1

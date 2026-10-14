@@ -59,6 +59,13 @@ class ActionCase(unittest.TestCase):
         self._env = os.environ.get("GARRICK_JOBS_DIR")
         os.environ["GARRICK_JOBS_DIR"] = str(self.jobs)
         build_workspace(self.root)
+        # the tools park and the manage verbs run: the scripts themselves, as
+        # an installed workspace has them, and the templates folder they look
+        # for to know they are in one. Nothing here uses the thread template.
+        (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        for tool in ("scaffold.py", "garrick_lib.py", "operations.py"):
+            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.work = self.root / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")                 # a real repository for Work, with no hook
         git(self.work, "init", "-q")
@@ -244,7 +251,7 @@ class TestPark(ActionCase):
 
     def test_a_field_park_does_not_declare_is_refused_by_name(self):
         before = self.thread.read_bytes()
-        with self.assertRaisesRegex(pa.Refused, "^park takes no field called confirm$"):
+        with self.assertRaisesRegex(pa.Refused, "^park takes no confirm field$"):
             self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md", confirm="Pricing")
         self.assertEqual(before, self.thread.read_bytes())
         self.assertEqual("start", self.last_commit()[0])
@@ -525,7 +532,7 @@ class TestAudit(ActionCase):
         self.assertIn("…\"  ->  ok: Added to Inbox", lines[1])
         self.assertLess(len(lines[1]), 320)
         self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
-        self.assertIn("refused: Not done. Todo-add takes no field called password and no field called session.", lines[3])
+        self.assertIn("refused: Not done. Todo-add takes no password field and no session field.", lines[3])
         self.assertNotIn("hunter2", "\n".join(lines))
 
     def test_an_open_by_folder_logs_the_folder_and_the_prompt_cut_short(self):
@@ -665,7 +672,7 @@ class TestJournal(ActionCase):
         """Closed validation: until 0.26.0 these were ignored, so a request
         could carry anything and still be accepted."""
         reply = self.run_script(dict(self.requests()["todo-add"], op="b29f3c80", retry_of="a19f3c80", host="app"))
-        self.assertEqual({"ok": False, "say": "Not done. Todo-add takes no field called host and no field called retry_of."},
+        self.assertEqual({"ok": False, "say": "Not done. Todo-add takes no host field and no retry_of field."},
                          {k: reply[k] for k in ("ok", "say")})
         self.assertEqual("refused", reply["outcome"])
         self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
@@ -757,6 +764,7 @@ class TestJournal(ActionCase):
 
     def test_without_the_module_every_reply_is_what_it_was(self):
         """A workspace and an extra with no operations.py anywhere: 0.26.0's replies, byte for byte."""
+        (self.root / "System" / "tools" / "operations.py").unlink()      # nor in the workspace
         bare = Path(self._tmp.name) / "bare" / "System" / "status"
         bare.mkdir(parents=True)
         for name in ("page_action.py", "todo_lines.py"):

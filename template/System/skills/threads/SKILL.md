@@ -468,23 +468,28 @@ moves nothing: the folder, the Resume here block, the links and the history
 stay exactly where they are.
 
 1. **Resolve X.** Parked threads resolve like any other.
-2. **Re-read the thread note now.**
-3. **Set `status: parked`** to park, or `status: active` to wake, and `updated:`
-   today, in the note's frontmatter. Leave the Resume here block as it is: it
-   still says where the work stood.
-4. **Add a dated entry** below the `---`: "Parked." or "Woken.", with the reason
-   if the user gave one.
-5. **Commit** in the zone's repository: "Acme, Pricing: parked".
-6. **Keep the memory pointer**, if there is one. A parked thread is not
+2. **Run the scaffolding script**, from the workspace root. It sets
+   `status: parked`, or `status: active` for `wake`, and `updated:` today,
+   adds the dated entry, "Parked." or "Woken.", and leaves the Resume here
+   block as it is: it still says where the work stood.
+   ```sh
+   python3 System/tools/scaffold.py park --zone Work --project Acme --thread Pricing
+   ```
+   It writes that one note and commits nothing. A thread already set aside,
+   or an active one asked to wake, is refused in one line and nothing is
+   written, so read what it says rather than running it twice.
+3. **If the user gave a reason**, add it to that dated entry.
+4. **Commit** in the zone's repository: "Acme, Pricing: parked".
+5. **Keep the memory pointer**, if there is one. A parked thread is not
    finished.
-7. **Parking takes it off the interruption stack**: run `unstack`. Waking
+6. **Parking takes it off the interruption stack**: run `unstack`. Waking
    puts nothing back.
 
-**When X is a whole project** ("park Acme", where Acme has threads), park the
-project: the same steps on its hub note, with the dated entry under its
-`## State of play` if it has one, and the commit "Acme: parked". Leave its
-thread notes alone: every thread in it counts as parked while the hub says so,
-and waking the project brings back exactly what was live before. `unstack`
+**When X is a whole project** ("park Acme", where Acme has threads), leave
+`--thread` out: the script parks the hub note, with the dated entry under its
+`## State of play` if it has one, and the commit is "Acme: parked". Its thread
+notes are left alone: every thread in it counts as parked while the hub says
+so, and waking the project brings back exactly what was live before. `unstack`
 with the project alone takes all its threads off the stack. If X could be
 the project or one of its threads, ask which.
 

@@ -24,6 +24,7 @@ functions below keep their signatures:
     hooks_path(repo) -> str
     skill_links(root, repo) -> [(link, target)]
     init_repo(path, message, identity=None, paths=None)
+    foreign_git_env(env=None) -> dict or None
     table_row(cells) -> str
     parse_mail(path) -> dict
     mail_attachments(data) -> [(name, type, bytes)]
@@ -102,6 +103,9 @@ __all__ = [
     "LOCAL_EMAIL",
     "GitError",
     "git",
+    "LOCAL_ENV_VARS",
+    "git_local_env_vars",
+    "foreign_git_env",
     "skill_links",
     "init_repo",
     "table_row",
@@ -1498,6 +1502,59 @@ def say_newer_release(root: PathLike) -> str:
     runs = ("this workspace runs %s" % new["current"]) if new["current"] else \
         "this workspace does not record which release it runs"
     return "Garrick %s is out; %s. To update: %s" % (new["version"], runs, UPDATE_COMMAND)
+
+
+# Git's repository-local environment variables, as a git too old to list them
+# knew them: only the fallback, since `git rev-parse --local-env-vars` is asked
+# first and answers for the git that is installed.
+LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+    "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
+)
+
+_local_env_vars: Optional[Tuple[str, ...]] = None
+
+
+def git_local_env_vars() -> Tuple[str, ...]:
+    """The environment variables git treats as belonging to one repository, as
+    this git lists them (`git rev-parse --local-env-vars`), or LOCAL_ENV_VARS
+    when it cannot be asked. Asked once and kept."""
+    global _local_env_vars
+    if _local_env_vars is None:
+        names: Tuple[str, ...] = ()
+        try:
+            r = subprocess.run(["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                names = tuple(n.strip() for n in r.stdout.split() if n.strip().startswith("GIT_"))
+        except (OSError, subprocess.SubprocessError):
+            names = ()
+        _local_env_vars = names or LOCAL_ENV_VARS
+    return _local_env_vars
+
+
+def foreign_git_env(env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, str]]:
+    """The environment for a git process to be run in a repository *other* than
+    the one whose commit a hook is checking: `env` (this process's own by
+    default) with git's repository-local variables taken out. None when none of
+    them is set, so the caller can leave the child to inherit the environment
+    untouched.
+
+    A commit made with a pathspec (`git commit -m … -- Todo.md`) runs its hooks
+    with GIT_INDEX_FILE pointing at a temporary index inside the committing
+    repository. Inherited by a git process started in another repository, that
+    index makes the other repository compare its own HEAD against it and report
+    its whole tree as changed, which costs one `git show` per file. The
+    committing repository keeps the variables: its temporary index is exactly
+    what the hook has to read."""
+    source = dict(os.environ) if env is None else dict(env)
+    names = [n for n in git_local_env_vars() if n in source]
+    if not names:
+        return None
+    for name in names:
+        source.pop(name, None)
+    return source
 
 
 class GitError(RuntimeError):

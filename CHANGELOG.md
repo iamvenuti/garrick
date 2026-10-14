@@ -2,6 +2,14 @@
 
 What changed in each release. Dates are when the release was tagged. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The status page's *Overview* opens on what you were doing and what you owe, instead of on a graph of every note. Four cards lead it: *Recent work*, the six threads whose notes moved last with each one's next action beside it, read from the thread's own task lines; *Due and overdue*, every open action across every zone whose day has come, soonest first; *A thought*, a box for something that is not yet work, kept in that browser and nowhere else; and *Waiting on you*, the live threads with nothing saying what happens next, or with no `### Resume here` block. Parked and finished work stays out of all four. The graph keeps every mode it has and moves behind *Explore* at the foot of the same tab, folded shut until you open it. A workspace with no project yet gets *Start here* in place of the first card: the one ordinary request that sets the first project up, and where that route is written. The *Status* tab, the *Todo* tab and what `check.py` reports are unchanged. ([#102](https://github.com/iamvenuti/garrick/issues/102))
+- Age is no longer urgency on that page. A thread's bar was good for 14 days, amber to 45 and red after that, which called a thread nobody had touched for seven weeks a problem when it was often simply slow, or waiting on somebody. The days since a note moved are now a plain figure with an uncoloured bar, and what marks a thread is its own next action: *overdue* when a due date has passed, *chase due* when a `#waiting` line's chase date has come, *check* when `check.py` names a file in its folder. A zone and a project count those as *needing a chase* where they counted *aging* and *stale*, the graph's one ring follows the same rule, and a thread's card says *Last touched* where it said *Aging*. A thread with no next action at all is named under *Waiting on you*, which is not the same as calling it late. ([#102](https://github.com/iamvenuti/garrick/issues/102))
+- A browser that has dragged, moved or hidden a card keeps that arrangement card for card, whatever order a newer Garrick builds. The order a build writes is a default: it reaches a browser that has arranged nothing, and *Reset view* is what adopts it anywhere else. A card a new release adds appears where that build puts it, ahead of the cards you placed in the same column, and nothing you placed moves. ([#102](https://github.com/iamvenuti/garrick/issues/102))
+
 ## [0.27.0] - 2026-10-14
 
 ### Added

@@ -516,8 +516,14 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
 3. **A new party:** offer to add it to Parties before scaffolding, and ask
    whether a wall applies: "Birch isn't a party yet. Add it to the Work zone,
    and should anyone be walled off from it?" With the answer, re-read
-   `System/context.md`, add the Parties row (name, what it is, zone, tag) and
-   any Walls rows, then scaffold. Never scaffold with a made-up tag.
+   `System/context.md`, then run
+   `python3 System/tools/scaffold.py party --name "<Party>" --zone <Zone> --what "<what it is>"`,
+   which writes the row and offers the tag itself, with `--walled-from <tag>`
+   for a wall; commit `System/context.md` on its own before the project, which
+   is refused until the row is there. Never scaffold with a made-up tag. Where
+   the user did not ask for a project at all but for help with a piece of work,
+   the short route sets up the party, the project and the thread on one
+   question instead: the `meetings` skill's *Nothing there yet*.
 4. **Run the script.** When it refuses, it prints a one-line reason. Relay it
    in plain words and suggest a fix:
    - a name that will not work (an underscore, a comma, a slash, a full stop

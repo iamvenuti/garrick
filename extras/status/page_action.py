@@ -56,8 +56,8 @@ zone's repository, as the skills would:
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
                 "default": "cmux"}; each zone's colour and icon: {"zones":
                 {"Work": {"color": "Teal", "icon": "briefcase"}}}; or both.
-                Written to System/generated/status-settings.json, so the app,
-                Obsidian and the cmux desk agree. It commits nothing. A zone
+                Kept in System/garrick-settings.json, committed with the
+                workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
                 when the cmux extra and cmux are there
 
@@ -1002,14 +1002,29 @@ def run_job(req: dict, folder: Path = None) -> str:
     return "%s is running now" % name
 
 
+_PREFS = None
+
+
+def prefs():
+    """prefs.py, beside this file: the one way to the choices the page keeps."""
+    global _PREFS
+    if _PREFS is None:
+        spec = importlib.util.spec_from_file_location("garrick_prefs", str(Path(__file__).with_name("prefs.py")))
+        _PREFS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PREFS)
+    return _PREFS
+
+
 def save_settings(ws: Path, req: dict) -> str:
     """Settings, kept in one file so every viewer of the page agrees, and the
     cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
     "default": "note", "zones": {"Work": {"color": "Teal", "icon": "briefcase"}}}.
-    A request carries the launchers, the zones or both, and what it leaves
-    out stays as saved. Every known way is written, on or off; status.py
-    reads the file when it builds the page. A way it does not list is on, as
-    on the page."""
+    They go in the workspace's own settings file, through garrick_lib's
+    accessor (prefs.py), so they are committed with the workspace and nothing
+    here knows where the file is. A request carries the launchers, the zones
+    or both, and what it leaves out stays as saved. Every known way is
+    written, on or off; status.py reads the same choices when it builds the
+    page. A way it does not list is on, as on the page."""
     if "launchers" not in req and "zones" not in req:
         raise Refused("nothing to save")
     new = {}
@@ -1027,23 +1042,11 @@ def save_settings(ws: Path, req: dict) -> str:
         new = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
     if "zones" in req:
         new["zones"] = zone_styles(ws, req["zones"])
-    path = ws / "System" / "generated" / "status-settings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    data = data if isinstance(data, dict) else {}
-    before = data.get("zones") if isinstance(data.get("zones"), dict) else {}
-    data.update(new)
-    fd, tmp = tempfile.mkstemp(prefix=".status-settings-", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=1) + "\n")
-        os.replace(tmp, str(path))
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    keep = prefs()
+    keep.migrate(ws)             # a choice an older Garrick left in System/generated/ comes first
+    was = keep.read(ws).get("zones")
+    before = was if isinstance(was, dict) else {}
+    keep.save(ws, new)
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))

@@ -52,10 +52,10 @@ Tomorrow, return for that next action. Once this is useful, add another project 
 
 ## Try the wall with fictional data
 
-Use the separate `~/Garrick-demo` workspace for this exercise, never your real one. If it is not built yet, build it in Terminal from the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP:
+Use the separate `~/Garrick-demo` workspace for this exercise, never your real one. If it is not built yet, build it in Terminal from the folder Garrick came in, `~/Downloads/garrick` for the download:
 
 ```sh
-cd ~/Downloads/garrick-main
+cd ~/Downloads/garrick
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 

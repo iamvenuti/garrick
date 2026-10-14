@@ -310,20 +310,49 @@ class TestNames(CheckCase):
     def test_pass(self):
         self.assertClean("names")
 
-    def test_unspeakable_project(self):
+    def said(self, note: Path, spoken: str) -> None:
+        """Give a note a `spoken` form, under its title."""
+        note.write_text(note.read_text().replace("type:", "spoken: %s\ntype:" % spoken, 1))
+
+    def test_a_business_name_with_a_spoken_form_is_clean(self):
+        t = self.acme / "Threads" / "Q4 Planning"
+        write(t / "Q4 Planning.md", thread_note("Acme Review", "Q4 Planning"))
+        self.said(t / "Q4 Planning.md", "fourth quarter planning")
+        self.assertClean("names")
+
+    def test_a_business_name_without_one_is_asked_for(self):
         p = self.work / "Acme Q3"
         write(p / "Acme Q3.md", project_hub("Work", "Acme Q3", "acme"))
-        self.assertFinds("names", "error", "digit", "Zones/Work/Acme Q3")
+        self.assertFinds("names", "warning", "`spoken:`", "Zones/Work/Acme Q3/Acme Q3.md")
+        self.assertEqual([], self.findings("names", "error"))
 
-    def test_unspeakable_thread(self):
+    def test_a_spoken_form_that_does_not_say_how_it_is_said_either(self):
+        t = self.acme / "Threads" / "ISO 27001"
+        write(t / "ISO 27001.md", thread_note("Acme Review", "ISO 27001"))
+        self.said(t / "ISO 27001.md", "ISO 27001 readiness")
+        self.assertFinds("names", "warning", "does not say how it is said either",
+                         "Zones/Work/Acme Review/Threads/ISO 27001/ISO 27001.md")
+
+    def test_a_name_that_will_not_work(self):
         t = self.acme / "Threads" / "pricing_v2"
         write(t / "pricing_v2.md", thread_note("Acme Review", "pricing_v2"))
-        self.assertFinds("names", "error", "not speakable")
+        self.assertFinds("names", "error", "will not work: it contains an underscore")
+
+    def test_a_zone_name_has_to_say_how_it_is_said(self):
+        z = self.root / "Zones" / "Clients 2"
+        write(z / "AGENTS.md", "# Clients 2 zone\n")
+        self.assertFinds("names", "error", "a zone has no note to carry a `spoken` form", "Zones/Clients 2")
 
     def test_siblings_sound_alike(self):
         t = self.acme / "Threads" / "Prizing"
         write(t / "Prizing.md", thread_note("Acme Review", "Prizing"))
         self.assertFinds("names", "warning", "sound alike", "Zones/Work/Acme Review/Threads")
+
+    def test_siblings_whose_spoken_forms_sound_alike(self):
+        t = self.acme / "Threads" / "Q4 Planning"
+        write(t / "Q4 Planning.md", thread_note("Acme Review", "Q4 Planning"))
+        self.said(t / "Q4 Planning.md", "pricing")
+        self.assertFinds("names", "warning", 'said "Pricing" and "pricing"', "Zones/Work/Acme Review/Threads")
 
 
 class TestProjects(CheckCase):
@@ -483,6 +512,29 @@ class TestGenerated(CheckCase):
     def test_placeholders_in_generated_output_are_not_an_unfinished_install(self):
         write(self.root / "System" / "generated" / "brief.md", "Fill {{ZONE}} later\n")
         self.assertClean("placeholders")
+
+
+class TestKeptChoices(CheckCase):
+    """The choices a user keeps -- each zone's colour and icon, how a thread
+    opens -- are committed with the workspace, so a restore brings them back (#81)."""
+
+    def kept(self):
+        write(self.root / "System" / "garrick-settings.json",
+              json.dumps({"zones": {"Work": {"color": "Teal"}}}) + "\n")
+
+    def test_no_file_and_no_repository_are_clean(self):
+        self.assertClean("preferences")
+        self.kept()
+        self.assertClean("preferences")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_untracked_warns_and_committed_is_clean(self):
+        git_init(self.root)
+        write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
+        self.kept()
+        self.assertFinds("preferences", "warning", "not in the workspace's history")
+        commit_all(self.root)
+        self.assertClean("preferences")
 
 
 class TestDeliverables(CheckCase):

@@ -21,5 +21,6 @@
   "aliases": [
     {"heard": "birch and co, birchen co", "means": "Birch & Co"},
     {"heard": "dana whitlaw", "means": "Dana Whitlock"}
-  ]
+  ],
+  "allow-commands": true
 }

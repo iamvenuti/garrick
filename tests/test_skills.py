@@ -176,14 +176,14 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(needle, rules, needle)
 
     def test_a_new_zone_goes_through_the_scaffold(self):
-        """A zone is made as the installer makes one, by the scaffold script, after
-        the name and what it holds are confirmed; the interview hands over to it."""
+        """A zone is made as the installer makes one, by the scaffold script, once the
+        name and what it holds are given; the interview hands over to it."""
         for phrase in ("add a zone called x", "new zone x"):
             self.assertIn(phrase, triggers(SKILLS / "threads"), phrase)
         text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
         new_zone = flat(section(text, '## New zone: "add a zone called X", "new zone X"'))
         for needle in ('python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"',
-                       "**Confirm the name and what it holds**", "wait for the yes", "never `git add -A`",
+                       "**A name and what it holds is enough to go ahead**", "never `git add -A`",
                        "python3 System/tools/check.py"):
             self.assertIn(needle, new_zone, needle)
         self.assertIn("offer to add it (*New zone*, below)", flat(text))
@@ -300,6 +300,39 @@ class SkillsTest(unittest.TestCase):
                        "what is still open (the `Todo.md` lines)"):
             self.assertIn(needle, prep, needle)
         self.assertNotIn("from each page's actions table", prep)
+
+    def test_the_naming_rule_says_what_the_code_decides(self):
+        """One rule, three questions: the wording in the rules and in the threads
+        skill follows garrick_lib's three functions, and names the frontmatter key
+        that carries a spoken form, which is the key the scaffold writes."""
+        tools = REPO / "template" / "System" / "tools"
+        lib = (tools / "garrick_lib.py").read_text(encoding="utf-8")
+        for decides in ("def is_path_safe(", "def is_display_name(", "def is_sayable("):
+            self.assertIn(decides, lib, decides)
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        for needle in ("a full stop inside an acronym", "`spoken:` in the note's frontmatter",
+                       "a zone name has to say how it is said"):
+            self.assertIn(needle, rules, needle)
+        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        for needle in ("the `spoken:` form in its note", "as `spoken:`", "--spoken"):
+            self.assertIn(needle, threads, needle)
+        self.assertIn("spoken: %s", (tools / "scaffold.py").read_text(encoding="utf-8"))
+        self.assertIn("`spoken:` form", (tools / "check.py").read_text(encoding="utf-8"))
+
+    def test_setup_offers_the_allowance_and_changes_no_settings(self):
+        """Like its other per-assistant offers: only where it applies, and it says
+        how rather than doing it."""
+        text = (SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
+        bullets = flat(text).split("- Only if ")
+        offer = [b for b in bullets if "install.py --allowlist" in b]
+        self.assertEqual(1, len(offer), bullets)
+        self.assertTrue(offer[0].startswith("the assistant is Claude Code and the probe found no commands allowed"),
+                        offer[0])
+        self.assertIn("never change the settings for them", offer[0])
+        for word in ("status", "diff", "log", "add", "commit"):
+            self.assertIn(word, offer[0])
+        for word in ("push", "reset", "checkout"):
+            self.assertNotIn(word, offer[0])
 
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",

@@ -27,7 +27,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import project_hub, thread_note, write  # noqa: E402
-from test_status import StatusCase, cards, graph_data, stamp, status  # noqa: E402
+from test_status import REPO, StatusCase, cards, graph_data, stamp, status  # noqa: E402
 
 
 def attention(html):
@@ -593,15 +593,15 @@ class TestEffortFolders(StatusCase):
 class TestSharedLauncherSettings(StatusCase):
     def test_embedded_when_saved(self):
         self.assertNotIn('id="launch-settings"', self.page())
-        write(self.root / "System" / "generated" / "status-settings.json",
+        write(self.root / "System" / "garrick-settings.json",
               json.dumps({"launchers": ["note", "claude", "nonsense"], "default": "claude"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
         self.assertEqual({"launchers": ["note", "claude"], "default": "claude"}, json.loads(found.group(1)))
-        write(self.root / "System" / "generated" / "status-settings.json",
+        write(self.root / "System" / "garrick-settings.json",
               json.dumps({"launchers": {"note": True, "finder": False, "cmux": False, "codex": False}, "default": "cmux"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
         self.assertEqual({"launchers": ["note", "claude"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
-        write(self.root / "System" / "generated" / "status-settings.json", json.dumps({"launchers": "all"}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"launchers": "all"}))
         self.assertNotIn('id="launch-settings"', self.page())
 
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
@@ -637,7 +637,7 @@ class TestZoneColours(StatusCase):
     """Settings › Zones (#67): a colour and an icon per zone, on every label that names it."""
 
     def save(self, zones):
-        write(self.root / "System" / "generated" / "status-settings.json", json.dumps({"zones": zones}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"zones": zones}))
 
     def test_read_with_unknown_names_dropped(self):
         self.assertEqual({}, status.zone_styles(self.root))
@@ -645,7 +645,7 @@ class TestZoneColours(StatusCase):
                    "Other": {"color": "Plum", "icon": "unicorn"}, "Odd": "Teal"})
         self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}, "Personal": {"icon": "house"}},
                          status.zone_styles(self.root))
-        write(self.root / "System" / "generated" / "status-settings.json", "not json")
+        write(self.root / "System" / "garrick-settings.json", "not json")
         self.assertEqual({}, status.zone_styles(self.root))
 
     def test_every_label_that_names_a_zone(self):
@@ -1372,3 +1372,54 @@ class TestSettingsFromTheMenu(unittest.TestCase):
         loaded = s[s.index("func webView(_ webView: WKWebView, didFinish"):]
         self.assertIn("if -asked.timeIntervalSinceNow < 60 { openSettings(nil) }", loaded[:600])   # a page loading opens it when it has
         self.assertIn("window.StatusSettings && window.StatusSettings.open()", s)              # the same as ⌘,
+
+
+class TestWhereTheChoicesLive(StatusCase):
+    """Each zone's colour and icon, and Opening a thread, are committed with
+    the workspace in System/garrick-settings.json, and every reader reads them
+    through garrick_lib's accessor (#81)."""
+
+    SETTINGS = Path("System") / "garrick-settings.json"
+
+    def build_main(self):
+        out = self.jobs / "page.html"
+        with contextlib.redirect_stdout(io.StringIO()):
+            status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian"])
+        return out.read_text(encoding="utf-8")
+
+    def test_the_file_the_page_names_is_the_accessors(self):
+        prefs = status.prefs()
+        self.assertEqual(prefs.lib(self.root).PREFERENCES_FILE, prefs.FILE)
+        self.assertEqual("System/garrick-settings.json", prefs.FILE)
+        html = self.page()
+        self.assertIn("<code>System/garrick-settings.json</code>", html)          # Settings says where they are kept
+        self.assertNotIn("status-settings.json", html)
+
+    def test_every_reader_reads_the_same_file(self):
+        """The page, the settings request, the Mac app and the cmux desk: the
+        generated file is nobody's path any more."""
+        pa = REPO / "extras" / "status" / "page_action.py"
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn('appendingPathComponent("System/garrick-settings.json")', swift)
+        for path in (REPO / "extras" / "status" / "status.py", pa, REPO / "extras" / "status" / "ask.py",
+                     REPO / "extras" / "cmux" / "desk.py"):
+            with self.subTest(file=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("status-settings.json", text)
+                self.assertNotIn("System/generated/status-settings", text)
+        self.assertNotIn("status-settings.json", swift)
+
+    def test_a_rebuild_copies_an_older_garricks_choices_across(self):
+        write(self.root / "System" / "generated" / "status-settings.json",
+              json.dumps({"zones": {"Work": {"color": "Teal", "icon": "briefcase"}},
+                          "launchers": ["note", "claude"], "default": "claude"}))
+        self.assertIn('<h3 class="zc zc-teal">', self.build_main())          # the page shows them either way
+        kept = json.loads((self.root / self.SETTINGS).read_text(encoding="utf-8"))
+        self.assertEqual({"Work": {"color": "Teal", "icon": "briefcase"}}, kept["zones"])
+        self.assertEqual(["note", "claude"], kept["launchers"])
+        # Deleting the generated folder and rebuilding keeps every choice.
+        shutil.rmtree(str(self.root / "System" / "generated"))
+        html = self.build_main()
+        self.assertIn('<h3 class="zc zc-teal">', html)
+        self.assertEqual({"launchers": ["note", "claude"], "default": "claude"},
+                         json.loads(re.search(r'id="launch-settings">(.*?)</script>', html, re.S).group(1)))

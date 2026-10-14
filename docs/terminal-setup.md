@@ -18,6 +18,8 @@ cd ~/garrick-source
 python3 examples/demo/build.py --target ~/Garrick-demo
 ```
 
+That clone gives you `main`, the branch under development. For the newest release instead, download [garrick.zip](https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip) and work in `~/Downloads/garrick`: the rest of this page is the same.
+
 In another terminal:
 
 ```sh

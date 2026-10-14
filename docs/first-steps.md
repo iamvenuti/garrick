@@ -38,24 +38,24 @@ Both should print a version. Python must be 3.9 or later.
 
 ## 3. Download and install Garrick
 
-On the [Garrick repository page](https://github.com/iamvenuti/garrick), choose **Code**, then **Download ZIP**. Safari usually unzips the download for you, so look in Downloads for a folder called **garrick-main**. If you see only `garrick-main.zip`, double-click it to unzip it. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
+Download [garrick.zip](https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip), which is always Garrick's newest release. Safari usually unzips the download for you, so look in Downloads for a folder called **garrick**. If you see only `garrick.zip`, double-click it to unzip it. If you have a guided session booked, stop here and answer the installer questions with your facilitator.
 
 For self-guided setup, run these commands in Terminal. If Finder gave the downloaded folder a different name, type `cd ` and drag that folder into Terminal to supply its path.
 
 ```sh
-cd ~/Downloads/garrick-main
+cd ~/Downloads/garrick
 python3 install.py
 ```
 
 macOS may ask whether Terminal may access files in your Downloads folder. Click **Allow**: the installer runs from there, and puts the workspace itself in your home folder.
 
-Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones and parties you need for your first project. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](getting-started.md#another-zone). A wall is an explicit pair of parties whose information must stay apart. Two folders alone do not create one. [Getting started](getting-started.md#install) explains the questions.
+Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones and parties you need for your first project. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](getting-started.md#another-zone). A wall is an explicit pair of parties whose information must stay apart. Two folders alone do not create one. The last question offers to let the assistant run Garrick's own tools, and git's commands that look at or save history, without asking each time; [The commands it asks to approve](#the-commands-it-asks-to-approve) says exactly what that allows. [Getting started](getting-started.md#install) explains the questions.
 
 You can close Terminal when installation finishes. The assistant runs the tools for everyday work, and asks you to approve commands as your app settings say. [The commands it asks to approve](#the-commands-it-asks-to-approve) explains them.
 
 ## 4. Open the workspace in your app
 
-Follow just the section for the assistant you chose. Select the **installed workspace**, normally `~/Garrick`, rather than the downloaded `garrick-main` source folder.
+Follow just the section for the assistant you chose. Select the **installed workspace**, normally `~/Garrick`, rather than `~/Downloads/garrick`, the source folder you installed from.
 
 ### Using Claude
 
@@ -90,22 +90,28 @@ Open the ChatGPT desktop app and sign in to the account and workspace you chose.
 
 ### The commands it asks to approve
 
-Whichever assistant you use, a first session asks you to approve around fifteen commands. Each shows a line you may not be able to judge, but most are Garrick's own tools, or git saving history on your Mac:
+Unless you allowed them when you installed, a first session asks you to approve around fifteen commands. Each shows a line you may not be able to judge, but most are Garrick's own tools, or git saving history on your Mac:
 
 | A command that starts with | Does this |
 |---|---|
 | `python3 System/tools/scaffold.py` | Makes a zone, project or thread folder from its template |
 | `python3 System/skills/intake/intake.py` | Reads what waits in an inbox and files it where it belongs |
 | `python3 System/skills/meetings/ingest.py` | Files a conversation in the Meetings wiki |
+| `python3 System/skills/todo/todo.py` | Expires, archives and tidies the lines of a zone's `Todo.md` |
 | `python3 System/tools/check.py` | Runs the workspace check. It changes nothing |
+| `python3 System/tools/probe.py` | Looks at what your Mac has that Garrick can use. It changes nothing |
+| `python3 System/tools/wiki_lint.py` | Lists a wiki's pages that nothing links to, and links to pages that are not there. It changes nothing |
+| `python3 System/tools/drift.py` | Compares what a project published with the copy in a shared folder. It changes nothing |
 | `git -C Zones/…` or `git -C Wikis`, then `status`, `diff`, `log`, `add` or `commit` | Looks at, or saves, what changed in a zone's or a wiki's history, on your Mac |
 
 None of these sends anything off your Mac. Read the whole line before you approve it, not only its start. With git, the folder after `-C` says only where the command works; the word after the folder says what it does. A git command with `push`, `pull`, `fetch`, `clone` or `remote` reaches the internet, and one with `reset`, `checkout`, `restore`, `clean`, `rm` or `--force` can throw work away. A first session needs none of them: decline them unless you asked for one. Read anything else before you approve it too, above all a command that reaches the internet or works outside your Garrick folder.
 
-You can allow some of these once rather than every time:
+The installer's last question offers to allow most of these once rather than every time, and its default is yes:
 
-- **Claude.** For Garrick's own tools, the `python3` lines above, choose the answer that stops it asking again, rather than the one that allows it this time only. That answer names the start of the command, such as `python3 System/tools/scaffold.py`, and holds for this folder alone. From then on, commands that start the same way run without asking. For git, do the same only when the start it names includes one of the five words above, such as `git -C Zones/Work commit`. If it names only the folder, `git -C Zones/Work`, allow the command this time only: a rule that stops at the folder lets every git command run there without asking, `push` included.
-- **Codex.** The setting from step 5 decides. With one that lets Codex work inside the workspace on its own, it runs the tools without asking. If it still asks before each git commit, read the line, then approve it when it is one of the five above: those only look at or save history on your Mac.
+- **Claude.** On a yes, the installer writes the rules into `.claude/settings.json` in your workspace: one for each of Garrick's own tools above, and, for the workspace, for `Wikis` and for each zone, `git -C` that folder with `status`, `diff`, `log`, `add` or `commit` after it. Each names the start of a command and holds for this folder alone. The file is saved with the workspace, so you can read what was allowed.
+- **What it does not allow.** No `push`, `pull`, `fetch`, `clone` or `remote`, no `reset`, `checkout`, `restore`, `clean`, `rm` or `--force`, nothing outside your Garrick folder, and no rule that names only the folder, `git -C Zones/Work`: a rule that stops at the folder lets every git command run there without asking, `push` included. Nor `python3 System/tools/release.py`, the one tool that reaches the internet. Those still ask, every time.
+- **To take it back**, delete the rules from `.claude/settings.json`, or answer no when you install. An update replaces Garrick's own rules and leaves any you added, and puts back none you deleted.
+- **Codex.** The setting from step 5 decides, and it is one setting for your whole account rather than one per workspace, so the installer writes nothing for Codex. With one that lets Codex work inside the workspace on its own, it runs the tools without asking. If it still asks before each git commit, read the line, then approve it when it is one of the five above: those only look at or save history on your Mac.
 
 ## 5. Do one useful piece of work
 

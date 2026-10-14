@@ -6,13 +6,13 @@ Requires macOS, Python 3.9 or later, and git. If `git --version` fails, run `xco
 
 ## Install
 
-From the folder Garrick came in, `~/Downloads/garrick-main` for the ZIP or `~/garrick-source` for a clone:
+From the folder Garrick came in, `~/Downloads/garrick` for the download or `~/garrick-source` for a clone:
 
 ```sh
 python3 install.py
 ```
 
-This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases. Press Enter to accept the default in brackets, or skip a section by answering nothing. Most people skip the aliases, names that dictation gets wrong, since nothing has been dictated yet: the assistant adds them to `System/context.md` as it learns them. A party is an organisation or person whose confidences you hold, and each gets a tag, one lowercase word that starts with a letter, and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the zones and parties relevant to your first project and add others later: parties in `System/context.md`, zones as [Another zone](#another-zone) describes.
+This asks a few questions, one at a time: where the workspace should go (default `~/Garrick`; a folder name on its own, such as `Garrick-work`, goes in your home folder), your name and a one-line description of what you do, your zones (default `Work, Personal`), what each zone holds, then your parties, walls, people and dictation aliases, and last whether the assistant may run Garrick's own tools and git's commands that look at or save history without asking each time ([what that allows](first-steps.md#the-commands-it-asks-to-approve)). Press Enter to accept the default in brackets, or skip a section by answering nothing. Most people skip the aliases, names that dictation gets wrong, since nothing has been dictated yet: the assistant adds them to `System/context.md` as it learns them. A party is an organisation or person whose confidences you hold, and each gets a tag, one lowercase word that starts with a letter, and, if you like, the domains its mail comes from, such as `acmecorp.example`. Leave personal webmail out: a Gmail address never names a party. A wall is an explicit pair of tags whose material must not be used in each other's projects; the installer only asks about walls once you have named two parties. Separate folders and different party tags do not create walls automatically. For two confidential internal projects, use two party tags and declare a wall between them. You can start with the zones and parties relevant to your first project and add others later: parties in `System/context.md`, zones as [Another zone](#another-zone) describes.
 
 To skip the questions (for a demo, a test, or a guided session), pass a config file:
 
@@ -20,7 +20,13 @@ To skip the questions (for a demo, a test, or a guided session), pass a config f
 python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
-`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config.
+`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config. Its keys are the questions: `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing.
+
+To allow those commands in a workspace already installed, because you answered no or installed before Garrick asked, run this from the folder Garrick came in. It writes the same rules and changes nothing else, and it overwrites neither file:
+
+```sh
+python3 install.py --allowlist ~/Garrick
+```
 
 The installer writes only inside the target folder. It refuses a target that is your home folder, sits under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library` (macOS blocks scheduled jobs from reading those), overlaps the folder Garrick came in (that folder, one inside it, or one holding it), or already has files in it. It compares the folders themselves, not their names: on a Mac, `~/garrick` and `~/Garrick` are the same folder. `--force` lets it install next to files that are already there, but it still stops if the folder holds an `AGENTS.md`, `System`, `Zones`, `Wikis`, `.git`, `.gitignore`, `.claude` or `.agents`.
 
@@ -29,11 +35,13 @@ The installer writes only inside the target folder. It refuses a target that is 
 ```
 AGENTS.md               entry point for any assistant
 .claude/skills          link to System/skills, for Claude Code
+.claude/settings.json   the commands you allowed at install, if you did, for Claude Code
 .agents/skills          link to System/skills, for Codex
 System/
   rules.md              how the assistant behaves: Garrick's, replaced by each update
   rules.local.md        your own rules, which win over Garrick's; no update touches it
   context.md            who you are and who you deal with, filled in from your answers
+  garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
   tools/                scaffold.py, check.py, probe.py, release.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, interview, setup, update
@@ -68,7 +76,7 @@ This creates `Zones/Work/Acme/`, its hub note, `Sources/`, `Deliverables/`, and 
 python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Supplier Audit"
 ```
 
-The script checks names before it creates anything: no digits but a year standing as a word, and no punctuation (they can't be said aloud), and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken.
+The script checks names before it creates anything: letters and digits, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, nothing a folder could not hold or the spoken grammar already uses, and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken. A name that does not say how it is said, such as "Q4 Planning", is made and then asked about, so its note can carry the form to hear for it in `spoken:`; `--spoken "fourth quarter planning"` gives it straight away.
 
 The script does not commit. Each zone is its own git repository, so commit there:
 
@@ -146,7 +154,7 @@ Tests the workspace against every rule a machine can check:
 - a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning); a git repository inside a project that has a remote and no wall check (a warning; `--install-hooks` adds it);
 - a zone or the Wikis repository whose own hooks git skips, because `core.hooksPath` points somewhere else (a warning);
-- names that cannot be said aloud, or siblings that sound alike;
+- names that will not work as names, a name that does not say how it is said and whose note gives no `spoken:` form (a warning), or siblings that sound alike;
 - project and thread notes missing their frontmatter or required sections, or naming a party that is not in `System/context.md`, or with a status no tool reads (active, parked or done), or a `created` or `updated` date not written YYYY-MM-DD; a hub or thread note renamed `-v2`;
 - a hub that does not link one of its threads, or lists a finished one outside `## Finished`, and a thread-first project with a folder outside its threads (warnings);
 - deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);

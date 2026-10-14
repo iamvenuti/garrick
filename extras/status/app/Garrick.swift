@@ -110,11 +110,12 @@ let troubleSaid = "Something on the Status tab failed"
 // (ASK_WAIT), so its own message comes first; past it, the request is let go.
 let askWait = 180.0
 
-// Settings › Opening a thread, as status.py's shared_launchers() reads it:
-// {name: true or false}, a name left out being on, or a list of those on.
-// Nothing saved, or nothing that reads: every way is on.
+// Settings › Opening a thread, from the choices the workspace keeps, as
+// status.py's shared_launchers() reads them (garrick_lib's PREFERENCES_FILE,
+// committed with the workspace): {name: true or false}, a name left out being
+// on, or a list of those on. Nothing saved, or nothing that reads: every way is on.
 func launcherOn(_ k: String) -> Bool {
-	guard let data = try? Data(contentsOf: workspace.appendingPathComponent("System/generated/status-settings.json")),
+	guard let data = try? Data(contentsOf: workspace.appendingPathComponent("System/garrick-settings.json")),
 	      let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return true }
 	if let on = saved["launchers"] as? [String: Any] { return on[k] == nil || on[k] as? Bool == true }
 	if let on = saved["launchers"] as? [String] { return on.contains(k) }

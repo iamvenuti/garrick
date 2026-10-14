@@ -60,6 +60,15 @@ mode* in the `threads` skill describes.
      opened me in?" A yes means the zone guard in `extras/hooks/` of the
      Garrick download: say how, from its README, never change the settings
      for them.
+   - Only if the assistant is Claude Code and the probe found no commands
+     allowed here: "Shall I run Garrick's own tools, and git's status, diff,
+     log, add and commit inside the workspace, without asking you each time?
+     None of them sends anything off your Mac." A yes means
+     `python3 install.py --allowlist <this workspace>`, run from the Garrick
+     download, which writes the rules the installer would have written: say
+     how, never change the settings for them. Once they have run it, commit
+     the two files it wrote, `.claude/settings.json` and
+     `System/garrick-settings.json`, in the workspace's own repository.
    - Unless `System/garrick-settings.json` already says: "Tell me when a new
      Garrick is out? It asks GitHub once a day and sends nothing about your
      workspace." Ask it once. A yes or a no is written as the `update`

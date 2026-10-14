@@ -384,7 +384,7 @@ class TestSettings(ActionCase):
     """Settings › Opening a thread, in one file every viewer reads."""
 
     def path(self):
-        return self.root / "System" / "generated" / "status-settings.json"
+        return self.root / "System" / "garrick-settings.json"
 
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
@@ -419,7 +419,7 @@ class TestZoneSettings(ActionCase):
         self.addCleanup(p.stop)
 
     def path(self):
-        return self.root / "System" / "generated" / "status-settings.json"
+        return self.root / "System" / "garrick-settings.json"
 
     def saved(self):
         return json.loads(self.path().read_text())

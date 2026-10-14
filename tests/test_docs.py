@@ -10,14 +10,26 @@ one folder, and folders here are compared without regard to case.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 import unittest
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_TARGET = re.search(r'^DEFAULT_TARGET = "([^"]+)"', (REPO / "install.py").read_text(encoding="utf-8"),
                            re.M).group(1)
 CLONE = re.compile(r"git clone (\S+)(?:[ \t]+([^\s`<]+))?")
+
+
+def installer():
+    """install.py as a module: the commands it allows are documented, not guessed."""
+    spec = importlib.util.spec_from_file_location("garrick_install", REPO / "install.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 TARGET = re.compile(r"--target[ \t]+([^\s`<)]+)")
 CONFIG = re.compile(r"--config[ \t]+([^\s`<)]+)")
 
@@ -50,6 +62,23 @@ def example_targets():
                     continue
                 config = CONFIG.search(before)
                 yield page, script + (" --config " + config.group(1) if config else ""), m.group(1).rstrip(".,;:")
+
+
+LATEST = re.compile(r"https://github\.com/iamvenuti/garrick/releases/latest/download/([^\s)`]+)")
+DOWNLOAD_FOLDER = re.compile(r"~/Downloads/([A-Za-z0-9._-]+)")
+BEGINNER = ("docs/first-steps.md", "docs/getting-started.md", "docs/try-it-safely.md",
+            "docs/first-session.md", "docs/updating.md")
+
+
+def release_archive():
+    """AGENTS.md's `git archive` step: (what it archives, the folder it unpacks into, the asset name)."""
+    text = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+    line = next((l for l in text.splitlines() if l.startswith("git archive")), "")
+    prefix = re.search(r"--prefix=([^\s/]+)/", line)
+    asset = re.search(r"-o[ \t]+(\S+)", line)
+    return (line.split()[-1] if line else None,
+            prefix.group(1) if prefix else None,
+            asset.group(1).rsplit("/", 1)[-1] if asset else None)
 
 
 class DocCommandsTest(unittest.TestCase):
@@ -91,6 +120,22 @@ class FirstStepsTest(unittest.TestCase):
         for script in scripts:
             self.assertTrue((REPO / "template" / script).is_file(), f"first-steps.md names {script}, which is not shipped")
 
+    def test_the_table_names_every_tool_the_installer_allows(self):
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        table = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        named = re.findall(r"`python3 (System/\S+\.py)`", table)
+        for tool in installer().ALLOWED_TOOLS:
+            self.assertIn(tool, named, "the installer allows %s, which first-steps.md does not name" % tool)
+
+    def test_the_account_says_what_it_refused_to_allow(self):
+        text = (REPO / "docs" / "first-steps.md").read_text(encoding="utf-8")
+        section = text.split("### The commands it asks to approve", 1)[1].split("\n## ", 1)[0]
+        account = section.split("The installer's last question", 1)[1]
+        for word in installer().REFUSED_GIT:
+            self.assertIn("`%s`" % word, account, word)
+        for needle in ("git -C Zones/Work", "take it back", "release.py"):
+            self.assertIn(needle, account, needle)
+
     def test_the_git_commands_to_approve_are_named_by_what_they_do(self):
         # A folder after `git -C` says where a command works, not what it does:
         # the table names the subcommands, and every one the skills run is among them.
@@ -105,6 +150,52 @@ class FirstStepsTest(unittest.TestCase):
         for path in skills.rglob("SKILL.md"):
             for sub in re.findall(r"git -C (?:\"[^\"]+\"|\S+) (\w+)", path.read_text(encoding="utf-8")):
                 self.assertIn(sub, named, f"{path.relative_to(REPO)} runs git {sub}, which first-steps.md does not name")
+
+
+
+class LatestReleaseTest(unittest.TestCase):
+    """A beginner downloads the newest release, never the default branch. One link and one
+    folder serve every release, so the asset the docs name has to be the one the release
+    procedure builds, under the name it builds it under."""
+
+    def test_the_procedure_builds_a_fixed_name_archive_from_the_tag(self):
+        tree, prefix, asset = release_archive()
+        self.assertIsNotNone(asset, "AGENTS.md has no `git archive` step that writes a file")
+        self.assertTrue(asset.endswith(".zip"), asset)
+        self.assertIsNotNone(prefix, "the archive needs --prefix, or it unpacks into the folder you ran it in")
+        self.assertNotIn(tree, ("HEAD", "main"), "the archive comes from the tag, so VERSION names the release")
+        # The stamp a workspace carries is git's substitution, which only a tag's archive makes.
+        self.assertRegex((REPO / ".gitattributes").read_text(encoding="utf-8"),
+                         r"(?m)^VERSION\b.*\bexport-subst\b")
+        self.assertIn("$Format:%h$", (REPO / "VERSION").read_text(encoding="utf-8"))
+
+    def test_the_docs_download_the_asset_the_release_carries(self):
+        asset = release_archive()[2]
+        named = {name for _, text in documents() for name in LATEST.findall(text)}
+        self.assertEqual({asset}, named, "a page downloads an asset the release procedure does not build")
+        self.assertRegex((REPO / "docs" / "first-steps.md").read_text(encoding="utf-8"), LATEST,
+                         "first-steps.md does not send a beginner to the latest release")
+
+    def test_no_page_names_a_version_in_a_download(self):
+        for page, text in documents():
+            self.assertFalse("/releases/download/" in text,
+                             f"{page}: a download link that names one release goes stale at the next")
+
+    def test_no_beginner_page_sends_anyone_to_the_default_branch(self):
+        for page in BEGINNER:
+            text = (REPO / page).read_text(encoding="utf-8")
+            for needle in ("garrick-main", "Download ZIP", "archive/refs/heads/", "/archive/main"):
+                self.assertFalse(needle in text, f"{page}: {needle} is the default branch, not a release")
+
+    def test_every_download_folder_is_the_one_the_archive_unpacks_into(self):
+        prefix = release_archive()[1]
+        found = [(page, folder) for page, text in documents() for folder in DOWNLOAD_FOLDER.findall(text)]
+        self.assertTrue(found, "no page says where the download lands")
+        for page, folder in found:
+            self.assertEqual(prefix, folder, f"{page}: the archive unpacks into {prefix}, not {folder}")
+        # ~/garrick and ~/Garrick are one folder on a Mac, so the download stays out of Downloads only.
+        self.assertNotEqual(("~/Downloads/" + prefix).lower(), DEFAULT_TARGET.lower(),
+                            "the download would land on the workspace")
 
 
 DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"

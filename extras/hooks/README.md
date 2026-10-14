@@ -19,9 +19,11 @@ A session opened at the workspace root is never stopped, since it belongs to no 
 How each assistant stops:
 
 - **Claude Code** asks you in its own permission prompt. Allow it, and the rest of the session writes to that place without asking again. Refuse, and it asks again next time.
-- **Codex** hooks can't ask you, so the first edit to a place is refused, with the same sentence telling the assistant to check with you. Once you say yes, the next edit there goes through for the rest of the session.
+- **Codex** hooks can't ask you, so the first edit to a place is refused, with the same sentence telling the assistant to check with you. The next edit there goes through for the rest of the session, whether you said yes or not: the refusal is what makes the assistant ask, and your answer is what decides.
 
 It covers the file-editing tools: Edit, Write, MultiEdit and NotebookEdit in Claude Code, and `apply_patch` in Codex. A shell command that writes a file isn't covered; the rule in `System/rules.md` is what covers that. A scheduled job runs with `GARRICK_HEADLESS=1` and has nobody to ask, so the guard stands aside for it. It reads files only and never calls a model. If anything goes wrong inside it, the edit goes through: a broken guard never stops work.
+
+**What is and isn't enforced.** The guard is a reminder, not a gate: it records nothing about your answer. In Claude Code the question reaches you through the assistant's own permission prompt, which is where your consent belongs. On the Codex path the refusal only makes the assistant ask you, and a second attempt at the same place goes through whether you said yes or not. A shell command that writes a file isn't covered, and a guard that breaks lets the edit through. So what the guard gives you is the question, asked at the moment it matters; what keeps the work in the right place is the rule in `System/rules.md` and your answer to it.
 
 ## Load it
 

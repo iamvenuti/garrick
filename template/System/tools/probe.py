@@ -28,7 +28,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from garrick_lib import LOCAL_EMAIL, hooks_path, workspace_root  # noqa: E402
+from garrick_lib import CLAUDE_SETTINGS, LOCAL_EMAIL, allow_rules, allowed_commands, hooks_path, workspace_root  # noqa: E402
 
 # Apps Garrick can work with: key, what it is, bundle ids, the names its .app may carry.
 APPS = (
@@ -112,6 +112,11 @@ def probe(root: Path, home: Optional[Path] = None, path: Optional[str] = None) -
                           for r in repos if (r / ".git").exists() and hooks_path(r)],
         "obsidian_vaults": vaults,
         "zones": zones,
+        # Commands the assistant may run here without asking, so the setup skill
+        # knows whether to offer the allowance: how many rules the assistant's own
+        # settings hold, and how many of them the installer wrote.
+        "allow_rules": len(allow_rules(root)),
+        "allow_rules_garricks": len(allowed_commands(root)),
     }
 
 
@@ -135,6 +140,12 @@ def say(found: dict) -> str:
         lines.append("git skips the wall check in: %s." % ", ".join(found["hooks_skipped"]))
     if "obsidian" in found["apps"]:
         lines.append("Obsidian vaults here: %s." % (", ".join(found["obsidian_vaults"]) or "none yet"))
+    settings = "/".join(CLAUDE_SETTINGS)
+    if found.get("allow_rules"):
+        lines.append("Commands allowed here without asking: %d rules in %s, %d of them Garrick's own."
+                     % (found["allow_rules"], settings, found.get("allow_rules_garricks", 0)))
+    else:
+        lines.append("No command is allowed here without asking: %s has none." % settings)
     return "\n".join(lines)
 
 

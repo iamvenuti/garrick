@@ -53,6 +53,7 @@ from garrick_lib import (  # noqa: E402
     CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
+    PREFERENCES_FILE,
     SKILL_FOLDERS,
     VERSION_STAMP,
     MEDIA_EXTS,
@@ -60,8 +61,9 @@ from garrick_lib import (  # noqa: E402
     has_wall_hook,
     install_wall_hook,
     is_domain,
+    is_display_name,
     is_instruction_file,
-    is_speakable,
+    is_sayable,
     is_webmail,
     knowledge_schema,
     fingerprint,
@@ -77,7 +79,8 @@ from garrick_lib import (  # noqa: E402
     say_changes,
     say_newer_release,
     say_version,
-    sounds_alike,
+    spoken_clash,
+    spoken_of,
     strip_recipients,
     strip_tag,
     walled,
@@ -113,6 +116,7 @@ CHECKS = [
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
     ("generated", "Generated files"),
+    ("preferences", "Kept choices"),
     ("updates", "Updates to merge"),
 ]
 
@@ -143,6 +147,7 @@ EAR_GROUP = {
     "knowledge": "{n} Knowledge pages carry parties or meeting material",
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
+    "preferences": "{n} of the choices you keep are not in the workspace history",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -1162,16 +1167,44 @@ def check_skills(ws: Workspace) -> List[Finding]:
 
 
 def _check_siblings(ws: Workspace, folders: List[Path], level: str, out: List[Finding]) -> None:
+    """The three naming questions, folder by folder: can it be stored and does
+    it read as a name (`is_display_name`, an error either way), does it say how
+    it is said or carry a `spoken` form (a warning), and can a sibling be told
+    from it by ear, through either's spoken form."""
     for folder in folders:
-        ok, why = is_speakable(folder.name)
+        ok, why = is_display_name(folder.name)
         if not ok:
-            out.append(Finding(ERROR, "names", rel(ws, folder), "%s name is not speakable: %s" % (level, why),
-                               "The %s name %s cannot be said cleanly" % (level, folder.name)))
+            out.append(Finding(ERROR, "names", rel(ws, folder), "%s name will not work: %s" % (level, why),
+                               "The %s name %s will not work" % (level, folder.name)))
+            continue
+        said, why = is_sayable(folder.name)
+        spoken = spoken_of(folder)
+        note = folder / (folder.name + ".md")
+        where = rel(ws, note if note.is_file() else folder)
+        if level == "zone":
+            if not said:
+                out.append(Finding(ERROR, "names", rel(ws, folder),
+                                   "zone name does not say how it is said: %s, and a zone has no note to carry "
+                                   "a `spoken` form" % why,
+                                   "The zone name %s cannot be said as written" % folder.name))
+        elif not said and not spoken:
+            out.append(Finding(WARNING, "names", where,
+                               "%s name does not say how it is said: %s; give the note a `spoken:` form, so "
+                               "asking for it by ear finds it" % (level, why),
+                               "The %s %s has no spoken form" % (level, folder.name)))
+        elif spoken:
+            ok, why = is_sayable(spoken)
+            if not ok:
+                out.append(Finding(WARNING, "names", where,
+                                   "`spoken: %s` does not say how it is said either: %s" % (spoken, why),
+                                   "The spoken form of %s cannot be said as written" % folder.name))
     for i, a in enumerate(folders):
         for b in folders[i + 1:]:
-            if sounds_alike(a.name, b.name):
+            clash = spoken_clash(a.name, b.name, spoken_of(a), spoken_of(b))
+            if clash:
+                heard = "" if clash == (a.name, b.name) else ", said \"%s\" and \"%s\"" % clash
                 out.append(Finding(WARNING, "names", rel(ws, a.parent),
-                                   "%ss \"%s\" and \"%s\" sound alike" % (level, a.name, b.name),
+                                   "%ss \"%s\" and \"%s\" sound alike%s" % (level, a.name, b.name, heard),
                                    "The %ss %s and %s sound alike" % (level, a.name, b.name)))
 
 
@@ -3417,6 +3450,29 @@ def check_generated(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_preferences(ws: Workspace) -> List[Finding]:
+    """The choices made once and kept -- each zone's colour and icon, and how
+    a thread opens -- are saved in the settings file, which is committed with
+    the workspace. That is what carries them through a rebuild of
+    System/generated/, which is never committed, and through a workspace
+    restored from its own history. A settings file left out of git loses
+    them."""
+    out = []
+    if not (ws.root / PREFERENCES_FILE).is_file() or not (ws.root / ".git").exists():
+        return out
+    try:
+        tracked = subprocess.run(["git", "-C", str(ws.root), "ls-files", "--", PREFERENCES_FILE],
+                                 capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    if tracked.returncode == 0 and not tracked.stdout.strip():
+        out.append(Finding(WARNING, "preferences", PREFERENCES_FILE,
+                           "the choices kept here are not in the workspace's history, so a restore loses them; "
+                           "`git add` it and commit it",
+                           "The settings file is not committed"))
+    return out
+
+
 def check_updates(ws: Workspace) -> List[Finding]:
     """An update leaves Garrick's newer version of a file you changed beside it,
     as `<name>.new`, for you and your assistant to merge. Until then the file
@@ -3485,7 +3541,7 @@ ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_zones, check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
-    check_raw, check_generated, check_updates,
+    check_raw, check_generated, check_preferences, check_updates,
 ]
 
 

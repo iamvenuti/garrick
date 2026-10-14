@@ -9,10 +9,12 @@ This file is Garrick's, as shipped, and an update replaces it. Read `System/rule
 **Go ahead without asking:** reading, searching, creating and editing files inside the zone or wiki the task is about, and anything else you can undo.
 
 **Stop and ask first:**
-- Anything you cannot undo: deleting, overwriting a file you did not create, rewriting git history.
+- Anything you cannot undo: deleting, rewriting git history, and overwriting a file whose content cannot be recovered, meaning one outside the workspace's history or a copy in a shared folder that is somebody's working file. A note a zone's git history holds can be recovered, so revising one goes ahead, whoever wrote it.
 - Anything that leaves the machine: sending, posting, sharing, publishing. Confirm what and where, every time. Yes once is not yes next time.
 - Which zone applies, when the task does not make it obvious.
 - Writing outside the project the session was opened in: another project, another zone, a wiki, `System/`. Say where the file belongs and ask; that place's own session is usually the right one. A session opened at the workspace root belongs to no project, and one opened in `System/` may write in every zone and wiki: it governs them all.
+
+**A request carries its scope through the workflow it names.** Filing a conversation for a project you can name authorises the writes that filing needs: the wiki page, that project's notes, the zone's `Todo.md`. Stop and ask as before for an unresolved party, a destination nobody has named, or a wall between the conversation and the project.
 
 When there are several good ways to do something, name two or three, recommend one, and go ahead with it.
 
@@ -57,7 +59,8 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 Much of this workspace is driven by speaking and listening. Every name, request and reply has to survive that.
 
-- **Names are speakable.** Zones, projects and threads get names a person can say: no dates, codes or punctuation, though a year standing as a word of its own is fine (Summit 2027). Siblings must not sound alike.
+- **Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym: Q4 Planning, ISO 27001, Birch & Co. Nothing else, since the rest either cannot be stored as a folder or is a separator the spoken grammar uses, such as the comma in "Acme, pricing". Siblings must not sound alike.
+- **A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it (Q4 Planning, `spoken: fourth quarter planning`), and a request matches it alongside the name itself. A year standing as a word of its own needs none: Summit 2027 is said "twenty twenty-seven". A zone has no note, so a zone name has to say how it is said.
 - **Say the shortest name that is unique.** A thread name alone, if only one thread has it. Otherwise project and thread ("Acme, pricing"). The zone only when two projects share a name.
 - **When a name matches more than one thing**, ask in one line, naming the candidates. Never guess.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.

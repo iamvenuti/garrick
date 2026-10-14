@@ -5,7 +5,12 @@ Standard library only, Python 3.9 or later. The checker (`check.py`),
 functions below keep their signatures:
 
     parse_frontmatter(path) -> dict
-    is_speakable(name) -> (bool, str)
+    is_path_safe(name) -> (bool, str)
+    is_display_name(name) -> (bool, str)
+    is_sayable(name) -> (bool, str)
+    spoken_forms(name, spoken=None) -> [str]
+    spoken_of(folder) -> str
+    spoken_clash(a, b, a_spoken=None, b_spoken=None) -> (str, str) or None
     sounds_alike(a, b) -> bool
     load_context(root) -> dict
     walled(context, tag_a, tag_b) -> bool
@@ -49,7 +54,13 @@ __all__ = [
     "is_own_address",
     "parse_frontmatter",
     "parse_frontmatter_text",
-    "is_speakable",
+    "is_path_safe",
+    "is_display_name",
+    "is_sayable",
+    "NAME_LIMIT",
+    "spoken_forms",
+    "spoken_of",
+    "spoken_clash",
     "sounds_alike",
     "normalise_name",
     "phonetic_key",
@@ -225,46 +236,150 @@ def parse_frontmatter(path: PathLike) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Voice: speakable names and names that sound alike
+# Names: what can be stored, what a name may look like, how it is said
+#
+# Three questions, three answers, because one answer to all three refused
+# names people use: a folder name has to be safe to store, a name has to read
+# as a name, and a heard name has to find one thread. Only the first is a
+# property of the file system; the second is a house style; the third is
+# answered by the name itself or, where the writing does not say how to say
+# it, by the `spoken` form in the note's frontmatter.
 # ---------------------------------------------------------------------------
 
 _APOSTROPHES = "'’"
 _HYPHENS = "-‐‑"
 _YEAR_RE = re.compile(r"(19|20)\d\d")
+# A full stop belongs inside an acronym (U.S., U.S.A), nowhere else in a name.
+_ACRONYM_RE = re.compile(r"(?:[^\W\d_]\.)+[^\W\d_]?\Z")
+# Characters a folder name cannot hold on a Mac, or in a synced folder.
+_UNSAFE = '/\\:*?"<>|'
+# Names a synced folder reserves, whatever the extension.
+_RESERVED = ({"con", "prn", "aux", "nul"}
+             | {"%s%d" % (stem, n) for stem in ("com", "lpt") for n in range(1, 10)})
+# A folder name and its note's name both carry it, and a link names it again,
+# so the limit is well short of what the file system would take.
+NAME_LIMIT = 96
+_DIGIT_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
 
-def is_speakable(name: str) -> Tuple[bool, str]:
-    """Is `name` fit to be a zone, project or thread name said aloud?
+def is_path_safe(name: str) -> Tuple[bool, str]:
+    """Can `name` be stored as a folder, here and in a synced folder?
 
-    Letters, spaces, hyphens, apostrophes and `&` only, and a year as a word
-    of its own ("Harbour Summit 2027" is said "twenty twenty-seven"). No other
-    digits (dates and codes), no underscores, no other punctuation. Not
-    empty, and not starting with `_`, which is reserved for templates.
+    Strict, and about storage alone: not empty, no path separator or other
+    character a file system refuses, nothing a sync folder reserves or
+    strips, no leading dot (hidden) or underscore (a template), and short
+    enough that the folder, its note and the links to it stay sane.
     """
-    if name is None or not name.strip():
+    if name is None or not str(name).strip():
         return False, "the name is empty"
-    if name.startswith("_"):
-        return False, "it starts with an underscore, which marks a template"
+    name = str(name)
     if name != name.strip():
         return False, "it starts or ends with a space"
-    if "  " in name:
-        return False, "it has a double space"
-    for ch in " ".join(w for w in name.split(" ") if not _YEAR_RE.fullmatch(w)):
-        if ch.isalpha() or ch == " " or ch == "&" or ch in _APOSTROPHES or ch in _HYPHENS:
-            continue
-        if ch.isdigit():
-            return False, "it contains a digit that is not a year; dates and codes cannot be said cleanly"
-        if ch == "_":
-            return False, "it contains an underscore"
-        return False, "it contains '%s', which cannot be said" % ch
-    if not any(ch.isalpha() for ch in name):
-        return False, "it has no letters"
+    if name.startswith("_"):
+        return False, "it starts with an underscore, which marks a template"
+    if name.startswith("."):
+        return False, "it starts with a full stop, which hides the folder"
+    if name.endswith("."):
+        return False, "it ends with a full stop, which a synced folder strips"
+    if len(name) > NAME_LIMIT:
+        return False, "it is longer than %d characters" % NAME_LIMIT
+    for ch in name:
+        if ch in _UNSAFE:
+            return False, "it contains '%s', which cannot be in a folder name" % ch
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            return False, "it contains a character that cannot be in a folder name"
+    if name.split(".")[0].lower() in _RESERVED:
+        return False, "%s is a name a synced folder reserves" % name
     return True, ""
 
 
+def is_display_name(name: str) -> Tuple[bool, str]:
+    """May `name` stand as a zone, project or thread name?
+
+    Ordinary business names, which is wider than what can be said as written:
+    letters and digits anywhere (Q4 Planning, ISO 27001), spaces, hyphens,
+    apostrophes, `&`, and a full stop inside an acronym (U.S. Expansion). No
+    other punctuation, since the rest of it is either unsafe to store or a
+    separator the spoken grammar already uses, such as the comma in "Acme,
+    pricing". At least one letter, which is what a heard name is matched on.
+    """
+    ok, why = is_path_safe(name)
+    if not ok:
+        return False, why
+    name = str(name)
+    if "  " in name:
+        return False, "it has a double space"
+    for word in name.split(" "):
+        if "." in word and not _ACRONYM_RE.match(word):
+            return False, "a full stop belongs inside an acronym, as in U.S., not in '%s'" % word
+        for ch in word:
+            if ch.isalpha() or ch.isdigit() or ch == "&" or ch == "." or ch in _APOSTROPHES or ch in _HYPHENS:
+                continue
+            if ch == "_":
+                return False, "it contains an underscore"
+            return False, "it contains '%s', which does not belong in a name" % ch
+    if not any(ch.isalpha() for ch in name):
+        return False, "it has no letters, so nothing is left to match a heard name on"
+    return True, ""
+
+
+def is_sayable(name: str) -> Tuple[bool, str]:
+    """Does `name` say how it is said, or does it need a `spoken` form?
+
+    True for letters, spaces, hyphens, apostrophes, `&` and a year standing as
+    a word of its own ("Harbour Summit 2027" is said "twenty twenty-seven").
+    False for anything a reader would have to decide how to pronounce: other
+    digits (Q4 Planning, ISO 27001) and an acronym's full stops. A name that
+    is not sayable is still a good name; it carries `spoken:` in its note's
+    frontmatter, and the resolver matches that form alongside the name.
+    """
+    ok, why = is_display_name(name)
+    if not ok:
+        return False, why
+    for word in str(name).split(" "):
+        if _YEAR_RE.fullmatch(word):
+            continue
+        for ch in word:
+            if ch.isdigit():
+                return False, "it contains a digit that is not a year, so how to say it is a guess"
+            if ch == ".":
+                return False, "it contains a full stop, and an acronym is said letter by letter"
+    return True, ""
+
+
+def spoken_forms(name: str, spoken: Optional[str] = None) -> List[str]:
+    """What a spoken request can resolve to: the name, and the form the note's
+    `spoken` frontmatter gives, where it gives one."""
+    forms = [str(name)]
+    said = str(spoken or "").strip()
+    if said and said.lower() != str(name).lower():
+        forms.append(said)
+    return forms
+
+
+def spoken_of(folder: PathLike) -> str:
+    """The `spoken` form in the note of a project or thread folder, or ""."""
+    folder = Path(folder)
+    return str(parse_frontmatter(folder / (folder.name + ".md")).get("spoken") or "").strip()
+
+
+def spoken_clash(a: str, b: str, a_spoken: Optional[str] = None,
+                 b_spoken: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """The first way two sibling names would be heard as one another: a pair of
+    forms, one from each, that sound alike. None when they are easy to tell
+    apart said aloud."""
+    for first in spoken_forms(a, a_spoken):
+        for second in spoken_forms(b, b_spoken):
+            if sounds_alike(first, second):
+                return first, second
+    return None
+
+
 def normalise_name(name: str) -> str:
-    """Lower-case letters only, with `&` read as "and" and accents dropped."""
+    """Lower-case letters only, with `&` read as "and", a digit as its word and
+    accents dropped."""
     name = unicodedata.normalize("NFKD", name.replace("&", " and "))
+    name = "".join(" %s " % _DIGIT_WORDS[int(ch)] if ch.isdigit() else ch for ch in name)
     return "".join(ch for ch in name.lower() if ch.isalpha() and ord(ch) < 0x250)
 
 
@@ -927,9 +1042,19 @@ LOCAL_RULES = "System/rules.local.md"
 LOCAL_HEADER = ("Adds to Garrick's `AGENTS.md` beside it and wins where the two differ. "
                 "Garrick never ships or changes this file.")
 
+# The workspace's own settings, where the release notice lives and where the
+# installer records the allow rules it wrote (see below), and the assistant's
+# own settings, which Garrick adds those rules to and never owns.
+SETTINGS = ("System", "garrick-settings.json")
+CLAUDE_SETTINGS = (".claude", "settings.json")
+ALLOWED_COMMANDS = "allowed-commands"
+
 # Files the installer writes that are the user's from the start: never listed in
-# the stamp, never compared or written by an update.
-UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES)
+# the stamp, never compared or written by an update. The two settings files are
+# here because each holds the user's own entries beside Garrick's; an update
+# replaces only the entries it wrote, and never the whole file.
+UNLISTED = ("System/context.md", "/".join(VERSION_STAMP), LOCAL_RULES,
+            "/".join(SETTINGS), "/".join(CLAUDE_SETTINGS))
 
 
 def is_instruction_file(path: str) -> bool:
@@ -1086,13 +1211,14 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
 
 
-# The workspace's settings: choices that stay, unlike the preview flags in
-# System/garrick-flags.json, which a release drops. One so far:
+# What the workspace's settings hold, SETTINGS above: choices that stay, unlike
+# the preview flags in System/garrick-flags.json, which a release drops.
 # {"release-notice": true} lets the status page ask GitHub, at most once a day,
 # whether a newer Garrick is out. Off unless the file says true: it is the only
 # call Garrick makes on its own. "release-repository" names another repository
-# to ask, for a fork, as owner/name.
-SETTINGS = ("System", "garrick-settings.json")
+# to ask, for a fork, as owner/name. "allowed-commands" lists the allow rules
+# the installer wrote into the assistant's own settings, so an update can
+# replace its own and leave the ones the user added.
 RELEASE_NOTICE = "release-notice"
 RELEASE_REPOSITORY = "iamvenuti/garrick"
 # What the last question to GitHub found, written by System/tools/release.py.
@@ -1120,11 +1246,134 @@ def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
 
 
+def allowed_commands(root: PathLike) -> List[str]:
+    """The allow rules the installer wrote into the assistant's own settings,
+    as it recorded them, or [] where the workspace has none. The rules
+    themselves are the installer's: nothing here depends on one assistant."""
+    found = read_settings(root).get(ALLOWED_COMMANDS)
+    return [x for x in found if isinstance(x, str)] if isinstance(found, list) else []
+
+
+def allow_rules(root: PathLike) -> List[str]:
+    """Every command the assistant may run in this workspace without asking,
+    as its own settings list them, Garrick's rules and the user's alike. []
+    where there is no settings file, or it allows nothing, or it does not
+    read."""
+    import json
+    try:
+        data = json.loads(Path(root).joinpath(*CLAUDE_SETTINGS).read_text(encoding="utf-8"))
+        allow = data["permissions"]["allow"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return [x for x in allow if isinstance(x, str)] if isinstance(allow, list) else []
+
+
 def release_repository(root: PathLike) -> str:
     """The repository to ask about releases: the setting, when it reads as
     owner/name, else the one Garrick comes from."""
     named = read_settings(root).get("release-repository")
     return named if isinstance(named, str) and _REPO_NAME.match(named) else RELEASE_REPOSITORY
+
+
+# The choices a user makes once and keeps: each zone's colour and icon, and
+# Settings > Opening a thread, from the status page and its Mac app. They live
+# in the settings file above, so they are committed with the workspace: a
+# rebuild of System/generated/ keeps them, and so does a workspace restored
+# from its own history. Garrick saved them in System/generated/status-settings.json
+# up to 0.24.0; migrate_shared_settings() copies those across, once, and never
+# over a newer choice. What a window alone remembers -- its theme, its folds,
+# the cards it has hidden -- stays in that window's own storage and never
+# comes here. The names of the colours, icons and ways to open a thread
+# belong to whoever offers them, so nothing here knows one from another: this
+# is the one place they are read and written, by the page's build, its
+# settings request and the cmux desk, and by the Mac app in Swift, which
+# reads the same file by the same keys.
+PREFERENCES = ("zones", "launchers", "default")
+PREFERENCES_FILE = "/".join(SETTINGS)
+SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
+
+
+def preferences(root: PathLike) -> dict:
+    """The kept choices: "zones", each zone's colour and icon; "launchers"
+    and "default", how a thread opens. A key nothing is saved under is left
+    out, and nothing is checked beyond its shape, so an older or a newer
+    Garrick's choice reads as it was saved. What an older Garrick left in
+    System/generated/ is read with the settings file until the migration
+    copies it across, so no choice is lost in between."""
+    return _preferences(root)[0]
+
+
+def save_preferences(root: PathLike, chosen: dict) -> dict:
+    """Keep these choices, leaving every other setting, and every choice not
+    named, as it stands; returns the choices as they now are. Anything an
+    older Garrick left in System/generated/ is copied across first, so saving
+    one choice never loses another. Written beside the file and renamed over
+    it, so a reader sees one whole file or the other."""
+    unknown = sorted(set(chosen) - set(PREFERENCES))
+    if unknown:
+        raise ValueError("not a kept choice: %s" % ", ".join(unknown))
+    root = Path(root)
+    migrate_shared_settings(root)
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return {key: saved[key] for key in PREFERENCES if key in saved}
+
+
+def migrate_shared_settings(root: PathLike) -> List[str]:
+    """Copy the choices Garrick used to save in
+    System/generated/status-settings.json into the settings file, where they
+    are committed with the workspace. Run it as often as you like: it never
+    replaces a newer choice. Where both files hold the same zone, or both say
+    how a thread opens, the choice in the file written later wins; a choice
+    only one file holds is taken from there. Returns the keys it copied, and
+    writes nothing when there is nothing to copy."""
+    root = Path(root)
+    chosen = _preferences(root)[1]
+    if not chosen:
+        return []
+    saved = read_settings(root)
+    saved.update(chosen)
+    _write_settings(root, saved)
+    return sorted(key for key in chosen if key != "default")
+
+
+def _preferences(root: PathLike) -> Tuple[dict, dict]:
+    """(the choices as they stand, what of them the settings file does not
+    hold yet). The settings file is their home; an older Garrick's
+    System/generated/status-settings.json is read beside it, and of the two
+    the file written later wins, zone by zone and for how a thread opens."""
+    root = Path(root)
+    saved = read_settings(root)
+    mine = {key: saved[key] for key in PREFERENCES if key in saved}
+    was = root.joinpath(*SHARED_SETTINGS_WAS)
+    try:
+        old = json.loads(was.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return mine, {}
+    if not isinstance(old, dict):
+        return mine, {}
+    try:
+        theirs_is_older = was.stat().st_mtime <= root.joinpath(*SETTINGS).stat().st_mtime
+    except OSError:
+        theirs_is_older = False      # no settings file yet: anything saved there is the newer choice
+    chosen: dict = {}
+    zones = old.get("zones")
+    mine_zones = mine["zones"] if isinstance(mine.get("zones"), dict) else {}
+    if isinstance(zones, dict):
+        take = {zone: style for zone, style in zones.items() if not (theirs_is_older and zone in mine_zones)}
+        if take:
+            chosen["zones"] = dict(mine_zones, **take)
+    if "launchers" in old and not (theirs_is_older and "launchers" in mine):
+        chosen["launchers"] = old["launchers"]
+        if "default" in old:
+            chosen["default"] = old["default"]
+    chosen = {key: value for key, value in chosen.items() if mine.get(key) != value}   # the same choice is not a change
+    return dict(mine, **chosen), chosen
+
+
+def _write_settings(root: Path, data: dict) -> None:
+    write_over(root, root, root.joinpath(*SETTINGS), (json.dumps(data, indent=1) + "\n").encode("utf-8"))
 
 
 def release_key(tag: object) -> Optional[tuple]:

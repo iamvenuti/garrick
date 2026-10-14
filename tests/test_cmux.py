@@ -342,6 +342,18 @@ class ResolveTest(CmuxCase):
             with self.subTest(heard=heard):
                 self.assertEqual(self.desk.resolve(heard)["path"], folder)
 
+    def test_a_spoken_form_from_the_note(self):
+        """A name that does not say how it is said is heard by its `spoken` form."""
+        write(self.ws / "System" / "tools" / "garrick_lib.py",
+              (REPO / "template" / "System" / "tools" / "garrick_lib.py").read_text(encoding="utf-8"))
+        folder = self.work / "Acme Review" / "Threads" / "Q4 Planning"
+        note = thread_note("Acme Review", "Q4 Planning").replace(
+            "type:", "spoken: fourth quarter planning\ntype:", 1)
+        write(folder / "Q4 Planning.md", note)
+        for heard in ("fourth quarter planning", "Q4 Planning", "q four planning"):
+            with self.subTest(heard=heard):
+                self.assertEqual(desk.Desk(self.ws).resolve(heard)["path"], folder)
+
     def test_an_alias_from_the_config(self):
         write(self.ws / "System" / "desk.json", json.dumps({"aliases": {"the price": "Pricing"}}))
         self.assertEqual(desk.Desk(self.ws).resolve("the price")["path"], self.pricing)
@@ -698,17 +710,24 @@ class ZoneColourTest(CmuxCase):
 
     def setUp(self):
         super().setUp()
-        write(self.ws / "System" / "generated" / "status-settings.json",
+        write(self.ws / "System" / "garrick-settings.json",
               json.dumps({"launchers": {"note": True}, "zones": {"Work": {"color": "teal", "icon": "briefcase"},
                                                                  "Personal": {"color": "Mauve"}}}))
 
     def colours(self):
         return [c["argv"][1:] for c in self.calls() if c["argv"][0] == "workspace-action"]
 
-    def test_read_from_the_shared_settings(self):
+    def test_read_from_the_committed_settings(self):
         self.assertEqual({"Work": "Teal"}, desk.zone_colours(self.ws))         # cmux's name; an unknown one dropped
-        (self.ws / "System" / "generated" / "status-settings.json").write_text("{", encoding="utf-8")
+        (self.ws / "System" / "garrick-settings.json").write_text("{", encoding="utf-8")
         self.assertEqual({}, desk.zone_colours(self.ws))
+
+    def test_a_colour_an_older_garrick_saved_is_still_read(self):
+        """Up to 0.24.0 the colours sat in System/generated/status-settings.json (#81)."""
+        (self.ws / "System" / "garrick-settings.json").unlink()
+        write(self.ws / "System" / "generated" / "status-settings.json",
+              json.dumps({"zones": {"Work": {"color": "Rose"}}}))
+        self.assertEqual({"Work": "Rose"}, desk.zone_colours(self.ws))
 
     def test_a_thread_tab_colours_its_zones_workspace(self):
         self.state({"workspaces": [{"id": "ws-work", "title": "Work"}]})
@@ -723,7 +742,7 @@ class ZoneColourTest(CmuxCase):
         self.run_desk("open", str(self.ws), "--prompt", "process the inbox")
         self.run_desk("open", str(self.ws / "Wikis" / "Meetings"))
         self.run_desk("open", "pricing", "--workspace", "Scratch")              # not the zone's own workspace
-        write(self.ws / "System" / "generated" / "status-settings.json", json.dumps({"zones": {}}))
+        write(self.ws / "System" / "garrick-settings.json", json.dumps({"zones": {}}))
         self.run_desk("open", "pricing", "--new")
         self.assertTrue({"new-surface", "new-workspace"} & set(self.verbs()))
         self.assertEqual([], self.colours())

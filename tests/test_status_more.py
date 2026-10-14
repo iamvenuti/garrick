@@ -1551,8 +1551,14 @@ class TestWhatALaunchSays(StatusCase):
     def test_the_page_says_it_is_opening_never_that_it_opened(self):
         html = self.page(launchers=("finder", "cmux", "codex", "claude"))
         self.assertIn('data-launchers="finder,cmux,codex,claude"', html)
-        acts = panel(True, ("acts", cards(html)[("Acme Review", "Pricing")]),
-                     launchers="finder,cmux,codex,claude")[0]
+        # The desk marker is set here on purpose. Whether a real card carries
+        # one depends on whether the cmux extra and cmux itself are installed
+        # on the machine, and with no desk cmux is a fourth `data-launch`
+        # button rather than a desk button: that branch is the `plain` case
+        # below. Reading the ambient machine instead would make this pass on
+        # one and fail on the other, which is what it did.
+        desk_card = dict(cards(html)[("Acme Review", "Pricing")], dk=["Work", "Acme Review", "Pricing"])
+        acts = panel(True, ("acts", desk_card), launchers="finder,cmux,codex,claude")[0]
         said = dict(re.findall(r'data-launch="(\w+)"[^>]*?data-say="([^"]*)"', acts))
         self.assertEqual({"finder": "Showing Pricing in Finder…", "codex": "Opening Pricing in Codex…",
                           "claude": "Opening Pricing in Claude…"}, said)

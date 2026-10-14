@@ -59,9 +59,9 @@ The assistant updates the resume note and saves changes to the appropriate local
 
 Select the same Garrick folder in a new app chat, or start a new terminal session there. Say:
 
-> Open the supplier call thread. What do I need to do next?
+> Open Next Call. What do I need to do next?
 
-Step 1 told you what the project and thread were called, and either name finds it. It should answer from the saved note without asking you to retell the conversation. If it cannot, ask it to check the workspace instructions and resume note before importing more material.
+Step 1 told you what the project and thread were called, and either name finds it: the thread's alone where only one thread has it, otherwise both ("Supplier Review, Next Call"). It should answer from the saved note without asking you to retell the conversation. If it cannot, ask it to check the workspace instructions and resume note before importing more material.
 
 Tomorrow, return for that next action. Once this is useful, add another project or an [optional tool](extras/index.md).
 

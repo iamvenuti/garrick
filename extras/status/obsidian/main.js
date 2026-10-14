@@ -93,6 +93,13 @@ class StatusView extends ItemView {
 			attr: { src: pathToFileURL(page).href, style: "width:100%;height:100%" },
 		});
 		this.web.addEventListener("console-message", (e) => this.heard(e.message || ""));
+		// GarrickReads tells the page this plugin answers a request that only reads,
+		// so it may ask what is running (page_action.py's "operations"); GarrickReady
+		// makes it ask now, since the page's script has already run by here. A plugin
+		// without them is never asked, and the page works as it did before the record.
+		this.web.addEventListener("dom-ready", () => {
+			this.web.executeJavaScript("window.GarrickReads=true;window.GarrickReady&&window.GarrickReady()").catch(() => {});
+		});
 		this.web.addEventListener("will-frame-navigate", (e) => {
 			if (e.isMainFrame && !e.url.startsWith("file:")) this.plugin.follow(e.url);
 		});

@@ -803,9 +803,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return (try? JSONSerialization.data(withJSONObject: urls)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 	}()
 
+	// GarrickReads tells the page this app answers a request that only reads, so
+	// it may ask what is running (page_action.py's "operations"). An app without
+	// it is never asked, and the page works as it did before the record. It is
+	// set at document start, before the page's own scripts run.
 	func appScript() -> WKUserScript {
 		WKUserScript(source: """
-			window.GarrickApp=\(appJSON());(function(i){var r=document.documentElement;r.classList.add('appicons');
+			window.GarrickApp=\(appJSON());window.GarrickReads=true;
+			(function(i){var r=document.documentElement;r.classList.add('appicons');
 			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
 			window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:{line:e.lineno||0,
 			col:e.colno||0,msg:String(e.message||'').replace(/(["'`]).*?\\1/g,'…').slice(0,160)}})}catch(x){}});

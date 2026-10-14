@@ -1061,12 +1061,19 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # from the page: only the outcome "saved" is a success. A workspace without the
 # module is told so once. ACTION_LOST stays the last resort for a reply that
 # never comes.
+#
+# It asks only a host that has said it can answer a request that reads: the
+# host sets window.GarrickReads as the page loads, and calls window.GarrickReady
+# once it has, when that is after this script ran. An older app or plugin, which
+# toasts and rebuilds the page for every request it passes on, says nothing, is
+# asked nothing, and behaves exactly as it did in 0.26.0, with ACTION_LOST as
+# the fallback. The record is still written, and is there to be read as soon as
+# the host is updated.
 ACTION_TOAST = 4
 ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_QUIET = 20
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
               "delete", "undo", "interrupt")
 
@@ -1088,7 +1095,7 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,QUIET=@QUIET@,SEEN=[],OPS={};
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={};
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
@@ -1121,12 +1128,14 @@ function sweep(){var now=Date.now(),changed=false;W.forEach(function(e){if(e.out
 if(now-e.t0>LOST*1000){e.out={ok:false,say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
 else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}});if(changed)keep();return changed}
 function tick(){if(sweep())render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
-/* the record: ask for the open set on load, and every POLL seconds while an entry of ours is running; only Python reads the file */
-function poll(first){var now=Date.now();if(OPS.durable===false)return;
+/* the record: ask for the open set on load, and every POLL seconds while an entry of ours is running; only Python reads the file.
+   Never asked of a host that has not said it can answer a request that reads: an older one would toast and rebuild the page for each */
+function poll(first){var now=Date.now();if(!window.GarrickReads||OPS.durable===false)return;
 if(!first&&(now-(OPS.asked||0)<POLL*1000-200||!W.some(function(e){return!e.out})))return;
 OPS.asked=now;keep();host.postMessage({act:{verb:'operations'}})}
-function heard(out){OPS.replied=Date.now();
-if(!out||!out.ok||out.durable===false){OPS.durable=false;if(!OPS.said){OPS.said=1;toast('Actions are not recoverable here: if this page reloads while one is running, look at git status in its zone.')}keep();run();return}
+/* a host whose flag is set after this script has run says so, and the first ask is made then */
+window.GarrickReady=function(){poll(true)};
+function heard(out){if(!out||!out.ok||out.durable===false){OPS.durable=false;if(!OPS.said){OPS.said=1;toast('Actions are not recoverable here: if this page reloads while one is running, look at git status in its zone.')}keep();run();return}
 OPS.durable=true;OPS.verbs=out.verbs||[];OPS.lost=out.lost||'';reconcile(out.ops||[]);keep();render();run()}
 function reconcile(ops){var now=Date.now(),by={};ops.forEach(function(r){by[r.op]=r});
 ops.forEach(function(r){var e=W.filter(function(x){return x.op===r.op})[0],end=r.state==='completed'||r.state==='failed';
@@ -1153,9 +1162,9 @@ mark(e.op,out&&out.op);if(now-e.t0>TOAST*1000){e.out={ok:out&&out.outcome?out.ou
 var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 if(box)box.addEventListener('click',function(e){var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
-sweep();render();run();if(!(OPS.replied&&Date.now()-OPS.replied<QUIET*1000))poll(true)})();
+sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
-    .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@QUIET@", str(ACTION_QUIET)) \
+    .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":")))
 
 

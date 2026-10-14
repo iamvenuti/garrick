@@ -35,7 +35,7 @@ spec.loader.exec_module(page_action)
 # the script again on the same storage, as a rebuilt page does.
 HARNESS = textwrap.dedent(r"""
     const vm = require("vm");
-    const [js, steps] = JSON.parse(process.argv[1]);
+    const [js, steps, reads] = JSON.parse(process.argv[1]);
     const store = {}, posted = [], asked = [], out = [];
     let toasts = 0;
     let clock = 1000000, ctx, box, toast, style, interval, chained = [];
@@ -64,6 +64,7 @@ HARNESS = textwrap.dedent(r"""
       ctx.window = ctx;                    // as in a browser, the page's globals are the window's
       ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => (m.act && m.act.verb === "operations" ? asked : posted).push(m) } } };
       ctx.GarrickActed = (q, o) => chained.push(q.verb);
+      if (reads) ctx.GarrickReads = true;        // as the Mac app sets it, before the page's scripts run
       vm.createContext(ctx);
       vm.runInContext(js, ctx);
     }
@@ -76,6 +77,8 @@ HARNESS = textwrap.dedent(r"""
       if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
+      // as the Obsidian plugin does it, once the page's script has already run
+      if (what === "host") { ctx.GarrickReads = true; if (ctx.window.GarrickReady) ctx.window.GarrickReady(); }
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
       out.push({ r, box: box.hidden ? "" : box.innerHTML, toast: toast.textContent, opacity: toast.style.opacity,
@@ -92,8 +95,11 @@ HOME = {"verb": "todo-add", "zone": "Personal", "target": "-", "date": "-", "tex
 
 
 class NodeCase(unittest.TestCase):
-    def run_js(self, *steps):
-        done = subprocess.run(["node", "-e", HARNESS, json.dumps([status.WORK_JS, [list(s) for s in steps]])],
+    def run_js(self, *steps, **kw):
+        """`reads`: whether the host says it can answer a request that reads, as
+        the Mac app does at document start. False for a host from 0.26.0."""
+        done = subprocess.run(["node", "-e", HARNESS, json.dumps([status.WORK_JS, [list(s) for s in steps],
+                                                                  kw.get("reads", True)])],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
@@ -304,10 +310,36 @@ class TestWorkFromTheRecord(NodeCase):
         out = self.run_js(("ops", 1, {"ok": True, "durable": False, "verbs": [], "ops": []}))
         self.assertIn("Actions are not recoverable here", out[0]["toast"])
 
-    def test_a_rebuild_straight_after_an_answer_does_not_ask_again(self):
+    def test_each_load_asks_once_and_a_rebuild_is_a_load(self):
+        """The host rebuilds the page after every request it does, so each
+        rebuild asks once more: that is the reattachment, and it cannot loop,
+        because a host that is asked neither toasts nor rebuilds for it."""
         out = self.run_js(("ops", 1, reply()), ("reload", 3), ("tick", 3), ("reload", 40), ("tick", 40))
-        self.assertEqual([1, 1, 1], [out[0]["asked"], out[1]["asked"], out[2]["asked"]])
-        self.assertEqual(2, out[3]["asked"])                                  # a page long after the last answer asks
+        self.assertEqual([1, 2, 3], [out[0]["asked"], out[2]["asked"], out[4]["asked"]])
+        self.assertEqual(0, out[4]["posted"])                                 # and asking sends no request that acts
+
+    def test_a_host_that_does_not_say_it_reads_is_never_asked(self):
+        """An app or plugin from 0.26.0 toasts and rebuilds the page for every
+        request it passes on, so asking it to read would do that every POLL
+        seconds. It is not asked, and the page behaves as it did."""
+        out = self.run_js(("tick", 0), ("act", 1, PARK, "Parking Birch Entry…"), ("tick", 2), ("tick", 12), ("tick", 60),
+                          ("reload", 61), ("tick", status.ACTION_LOST + 2), reads=False)
+        self.assertEqual([0] * 7, [o["asked"] for o in out])                  # nothing ever left the page
+        self.assertEqual(0, out[0]["toasts"])
+        self.assertEqual(1, out[1]["posted"])                                 # the request itself still went
+        self.assertIn("Parking Birch Entry…", out[1]["box"])
+        self.assertIn("Committing: the wall check can take a minute.", out[3]["box"])    # the ten-second guess, as before
+        self.assertIn("Parking Birch Entry…", out[5]["box"])                  # a reload keeps it from sessionStorage alone
+        self.assertNotIn("recoverable", "".join(o["toast"] for o in out))     # and is never told the record is missing
+        self.assertIn("No reply after 16 min", out[6]["box"])                 # ACTION_LOST is still the fallback
+
+    def test_a_host_that_says_so_after_the_page_loaded_is_asked_then(self):
+        """The Obsidian plugin sets the flag on dom-ready, after this script ran."""
+        out = self.run_js(("tick", 0), ("host", 1), ("ops", 2, reply(record(OP, phase="checking"))), reads=False)
+        self.assertEqual(0, out[0]["asked"])
+        self.assertEqual(1, out[1]["asked"])                                  # the flag's own kick asks
+        self.assertIn("Parking Birch Entry…", out[2]["box"])                  # and reattaches, as on the app
+        self.assertIn("Committing: the wall check can take a minute.", out[2]["box"])
 
     def test_a_reload_keeps_what_was_seen(self):
         done = record(OP, state="completed", outcome="saved", done=1000.0, say="Birch Entry is parked")
@@ -357,6 +389,16 @@ class TestWorkOnThePage(StatusCase):
 
 
 class TestWorkHosts(unittest.TestCase):
+    def test_each_host_says_it_can_answer_a_request_that_reads(self):
+        swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn("window.GarrickReads=true;", swift)
+        self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
+        self.assertIn('request["verb"] as? String == "operations"', swift)     # and it neither toasts nor rebuilds for it
+        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn('"dom-ready"', plugin)
+        self.assertIn('window.GarrickReads=true;window.GarrickReady&&window.GarrickReady()', plugin)
+        self.assertIn('request.verb === "operations"', plugin)
+
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]

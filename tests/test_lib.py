@@ -197,6 +197,54 @@ class TestSoundsAlike(unittest.TestCase):
         self.assertTrue(lib.sounds_alike("Tabs", "Taps"))
 
 
+class TestTagFor(unittest.TestCase):
+    """The tag offered for a party. One algorithm, here, for the installer's
+    question and for `scaffold.py party`, so a workspace can never hold a tag
+    its own installer would have refused. Nobody is ever asked for one."""
+
+    def test_the_plain_answer_is_the_first_word(self):
+        self.assertEqual("acme", lib.tag_for("Acme Corp"))
+        self.assertEqual("birch", lib.tag_for("Birch & Co"))
+        self.assertEqual("cafe", lib.tag_for("Cafe\u0301 Birch"))        # accents dropped, not transliterated away
+        self.assertEqual("olark", lib.tag_for("O'Lark Partners"))
+
+    def test_a_collision_widens_with_the_next_word(self):
+        self.assertEqual("acme-corp", lib.tag_for("Acme Corp", {"acme"}))
+        self.assertEqual("acme-corp-ltd", lib.tag_for("Acme Corp Ltd", {"acme", "acme-corp"}))
+        # The installer holds its tags as {tag: name}; its keys are the taken ones.
+        self.assertEqual("acme-corp", lib.tag_for("Acme Corp", {"acme": "Acme Ltd"}))
+
+    def test_then_the_zone_is_folded_in(self):
+        """One organisation in two capacities: the zone is what tells them apart,
+        and the wider tag is what a wall between the two is written in."""
+        self.assertEqual("acme-consulting", lib.tag_for("Acme Corp", {"acme", "acme-corp"}, "Consulting"))
+        self.assertEqual("cobalt-work", lib.tag_for("Cobalt", {"cobalt"}, "Work"))
+        self.assertEqual("cobalt", lib.tag_for("Cobalt", (), "Work"))     # no collision, no zone in the tag
+
+    def test_then_a_number(self):
+        """The last resort, where the name has no more words and the zone is taken too."""
+        self.assertEqual("cobalt-2", lib.tag_for("Cobalt", {"cobalt"}))
+        self.assertEqual("cobalt-2", lib.tag_for("Cobalt", {"cobalt", "cobalt-work"}, "Work"))
+        self.assertEqual("cobalt-3", lib.tag_for("Cobalt", {"cobalt", "cobalt-2"}))
+
+    def test_nothing_to_offer_is_said_as_nothing(self):
+        """A name no tag can come from: the caller asks rather than inventing one."""
+        for name in ("4Birch", "4Birch Holdings", "12 Cobalt Lanes", "!!!", "", None):
+            self.assertEqual("", lib.tag_for(name), name)
+        self.assertEqual("", lib.tag_for("Cobalt", {"cobalt"} | {"cobalt-%d" % n for n in range(2, 10)}))
+        self.assertEqual("", lib.tag_for("A" * 40))                        # longer than a tag may be
+
+    def test_every_answer_is_one_the_rule_accepts(self):
+        taken = set()
+        for name in ("Acme Corp", "Birch & Co", "O'Lark Partners", "Dune-Cedar Group", "Zoe\u0308 & U\u0308nal",
+                     "Acme Corp", "Acme Corp", "Acme Corp"):
+            tag = lib.tag_for(name, taken, "Work")
+            self.assertRegex(tag, lib.TAG_RE, name)
+            self.assertNotIn(tag, taken, name)
+            taken.add(tag)
+        self.assertIn("one lowercase word", lib.TAG_RULE)
+
+
 class TestContext(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

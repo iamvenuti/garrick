@@ -85,6 +85,19 @@ git -C Zones/Work add Acme
 git -C Zones/Work commit -m "New project Acme"
 ```
 
+For a party that is not in the table yet, one command adds it and picks the tag itself, so you never have to invent one:
+
+```sh
+python3 System/tools/scaffold.py party --name "Cobalt Freight" --zone Work --what "Supplier"
+```
+
+With `--check` it writes nothing and answers in one line: that the party is new and what its tag would be, that it is already there with its tag, its zone and any project that names it, or, where two of your parties share the name, which two they are. A party row goes in `System/context.md`, which belongs to the workspace's own repository, while a project goes in its zone's, so the row is committed on its own first and the project is refused until it is there:
+
+```sh
+git add System/context.md
+git commit -m "Cobalt Freight added as a party (cobalt)"
+```
+
 Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first, and asks whether a wall belongs between it and any existing party.
 
 ## Another zone

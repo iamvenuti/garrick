@@ -102,8 +102,13 @@ mode* in the `threads` skill describes.
    - Anything else the probe flagged: say what it means, and what it would
      take, then leave it unless the user asks.
 6. **Hand over.** Read `System/context.md` and list the projects:
-   - No parties and no projects yet: "Next, I'd like to ask you about your
-     work, one question at a time. Say 'interview me' when you're ready."
+   - No parties and no projects yet: offer the short way first, and the
+     interview as the fuller one. "Tell me one thing you need to prepare,
+     and I'll set up just enough to do it. Or say 'interview me' and I'll
+     ask about your work first, one question at a time." The short way is
+     the `meetings` skill's *Nothing there yet*, which asks one question and
+     leaves a brief in a thread note; the `interview` skill is the twenty
+     minutes that sets up the whole workspace first, and is unchanged.
    - Projects whose resume points are still the template's: offer the next
      section. "Three of your threads have no real resume point yet. Shall we
      fill them in? It takes a minute each."

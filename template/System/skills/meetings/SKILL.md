@@ -342,8 +342,11 @@ writes a file only when the user asks to save the brief (step 7).
 1. **Resolve X**, against Parties, People and Aliases in `System/context.md`:
    a party directly, or a person through their party. A project, or "this
    project", stands for its hub's `party`, and is the project step 2 needs.
-   Close to two entries, or not found: ask, naming the candidates. Never
-   guess.
+   Close to two entries: ask, naming the candidates. Never guess. Two
+   parties of the same name: *Nothing there yet*, step 4, which is the same
+   question. Nothing found at all, and the request names work to prepare
+   for: *Nothing there yet*, below, which sets up just enough to answer it
+   and comes back here.
 2. **Whose behalf this is for.** A wall is checked against a project's
    party, so find one: the thread in focus this session, or ask "which
    project is this for?" if none is. If the user explicitly wants the
@@ -413,6 +416,146 @@ Written: the same opening, then the pages drawn on (as links), the open
 actions from `Todo.md`, and any quoted commitments; when saved, the file's
 path and the commit hash.
 
+## Nothing there yet: from an ordinary request to a saved brief
+
+*Prep* resolves a name against what the workspace already holds. This
+section is for the request that resolves to nothing: "help me prepare my
+next supplier call", in a workspace that has never heard of the supplier.
+It sets up just enough to answer that, and hands back to *Prep*.
+
+*Prep* promises to read and not write until it is asked, and that promise
+stands. This section is not *Prep*, and makes its own: it writes the
+Parties row, the project, its first thread and the brief in that thread
+note, and asks one question before it starts. Everything it writes is
+carried by the request that named the work, bar the Parties row, which is
+the workspace's own file rather than the project's, and that row is what
+the one question covers. There is no second confirmation afterwards.
+
+Nobody is asked for a tag, a thread name, a mail domain, a person's row, a
+second wall or an integration. The tag comes from the script, the names
+come from the user's own words, and the rest is written later, when
+something needs it.
+
+1. **Read `System/context.md` and the zones first.** Then resolve what the
+   request names: an organisation against Parties, a person against People,
+   a name that arrived mangled against Aliases, and an existing project by
+   its hub's `party:`. One command answers the party half and writes
+   nothing:
+
+   ```sh
+   python3 System/tools/scaffold.py party --check --name "<Party>"
+   ```
+
+   It says one of three things: that the party is new and what tag it would
+   take; that it is already a party, with its tag, its zone and every
+   project whose hub note names that tag; or that two of the user's parties
+   are called that, and which two. It lists; it never picks.
+
+   This step is also how the route picks itself up after an interruption.
+   It keeps nothing of its own: what it has already done is the Parties
+   row, the project folder and the thread note, and re-reading finds all
+   three. Nothing already answered is asked again, the party script writes
+   no second row for a party already there, and the project script refuses
+   a name that exists.
+
+2. **Already a party: ask nothing.** Its project is reused, and so is the
+   thread the request is about. Where the work is new to that project, the
+   request named it, so the thread is made without a question, through the
+   `threads` skill's *New*. Then go to *Prep* step 1, which now resolves.
+
+3. **New party: one question, and only this one.**
+
+   > Acme Corp isn't in your workspace yet. Shall I add it as a party in
+   > Work, which means its confidences are yours to keep, and start a
+   > Supplier call thread for it?
+
+   With more than one zone and nothing in the request to settle which, the
+   same question names the alternative, so a yes answers both at once:
+   "Shall I add it as a party in Work, or in Personal if it is yours alone,
+   which means its confidences are yours to keep, and start a Supplier call
+   thread for it?" One yes covers the Parties row, the tag, the project and
+   the first thread. A no ends it: answer from what the request itself says,
+   and write nothing.
+
+4. **Two parties of one name: ask, and never pick one.** Saying the name
+   says nothing about which capacity is meant, so this is the user's to
+   answer, every time, however plain the rest of the request is.
+
+   > Two of your parties are called Acme Corp: the supplier in Work, and
+   > the research client in Consulting. Which one is this call with?
+
+   And where material is in hand that names both, and a wall stands between
+   them:
+
+   > These notes mention both, and a wall stands between them. Which one is
+   > this brief for? What belongs to the other stays out.
+
+   Then *Prep* step 4 holds the other side's material out, and step 6 says
+   that something was held back and nothing more.
+
+5. **The same organisation in a second capacity: ask about the wall.** Where
+   the user says the new party is an organisation already in Parties, under
+   another hat, the two need the one thing that tells them apart in writing:
+
+   > Is this the same Acme Corp in another capacity? Shall I keep the two
+   > apart in writing, so neither ever informs the other?
+
+   A yes writes the Walls row, with `--also --walled-from <the first tag>`.
+   A no writes the row without a wall, and says plainly that the workspace
+   check will warn about two parties of one name until a wall is there.
+   Never guess a wall, either way.
+
+6. **On the yes, the two scripts, in this order.** The order is forced:
+   `project` is refused with a tag `System/context.md` does not already
+   carry, and that file is in the workspace's own repository while the
+   project is in its zone's, so the row is committed on its own first. Stage by name,
+   never `git add -A`.
+
+   ```sh
+   python3 System/tools/scaffold.py party --name "<Party>" --zone <Zone> --what "<what it is>"
+   git add -- System/context.md
+   git commit -m "<Party> added as a party (<tag>)"
+   python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
+   git -C "Zones/<Zone>" add -- "<Project>"
+   git -C "Zones/<Zone>" commit -m "New project <Project> (<tag>), first thread <Thread>"
+   ```
+
+   The project and the thread are named from the user's own words: a
+   supplier call becomes the project Supplier Review and the thread Next
+   Call. Nothing is invented that the user would not recognise, and no name
+   carries a date or a code. Where the script asks for a spoken form, put
+   that one line to the user, as the `threads` skill's *New* step 5 does.
+
+7. **The material, where there is any.** A transcript or notes go in first,
+   through *Ingest a transcript* or *Notes pasted in*, so the brief has a
+   page to cite. Nothing to file: say so in one line, and brief from the
+   request alone.
+
+8. **Back to *Prep*, step 1.** The name now resolves, the project from step
+   6 is the project its wall check runs against, and the brief is composed
+   there, by its steps 3 to 6.
+
+9. **The brief goes into the new thread note**, which is the thread's resume
+   point: the user's own words under `## The ask`, the brief under
+   `## State of play`, and the `### Resume here` table filled in as the
+   `threads` skill's *Wrap* fills it, with the filed page linked as the
+   citation and the one thing due as the Next action. That action is a line
+   in the zone's `Todo.md` as well, in the one shape every skill writes:
+   `- [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>`. A file in
+   `Deliverables/` is offered rather than written: *Prep* step 7 saves one
+   when the user asks.
+
+10. **Then say what was set up, in two sentences**, and nothing longer.
+    Spoken: "Acme Corp is a party in Work now, with a Supplier Review
+    project and a Next Call thread. The brief is in the thread note, and
+    the next thing due is the carrier quote on Friday." Written: the same,
+    then the paths and the two commit hashes.
+
+What this route never does: resolve two parties of one name by itself,
+guess a wall, create a zone, write a mail domain, a person's row or an
+alias nobody asked about, brief across more than one party, send anything,
+or ask the user for a tag.
+
 ## Lint: "lint the meetings", "lint the wikis"
 
 As the `knowledge` skill's *Lint*, for this wiki, and it changes nothing:
@@ -469,7 +612,9 @@ asked for the detail.
 - **`prep` writes nothing unless asked.** Asked to save the brief, it
   writes that one file, in the project's `Deliverables/`, and commits it in
   that zone. Never a meeting page, a person page, another project or
-  anything outside the zone.
+  anything outside the zone. *Nothing there yet* is the one procedure here
+  that writes before it is asked to save anything, and it asks its one
+  question first; it is reached from *Prep* step 1 and never runs on its own.
 - **It does not sweep or tidy `Todo.md`.** It appends this conversation's
   owed actions and nothing else: no re-triaging, no ticking off unrelated
   lines.

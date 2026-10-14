@@ -45,6 +45,8 @@ SOURCES = {
     "delete": (SKILLS / "threads" / "SKILL.md", '## Delete: "delete X"'),
     "intake skill": (SKILLS / "intake" / "SKILL.md", None),
     "meetings skill": (SKILLS / "meetings" / "SKILL.md", None),
+    "short route": (SKILLS / "meetings" / "SKILL.md",
+                    "## Nothing there yet: from an ordinary request to a saved brief"),
 }
 
 # A case: its name, what happens, and the wording that has to answer it.
@@ -105,6 +107,24 @@ GOES_AHEAD = [
         "rename",
         ["**One match goes ahead**", "the instruction named it, so do not ask it back"],
         ["**Confirm in one line** before acting"],
+    ),
+    case(
+        "prepare for a party the workspace already has",
+        "\"Help me prepare my next Acme Corp call.\" Acme Corp is in Parties and Acme Review is its "
+        "project, so nothing about the workspace has to change.",
+        "short route",
+        ["**Already a party: ask nothing.** Its project is reused",
+         "It lists; it never picks."],
+    ),
+    case(
+        "set the work up on the one yes that was already given",
+        "The user said yes to adding Acme Corp as a party. The Parties row, the project, its first "
+        "thread, the brief in that note and the zone's `Todo.md` line all follow from it.",
+        "short route",
+        ["One yes covers the Parties row, the tag, the project and the first thread.",
+         "There is no second confirmation afterwards.",
+         "That action is a line in the zone's `Todo.md` as well"],
+        ["There is a second confirmation"],
     ),
     case(
         "add a zone with a name and a purpose",

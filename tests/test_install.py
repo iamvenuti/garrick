@@ -452,20 +452,19 @@ class SourceVersionTest(unittest.TestCase):
         self.assertEqual("VERSION: export-subst: set", git(REPO, "check-attr", "export-subst", "VERSION"))
 
 
-class TagGuessTest(unittest.TestCase):
-    """The tag the questions offer is always one they would accept."""
+class TagRuleTest(unittest.TestCase):
+    """The installer keeps no tag algorithm of its own. One rule and one guess
+    live in `garrick_lib`, which the installer loads and a workspace's own
+    `scaffold.py party` loads too; the answers are tested in `test_lib.py`."""
 
-    def test_guesses(self):
+    def test_the_installer_asks_the_library(self):
         installer = load_installer()
-        guess = installer.tag_guess
-        self.assertEqual(guess("Acme Corp"), "acme")
-        self.assertEqual(guess("Birch & Co"), "birch")
-        self.assertEqual(guess("Acme Corp", {"acme": "Acme Ltd"}), "acme-corp")
-        self.assertEqual(guess("Café Birch"), "cafe")
-        for name in ("4Birch", "4Birch Holdings", "12 Cobalt Lanes", "!!!", ""):
-            self.assertEqual(guess(name), "", name)
-        for name in ("Acme Corp", "Birch & Co", "O'Lark Partners", "Dune-Cedar Group", "Zoë & Ünal"):
-            self.assertRegex(guess(name), installer.TAG_RE, name)
+        for name in ("TAG_RE", "TAG_RULE", "tag_guess", "tag_for"):
+            self.assertFalse(hasattr(installer, name), "install.py still carries %s of its own" % name)
+        source = INSTALL.read_text(encoding="utf-8")
+        for use in ("pl.TAG_RE.match", "pl.TAG_RULE", "pl.tag_for("):
+            self.assertIn(use, source, use)
+        self.assertEqual("acme", installer.lib().tag_for("Acme Corp"))
 
 
 class TargetIdentityTest(unittest.TestCase):

@@ -871,13 +871,11 @@ class TestTheThreadsList(StatusCase):
         self.assertIn("NSRect(x: 10 + indent, y: bounds.midY - 3, width: 6, height: 6)", menu)   # the menu's, before it, the name at 21
 
 
-# PARK_JS against a page status.py wrote, in a DOM just big enough for it:
-# the requests, each with page_action.py's reply, then what the list shows.
-DOM_HARNESS = r"""
-const vm = require("vm");
-const [html, js, steps, redo, expect] = JSON.parse(process.argv[1]);
-// Just enough of a DOM for PARK_JS on a page status.py wrote: elements, text,
-// attributes, the selectors it uses, and an HTML reader for well-formed markup.
+# Just enough of a DOM for a script the page ships, run against the page
+# status.py wrote: elements, text, attributes, the selectors it uses, and an
+# HTML reader for well-formed markup. PARK_JS's harness, just below, shares it
+# with LAYOUT_JS's, further down.
+DOM = r"""
 const VOID = new Set(["meta", "link", "input", "br", "img", "hr", "path", "circle", "rect", "line"]);
 const RAW = new Set(["script", "style", "title", "textarea"]);
 const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
@@ -1027,6 +1025,15 @@ function parse(h, parent) {
     i = end;
   }
 }
+"""
+
+
+# PARK_JS against a page status.py wrote: the requests, each with
+# page_action.py's reply, then what the list shows.
+DOM_HARNESS = r"""
+const vm = require("vm");
+const [html, js, steps, redo, expect] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
 const doc = new El("#document");
 parse(html, doc);
 const store = {};
@@ -1423,3 +1430,101 @@ class TestWhereTheChoicesLive(StatusCase):
         self.assertIn('<h3 class="zc zc-teal">', html)
         self.assertEqual({"launchers": ["note", "claude"], "default": "claude"},
                          json.loads(re.search(r'id="launch-settings">(.*?)</script>', html, re.S).group(1)))
+
+
+# LAYOUT_JS against a page status.py wrote, with whatever a window had saved
+# under garrick-status-layout: what each slot then holds, in order, and which
+# cards are hidden.
+LAYOUT_HARNESS = r"""
+const vm = require("vm");
+const [html, js, saved] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+const doc = new El("#document");
+parse(html, doc);
+const store = {};
+if (saved !== null) store["garrick-status-layout"] = JSON.stringify(saved);
+const ctx = { JSON, String, Array, Object, setTimeout: () => 0, clearTimeout: () => {},
+  localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
+                  removeItem: (k) => { delete store[k]; }, get length() { return Object.keys(store).length; },
+                  key: (i) => Object.keys(store)[i] },
+  document: { querySelectorAll: (s) => doc.querySelectorAll(s), querySelector: (s) => doc.querySelector(s),
+              createElement: (t) => new El(t), getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null,
+              addEventListener: () => {} } };
+ctx.window = {};
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+const slots = {};
+doc.querySelectorAll("[data-slot]").forEach((s) => {
+  slots[s.getAttribute("data-slot")] = s.children.filter((c) => c.classList.contains("card")).map((c) => c.id);
+});
+process.stdout.write(JSON.stringify({ slots, hidden: doc.querySelectorAll("[data-slot]>.card[id]")
+  .filter((c) => c.hidden).map((c) => c.id), saved: store["garrick-status-layout"] || null }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestASavedLayoutSurvivesANewDefault(StatusCase):
+    """#102: the order a build writes is a default. A window that has chosen a
+    layout keeps every card where it put it; *Reset view* is what adopts the
+    new order."""
+
+    def run_js(self, saved, html=None):
+        import subprocess
+        html = html if html is not None else self.page()
+        done = subprocess.run(["node", "-e", LAYOUT_HARNESS, json.dumps([html, status.LAYOUT_JS, saved])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    # What a window running 0.27.0 could have saved: the old default, with the
+    # graph and the threads at the top, and two cards moved by hand.
+    OLD = {"v": 2, "c": {"top": ["graph", "threads"], "left": ["todo"], "right": ["inboxes"], "bottom": [],
+                         "status-left": ["checks", "repos"], "status-right": ["wikis"], "status-bottom": []}, "h": []}
+
+    def test_a_window_with_nothing_saved_takes_the_new_order(self):
+        out = self.run_js(None)
+        self.assertEqual(["recent", "due"], out["slots"]["top"])
+        self.assertEqual(["thought", "todo"], out["slots"]["left"])
+        self.assertEqual(["waiting", "inboxes"], out["slots"]["right"])
+        self.assertEqual(["threads", "graph"], out["slots"]["bottom"])
+        self.assertEqual([], out["hidden"])
+        self.assertIsNone(out["saved"])                     # and nothing is written until something is moved
+
+    def test_a_saved_layout_keeps_every_card_where_it_was_put(self):
+        moved = json.loads(json.dumps(self.OLD))
+        moved["c"]["left"] = ["inboxes", "todo"]            # the user dragged Inboxes over, and hid Wikis
+        moved["c"]["right"] = []
+        moved["c"]["status-right"] = []
+        moved["c"]["status-bottom"] = ["wikis"]
+        moved["h"] = ["wikis"]
+        out = self.run_js(moved)
+        self.assertEqual(["thought", "inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
+        self.assertEqual(["waiting"], out["slots"]["right"])        # which it emptied: only the new card is there
+        self.assertEqual(["wikis"], out["slots"]["status-bottom"])
+        self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
+        self.assertEqual(["recent", "due", "graph", "threads"], out["slots"]["top"])   # the new cards lead, the rest as saved
+
+    def test_a_card_this_release_added_keeps_the_place_the_build_gave_it(self):
+        out = self.run_js(self.OLD)
+        self.assertEqual(["recent", "due", "graph", "threads"], out["slots"]["top"])
+        self.assertEqual(["thought", "todo"], out["slots"]["left"])
+        self.assertEqual(["waiting", "inboxes"], out["slots"]["right"])
+        self.assertEqual([], out["slots"]["bottom"])        # nothing the saved layout named moves for them
+
+    def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):
+        out = self.run_js({"v": 2, "c": {"top": ["ghost", "threads"]}, "h": ["ghost"]})
+        self.assertEqual(["recent", "due", "threads"], out["slots"]["top"])
+        self.assertEqual([], out["hidden"])
+
+    def test_an_older_layout_than_the_one_in_use_is_not_replayed(self):
+        out = self.run_js({"v": 1, "c": {"top": ["todo"]}, "h": ["threads"]})
+        self.assertEqual(["recent", "due"], out["slots"]["top"])     # v1 is ignored, as it always was
+        self.assertEqual([], out["hidden"])
+        self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                 # and v2 is still what save() writes
+        self.assertIn("if(L&&L.v===2)", status.LAYOUT_JS)
+
+    def test_reset_view_is_what_adopts_a_new_order(self):
+        self.assertIn("var r=document.getElementById('reset-view');", status.LAYOUT_JS)
+        self.assertIn("if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme'&&k!=='garrick-launchers')ks.push(k)",
+                      status.LAYOUT_JS)                              # the layout goes with the window's own storage
+        self.assertIn("in the order this Garrick builds", self.page())

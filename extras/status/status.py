@@ -676,6 +676,47 @@ def todo_row(r: dict, today: dt.date, actions: bool) -> str:
                '<div class="tmeta">%s</div>' % "".join(meta) if meta else "", date))
 
 
+def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws: Path) -> None:
+    """Hang what a thread owes on each of its rows: `actions`, its open task
+    lines; `next`, the most pressing of them; `late`, whether one of them is
+    overdue or due a chase; `flagged`, how many check findings name a file in
+    its folder; and `urgent`, those two together.
+
+    The actions are the zone's own task lines, the ones the Todo tab shows: a
+    line in `Todo.md` whose `[[label]]` names the thread, and any line in the
+    thread's own folder. Urgency is the action's and never the row's age. A
+    thread nobody has touched for seven weeks is often simply slow, or
+    waiting on somebody; a thread with nothing open at all is not urgent
+    either, and `next` being None is what the cards say so from."""
+    flags: Dict[str, int] = {}
+    for f in (C or {}).get("findings") or []:
+        path = str(f.get("path") or "")
+        if path:
+            flags[path] = flags.get(path, 0) + 1
+    per_zone = {z["zone"]: [r for _, rows in z["groups"] for r in rows] for z in lists}
+    for zone, data in T.items():
+        labels: Dict[str, List[dict]] = {}
+        folders: Dict[str, List[dict]] = {}
+        for a in per_zone.get(zone, []):
+            if a["file"] != "Todo.md":
+                folders.setdefault(Path(a["file"]).parent.as_posix(), []).append(a)
+            elif a["label"]:
+                labels.setdefault(a["label"].casefold(), []).append(a)
+        for r in data["rows"] + data["parked"]:
+            mine, seen = [], set()
+            for a in labels.get(r["thread"].casefold(), []) + folders.get(Path(r["rel"]).parent.as_posix(), []):
+                if (a["file"], a["key"]) not in seen:
+                    seen.add((a["file"], a["key"]))
+                    mine.append(a)
+            mine.sort(key=lambda a: (0 if a["late"] else 1, a["when"] or dt.date.max, a["alpha"]))
+            here = r["note"].parent.relative_to(ws).as_posix() + "/"
+            r["actions"] = mine
+            r["next"] = mine[0] if mine else None
+            r["late"] = any(a["late"] for a in mine)
+            r["flagged"] = sum(n for path, n in flags.items() if path.startswith(here))
+            r["urgent"] = bool(r["late"] or r["flagged"])
+
+
 def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
     """Per zone, the projects the + dialog offers, each with the threads that
     have notes of their own. A project is parked when all its threads are."""
@@ -1769,7 +1810,7 @@ def ignored(rel: str, filters: List[object]) -> bool:
 
 
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False,
-          desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
+          desk: Optional[Dict[str, str]] = None, drive: bool = False, urgent: Optional[set] = None) -> dict:
     """Every note in the zones and the wikis, and the [[links]] between them.
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
@@ -1783,7 +1824,10 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     note no group takes is grey; the vault's ignore filters (.obsidian/app.json)
     leave notes out, as Obsidian's graph does. Elsewhere each kind keeps its
     colour. Every note in a project carries the folder an app opens it in
-    (`f`), its thread's or else its project's, where an app can open one."""
+    (`f`), its thread's or else its project's, where an app can open one. A
+    thread whose own next action is overdue or due a chase, named by zone,
+    project and thread in `urgent`, is marked `lt` and draws the one ring the
+    graph has: age alone never marks a note."""
     places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
     names = short_names(T)
@@ -1863,6 +1907,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path)})
+        if moving and urgent and (place, project, folder_thread) in urgent:
+            nodes[-1]["lt"] = 1                  # its next action is overdue or due a chase
         if wiki and nodes[-1]["n"] != title:
             nodes[-1]["N"] = title                   # the whole title, for the card and the tooltip
         vault = vault_at[root]
@@ -2459,7 +2505,9 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     graph gives a note, so one helper draws both. Names, tags, the days since
     the note was updated, whether it is parked (`held` when only because its
     project is), the name to say, its note's link; whether the note has a
-    Resume here block (`r`) and how old that block's date is (`rd`). Where an app to open it in is installed (`cmux`, for any
+    Resume here block (`r`), how old that block's date is (`rd`), and whether
+    its own next action is overdue or due a chase (`lt`), which is the one
+    thing that marks a thread; its age never does. Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
     sessions open), the session's state, and with `drive` (the extra and
     cmux) what the desk opens and closes."""
@@ -2467,6 +2515,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
             "u": link(r["note"]), "r": 1 if r.get("resume") else 0,
             "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
+    if r.get("urgent"):
+        card["lt"] = 1
     if cmux:
         card["f"] = str(r["note"].parent)
     if r.get("held"):
@@ -2790,7 +2840,8 @@ def preview_section(flags: Dict[str, bool]) -> str:
 VIEW_HELP = "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."
 VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="hidden-cards" hidden></div><div class="gacts">'
         '<button class="act" type="button" id="reset-view" title="%s">Reset view</button>%s</div>%s</div></div>'
-        % (E(VIEW_HELP + " Reset view puts every card back in place and shown, folds open, graph and filter as built."),
+        % (E(VIEW_HELP + " Reset view puts every card back in place and shown, in the order this Garrick builds, "
+                         "folds, graph and filter as built."),
            help_button("Reset view", "view"), help_text("view", E(VIEW_HELP))))
 
 
@@ -3134,6 +3185,194 @@ def cost_chart(L: dict) -> str:
             '<div class="cols" role="img" aria-label="Cost per day, last %d days">%s</div><div class="ticks">%s</div>' % (DAYS, DAYS, cols, ticks))
 
 
+# ------------------------------------------------- what you were doing, what you owe
+# Overview opens on four things, in this order: the threads you touched most
+# recently with each one's next action beside it, what is due or overdue
+# across every zone, somewhere to put a thought that is not yet work, and
+# what waits on a decision from you. The graph keeps every mode it has and
+# sits behind Explore at the foot of the same tab.
+#
+# Nothing here is coloured for age. The days since a note moved are a figure
+# and nothing more; red belongs to the thread's own next action, which
+# thread_actions() works out.
+
+RECENT = 6           # threads Recent work lists, most recently touched first
+DUE_SHOWN = 12       # actions Due and overdue draws; the figure above stays exact
+WAITING_SHOWN = 8    # threads Waiting on you names under each heading
+
+
+def when_chip(a: dict, today: dt.date) -> str:
+    """An action's date as a pill, in the Todo tab's words and colours: red
+    once a due date has passed, or a `#waiting` line's chase date has come."""
+    when = a["when"]
+    if when is None:
+        return '<span class="tdate none">%s</span>' % ("waiting" if a["waiting"] else "no date")
+    rel = "today" if when == today else "tomorrow" if (when - today).days == 1 else \
+        "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b"))
+    return '<span class="tdate %s">%s %s</span>' % ("overdue" if a["late"] else "today" if when == today else "",
+                                                    "Chase" if a["waiting"] else "Due", E(rel))
+
+
+def thread_where(r: dict, styles: Dict[str, dict]) -> str:
+    """Under a thread's name: its project, where that is not its own name, and
+    its zone in the zone's colour."""
+    zone = '<span%s>%s</span>' % (zone_attr(r["zone"], styles), zone_name(r["zone"], styles))
+    return (E(r["project"]) + " · " + zone) if r["thread"] != r["project"] else zone
+
+
+def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
+    """The threads whose notes moved last, each with its next action beside it
+    and how long since it was touched. Parked and finished work stays out, as
+    it stays out of the counts."""
+    rows = [r for z in T.values() for r in z["rows"]]
+    rows.sort(key=lambda r: (r["updated"] is None, -(r["updated"].toordinal() if r["updated"] else 0),
+                             r["thread"].casefold()))
+    body = ""
+    for r in rows[:RECENT]:
+        days = (today - r["updated"]).days if r["updated"] else None
+        a = r.get("next")
+        if a:
+            nxt = '<div class="hnext"><div class="ttext">%s</div>%s</div>' % (md_inline(a["text"]), when_chip(a, today))
+        else:
+            nxt = ('<div class="hnext"><span class="chip nores" title="No open action names this thread, in its zone\'s '
+                   'Todo.md or in its own notes">nothing says what happens next</span></div>')
+        if r.get("flagged"):
+            nxt += '<span class="chip late" title="The check reported %d finding%s against a file in this thread">check</span>' % (
+                r["flagged"], "" if r["flagged"] == 1 else "s")
+        body += ('<div class="hrow" data-ok="%d"><div class="hname"><a href="%s">%s</a><small>%s</small></div>%s'
+                 '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
+                 % (0 if r.get("urgent") else 1, E(link(r["note"])), E(r["thread"]), thread_where(r, styles), nxt,
+                    "%dd" % days if days is not None else "—"))
+    if not body:
+        body = '<p class="muted">No live threads yet.</p>'
+    foot = ('<p class="hint">Last touched is a figure, not a fault. A thread reads as urgent when its own next action is '
+            'overdue, when a <code>#waiting</code> line\'s chase date has come, or when the check names one of its files.</p>')
+    live = sum(len(z["rows"]) for z in T.values())
+    return card("recent", "Recent work", "%s, most recently touched first" % (
+        "every live thread" if live <= RECENT else "%d of %d live threads" % (RECENT, live)), body + foot)
+
+
+def due_card(lists: List[dict], today: dt.date, styles: Dict[str, dict]) -> str:
+    """Every open action whose day has come, across every zone: a due date
+    today or earlier, or a `#waiting` line to chase today or earlier. The
+    Todo tab holds the rest, and the buttons that change a line."""
+    rows = [r for z in lists for _, group in z["groups"] for r in group if r["when"] and r["when"] <= today]
+    rows.sort(key=lambda r: (r["when"], r["zone"].casefold(), r["alpha"]))
+    body = ""
+    for r in rows[:DUE_SHOWN]:
+        thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["label"])) if r["link"] and r["label"]
+               else '<span class="thr">%s</span>' % E(r["label"]) if r["label"] else "")
+        body += ('<div class="hrow due" data-ok="%d"><div class="hname"><span%s>%s</span></div>'
+                 '<div class="hnext"><div class="ttext">%s%s</div></div>%s</div>'
+                 % (0 if r["late"] else 1, zone_attr(r["zone"], styles), zone_name(r["zone"], styles),
+                    thr, md_inline(r["text"]), when_chip(r, today)))
+    more = len(rows) - DUE_SHOWN
+    if more > 0:
+        body += '<p class="hint">and %d more, on the Todo tab</p>' % more
+    if not rows:
+        body = '<p class="muted">Nothing is due today, and nothing is overdue.</p>'
+    late = sum(1 for r in rows if r["late"])
+    meta = "%d due today or earlier · %d overdue or due a chase" % (len(rows), late)
+    return card("due", "Due and overdue", meta,
+                '<div class="hacts"><a class="act" href="#todolist">Open the list</a></div>' + body)
+
+
+def thought_card() -> str:
+    """Somewhere to put a thought that is not yet work. It stays in this
+    browser: the page writes nothing into the workspace, so a thought becomes
+    work when you file it, and not before."""
+    return card("thought", "A thought", "not yet work, and kept in this browser",
+                '<textarea id="thought" class="hthought" rows="4" aria-label="A thought that is not yet work" '
+                'placeholder="Something you do not want to lose, before it is a thread, a note or an action…"></textarea>'
+                '<div class="hacts"><button class="act" type="button" id="thought-copy">Copy</button>'
+                '<button class="act" type="button" id="thought-clear">Clear</button>'
+                '<span class="hint" id="thought-kept"></span></div>'
+                '<p class="hint">This box is this browser\'s own, and nothing in it reaches your workspace on its own. '
+                'Copy it into a note, or paste it to your assistant and say where it belongs.</p>')
+
+
+def waiting_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
+    """What waits on a decision from you: a live thread with nothing saying
+    what happens next, and one whose note has no Resume here block to resume
+    from. Neither is a failure, and neither is about age."""
+    live = [r for z in T.values() for r in z["rows"]]
+    groups = [("Nothing says what happens next", "no open action names it",
+               sorted((r for r in live if not r.get("next")), key=lambda r: r["thread"].casefold())),
+              ("No resume block", "nothing in the note says where it stands",
+               sorted((r for r in live if not r.get("resume")), key=lambda r: r["thread"].casefold()))]
+    body = ""
+    for title, why, rows in groups:
+        if not rows:
+            continue
+        body += '<p class="hgroup">%s · %s</p>' % (E(title), E(why))
+        for r in rows[:WAITING_SHOWN]:
+            body += ('<div class="hrow bare" data-ok="1"><div class="hname"><a href="%s">%s</a><small>%s</small></div>'
+                     '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
+                     % (E(link(r["note"])), E(r["thread"]), thread_where(r, styles),
+                        "%dd" % (today - r["updated"]).days if r["updated"] else "—"))
+        if len(rows) > WAITING_SHOWN:
+            body += '<p class="hint">and %d more</p>' % (len(rows) - WAITING_SHOWN)
+    if not body:
+        body = '<p class="muted">Nothing is waiting on a decision from you.</p>'
+    n = len({(r["zone"], r["project"], r["thread"]) for _, _, rows in groups for r in rows})
+    return card("waiting", "Waiting on you", "%d thread%s" % (n, "" if n == 1 else "s") if n else "nothing", body)
+
+
+def start_card() -> str:
+    """A workspace with no projects: the one request that makes the first one,
+    and where the route is written. The route is the meetings skill's, and is
+    not repeated here."""
+    ask = "help me prepare my next supplier call"
+    return card("start", "Start here", "nothing is set up yet, and nothing needs to be",
+                '<p>Ask your assistant for the thing you actually need, in your own words. There is no tag, zone or '
+                'thread to learn first.</p><p class="hsay">“%s”</p><div class="hacts">%s</div>'
+                '<p class="hint">That one request is the route: your assistant follows <i>Nothing there yet: from an '
+                'ordinary request to a saved brief</i> in <code>System/skills/meetings/SKILL.md</code>, which asks one '
+                'question and leaves you a party, a project, its first thread and the brief in that thread note. It is '
+                'written there, not here.</p>'
+                % (E(ask), copy("Copy the request", ask, "Copied the request. Paste it to your assistant.")))
+
+
+HOME_CSS = r"""
+.hrow{display:grid;grid-template-columns:minmax(0,32%) minmax(0,1fr) auto;gap:10px;align-items:start;padding:8px 6px;border-top:1px solid var(--grid);border-radius:8px}
+.hrow:first-child{border-top:0}.hrow:hover{background:var(--wash)}
+.hrow.bare{grid-template-columns:minmax(0,1fr) auto}.hrow.due{grid-template-columns:minmax(0,96px) minmax(0,1fr) auto}
+.hname{min-width:0}.hname>a{font-weight:560;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hname small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hnext{min-width:0;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.hnext .ttext{flex:1 1 140px;min-width:0}
+.hgroup{margin:10px 2px 2px;font-size:11.5px;color:var(--muted)}.hgroup:first-child{margin-top:0}
+.chip.late{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.hacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+.hthought{display:block;width:100%;min-height:78px;resize:vertical;font:inherit;font-size:13.5px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.hthought:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hsay{font-family:var(--display);font-size:17px;margin:12px 0}
+@media (max-width:820px){.hrow{grid-template-columns:minmax(0,1fr) auto}.hrow .hnext{grid-column:1/-1}}
+"""
+
+
+# The thought pad: this browser's own storage, like the folds and the theme,
+# and cleared by Reset view with the rest. The page writes nothing into the
+# workspace, so a thought is kept where a window keeps what is only its own.
+HOME_JS = r"""
+(function(){var t=document.getElementById('thought');if(!t)return;
+var KEY='garrick-thought',st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+var kept=document.getElementById('thought-kept');
+function mark(){if(kept)kept.textContent=t.value.trim()?'Kept in this browser.':''}
+t.value=st.get(KEY)||'';mark();
+t.addEventListener('input',function(){st.set(KEY,t.value);mark()});
+var c=document.getElementById('thought-copy');
+if(c)c.onclick=function(){if(!t.value.trim()){t.focus();return}
+if(window.GarrickCopy)GarrickCopy(t.value);if(window.GarrickSay)GarrickSay('Copied the thought.')};
+var x=document.getElementById('thought-clear');
+if(x)x.onclick=function(){if(!t.value){t.focus();return}
+if(!x.classList.contains('armed')){x.classList.add('armed');x.textContent='Click again to clear';
+setTimeout(function(){x.classList.remove('armed');x.textContent='Clear'},4000);return}
+x.classList.remove('armed');x.textContent='Clear';t.value='';st.set(KEY,'');mark();t.focus()};
+})();
+"""
+
+
 # --------------------------------------------------------------------------- the page
 
 CSS = r"""
@@ -3193,7 +3432,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .thread .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip{display:inline-flex;align-items:center;font-size:11px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--ink2);margin-left:4px}
 .fresh{height:6px;border-radius:3px;background:var(--grid);position:relative}.fresh i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--good)}
-.fresh.warning i{background:var(--warning)}.fresh.critical i{background:var(--critical)}
+.fresh.warning i{background:var(--warning)}.fresh.critical i{background:var(--critical)}.fresh.age i{background:var(--base)}
 .group>summary{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px}.group>summary:hover{background:var(--wash)}
 .group>summary .counts{margin-left:auto;display:flex;gap:6px}
 .group ul{list-style:none;margin:2px 0 8px;padding:0 0 0 32px}.group li{display:flex;gap:8px;padding:5px 0;color:var(--ink2);font-size:12.5px;border-top:1px solid var(--grid)}
@@ -3451,8 +3690,9 @@ function pflip(o){if(o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.
 var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
 return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
+/* how long since the note moved, as a figure: age is not urgency, so nothing here reads as a fault */
 function state(o){if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
-return o.d>45?'Untouched for '+o.d+' days':(o.d>14?'Aging: updated ':'Updated ')+ago(o.d)}
+return'Last touched '+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
 function line(t,html){return t?'<div class="ink2 tline" style="margin-top:4px">'+(html?t:esc(t))+'</div>':''}
@@ -3489,6 +3729,7 @@ var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHand
 if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
+window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
 var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
@@ -3641,13 +3882,17 @@ u.appendChild(h);u.appendChild(s);place(box,u,tail);R.chev(b);R.bind(h);return u
 /* a project's row counts its threads; one with none left goes */
 function recountUnit(u){var h=headOf(u),s=u.querySelector(':scope>.subthreads');if(!h||!s)return;var rs=s.querySelectorAll(':scope>.thread'),n=rs.length;if(!n){u.remove();return}
 var bare=inFold(u)?0:[].filter.call(rs,function(r){var c=cardOf(r);return c&&c.r===0}).length,t=h.querySelector('.subn'),b=h.querySelector('.pchev');
-if(t)t.textContent=n+' thread'+(n===1?'':'s')+(bare?' · '+bare+' without a resume block':'');if(b)b.title='Show its '+n+' thread'+(n===1?'':'s')}
-/* a zone's line as the build writes it: live, aging and stale by each live row's bar, and the done it counted */
+var urg=inFold(u)?0:[].filter.call(rs,function(r){var c=cardOf(r);return c&&c.lt}).length;
+if(t)t.textContent=n+' thread'+(n===1?'':'s')+(urg?' · '+urg+' needing a chase':'')+(bare?' · '+bare+' without a resume block':'');
+if(b)b.title='Show its '+n+' thread'+(n===1?'':'s')}
+/* a zone's line as the build writes it: live, those needing a chase (a row the
+   build marked not ok, which is its next action's doing and never its age),
+   and the done it counted */
 function count(z,f,sel){return z.querySelectorAll(sel).length-(f?f.querySelectorAll(sel).length:0)}
 function recount(){var live=0,held=0;document.querySelectorAll('.tview details.zone').forEach(function(z){var f=fold(z,false),
 p=f?f.querySelectorAll('.thread:not(.proj)').length:0,l=count(z,f,'.thread:not(.proj)'),meta=z.querySelector(':scope>summary .meta');
-live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj) .fresh.warning'),o=count(z,f,'.thread:not(.proj) .fresh.critical'),d=/(\d+) done/.exec(meta.textContent);
-meta.textContent=l+' live'+(a?' · '+a+' aging':'')+(o?' · '+o+' stale':'')+(d?' · '+d[1]+' done':'')}
+live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj)[data-ok="0"]'),d=/(\d+) done/.exec(meta.textContent);
+meta.textContent=l+' live'+(a?' · '+a+' needing a chase':'')+(d?' · '+d[1]+' done':'')}
 if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
 var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
 if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
@@ -3680,8 +3925,19 @@ if(window.GarrickRedo)moved(window.GarrickRedo);
 
 
 # Where each card sits and which are hidden: a view preference like the theme
-# and the folds, kept in the browser and nowhere else. A card the stored
-# layout does not know stays where the page put it.
+# and the folds, kept in the browser and nowhere else.
+#
+# A build's own order is a default, not a choice, and it reaches only a window
+# that has made none. The two are told apart by one thing: a layout parsed out
+# of garrick-status-layout whose `v` is 2. Without it nothing is replayed and
+# the page stands as it was built, in whatever order this release gives; with
+# it, every card the layout names goes back to the slot and the place that
+# layout gives it, and nothing a later release prefers moves it. A card the
+# layout has never heard of, one this release added, keeps the place the build
+# gave it, which is ahead of the cards the layout then puts back in its slot. So a new default is adopted by Reset view, which clears the layout
+# with the rest of the window's own storage, and by nothing else. That is the
+# rule #81 set for the settings file: never replace a newer choice, and
+# running it again changes nothing.
 LAYOUT_JS = r"""
 (function(){
 var KEY='garrick-status-layout',st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
@@ -3689,6 +3945,7 @@ var slots={};document.querySelectorAll('[data-slot]').forEach(function(s){slots[
 function cards(){return Array.prototype.slice.call(document.querySelectorAll('[data-slot]>.card[id]'))}
 function inSlot(el){return el&&el.parentNode&&el.parentNode.hasAttribute&&el.parentNode.hasAttribute('data-slot')}
 var L=null;try{L=JSON.parse(st.get(KEY)||'null')}catch(e){}
+/* a window that chose a layout keeps it, card for card; one that chose none takes the order the build wrote */
 if(L&&L.v===2){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c[k]||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))s.appendChild(el)})});
 (L.h||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))el.hidden=true})}
 function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
@@ -3837,7 +4094,8 @@ function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--
 /* a note in a vault with colour groups of its own takes its group's colour, or grey; elsewhere its kind's */
 var OTHERK=G.colors.indexOf(G.other);
 function fill(n){return n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:n.g===-1?G.other:G.colors[n.k]||C['--muted']}
-function ring(n){return n.d==null||n.s?null:n.d>45?C['--critical']:n.d>14?C['--warning']:null}
+/* a ring for a thread whose own next action is overdue or due a chase (lt), never for age alone */
+function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
 var f=sel||hover,near={};if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
 var P={};V.forEach(function(n){P[n.i]=toScreen(n)});
@@ -4023,6 +4281,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
     lists = todo_list(ws, link, now.date())
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
+    # What each thread owes, on its own row: its next action, and whether that
+    # action makes it urgent. Every card that says a thread is in trouble
+    # reads this, and none of them reads its age.
+    thread_actions(T, lists, C, ws)
+    urgent = {(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"])
+              for z in T.values() for r in z["rows"] if r.get("urgent")}
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
@@ -4089,24 +4353,40 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         for p in {r["project"] for r in data["rows"] + data["parked"]}:
             project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
 
-    def fresh_of(days):
-        return "good" if days is not None and days <= 14 else "warning" if days is not None and days <= 45 else "critical"
+    # Age is not urgency: the bar and the figure are the days since the note
+    # moved, and nothing about them says a thread is in trouble. What does is
+    # the thread's own next action (thread_actions): a due date that has
+    # passed, a #waiting line whose chase date has come, or a check finding
+    # against one of its files.
+    def urgent_chip(r):
+        a = r.get("next")
+        if a and a["late"]:
+            return '<span class="chip late" title="%s">%s</span>' % (
+                E("Its next action is a #waiting line to chase from %s" % a["when"] if a["waiting"]
+                  else "Its next action was due %s" % a["when"]), "chase due" if a["waiting"] else "overdue")
+        if r.get("flagged"):
+            return '<span class="chip late" title="%s">check</span>' % E(
+                "The check reported %d finding%s against a file in this thread" % (r["flagged"], "" if r["flagged"] == 1 else "s"))
+        return ""
 
     def live_dot(state, what):
         return ('<span class="live %s" title="%s"></span>' % (state, E("A session is open in %s, %s" % (what, state)))) if state else ""
 
     def row_html(r, sub=False, figures=None, parked=False, place=0):
         days = (now.date() - r["updated"]).days if r["updated"] else None
-        k = fresh_of(days)
+        k = not parked and bool(r.get("urgent"))
         # The party tags are the card's, not the row's: under a name they read as part of it.
-        chips = "" if parked or r.get("resume") else \
-            '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>'
+        chips = "" if parked else (
+            ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
+            + urgent_chip(r))
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
-            '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
+            '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
+                E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
+                max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
         return ('<div class="thread%s" data-ok="%d" data-card="%s"%s><div class="t"><a href="%s">%s</a>%s%s</div>%s'
                 '<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
-                % (" sub" if sub else "", 1 if parked else k == "good",
+                % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "",
                    E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
@@ -4139,7 +4419,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
 
     def units(zone, rs, parked=False):
         """The rows of a zone, or of its Parked fold, a unit per project."""
-        out, counts = [], {"warning": 0, "critical": 0}
+        out, counts = [], {True: 0, False: 0}
         groups: Dict[str, list] = {}
         for r in rs:
             groups.setdefault(r["project"], []).append(r)
@@ -4167,18 +4447,22 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             if EV:
                 total = {f: own[f] + sum(fg[f] for fg in figs) for f in EV.fields}
             sid = "sub-" + re.sub(r"\W+", "-", ("%s-%s%s" % (zone, project, "-parked" if parked else "")).lower()).strip("-")
-            k = fresh_of(newest)
+            k = not parked and any(r.get("urgent") for r in items)      # the project's, from its threads' own actions
             n = len(items)
             hub_link = link(items[0]["hub"]) if items[0]["hub"] else link(items[0]["note"])
             bar = '<span class="mu"></span>' if parked else \
-                '<div class="fresh %s mu"><i style="width:%.1f%%"></i></div>' % (k, max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
+                '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
+                    E("%s since its newest thread moved, toward sixty days" % ("%d days" % newest if newest is not None else "No date")),
+                    max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
+            urg = 0 if parked else sum(1 for r in items if r.get("urgent"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
-                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s</span></div>'
+                    'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
-                    % (1 if parked else k == "good", E(project_card(zone, project, items, newest)), sid, n, "" if n == 1 else "s", CHEV,
+                    % (0 if k else 1, E(project_card(zone, project, items, newest)), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
-                       n, "" if n == 1 else "s", " · %d without a resume block" % bare if bare else "", bar,
+                       n, "" if n == 1 else "s", " · %d needing a chase" % urg if urg else "",
+                       " · %d without a resume block" % bare if bare else "", bar,
                        "%dd" % newest if newest is not None else "—", EV.cells(total) if EV else ""))
             out.append('<div class="tunit" data-a="%d"%s>%s<div class="subthreads tsort" id="%s" hidden>%s</div></div>'
                        % (i, EV.attrs(total) if EV else "", head, sid, "".join(subs)))
@@ -4191,13 +4475,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         slug = re.sub(r"\W+", "-", z.lower())
         parked_block = ('<details class="parked tsort" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
                         % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
-        meta = "%d live" % len(data["rows"]) + (" · %d aging" % cnt["warning"] if cnt["warning"] else "") + \
-            (" · %d stale" % cnt["critical"] if cnt["critical"] else "") + (" · %d done" % data["done"] if data["done"] else "")
+        meta = "%d live" % len(data["rows"]) + (" · %d needing a chase" % cnt[True] if cnt[True] else "") + \
+            (" · %d done" % data["done"] if data["done"] else "")
         cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
                  % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
-    legend = ('<div class="legend mu"><span><i class="good"></i>Updated in the last 14 days</span><span><i class="warning"></i>15 to 45 days</span>'
-              '<span><i class="critical"></i>Over 45 days</span></div>')
+    legend = ('<div class="legend mu"><span><i class="critical"></i>Its next action is overdue, or a <code>#waiting</code> chase date has come</span>'
+              '<span><i style="background:var(--base)"></i>Days since the note moved, toward sixty: a figure, not a fault</span></div>')
     new_bar = ('<div class="mg-new"><button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>')
     threads_card = card("threads", "Threads", "",
@@ -4312,16 +4596,19 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         E(link(w["log"])), E(w["name"]), newest(w)) for w in W)
     wikis_card = card("wikis", "Wikis", "newest entry in each log", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
 
-    # ---- the graph
+    # ---- the graph, behind Explore at the foot of the Overview: it keeps every
+    # mode it has, and folds shut so the tab opens on the work instead. A
+    # window that has opened or shut this card keeps its own choice, as it
+    # does for every other fold.
     graph_card = ""
     if show_graph:
-        GR = graph(ws, T, link, now, cmux, acting, S, DK)
+        GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
         core = sum(1 for n in GR["nodes"] if n["c"])
         legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label[:1].upper() + label[1:]))) for i, label in GR["kinds"])
         legend += "".join('<span data-g="%d"><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
                           for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
-        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--warning)"></i>15–45 days old</span>'
-                  '<span><i class="ring" style="border-color:var(--critical)"></i>Over 45 days</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
+        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action overdue '
+                  'or due a chase</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
@@ -4329,14 +4616,15 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         # a select cannot draw an icon in its options, so the chosen place's icon sits over its left edge
         marks = "".join('<span class="gzi%s" data-z="%s" hidden>%s</span>' % (zone_class(z, ZS), E(z), zone_icon(ZS[z]["icon"]))
                         for z in places if ZS.get(z, {}).get("icon"))
-        graph_card = card("graph", "Graph", "",
+        graph_card = card("graph", "Explore", "the graph of every note, and the links between them",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
                           '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
                           '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button></div>'
                           '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
-                          '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data))
+                          '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data),
+                          open_=False)
 
     todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
     # Three tabs: Overview for where the work stands, Todo for the list, Status
@@ -4346,9 +4634,23 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
-    overview = section("overview", False, '<div class="grid"><div class="slot full" data-slot="top">%s%s</div>'
+    # The Overview opens on what you were doing and what you owe: the threads
+    # you touched last with their next actions, what is due, somewhere to put
+    # a thought, and what waits on you. Then the lists, and the graph behind
+    # Explore at the foot. A workspace with no project yet has none of that to
+    # show, so Start here takes the lead instead.
+    #
+    # This is the order a window with nothing saved gets. A window that has
+    # dragged, moved or hidden a card keeps every card it placed exactly where
+    # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
+    anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
+    lead = (recent_card(T, link, now.date(), ZS) + (due_card(lists, now.date(), ZS) if lists else "")
+            if anything else start_card())
+    left = thought_card() + todo_card
+    right = (waiting_card(T, link, now.date(), ZS) if anything else "") + inbox_card
+    overview = section("overview", False, '<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom"></div></div>' % (graph_card, threads_card, todo_card, inbox_card))
+                       '<div class="slot full" data-slot="bottom">%s%s</div></div>' % (lead, left, right, threads_card, graph_card))
     # Needs attention leads the Status tab: what it lists is the machinery's.
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
@@ -4384,12 +4686,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
     # and WORK_JS after both.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
                MANAGE_JS, WORK_JS, MENU_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
                 "".join("<script>%s</script>" % js for js in scripts if js)))
 
 

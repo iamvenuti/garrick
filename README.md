@@ -96,6 +96,7 @@ Early, for macOS. See the [changelog](CHANGELOG.md).
 - [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
 - [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).
 - [Command reference](docs/commands.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
+- [Concepts](docs/concepts.md), the words Garrick uses; [architecture](docs/architecture.md), how the parts fit together; and [what is enforced, and what is asked](docs/enforced.md).
 - [Updating to a newer Garrick](docs/updating.md), keeping what you changed.
 - [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (open it in a browser from your downloaded copy, which holds its images).
 

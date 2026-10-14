@@ -1,0 +1,189 @@
+# Concepts
+
+The words Garrick uses, and what each one means. The rules, the skills and the other pages use them as defined here. For how the parts fit together, see [Architecture](architecture.md); for which protections are code and which are rules, see [What is enforced, and what is asked](enforced.md).
+
+## The repository and your workspace
+
+### The Garrick repository
+
+The Garrick repository is what you download or clone: the installer, the template a workspace is made from, the extras, these pages and the tests. You do not work in it. You install from it, and later update from a newer copy of it.
+
+### Your workspace
+
+Your workspace is the folder the installer makes from that template, `~/Garrick` by default, and the one you open your assistant in. It holds your notes, your own rules and your own copy of Garrick's tools and skills. It records which Garrick it was made from in `System/garrick-version.json`, so an [update](#update) can tell what you changed from what Garrick wrote. See [What you get](commands.md#what-you-get).
+
+## Where work lives
+
+### Zone
+
+A side of your life or work, such as Work or Personal, in `Zones/<Zone>/`. Each zone is its own git repository, with its own `Todo.md` and `Inbox/`. Nothing moves or is copied between zones unless you ask, and no note links into another zone. See [Zone, project, thread](principles.md#zone-project-thread).
+
+### Project
+
+One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. `scaffold.py project` makes one with its first thread: see [Your first project](commands.md#your-first-project).
+
+### Thread
+
+One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. Every piece of work belongs to a thread, even in a project that has only one, so there is one kind of resume point in one kind of place. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
+
+### Hub note
+
+The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
+
+## Picking a thread back up
+
+### Resume here
+
+The `### Resume here` block at the top of a thread note's `## State of play` section. It says where the thread stands, the live artifact and how to rebuild it, the next action, what to keep in mind, who it waits on and the deadline. "Open X" reads it back in two sentences; "wrap X" rewrites it so it describes now and adds a dated entry below it, leaving the older entries as they are. See [One resume point per thread](principles.md#one-resume-point-per-thread).
+
+### Next action
+
+The row of the Resume here block that names the single next thing, small enough to start in two minutes, and whose it is. Open actions live in the zone's [`Todo.md`](#todomd), and the `todo` skill sweeps each live thread's next action into it, so the two say the same thing.
+
+### Keep in mind
+
+The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. "I'm being interrupted" fills it with its third question.
+
+### Status
+
+Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/rules.md#threads) in the rules.
+
+### The interruption stack
+
+When something cuts in, "I'm being interrupted" or "hold this" asks three short questions, writes the answers into the thread's Resume here block with the time, and puts the thread on a stack. "Back" opens the thread on top, so the last one held comes back first, and "back to X" takes one from anywhere in it. The stack only keeps the order, in `System/generated/interrupted.json`, which the [status page](#the-status-page)'s `page_action.py` keeps; without that extra, the answers are still saved and "back" offers the thread you worked on last. See [Opening and wrapping](commands.md#opening-and-wrapping).
+
+## Parties and walls
+
+### Party
+
+An organisation or person whose confidences you hold. Each has a tag, one lowercase word, which a project or thread carries in `party:` and a meeting page in `parties:`. The tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.
+
+### Wall
+
+A declared pair of parties whose material must not meet. With a wall between them, nothing from a meeting with one goes into the other's projects: not quoted, not paraphrased, not summarised. A wall exists only when you list the pair in the Walls table of `System/context.md`; separate folders and different tags do not make one. The assistant is asked to read the table before it uses a meeting, and the [wall check](#the-wall-check) refuses some crossings at commit. See [One memory, walled use](principles.md#one-memory-walled-use).
+
+### The Parties table
+
+The table in `System/context.md` that lists every party: its name, what it is, its zone, its tag and the mail domains that name it. A listed domain names its party when mail comes in, and personal webmail never names one. `scaffold.py party` adds a row and offers the tag itself.
+
+### People
+
+The table in `System/context.md` of the people who come up, one row per person and party. The wall check reads it to recognise a name from across a wall. Someone known on both sides of a wall can have a row under each party, and their name then no longer counts as crossing it, with one known gap described in [What is enforced](enforced.md#the-wall-checks-known-gaps).
+
+### Aliases
+
+The table in `System/context.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it, and adds a row when it had to ask what a heard name meant. See [Voice](../template/System/rules.md#voice) in the rules.
+
+### `System/context.md`
+
+Who you are and who you deal with: Me, Zones, Parties, Walls, People and Aliases. It is yours, filled in from your answers at install, and every session reads it.
+
+## The two wikis
+
+### The Meetings wiki
+
+`Wikis/Meetings/`: every conversation and mail exchange, from every zone, one page each, with its zone and its parties. A page without both is unfinished, and nothing on it may be used in any project until it has them. It keeps everything in one place, and the walls decide where its material may be used. Its schema is in its [`AGENTS.md`](../template/Wikis/Meetings/AGENTS.md).
+
+### The Knowledge wiki
+
+`Wikis/Knowledge/`: published material you read, such as articles, reports and newsletters. Its pages carry no parties, because what they hold carries nobody's confidence, so it can be used in any project.
+
+### `raw/`
+
+Each wiki keeps the record as it arrived in `raw/`, such as a transcript, a mail or a frozen copy of a page, and writes its pages in `wiki/`. Nothing in `raw/` is edited, and the check reports a raw record changed after it was filed.
+
+## What comes in
+
+### Ways in
+
+The routes material takes into the workspace: recordings, mail and files you drop in. Getting an item here is fetching, by hand, by a script or by your assistant's own connector, and it decides nothing. Where each item goes is decided by the [Ways in](../template/System/rules.md#ways-in) rules, one item at a time. See [Ways in](extras/ways-in.md).
+
+### Inbox
+
+Where everything lands first: a recording's transcript in `Wikis/Meetings/raw/inbox/`, and mail and any other file in a zone's `Inbox/`. An inbox is never a project, and nothing in one is committed: the pre-commit hook refuses it.
+
+### Intake
+
+The skill that empties the inboxes, started by "process the inbox". It files a conversation into Meetings, something to read into Knowledge and material for a project into that project's `Sources/`, and asks when the zone, a party or the project is unclear. See [The two memories](commands.md#the-two-memories).
+
+## Actions
+
+### `Todo.md`
+
+Each zone's one list of open actions, in Obsidian Tasks style. A line opens with its thread's link and ends with its dates: `📅` when it is due, or `#waiting` and `⏳` for the day to chase something you wait on. A thread note says where the work stands and is not a to-do list; the `todo` skill sweeps actions the records hold into the list's Inbox section and tidies the rest.
+
+## Instructions
+
+### Garrick's rules, and yours
+
+`System/rules.md` is Garrick's: how the assistant behaves, as shipped, and each update replaces it. `System/rules.local.md` is yours: it adds to Garrick's and wins where the two differ, and no update touches it. See [Garrick's rules, and yours](principles.md#garricks-rules-and-yours).
+
+### The `.local` files
+
+Each of Garrick's instruction files has a local file beside it for your own text: `rules.local.md` beside `rules.md`, and `AGENTS.local.md` beside an `AGENTS.md`. Garrick never ships, lists or changes them, so an update never has to merge your words into its own. The check warns when one of Garrick's files differs from what it shipped, and the update's split moves your text across: see [Updating](updating.md#your-rules-and-garricks).
+
+### `AGENTS.md`
+
+The entry point any assistant reads, at the workspace root, in each zone, in `Wikis/` and in each wiki. The root one sends the assistant to `rules.md` and `context.md`, and each zone's or wiki's adds what holds only there. They are Garrick's, as shipped; never create a `CLAUDE.md` in the workspace, since Claude Code stops reading every `AGENTS.md` once one exists.
+
+## Tools and assistants
+
+### Skill
+
+A procedure written in Markdown, `System/skills/<name>/SKILL.md`, which the assistant follows when a request matches it: `threads` for "open X" or "wrap it", `intake` for "process the inbox". Both supported assistants find the same skills, through links in `.claude/skills` and `.agents/skills`. See [the skills](architecture.md#the-skills).
+
+### Tool
+
+A Python script in `System/tools/`, standard library only, for what code does better than an assistant: `check.py`, `scaffold.py` and the others. Tools move, parse, check and list; they never choose where a thing goes. See [the tools](architecture.md#the-tools).
+
+### Harness
+
+The assistant program that runs the model and works on your files: Claude Code or Codex, in its desktop app or a terminal. No rule, template or skill names either one, so the same workspace opens in both. See [Assistant compatibility](harnesses.md).
+
+## Checks and guards
+
+### The check
+
+`python3 System/tools/check.py`, which tests the workspace against every rule a machine can check and lists errors and warnings. Run by hand, it is a report: it changes nothing and stops nothing. See [The check](commands.md#the-check).
+
+### The wall check
+
+The part of the check about walls. Each zone's pre-commit hook runs it as `check.py --staged --walls-only` and refuses a commit whose project files link to, name or quote a party across a declared wall. It has limits and known gaps: see [What the check covers](principles.md#what-the-check-covers) and [What is enforced](enforced.md).
+
+### The zone guard
+
+An optional hook for Claude Code and Codex. Before the assistant edits a file outside the project the session was opened in, it stops once so the assistant asks you. It is a reminder, not a gate, and a shell command that writes a file is not covered. See [the zone guard](../extras/hooks/README.md).
+
+## Extras
+
+### Extras
+
+Optional tools the repository ships in `extras/` for a workspace to take on, such as the status page, scheduled jobs, desk and the zone guard. `install.py` installs none of them, and core Garrick never depends on any. See [Extras](extras/index.md).
+
+### The status page
+
+An extra that builds one HTML page, in a browser, the Garrick Mac app or Obsidian: what you worked on last, what is due, every live thread, check findings, inboxes and jobs. Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone. See [the status page](extras/status-page.md).
+
+### Desk
+
+The skill that comes with the cmux extra: one cmux tab per thread, opened, wrapped and closed by voice or from the status page, and brought back the next day. See [cmux](extras/cmux.md).
+
+## Updates
+
+### Update
+
+Bringing your workspace up to a newer Garrick without losing what you changed. "Update Garrick", or `release.py update`, downloads the newest release and runs its `install.py --update`, which says what would change and changes it only with `--apply`. See [Updating](updating.md).
+
+### A `.new` file
+
+When you changed a file that Garrick has changed too, the update leaves yours as it is and puts Garrick's version beside it as `<name>.new`, committed, for you to merge. "Merge the update" does it with you, and the check warns while one waits. See [Merging a `.new` file](updating.md#merging-a-new-file).
+
+## Deliverables
+
+### Deliverable
+
+Anything made for someone else: a deck, a workbook, a brief, a draft. It lives in a project's `Deliverables/`, or a thread's own in a project whose hub says `layout: thread-first`.
+
+### The `YYMMDD -` prefix
+
+A deliverable's name starts with the date it was first made, such as `260930 - Pricing deck.pptx`. The date never moves, so a folder sorts by when the work started. Build intermediates, scripts and a folder's `README.md` keep plain names, and the check warns about a deliverable without the prefix.

@@ -4,6 +4,23 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-14
+
+When something cuts in, you can hold the thread you were in and come back to it later, in order; a commit from the status page waits for the wall check however long it takes; and the page shows an action is still working until it is done.
+
+### Added
+
+- *Interrupted* and *Back*, the first slice. Say "I'm being interrupted", "hold this" or "hold Acme pricing" and the assistant asks three one-line questions: where you are, the very next step, and anything only in your head, which you can skip. The answers become the thread's *Where it stands* line, stamped with the time, and its `Next action` and `Keep in mind` rows; a dated entry is added, the zone commits, and the thread stays active. The thread goes on a stack of held threads, last in, first out, across zones. "Back" or "where was I" takes the top one off and reads its three lines back, and "back to Acme pricing" takes one from anywhere in it; with nothing held it says so and offers the most recent live thread. Wrapping, parking, finishing or deleting a thread takes it off, renaming moves it, and *Close for the day* names what is still held and leaves it there. `page_action.py` has four new requests, `interrupt`, `back`, `stack` and `unstack`; the stack is kept in `System/generated/interrupted.json`, never committed, since what was saved is in the thread notes. The menu bar, panel, status page and band come in later slices. ([#32](https://github.com/iamvenuti/garrick/issues/32))
+- The status page shows that an action is still running. The message stays up with a spinner and the time so far, and after ten seconds says the commit's wall check can take a minute. The zone's other actions are greyed out until it finishes, while other zones stay usable. A result that took longer than the usual few seconds, done or refused, stays on screen until you dismiss it, and survives the page being rebuilt. The Mac app and the Obsidian plugin now hand every result back to the page, a failed one included. ([#77](https://github.com/iamvenuti/garrick/issues/77))
+
+### Changed
+
+- The wall check before a commit keeps what it read from each file in the repository's `.git/garrick-walls.cache`, and reuses it while the file is unchanged, so after the first commit in a zone it reads what is being committed and what changed since, not every meeting and project file. Every file is still compared. ([#76](https://github.com/iamvenuti/garrick/issues/76))
+
+### Fixed
+
+- A commit from the status page (*New project*, *New thread*, *Rename*, a Todo tick) was stopped after a minute while the zone's wall check was still running, which left the files made but uncommitted. A commit now gets five minutes, read-only git calls keep one, and the Obsidian plugin waits up to fifteen. If a commit is still stopped, the message says the wall check was still running and that committing by hand will go through. ([#76](https://github.com/iamvenuti/garrick/issues/76))
+
 ## [0.25.0] - 2026-10-14
 
 A first session stops asking you to approve the commands Garrick's own documentation calls safe, beginners install the newest release rather than the branch it is built on, projects and threads keep the names the work already has, the choices you make once survive a rebuild, and the rules and the zone guard each say exactly what they do.
@@ -667,7 +684,11 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/iamvenuti/garrick/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/iamvenuti/garrick/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/iamvenuti/garrick/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/iamvenuti/garrick/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/iamvenuti/garrick/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/iamvenuti/garrick/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iamvenuti/garrick/compare/v0.19.0...v0.20.0

@@ -81,6 +81,20 @@ second request waits for the first. The rekey map has a lock of its own.
 
 The cmux verbs need the cmux extra and cmux itself.
 
+Park, wake and the four Todo verbs also leave a durable record, so a page
+that was reloaded, or an app that was quit, can find the action again and
+learn how it ended. System/tools/operations.py, found as ops_lib() finds it,
+keeps it as one JSON line per state in operations.jsonl in the jobs folder:
+queued, running (with the phase "checking" while the wall check runs), then
+completed, or failed with an outcome of refused, crashed or unknown. The reply
+to such a request then also carries "op", "state" and "outcome", and a
+failure's "say" is the module's sentence for that outcome, so a refusal
+never reads as saved. {"verb": "operations"} reads the open set back, and a
+request identical to one under way, or just saved, is answered from the
+record instead of being done twice. Without the module, or with a jobs folder
+that cannot be written, every reply is what it was before: the record is
+best effort, as the audit log is, and stops nothing.
+
 Every request, done or refused, is one line in page-actions.log in the jobs
 folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
 on a Mac): the time, the verb, the fields it names and what came of it. Only
@@ -148,8 +162,56 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augus
           "October", "November", "December")
 
 
+# The one verb that only reads: the journal's open set (operations.py). It is
+# not in VERBS: without the module it is an unknown action, as it always was.
+JOURNAL_VERB = "operations"
+HERE = Path(__file__).resolve().parent
+_OPS_LIBS: dict = {}
+# The action in hand, for the two places that know a phase: when the zone's lock
+# is had, and when the wall check starts. None for anything without a record.
+CURRENT = None
+
+
 class Refused(Exception):
     pass
+
+
+def ops_lib(ws: Optional[Path] = None):
+    """The first System/tools/operations.py that loads and speaks the API this
+    file expects, or None: the workspace's own copy first, then the one beside
+    this folder (an extra sits in System/, a step from System/tools/), then a
+    Garrick clone's template/, which is what the tests run against."""
+    key = None if ws is None else Path(ws)
+    if key not in _OPS_LIBS:
+        found = None
+        places = ([Path(ws) / "System" / "tools" / "operations.py"] if ws is not None else []) + [
+            HERE.parent / "tools" / "operations.py", HERE.parent.parent / "template" / "System" / "tools" / "operations.py"]
+        for src in places:
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_operations", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if getattr(mod, "API", None) == 1 and callable(getattr(mod, "start", None)):
+                found = mod
+                break
+        _OPS_LIBS[key] = found
+    return _OPS_LIBS[key]
+
+
+def note_event(event: str, *args) -> None:
+    """Tell the action in hand where it has got to. A record that cannot be
+    written never stops the action."""
+    run = CURRENT
+    if run is None:
+        return
+    try:
+        getattr(run, event)(*args)
+    except Exception:
+        pass
 
 
 def jobs_dir() -> Path:
@@ -209,9 +271,12 @@ def held(name: str, wait: float = None, strict: bool = True, busy: str = "anothe
         os.close(fd)                # and with it the lock
 
 
+@contextlib.contextmanager
 def zone_lock(zone: Path):
     """One request at a time per zone, from reading a note to committing it."""
-    return held("page-action-%s.lock" % zone.name, busy="another action in %s is still running" % zone.name)
+    with held("page-action-%s.lock" % zone.name, busy="another action in %s is still running" % zone.name):
+        note_event("running")           # queued until the lock is had
+        yield
 
 
 def audit(req, ok: bool, say: str, via: str = "") -> None:
@@ -343,6 +408,7 @@ def committing(zone: Path, rel: str, message: str) -> tuple:
     deadline = time.time() + COMMIT_TIMEOUT
     code, said = git(zone, "add", "--", rel)
     if code == 0:
+        note_event("phase", "checking")         # the wall check runs inside git commit
         code, said = git(zone, "commit", "-q", "-m", message, "--", rel, timeout=deadline - time.time())
         if code is None:
             return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
@@ -1355,28 +1421,57 @@ def act(ws: Path, req, today=None, now=None):
 
 
 def main(argv=None) -> int:
+    global CURRENT
     ap = argparse.ArgumentParser(description="Do what a status page button asks, reading one JSON request on stdin.")
     ap.add_argument("--workspace", required=True)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
-    req, logged = None, None
+    req, logged, run, ops = None, None, None, None
     try:
-        if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
-            raise Refused("not a Garrick workspace")
+        outcome, why = None, ""
         try:
-            req = json.loads(sys.stdin.read())
-        except ValueError:
-            raise Refused("not a request")
-        done = act(ws, req)
-        if isinstance(done, dict):
-            logged = done.pop("logged", None)
-            out = dict({"ok": True}, **done)
-        else:
-            out = {"ok": True, "say": done}
-    except Refused as e:
-        out = {"ok": False, "say": str(e)}
-    except Exception as e:          # a fault still answers in JSON, and is logged
-        out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
+            if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
+                raise Refused("not a Garrick workspace")
+            try:
+                req = json.loads(sys.stdin.read())
+            except ValueError:
+                raise Refused("not a request")
+            ops = ops_lib(ws)
+            if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
+                print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
+                return 0
+            joined = None
+            if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
+                try:
+                    run, joined = ops.start(jobs_dir(), req)
+                except ops.BadOp as e:
+                    raise Refused(str(e))
+                except Exception:           # the record is best effort, as the audit log is
+                    run = joined = None
+            if joined is not None:
+                out = joined                # an identical request is under way, or has just saved
+                logged = "%s (%s)" % (joined["say"], joined["state"])
+            else:
+                CURRENT = run
+                done = act(ws, req)
+                outcome = "saved"
+                if isinstance(done, dict):
+                    logged = done.pop("logged", None)
+                    out = dict({"ok": True}, **done)
+                else:
+                    out = {"ok": True, "say": done}
+        except Refused as e:
+            out = {"ok": False, "say": str(e)}
+            outcome, why = "refused", str(e)
+        except Exception as e:          # a fault still answers in JSON, and is logged
+            out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
+            outcome, why = "crashed", "%s: %s" % (type(e).__name__, e)
+        if run is not None and outcome is not None:
+            out = run.finish(outcome, req, why=why, said=out["say"] if outcome == "saved" else "")
+    finally:
+        CURRENT = None
+        if run is not None:
+            run.close(req)              # a terminal record, whatever stopped us, then the lock
     audit(req, out["ok"], logged or out["say"])
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1

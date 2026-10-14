@@ -46,6 +46,11 @@ def git(cwd, *args):
     return subprocess.run(["git", "-C", str(cwd)] + list(args), capture_output=True, text=True, check=True).stdout
 
 
+def plain(reply):
+    """A reply as 0.26.0 made it: what the record adds (operations.py) taken off."""
+    return {k: v for k, v in reply.items() if k not in ("op", "state", "outcome")}
+
+
 class ActionCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -505,7 +510,267 @@ class TestAudit(ActionCase):
     def test_a_log_that_cannot_be_written_stops_nothing(self):
         (self.jobs / "page-actions.log").mkdir(parents=True)          # a folder where the log should be
         done = self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
-        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, json.loads(done.stdout))
+        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, plain(json.loads(done.stdout)))
+
+
+class TestJournal(ActionCase):
+    """Each click leaves a durable record in the jobs folder (operations.py): a
+    page that was reloaded finds the action again, and a refusal never reads as saved."""
+
+    def hook(self, body):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\n" + body)
+        hook.chmod(0o755)
+
+    def start(self, request=None):
+        p = subprocess.Popen([sys.executable, str(SCRIPT), "--workspace", str(self.root)], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
+        if request is not None:
+            p.stdin.write(json.dumps(request))
+            p.stdin.close()
+        return p
+
+    def finish(self, p):
+        out = p.stdout.read()
+        p.wait(timeout=60)
+        p.stdout.close()
+        p.stderr.close()
+        return json.loads(out)
+
+    def run_script(self, request, **kw):
+        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(kw.get("ws", self.root))],
+                              input=json.dumps(request) if not isinstance(request, str) else request,
+                              capture_output=True, text=True, env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
+        return json.loads(done.stdout)
+
+    def records(self):
+        return [json.loads(line) for line in (self.jobs / "operations.jsonl").read_text().splitlines()]
+
+    def wait_for(self, path, seconds=20):
+        import time
+        deadline = time.time() + seconds
+        while not path.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(path.exists(), path)
+
+    def requests(self):
+        """One request of each journaled verb, with the state it needs set up first."""
+        rel = "Acme Review/Threads/Pricing/Pricing.md"
+        return {
+            "park": {"verb": "park", "zone": "Work", "file": rel},
+            "todo-done": {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")},
+            "todo-date": {"verb": "todo-date", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice"), "date": "2026-10-12"},
+            "todo-add": {"verb": "todo-add", "zone": "Work", "text": "Book the room", "target": "-", "date": "-"},
+        }
+
+    def test_a_park_leaves_a_record_from_queued_to_saved(self):
+        reply = self.run_script({"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md", "op": "a19f3c80"})
+        self.assertEqual(("a19f3c80", "completed", "saved", True), (reply["op"], reply["state"], reply["outcome"], reply["ok"]))
+        self.assertEqual("Acme Review, Pricing is parked", reply["say"])
+        records = self.records()
+        self.assertEqual([("queued", ""), ("running", ""), ("running", "checking"), ("completed", "")],
+                         [(r["state"], r["phase"]) for r in records])
+        self.assertEqual("saved", records[-1]["outcome"])
+        self.assertEqual("Acme Review, Pricing is parked", records[-1]["say"])
+        self.assertEqual(("Acme Review, Pricing: parked", ""), self.last_commit())
+
+    def test_a_tick_and_an_add_leave_one_each(self):
+        for request in (self.requests()["todo-done"], self.requests()["todo-add"]):
+            reply = self.run_script(request)
+            self.assertEqual(("completed", "saved"), (reply["state"], reply["outcome"]), request["verb"])
+            self.assertTrue(re.fullmatch(r"[0-9a-f]{16}", reply["op"]))              # minted: the caller sent none
+        ends = [r for r in self.records() if r["state"] in ("completed", "failed")]
+        self.assertEqual(["todo-done", "todo-add"], [r["verb"] for r in ends])
+        self.assertEqual(["saved", "saved"], [r["outcome"] for r in ends])
+
+    def test_the_record_is_in_the_jobs_folder_and_nowhere_else(self):
+        self.run_script(self.requests()["todo-add"])
+        self.assertTrue((self.jobs / "operations.jsonl").is_file())
+        self.assertEqual([], [str(p) for p in self.root.rglob("operations.jsonl")])
+        self.assertEqual([], [str(p) for p in self.root.rglob("op-*.run")])
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertEqual([], list(self.jobs.glob("op-*.run")))                    # and the locks are cleared away
+
+    def test_a_commit_the_wall_check_refuses_is_refused_and_never_reads_as_saved(self):
+        """Every verb, with the zone's hook saying no."""
+        import test_operations as t
+        self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Send the revised"))
+        ticked = tl.done_on(str(self.work), dt.date.today())[0]["key"]
+        self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
+        self.hook('echo "wall: Acme Review names birch, a party across a wall" >&2\nexit 1\n')
+        requests = dict(self.requests(), **{
+            "wake": {"verb": "wake", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
+            "todo-undo": {"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "key": ticked},
+            "park": {"verb": "park", "zone": "Work", "project": "Birch Entry"}})
+        before = (self.work / "Todo.md").read_bytes(), self.thread.read_bytes()
+        self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add"}, set(requests))
+        for verb, request in requests.items():
+            reply = self.run_script(request)
+            self.assertEqual((False, "failed", "refused"), (reply["ok"], reply["state"], reply["outcome"]), (verb, reply))
+            self.assertIn("a party across a wall", reply["say"], verb)
+            self.assertTrue(t.only_in_the_negative(reply["say"]), (verb, reply["say"]))
+            self.assertFalse(t.ops.affirms(reply["say"]), (verb, reply["say"]))
+            last = self.records()[-1]
+            self.assertEqual(("failed", "refused", reply["say"]), (last["state"], last["outcome"], last["say"]), verb)
+        self.assertEqual(before, ((self.work / "Todo.md").read_bytes(), self.thread.read_bytes()))     # and nothing changed
+
+    def test_a_stale_line_is_refused_in_the_record_too(self):
+        key = self.key("Send the revised")
+        write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace("revised terms", "final terms"))
+        reply = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": key})
+        self.assertEqual(("failed", "refused"), (reply["state"], reply["outcome"]))
+        self.assertIn("changed since the page was built", reply["say"])
+
+    def test_a_bad_op_is_refused_before_anything_runs(self):
+        reply = self.run_script(dict(self.requests()["todo-add"], op="../../etc/passwd"))
+        self.assertEqual({"ok": False, "say": "not an operation id"}, reply)
+        self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
+
+    def test_the_fields_a_page_adds_change_nothing(self):
+        reply = self.run_script(dict(self.requests()["todo-add"], op="a19f3c80", retry_of="b29f3c80", host="app", extra=[1]))
+        self.assertEqual("saved", reply["outcome"])
+        self.assertEqual("Added to Inbox: Book the room", reply["say"])
+
+    def test_a_second_identical_request_joins_and_makes_one_edit(self):
+        mark = Path(self._tmp.name) / "in-the-hook"
+        self.hook('touch "%s"\nsleep 2\n' % mark)
+        request = self.requests()["todo-add"]
+        first = self.start(dict(request, op="a19f3c80"))
+        self.wait_for(mark)                                                       # the first is in the wall check
+        second = self.finish(self.start(dict(request, op="b29f3c80")))
+        self.assertEqual({"ok": True, "say": "Already adding to Work…", "op": "a19f3c80", "state": "running"}, second)
+        self.assertNotIn("outcome", second)                                       # joined: ok, and not saved
+        done = self.finish(first)
+        self.assertEqual(("a19f3c80", "saved"), (done["op"], done["outcome"]))
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("Book the room"))
+        self.assertEqual(["Work: added to Inbox, Book the room", "start"], git(self.work, "log", "-2", "--format=%s").splitlines())
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in self.records()})          # the second made no record of its own
+        self.assertIn("(running)", (self.jobs / "page-actions.log").read_text().splitlines()[0])
+
+    def test_the_same_request_again_after_a_save_is_answered_and_not_done(self):
+        request = self.requests()["todo-done"]
+        first = self.run_script(dict(request, op="a19f3c80"))
+        self.assertEqual("saved", first["outcome"])
+        head = git(self.work, "rev-parse", "HEAD")
+        second = self.run_script(dict(request, op="b29f3c80"))
+        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September", "op": "a19f3c80", "state": "completed",
+                          "outcome": "saved"}, second)
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))              # executed, the old key would have been refused
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in self.records()})         # the second left no record of its own
+
+    def test_a_refusal_is_run_again(self):
+        self.hook("exit 1\n")
+        request = self.requests()["todo-add"]
+        self.assertEqual("refused", self.run_script(dict(request, op="a19f3c80"))["outcome"])
+        (self.work / ".git" / "hooks" / "pre-commit").unlink()
+        again = self.run_script(dict(request, op="b29f3c80"))
+        self.assertEqual(("b29f3c80", "saved"), (again["op"], again["outcome"]))
+
+    def test_a_park_then_a_wake_then_a_park_is_three_edits(self):
+        rel = "Acme Review/Threads/Pricing/Pricing.md"
+        for verb, status in (("park", "parked"), ("wake", "active"), ("park", "parked")):
+            reply = self.run_script({"verb": verb, "zone": "Work", "file": rel})
+            self.assertEqual("saved", reply["outcome"], verb)
+            self.assertIn("\nstatus: %s\n" % status, self.thread.read_text())
+        self.assertEqual(["Acme Review, Pricing: parked", "Acme Review, Pricing: woken", "Acme Review, Pricing: parked"],
+                         git(self.work, "log", "-3", "--format=%s").splitlines())
+
+    def test_the_operations_verb_returns_the_open_set_with_its_phase(self):
+        mark = Path(self._tmp.name) / "in-the-hook"
+        self.hook('touch "%s"\nsleep 2\n' % mark)
+        worker = self.start(dict(self.requests()["todo-add"], op="a19f3c80"))
+        self.wait_for(mark)
+        reply = self.run_script({"verb": "operations"})
+        self.assertEqual((True, True), (reply["ok"], reply["durable"]))
+        self.assertEqual(["park", "todo-add", "todo-date", "todo-done", "todo-undo", "wake"], reply["verbs"])
+        (running,) = reply["ops"]
+        self.assertEqual(("a19f3c80", "running", "checking", "todo-add", "Work", None),
+                         (running["op"], running["state"], running["phase"], running["verb"], running["zone"], running["outcome"]))
+        self.assertEqual("Adding to Work…", running["label"])
+        self.finish(worker)
+        (ended,) = self.run_script({"verb": "operations"})["ops"]
+        self.assertEqual(("completed", "saved"), (ended["state"], ended["outcome"]))        # still there, for a page that was away
+        self.assertEqual([], [l for l in (self.jobs / "page-actions.log").read_text().splitlines() if "operations" in l])
+
+    def test_a_worker_killed_midway_reads_back_unknown_with_what_to_check(self):
+        import signal
+        mark = Path(self._tmp.name) / "in-the-hook"
+        self.hook('touch "%s"\nsleep 3\n' % mark)
+        worker = self.start(dict(self.requests()["todo-add"], op="a19f3c80"))
+        self.wait_for(mark)
+        os.kill(worker.pid, signal.SIGKILL)
+        worker.wait(timeout=30)
+        worker.stdout.close()
+        worker.stderr.close()
+        (found,) = self.run_script({"verb": "operations"})["ops"]
+        self.assertEqual(("failed", "unknown"), (found["state"], found["outcome"]))
+        self.assertIn("git log -1 in Work", found["say"])
+        self.assertIn("Trying again is safe", found["say"])
+        import test_operations as t
+        self.assertIsNone(t.SUCCESS.search(found["say"]), found["say"])
+        again = self.run_script({"verb": "operations"})["ops"]
+        self.assertEqual("unknown", again[0]["outcome"])
+        self.assertEqual(1, len([r for r in self.records() if r["op"] == "a19f3c80" and r["state"] == "failed"]))   # written once
+        import time
+        deadline = time.time() + 30
+        while (self.work / ".git" / "index.lock").exists() and time.time() < deadline:
+            time.sleep(0.1)                                                       # the orphaned commit finishes before the folder goes
+
+    def test_without_the_module_every_reply_is_what_it_was(self):
+        """A workspace and an extra with no operations.py anywhere: 0.26.0's replies, byte for byte."""
+        bare = Path(self._tmp.name) / "bare" / "System" / "status"
+        bare.mkdir(parents=True)
+        for name in ("page_action.py", "todo_lines.py"):
+            shutil.copy(REPO / "extras" / "status" / name, bare / name)
+        script = bare / "page_action.py"
+
+        def run(request):
+            return subprocess.run([sys.executable, str(script), "--workspace", str(self.root)], input=request, capture_output=True,
+                                  text=True, env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs))).stdout
+        ok = run(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice"), "op": "a19f3c80"}))
+        self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', ok)
+        stale = run(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16, "op": "a19f3c80"}))
+        self.assertEqual('{"ok": false, "say": "that line has changed since the page was built; it rebuilds now, try again"}\n', stale)
+        self.assertEqual('{"ok": false, "say": "unknown action"}\n', run('{"verb": "operations"}'))
+        self.assertEqual('{"ok": false, "say": "not a request"}\n', run("nope"))
+        self.assertEqual([], list(self.jobs.glob("operations.*")) + list(self.jobs.glob("op-*")))
+
+    def test_the_degraded_replies_match_the_module_ones_apart_from_the_record(self):
+        """Same workspace, the module present and then absent: the same verbs say the same thing when they save."""
+        with mock.patch.object(pa, "ops_lib", return_value=None):
+            old = pa.act(self.root, self.requests()["todo-add"], today=TODAY)
+        new = self.run_script(dict(self.requests()["todo-add"], text="Call Dana"))
+        self.assertEqual("Added to Inbox: Book the room", old)
+        self.assertEqual("Added to Inbox: Call Dana", new["say"])
+
+    def test_a_journal_that_cannot_be_written_stops_nothing_and_the_page_is_told(self):
+        self.jobs.mkdir(parents=True)
+        (self.jobs / "operations.jsonl").mkdir()                                  # a folder where the record should be
+        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
+                              input=json.dumps(dict(self.requests()["todo-done"], op="a19f3c80")),
+                              env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
+        self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', done.stdout)    # as it was, byte for byte
+        refused = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16})
+        self.assertEqual({"ok": False, "say": "that line has changed since the page was built; it rebuilds now, try again"}, refused)
+        reply = self.run_script({"verb": "operations"})
+        self.assertEqual((True, False, []), (reply["ok"], reply["durable"], reply["ops"]))
+        self.assertIn("not recoverable", reply["say"])
+
+    def test_a_phase_that_cannot_be_written_stops_nothing(self):
+        class Broken:
+            def running(self):
+                raise OSError("no space left")
+
+            def phase(self, text):
+                raise OSError("no space left")
+        pa.CURRENT = Broken()
+        try:
+            self.assertEqual("Added to Inbox: Book the room", self.act(verb="todo-add", zone="Work", text="Book the room"))
+        finally:
+            pa.CURRENT = None
+        self.assertEqual(("Work: added to Inbox, Book the room", ""), self.last_commit())
 
 
 class TestFlag(ActionCase):
@@ -559,8 +824,8 @@ class TestTogether(ActionCase):
         first.wait(timeout=60)
         first.stdout.close()
         first.stderr.close()
-        self.assertEqual({"ok": True, "say": "Added to Inbox: Book the room"}, json.loads(out1))
-        self.assertEqual({"ok": True, "say": "Added to Inbox: Call Dana"}, json.loads(out2))
+        self.assertEqual({"ok": True, "say": "Added to Inbox: Book the room"}, plain(json.loads(out1)))
+        self.assertEqual({"ok": True, "say": "Added to Inbox: Call Dana"}, plain(json.loads(out2)))
         todo = (self.work / "Todo.md").read_text()
         self.assertIn("- [ ] Book the room\n", todo)
         self.assertIn("- [ ] Call Dana\n", todo)
@@ -840,7 +1105,7 @@ class TestScript(ActionCase):
     def test_one_line_of_json(self):
         done = self.run_script(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice")}))
         self.assertEqual(0, done.returncode, done.stderr)
-        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, json.loads(done.stdout))
+        self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September"}, plain(json.loads(done.stdout)))
         refused = self.run_script("not json")
         self.assertEqual(1, refused.returncode)
         self.assertEqual({"ok": False, "say": "not a request"}, json.loads(refused.stdout))
@@ -862,9 +1127,33 @@ class TestScript(ActionCase):
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)
-        self.assertEqual({"ok": False, "say": "that did not work: OSError: the disk went away"}, json.loads(buf.getvalue()))
+        reply = json.loads(buf.getvalue())
+        self.assertEqual(("failed", "crashed", False), (reply["state"], reply["outcome"], reply["ok"]))
+        self.assertEqual("That did not work: OSError: the disk went away. Check git status in Work before trying again.", reply["say"])
+        self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
+            'todo-done zone="Work"  ->  refused: ' + reply["say"]))
+        last = [json.loads(line) for line in (self.jobs / "operations.jsonl").read_text().splitlines()][-1]
+        self.assertEqual(("failed", "crashed"), (last["state"], last["outcome"]))
+
+    def test_a_fault_without_the_record_answers_as_it_did(self):
+        import contextlib
+        import io
+        real, stdin = pa.act, sys.stdin
+
+        def broken(ws, req, today=None):
+            raise OSError("the disk went away")
+        pa.act, sys.stdin = broken, io.StringIO(json.dumps({"verb": "todo-done", "zone": "Work"}))
+        buf = io.StringIO()
+        try:
+            with mock.patch.object(pa, "ops_lib", return_value=None), contextlib.redirect_stdout(buf):
+                code = pa.main(["--workspace", str(self.root)])
+        finally:
+            pa.act, sys.stdin = real, stdin
+        self.assertEqual(1, code)
+        self.assertEqual('{"ok": false, "say": "that did not work: OSError: the disk went away"}\n', buf.getvalue())
         self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
             'todo-done zone="Work"  ->  refused: that did not work: OSError: the disk went away'))
+        self.assertFalse((self.jobs / "operations.jsonl").exists())
 
 
 if __name__ == "__main__":

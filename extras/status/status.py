@@ -1049,9 +1049,24 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # request with no reply after ACTION_LOST seconds, past the Obsidian plugin's
 # fifteen minutes, is taken as lost. ZONE_VERBS are the requests page_action.py
 # runs under the zone's lock.
+#
+# The page's memory is a cache. page_action.py keeps a durable record of park,
+# wake and the Todo verbs (System/tools/operations.py, in the jobs folder), and
+# the page asks for the open set, as {"verb": "operations"}, on load and every
+# ACTION_POLL seconds while one of its entries is still running. The record
+# wins: a reload, or an app that was quit, finds the action again with its
+# phase, a result that landed while the page was away is shown and dismissable,
+# an entry the record does not know after ACTION_UNKNOWN seconds is given up as
+# lost, and what the user reads comes from the record's own sentence, never
+# from the page: only the outcome "saved" is a success. A workspace without the
+# module is told so once. ACTION_LOST stays the last resort for a reply that
+# never comes.
 ACTION_TOAST = 4
 ACTION_WHY = 10
 ACTION_LOST = 960
+ACTION_POLL = 3
+ACTION_UNKNOWN = 60
+ACTION_QUIET = 20
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
               "delete", "undo", "interrupt")
 
@@ -1073,9 +1088,14 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null;
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,QUIET=@QUIET@,SEEN=[],OPS={};
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
-function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W))}catch(e){}}
+try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
+try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
+function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS))}catch(e){}}
+/* the operation ids this window has already shown the end of, so the record never shows one twice */
+function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
+function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function zoned(q){return!!q&&ZONED.indexOf(q.verb)>=0&&typeof q.zone==='string'}
 function running(z){return W.filter(function(e){return!e.out&&e.q.zone===z})[0]||null}
@@ -1094,26 +1114,48 @@ function render(){var now=Date.now();if(box){box.innerHTML=W.map(function(e,i){
 if(e.out)return'<div class="wk '+(e.out.ok?'ok':'bad')+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
 +'</span></div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
-+(now-e.t0>=WHY*1000?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
++((e.phase===undefined?now-e.t0>=WHY*1000:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
 box.hidden=!W.length;document.body.style.setProperty('--work-h',W.length?box.offsetHeight+8+'px':'0px')}hold()}
 /* each second: the time so far, why after WHY, and a request with no reply after LOST given up */
 function sweep(){var now=Date.now(),changed=false;W.forEach(function(e){if(e.out)return;
 if(now-e.t0>LOST*1000){e.out={ok:false,say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
 else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}});if(changed)keep();return changed}
-function tick(){if(sweep())render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});run()}
+function tick(){if(sweep())render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
+/* the record: ask for the open set on load, and every POLL seconds while an entry of ours is running; only Python reads the file */
+function poll(first){var now=Date.now();if(OPS.durable===false)return;
+if(!first&&(now-(OPS.asked||0)<POLL*1000-200||!W.some(function(e){return!e.out})))return;
+OPS.asked=now;keep();host.postMessage({act:{verb:'operations'}})}
+function heard(out){OPS.replied=Date.now();
+if(!out||!out.ok||out.durable===false){OPS.durable=false;if(!OPS.said){OPS.said=1;toast('Actions are not recoverable here: if this page reloads while one is running, look at git status in its zone.')}keep();run();return}
+OPS.durable=true;OPS.verbs=out.verbs||[];OPS.lost=out.lost||'';reconcile(out.ops||[]);keep();render();run()}
+function reconcile(ops){var now=Date.now(),by={};ops.forEach(function(r){by[r.op]=r});
+ops.forEach(function(r){var e=W.filter(function(x){return x.op===r.op})[0],end=r.state==='completed'||r.state==='failed';
+if(!e){if(SEEN.indexOf(r.op)>=0||ZONED.indexOf(r.verb)<0)return;
+e={q:{verb:r.verb,zone:r.zone,op:r.op},op:r.op,say:r.label||'Working…',t0:Math.round(r.at*1000)};W.push(e)}
+if(end){if(!e.out){e.out={ok:r.outcome==='saved',say:r.say||''};e.done=Math.round((r.done||r.at)*1000)}mark(r.op)}
+else if(!e.out)e.phase=r.phase||''});
+W.forEach(function(e){if(e.out||!e.op||by[e.op]||(OPS.verbs||[]).indexOf(e.q.verb)<0||now-e.t0<=UNKNOWN*1000)return;
+e.out={ok:false,say:(OPS.lost||'No record of this action was found. Look at git status in {zone} before trying again.').replace('{zone}',e.q.zone)};e.done=now;mark(e.op)})}
 function run(){var on=W.some(function(e){return!e.out});if(on&&!timer)timer=setInterval(tick,1000);if(!on&&timer){clearInterval(timer);timer=null}}
 window.GarrickBusy=function(z){var e=running(z);return e?e.say:''};
 window.GarrickHeld=function(q){var e=zoned(q)&&running(q.zone);if(e)toast(q.zone+' is still busy: '+e.say);return!!e};
-window.GarrickAct=function(q,said){if(!zoned(q))return false;if(GarrickHeld(q))return true;host.postMessage({act:q});
-W.push({q:q,say:said||'Working…',t0:Date.now()});keep();render();run();return true};
+window.GarrickAct=function(q,said){if(!zoned(q))return false;if(GarrickHeld(q))return true;q=Object.assign({},q,{op:q.op||mint()});host.postMessage({act:q});
+W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now()});keep();render();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside */
-var prev=window.GarrickActed;window.GarrickActed=function(q,out){var e=zoned(q)&&running(q.zone);
-if(e&&e.q.verb===q.verb){var now=Date.now();if(now-e.t0>TOAST*1000){e.out={ok:!!(out&&out.ok),say:out&&out.say||'That did not work.'};e.done=now;
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='operations'){heard(out);return}
+var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||running(q.zone));
+if(e&&e.q.verb===q.verb){var now=Date.now();
+if(out&&out.state==='running'&&!out.outcome){   /* an identical request is already under way: this entry becomes that one, and nothing was saved */
+W.splice(W.indexOf(e),1);if(out.op&&!W.some(function(x){return x.op===out.op})&&SEEN.indexOf(out.op)<0)W.push({q:{verb:q.verb,zone:q.zone,op:out.op},op:out.op,say:out.say||'Working…',t0:now});
+keep();render();run();return}
+/* a success is the record's outcome "saved"; with no record, the reply's ok, as before */
+mark(e.op,out&&out.op);if(now-e.t0>TOAST*1000){e.out={ok:out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),say:out&&out.say||'That did not work.'};e.done=now;
 var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 if(box)box.addEventListener('click',function(e){var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
-sweep();render();run()})();
+sweep();render();run();if(!(OPS.replied&&Date.now()-OPS.replied<QUIET*1000))poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
+    .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@QUIET@", str(ACTION_QUIET)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":")))
 
 

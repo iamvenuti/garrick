@@ -388,15 +388,22 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 				said = { ok: false, say: err && err.killed ? "page_action.py had no answer after fifteen minutes and was stopped." : "That did not work." };
 			}
 			this.acted(view, request, said);
-			this.rebuild(true);
+			if (!this.reading(request)) this.rebuild(true);
 		});
 		child.stdin.end(JSON.stringify(request));
+	}
+
+	// The page asking what is running (page_action.py's "operations") only reads:
+	// the reply goes to the page, with no toast and no rebuild, or asking would
+	// rebuild the page it asks from.
+	reading(request) {
+		return !!request && request.verb === "operations";
 	}
 
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
 	acted(view, request, said) {
-		view.toast(said.say || "That did not work.");
+		if (!this.reading(request)) view.toast(said.say || "That did not work.");
 		if (view.web) {
 			view.web.executeJavaScript(`(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(${
 				JSON.stringify([request, said]).replace(/</g, "\\u003c")})`).catch(() => {});

@@ -36,7 +36,8 @@ spec.loader.exec_module(page_action)
 HARNESS = textwrap.dedent(r"""
     const vm = require("vm");
     const [js, steps] = JSON.parse(process.argv[1]);
-    const store = {}, posted = [], out = [];
+    const store = {}, posted = [], asked = [], out = [];
+    let toasts = 0;
     let clock = 1000000, ctx, box, toast, style, interval, chained = [];
     function load() {
       box = { innerHTML: "", hidden: true, offsetHeight: 40, listeners: {}, addEventListener(k, f) { this.listeners[k] = f; },
@@ -46,7 +47,7 @@ HARNESS = textwrap.dedent(r"""
                 return [...this.innerHTML.matchAll(/data-t0="(\d+)"/g)].map((m) => ({ dataset: { t0: m[1] },
                   set textContent(v) { box.innerHTML = box.innerHTML.replace(new RegExp('(data-t0="' + m[1] + '"[^>]*>)[^<]*'), "$1" + v); } }));
               } };
-      toast = { textContent: "", style: { opacity: 0 } };
+      toast = { _t: "", set textContent(v) { this._t = v; toasts += 1; }, get textContent() { return this._t; }, style: { opacity: 0 } };
       style = null;
       interval = null;
       const document = {
@@ -61,7 +62,7 @@ HARNESS = textwrap.dedent(r"""
               setInterval: (f) => { interval = f; return 1; }, clearInterval: () => { interval = null; },
               setTimeout: () => 0, clearTimeout: () => {} };
       ctx.window = ctx;                    // as in a browser, the page's globals are the window's
-      ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => posted.push(m) } } };
+      ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => (m.act && m.act.verb === "operations" ? asked : posted).push(m) } } };
       ctx.GarrickActed = (q, o) => chained.push(q.verb);
       vm.createContext(ctx);
       vm.runInContext(js, ctx);
@@ -72,12 +73,13 @@ HARNESS = textwrap.dedent(r"""
       let r = null;
       if (what === "act") r = ctx.window.GarrickAct(a, b);
       if (what === "reply") ctx.window.GarrickActed(a, b);
+      if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
       out.push({ r, box: box.hidden ? "" : box.innerHTML, toast: toast.textContent, opacity: toast.style.opacity,
-                 hold: style ? style.textContent : "", posted: posted.length, ticking: !!interval, chained: chained.slice() });
+                 hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice() });
     }
     process.stdout.write(JSON.stringify(out));
 """)
@@ -89,13 +91,16 @@ PARK = {"verb": "park", "zone": "Work", "file": "Birch Entry/Birch Entry.md"}
 HOME = {"verb": "todo-add", "zone": "Personal", "target": "-", "date": "-", "text": "Book the car service"}
 
 
-@unittest.skipUnless(shutil.which("node"), "Node is not installed")
-class TestWorkUnderNode(unittest.TestCase):
+class NodeCase(unittest.TestCase):
     def run_js(self, *steps):
         done = subprocess.run(["node", "-e", HARNESS, json.dumps([status.WORK_JS, [list(s) for s in steps]])],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestWorkUnderNode(NodeCase):
 
     def test_a_slow_new_project_shows_it_is_working_until_its_reply_and_the_reply_stays(self):
         out = self.run_js(("act", 0, ACME, "Making Acme…"), ("tick", 5), ("tick", 12), ("tick", 75),
@@ -175,6 +180,139 @@ class TestWorkUnderNode(unittest.TestCase):
                                "vm.runInContext(process.argv[1],c);process.stdout.write(String(typeof c.window.GarrickAct))",
                                status.WORK_JS], capture_output=True, text=True, timeout=30)
         self.assertEqual("undefined", done.stdout, done.stderr)
+
+
+# A record as operations.py reads it back for the page. Seconds, as time.time() gives them.
+def record(op, state="running", at=999.0, **kw):
+    base = {"op": op, "verb": "park", "zone": "Work", "state": state, "phase": "", "at": at, "done": None, "outcome": None,
+            "say": None, "label": "Parking Birch Entry…"}
+    base.update(kw)
+    return base
+
+
+def reply(*ops, **kw):
+    return dict({"ok": True, "durable": True, "verbs": ["park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add"],
+                 "ops": list(ops), "lost": "No record of this action was found, so we do not know whether it went through. "
+                                           "Run git log -1 in {zone}, then try again: it checks first."}, **kw)
+
+
+SUCCESS = re.compile(r"\b(saved|parked|ticked|added|renamed|made|committed)\b", re.I)
+OP = "a19f3c80b29f3c80"
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestWorkFromTheRecord(NodeCase):
+    """The page's memory is a cache: the record in the jobs folder is read through
+    {"verb": "operations"} and wins."""
+
+    def no_success_in(self, html):
+        text = re.sub(r"<[^>]+>", " ", html)
+        for m in SUCCESS.finditer(text):                                      # "not committed" is a refusal; "committed" is a claim
+            self.assertRegex(text[:m.start()], r"(?i)\b(not|no)\s+$", text)
+
+    def test_the_page_asks_on_load_and_a_click_carries_its_op(self):
+        out = self.run_js(("tick", 0), ("act", 1, PARK, "Parking Birch Entry…"))
+        self.assertEqual(1, out[0]["asked"])                                  # on load, once
+        sent = out[1]["sent"][0]["act"]
+        self.assertRegex(sent["op"], r"^[0-9a-f]{8,32}$")
+        self.assertEqual({"verb": "park", "zone": "Work", "file": "Birch Entry/Birch Entry.md"}, {k: v for k, v in sent.items() if k != "op"})
+        self.assertIn("Parking Birch Entry…", out[1]["box"])                  # and it renders inside the click, not after the record
+
+    def test_a_reload_with_nothing_remembered_finds_the_action_and_its_phase(self):
+        out = self.run_js(("ops", 1, reply(record(OP, phase=""))), ("ops", 4, reply(record(OP, phase="checking"))),
+                          ("tick", 5))
+        first, second, third = out
+        self.assertIn("Parking Birch Entry…", first["box"])
+        self.assertIn('class="wspin"', first["box"])
+        self.assertIn(">2 s<", first["box"])                                  # since the record began, not since the page did
+        self.assertNotIn("wall check", first["box"])                          # no guess at ten seconds: the phase says
+        self.assertIn("Committing: the wall check can take a minute.", second["box"])
+        self.assertIn('.trow[data-z="Work"] button.tick', first["hold"])      # and its zone is held
+        self.assertTrue(first["ticking"])
+
+    def test_it_asks_again_every_few_seconds_while_something_runs_and_never_otherwise(self):
+        out = self.run_js(("tick", 0), ("act", 1, PARK, "Parking Birch Entry…"), ("tick", 2), ("tick", 4.5), ("tick", 5), ("tick", 8),
+                          ("reply", 9, PARK, {"ok": True, "say": "Parked", "outcome": "saved", "state": "completed"}),
+                          ("tick", 20), ("tick", 40))
+        self.assertEqual([1, 1, 1, 2, 2, 3, 3, 3, 3], [o["asked"] for o in out])
+
+    def test_a_result_that_landed_while_the_page_was_away_shows_and_is_dismissable_once(self):
+        done = record(OP, state="failed", outcome="refused", done=1000.0,
+                      say="Not done. Not committed, so nothing changed: the wall check refused.")
+        out = self.run_js(("ops", 5, reply(done)), ("dismiss", 6, 0), ("ops", 9, reply(done)))
+        shown, dismissed, again = out
+        self.assertIn("Not done. Not committed, so nothing changed: the wall check refused.", shown["box"])
+        self.assertIn('class="wk bad"', shown["box"])
+        self.assertIn('data-wx="0"', shown["box"])
+        self.assertNotIn("wspin", shown["box"])
+        self.assertEqual("", dismissed["box"])
+        self.assertEqual("", again["box"])                                    # dismissed: the record does not bring it back
+        self.no_success_in(shown["box"])
+
+    def test_a_saved_one_that_landed_while_away_is_the_only_one_that_reads_as_a_success(self):
+        out = self.run_js(("ops", 5, reply(record(OP, state="completed", outcome="saved", done=1000.0, say="Birch Entry is parked"))))
+        self.assertIn('class="wk ok"', out[0]["box"])
+        self.assertIn("Birch Entry is parked", out[0]["box"])
+
+    def test_a_reply_that_is_ok_is_not_a_save_unless_its_outcome_says_so(self):
+        for outcome in ("refused", "crashed", "unknown", "lost"):
+            out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"),
+                              ("reply", 30, PARK, {"ok": True, "say": "Not done. A check refused it.", "outcome": outcome, "state": "failed"}))
+            self.assertIn('class="wk bad"', out[1]["box"], outcome)
+            self.assertNotIn('class="wk ok"', out[1]["box"], outcome)
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"),
+                          ("reply", 30, PARK, {"ok": True, "say": "Birch Entry is parked", "outcome": "saved", "state": "completed"}))
+        self.assertIn('class="wk ok"', out[1]["box"])
+
+    def test_a_join_reply_is_one_toast_and_nothing_is_saved(self):
+        join = {"ok": True, "say": "Already parking Birch Entry…", "op": OP, "state": "running"}
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, join), ("ops", 2, reply(record(OP))),
+                          ("ops", 6, reply(record(OP, state="failed", outcome="refused", done=1005.0, say="Not done. A check refused it."))))
+        joined, listed, ended = out[1:]
+        self.assertEqual(1, joined["box"].count("wk"))                        # one toast, not two
+        self.assertIn("Already parking Birch Entry…", joined["box"])
+        self.assertIn("wspin", joined["box"])
+        self.assertNotIn("data-wx", joined["box"])
+        self.assertEqual(1, listed["box"].count("wspin"))
+        self.assertIn('class="wk bad"', ended["box"])
+        self.assertEqual(1, ended["box"].count("wk bad"))
+        self.no_success_in(joined["box"].replace("Already parking Birch Entry…", ""))
+
+    def test_a_page_entry_the_record_does_not_know_drops_to_lost_after_a_minute(self):
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("ops", 30, reply()), ("ops", 61, reply()))
+        self.assertIn("wspin", out[1]["box"])                                 # young enough: the worker may not have written yet
+        self.assertIn('class="wk bad"', out[2]["box"])
+        self.assertIn("No record of this action was found", out[2]["box"])
+        self.assertIn("git log -1 in Work", out[2]["box"])
+        self.no_success_in(out[2]["box"])
+        self.assertEqual("", self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("ops", 61, reply()), ("busy", 62, "Work"))[2]["r"])
+
+    def test_an_action_the_record_does_not_keep_is_left_to_the_old_last_resort(self):
+        out = self.run_js(("act", 0, ACME, "Making Acme…"), ("ops", 120, reply()), ("tick", 121))
+        self.assertIn("wspin", out[1]["box"])                                 # new-project has no record; not lost at a minute
+        out = self.run_js(("act", 0, ACME, "Making Acme…"), ("ops", 120, reply()), ("tick", status.ACTION_LOST + 1))
+        self.assertIn("No reply after 16 min", out[2]["box"])
+
+    def test_an_unreachable_record_is_said_once(self):
+        gone = {"ok": False, "say": "unknown action"}
+        out = self.run_js(("tick", 0), ("ops", 1, gone), ("act", 2, PARK, "Parking Birch Entry…"), ("ops", 3, gone), ("tick", 20))
+        self.assertEqual(1, out[0]["asked"])
+        self.assertIn("Actions are not recoverable here", out[1]["toast"])
+        self.assertEqual(out[1]["toasts"], out[3]["toasts"])                  # not said a second time
+        self.assertEqual(1, out[4]["asked"])                                  # and it stops asking
+        self.assertIn("wspin", out[4]["box"])                                 # the click still shows, as in 0.26.0
+        out = self.run_js(("ops", 1, {"ok": True, "durable": False, "verbs": [], "ops": []}))
+        self.assertIn("Actions are not recoverable here", out[0]["toast"])
+
+    def test_a_rebuild_straight_after_an_answer_does_not_ask_again(self):
+        out = self.run_js(("ops", 1, reply()), ("reload", 3), ("tick", 3), ("reload", 40), ("tick", 40))
+        self.assertEqual([1, 1, 1], [out[0]["asked"], out[1]["asked"], out[2]["asked"]])
+        self.assertEqual(2, out[3]["asked"])                                  # a page long after the last answer asks
+
+    def test_a_reload_keeps_what_was_seen(self):
+        done = record(OP, state="completed", outcome="saved", done=1000.0, say="Birch Entry is parked")
+        out = self.run_js(("ops", 5, reply(done)), ("dismiss", 6, 0), ("reload", 7), ("ops", 8, reply(done)))
+        self.assertEqual("", out[3]["box"])
 
 
 class TestWorkOnThePage(StatusCase):

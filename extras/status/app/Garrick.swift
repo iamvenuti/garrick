@@ -725,7 +725,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
 				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
-				self.freshen(force: true)
+				if !self.reading(request) { self.freshen(force: true) }
 			}
 		}
 		do {
@@ -737,10 +737,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// The page asking what is running (page_action.py's "operations") only reads:
+	// the reply goes to the page, with no toast and no rebuild, or asking would
+	// rebuild the page it asks from.
+	func reading(_ request: [String: Any]) -> Bool { request["verb"] as? String == "operations" }
+
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
 	func acted(_ request: [String: Any], _ said: [String: Any]) {
-		toast(said["say"] as? String ?? "That did not work.")
+		if !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
 		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
 		   let text = String(data: both, encoding: .utf8) {
 			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")

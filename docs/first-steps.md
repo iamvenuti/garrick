@@ -94,7 +94,7 @@ Unless you allowed them when you installed, a first session asks you to approve 
 
 | A command that starts with | Does this |
 |---|---|
-| `python3 System/tools/scaffold.py` | Makes a zone, project or thread folder from its template |
+| `python3 System/tools/scaffold.py` | Makes a zone, project or thread folder from its template, and adds a party to `System/context.md` |
 | `python3 System/skills/intake/intake.py` | Reads what waits in an inbox and files it where it belongs |
 | `python3 System/skills/meetings/ingest.py` | Files a conversation in the Meetings wiki |
 | `python3 System/skills/todo/todo.py` | Expires, archives and tidies the lines of a zone's `Todo.md` |

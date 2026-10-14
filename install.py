@@ -22,7 +22,6 @@ import os
 import re
 import shutil
 import subprocess
-import unicodedata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -40,8 +39,10 @@ DEFAULT_ZONES = ["Work", "Personal"]
 # macOS privacy protection stops scheduled jobs from reading these folders.
 PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
-TAG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-TAG_RULE = "one lowercase word that starts with a letter, then letters, digits or hyphens"
+# The tag rule and the tag the questions offer live in the library, beside the
+# naming layer: `garrick_lib.TAG_RE`, `TAG_RULE` and `tag_for`. This file is not
+# shipped into a workspace, so a copy here could not be reached by the workspace's
+# own tools, and `scaffold.py party` offers a tag long after the install.
 # Wall examples the questions can show, never built from the user's own tags.
 EXAMPLE_WALLS = (("acme", "birch"), ("cedar", "dune"))
 # The one way to put your own address on the workspace's repositories when git had
@@ -223,8 +224,8 @@ def validate(cfg, pl):
             problems.append("A party has no name.")
         if p["zone"] not in zone_names:
             problems.append(f'{label} is in zone "{p["zone"]}", which is not one of: {", ".join(sorted(zone_names))}.')
-        if not TAG_RE.match(p["tag"]):
-            problems.append(f'The tag for {label} ("{p["tag"]}") must be {TAG_RULE}.')
+        if not pl.TAG_RE.match(p["tag"]):
+            problems.append(f'The tag for {label} ("{p["tag"]}") must be {pl.TAG_RULE}.')
         elif p["tag"] in tags:
             problems.append(f'The tag "{p["tag"]}" is used twice.')
         tags.append(p["tag"])
@@ -756,19 +757,6 @@ def home_relative(answer):
     return p if p.is_absolute() else Path.home() / p
 
 
-def tag_guess(name, taken=()):
-    """The tag the question offers for a party: its first word, or its first words
-    joined by hyphens, in lowercase. Only one the question would accept: valid and
-    not taken. "" when there is none, such as for 4Birch, whose tag cannot start with 4."""
-    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
-    words = [w for w in (re.sub(r"[^a-z0-9]", "", w) for w in plain.split()) if w]
-    for n in range(1, len(words) + 1):
-        guess = "-".join(words[:n])
-        if TAG_RE.match(guess) and guess not in taken:
-            return guess
-    return ""
-
-
 def example_wall(tags):
     """A pair of example tags for the walls question that is not the user's own."""
     return next((pair for pair in EXAMPLE_WALLS if not set(pair) & set(tags)), EXAMPLE_WALLS[-1])
@@ -828,16 +816,16 @@ def interview(pl, target=None, force=False):
                     break
                 print(f"That is not one of your zones: {', '.join(names)}.\n")
         taken = {p["tag"]: p["name"] for p in parties}
-        guess = tag_guess(pname, taken)
+        guess = pl.tag_for(pname, taken, zone)
         while True:
             tag = ask(f"A short tag for {pname}, used in notes: one lowercase word that starts with a letter.",
                       guess).strip("`")
             if tag in taken:
                 print(f"{tag} is already the tag for {taken[tag]}. Pick another.\n")
-            elif TAG_RE.match(tag):
+            elif pl.TAG_RE.match(tag):
                 break
             else:
-                print(f"A tag is {TAG_RULE}, such as acme or acme-uk.\n")
+                print(f"A tag is {pl.TAG_RULE}, such as acme or acme-uk.\n")
         taken_domains = {d: p["name"] for p in parties for d in p["domains"]}
         while True:
             domains = domain_list(ask(f"Mail domains for {pname}: the part after the @ in their addresses, "

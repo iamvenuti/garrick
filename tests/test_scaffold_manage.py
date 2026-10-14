@@ -55,6 +55,131 @@ class ManageCase(Installed):
         return self.run_tool("scaffold.py", *args)
 
 
+class TestParty(ManageCase):
+    """`party`: the one step of setting work up that reaches outside the zone,
+    and the one the user is asked about. It offers the tag, so nobody has to
+    invent one; it runs again without writing a second row; and where two
+    parties share a name it refuses in a question."""
+
+    def root_git(self, *args):
+        return subprocess.run(["git", *args], cwd=str(self.root), capture_output=True, text=True, env=self.env)
+
+    def context(self):
+        return (self.root / "System" / "context.md").read_text(encoding="utf-8")
+
+    def test_check_on_a_new_party_offers_the_tag_and_writes_nothing(self):
+        before = self.context()
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--check")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Cobalt Freight is not a party yet, and the tag would be `cobalt`, in Work.", r.stdout)
+        self.assertEqual(before, self.context())
+        self.assertEqual("", self.root_git("status", "--porcelain").stdout)
+
+    def test_check_on_a_known_party_names_its_tag_its_zone_and_its_project(self):
+        """The listing is the code's, not the skill's prose: a project is found by
+        its hub's `party:`, whatever the folder is called."""
+        r = self.scaffold("party", "--name", "Acme Corp", "--check")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Acme Corp is already a party, `acme`, in Work, with the project Acme.", r.stdout)
+        r = self.scaffold("party", "--name", "Birch & Co", "--check")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Birch & Co is already a party, `birch`, in Work, with no project yet.", r.stdout)
+
+    def test_a_new_party_is_added_and_the_commit_left_to_the_caller(self):
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
+                      "in Work.", r.stdout)
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |", self.context())
+        # Left for the caller to commit, in the workspace's own repository.
+        self.assertIn("System/context.md", self.root_git("status", "--porcelain").stdout)
+        self.assertIn("Commit System/context.md on its own", r.stdout)
+        self.assertIn("refused while the row is not there", r.stdout)
+
+    def test_running_it_again_writes_no_second_row(self):
+        """An onboarding picked up again: what it already did is found by re-reading,
+        not by a state file of its own."""
+        self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
+                                          "--what", "Supplier").returncode)
+        after = self.context()
+        r = self.scaffold("party", "--name", "cobalt  freight", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Cobalt Freight is already a party, `cobalt`, in Work", r.stdout)
+        self.assertEqual(after, self.context())
+        self.assertEqual(1, self.context().count("| Cobalt Freight |"))
+
+    def test_the_project_is_refused_until_the_party_row_is_there(self):
+        """The ordering the two repositories force: the row first, on its own."""
+        r = self.scaffold("project", "--zone", "Work", "--name", "Cobalt Review", "--party", "cobalt",
+                          "--thread", "Next Call")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("not a party tag in System/context.md", r.stderr)
+        self.assertFalse((self.work / "Cobalt Review").exists())
+        self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
+                                          "--what", "Supplier").returncode)
+        r = self.scaffold("project", "--zone", "Work", "--name", "Cobalt Review", "--party", "cobalt",
+                          "--thread", "Next Call")
+        self.assertEqual(0, r.returncode, r.stderr)
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--check")
+        self.assertIn("with the project Cobalt Review.", r.stdout)
+
+    def test_a_second_capacity_gets_the_wider_tag_and_the_wall(self):
+        self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
+                                          "--what", "Supplier").returncode)
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client",
+                          "--also", "--walled-from", "cobalt", "--why", "Two capacities, two confidences")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("with the tag `cobalt-freight`, in Personal", r.stdout)
+        self.assertIn("Added a wall between `cobalt-freight` and `cobalt`", r.stdout)
+        self.assertIn("| `cobalt-freight` | `cobalt` | Two capacities, two confidences |", self.context())
+        # The check that would otherwise warn about the two: one name, two tags, a wall.
+        found = json.loads(self.run_tool("check.py", "--json").stdout)
+        self.assertEqual([], [f for f in found["findings"] if "no wall between them" in f.get("message", "")],
+                         found)
+
+    def test_a_second_capacity_with_no_wall_says_what_the_check_will_warn(self):
+        self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
+                                          "--what", "Supplier").returncode)
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client",
+                          "--also")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("with no wall between them, which the workspace check warns about until one is added",
+                      r.stdout)
+
+    def test_two_parties_of_one_name_are_a_question_and_nothing_is_written(self):
+        """Never resolved silently: which capacity a request means is the user's."""
+        for args in (("--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier"),
+                     ("--name", "Cobalt Freight", "--zone", "Personal", "--what", "Client", "--also")):
+            self.assertEqual(0, self.scaffold("party", *args).returncode)
+        after = self.context()
+        for extra in (["--check"], ["--zone", "Work", "--what", "Supplier"], ["--also", "--zone", "Work"]):
+            r = self.scaffold("party", "--name", "Cobalt Freight", *extra)
+            self.assertEqual(1, r.returncode, extra)
+            self.assertEqual(1, len(r.stderr.strip().splitlines()), r.stderr)
+            self.assertEqual("Two of your parties are called Cobalt Freight: `cobalt` in Work, and "
+                             "`cobalt-freight` in Personal. Which one is this?", r.stderr.strip())
+            self.assertEqual(after, self.context())
+
+    def test_what_it_refuses(self):
+        for extra, said in (
+            (["--name", "Cobalt Freight", "--what", "Supplier"],
+             "Which zone is Cobalt Freight in? The zones are Personal, Work."),
+            (["--name", "Cobalt Freight", "--zone", "Garden", "--what", "Supplier"],
+             "There is no zone called Garden."),
+            (["--name", "4Birch", "--zone", "Work", "--check"], 'No tag can be made from "4Birch"'),
+            (["--name", "Cobalt Freight", "--zone", "Work", "--also"],
+             "is not a party yet, so there is no first capacity for --also to stand beside"),
+            (["--name", "Cobalt Freight", "--zone", "Work", "--walled-from", "dune"],
+             "`dune` is not a party tag in System/context.md"),
+        ):
+            before = self.context()
+            r = self.scaffold("party", *extra)
+            self.assertEqual(1, r.returncode, extra)
+            self.assertIn(said, r.stderr)
+            self.assertEqual(before, self.context())
+        self.assertEqual("", self.root_git("status", "--porcelain").stdout)
+
+
 class TestCheck(ManageCase):
     def test_check_says_whether_a_name_would_do_and_makes_nothing(self):
         r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal", "--check")

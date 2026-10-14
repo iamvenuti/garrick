@@ -12,6 +12,7 @@ functions below keep their signatures:
     spoken_of(folder) -> str
     spoken_clash(a, b, a_spoken=None, b_spoken=None) -> (str, str) or None
     sounds_alike(a, b) -> bool
+    tag_for(name, taken=(), zone=None) -> str
     load_context(root) -> dict
     walled(context, tag_a, tag_b) -> bool
     workspace_root(start=None) -> Path
@@ -63,6 +64,9 @@ __all__ = [
     "spoken_clash",
     "sounds_alike",
     "normalise_name",
+    "TAG_RE",
+    "TAG_RULE",
+    "tag_for",
     "phonetic_key",
     "edit_distance",
     "load_context",
@@ -462,6 +466,45 @@ def sounds_alike(a: str, b: str) -> bool:
     if min(len(na), len(nb)) >= 4 and edit_distance(na, nb) <= 1:
         return True
     return False
+
+
+# A party's tag: what `party:` in a hub note and `parties:` on a meeting page
+# carry, and what the Walls table is written in. One rule, here, because the
+# installer asks for a tag at install and `scaffold.py party` offers one later;
+# two copies of it would let a workspace hold a tag its installer refused.
+TAG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+TAG_RULE = "one lowercase word that starts with a letter, then letters, digits or hyphens"
+
+
+def tag_for(name: str, taken: Iterable[str] = (), zone: Optional[str] = None) -> str:
+    """The tag to offer for a party called `name`: its first word in lower
+    case, or, where that is taken, a wider one.
+
+    `taken` is the tags already in Parties. Three widenings, in this order,
+    and the first that is valid and free wins: the next word of the name
+    (acme, then acme-corp), then the zone folded in (acme-consulting), which
+    is what tells one organisation's two capacities apart, then a number
+    (acme-2), which is the last resort when the name has no more words.
+
+    "" when the name yields no tag at all, such as 4Birch, whose tag cannot
+    start with a digit: there is nothing to offer, and the caller asks.
+    """
+    held = {str(t).strip().strip("`").lower() for t in taken}
+    plain = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower()
+    words = [w for w in (re.sub(r"[^a-z0-9]", "", w) for w in plain.split()) if w]
+    if not words:
+        return ""
+    stems = ["-".join(words[:n]) for n in range(1, len(words) + 1)]
+    zone_words = [w for w in (re.sub(r"[^a-z0-9]", "", w) for w in
+                              unicodedata.normalize("NFKD", zone or "").encode("ascii", "ignore")
+                              .decode().lower().split()) if w]
+    if zone_words:
+        stems += ["%s-%s" % (stem, zone_words[0]) for stem in stems]
+    stems += ["%s-%d" % (stems[0], n) for n in range(2, 10)]
+    for guess in stems:
+        if TAG_RE.match(guess) and guess not in held:
+            return guess
+    return ""
 
 
 # ---------------------------------------------------------------------------

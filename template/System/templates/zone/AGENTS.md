@@ -4,7 +4,7 @@ Part of the workspace above. Before anything else, read `../../AGENTS.md`, `../.
 
 ## Structure
 
-Three levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.
+Three levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.
 
     {{ZONE}}/
       Todo.md                 the only list of open actions in this zone

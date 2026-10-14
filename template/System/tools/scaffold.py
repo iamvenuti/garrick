@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Create a zone, a project or a thread in this workspace.
+"""Create a zone, a party, a project or a thread in this workspace.
 
     python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden"
+    python3 System/tools/scaffold.py party --name "Acme Corp" --zone Work --what "Supplier" [--check]
     python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme --thread "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
@@ -24,6 +25,19 @@ with a first commit, its inbox, the skill links and the wall check, and a row in
 System/context.md, which is left for you to commit. A project always starts with its
 first thread. A thread inherits its project's party. `--check` applies every refusal
 and makes nothing, so a form can check a name as it is typed.
+
+`party` adds a row to the Parties table in System/context.md and offers the tag
+itself, so nobody has to invent one. It has to run, and its row be committed,
+before `project`: a project is refused with a tag System/context.md does not
+already carry, and that file is in the workspace's own repository while a project
+is in the zone's, so the two are separate commits. Running it again for a party
+already there changes nothing and says so. `party --check` answers one of three
+things and writes nothing: that the party is new and what its tag would be; that
+it is already there, with its tag, its zone and any project whose hub note names
+that tag; or, where two parties share the name, a refusal naming both and asking
+which is meant. `--also` adds a second row for an organisation already in Parties,
+in another capacity, with the wider tag that keeps the two apart, and
+`--walled-from` writes the Walls row that keeps their material apart.
 
 `park` sets a project or a thread aside and `wake` brings it back: `status:`,
 `updated:` today and a dated entry, "Parked." or "Woken.", in the note the
@@ -62,6 +76,8 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
+    TAG_RE,
+    TAG_RULE,
     ZONE_TEMPLATE,
     GitError,
     git,
@@ -76,7 +92,9 @@ from garrick_lib import (  # noqa: E402
     skill_links,
     spoken_clash,
     spoken_of,
+    strip_tag,
     table_row,
+    tag_for,
     workspace_root,
 )
 
@@ -351,6 +369,162 @@ def cmd_zone(root, args, today):
                     f"in {name}. To turn it on, run in Zones/{name}: git config core.hooksPath .git/hooks")
     said.append(f'Next, say "new project <name> for <party> in {name}, first thread <name>". '
                 f"A party new to the workspace goes into System/context.md first, with {name} as its zone.")
+    return "\n".join(said)
+
+
+# --------------------------------------------------------------------------- party
+
+
+def party_words(name):
+    """A party's name as the words it is made of, lower case, so that Acme Corp
+    and "Acme  Corp." are the same name and the two-capacity case is found."""
+    return " ".join(w for w in re.sub(r"[^\w\s]", " ", (name or "").lower()).split() if w)
+
+
+def parties_called(root, name):
+    """[(tag, entry)] for every row in Parties whose name is `name`, in the
+    order the table has them. Two is one organisation in two capacities, which
+    only the user can tell apart."""
+    wanted = party_words(name)
+    parties = load_context(root).get("parties", {})
+    return [(tag, entry) for tag, entry in parties.items() if party_words(entry.get("party")) == wanted]
+
+
+def projects_of(root, tag, zone=None):
+    """Every project whose hub note names `tag` as its party, sorted, each
+    named with its zone where that is not the party's own. This lists; it
+    never picks one of them, which is what the user is asked."""
+    found = []
+    for zone_dir in sorted((root / "Zones").iterdir() if (root / "Zones").is_dir() else []):
+        if not zone_dir.is_dir() or zone_dir.name.startswith((".", "_")) or zone_dir.name == INBOX:
+            continue
+        for project in sorted(zone_dir.iterdir()):
+            if not project.is_dir() or project.name.startswith((".", "_")) or project.name == INBOX:
+                continue
+            hub = project / f"{project.name}.md"
+            if hub.is_file() and strip_tag(str(parse_frontmatter(hub).get("party") or "")) == tag:
+                found.append(project.name if zone_dir.name == zone else f"{project.name} in {zone_dir.name}")
+    return found
+
+
+def say_projects(projects):
+    if not projects:
+        return "no project yet"
+    if len(projects) == 1:
+        return "the project %s" % projects[0]
+    return "the projects %s and %s" % (", ".join(projects[:-1]), projects[-1])
+
+
+def party_zone(root, args, name, required=True):
+    """The zone the new party belongs to: the one named, or the only one there
+    is. Never guessed between several, which is the user's to say. None where
+    nothing settles it and nothing is being written yet."""
+    if args.zone:
+        return find_zone(root, args.zone).name
+    zones = sorted(children(root / "Zones"))
+    if len(zones) == 1:
+        return zones[0]
+    if not required:
+        return None
+    raise Refusal("Which zone is %s in? The zones are %s." % (name, ", ".join(zones) or "none yet"))
+
+
+def add_party_row(root, name, what, zone, tag):
+    """The row in context.md's Parties table, written where the installer wrote
+    its own. The commit is the caller's, as a new zone's row is."""
+    path = root / "System" / "context.md"
+    if not path.is_file():
+        raise Refusal("System/context.md is missing, so the party could not be listed there.")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## parties"), None)
+    if start is None:
+        raise Refusal("System/context.md has no `## Parties` table to add the party to.")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+    row = table_row([name, what, zone, "`%s`" % tag, ""])
+    if len(rows) < 2:
+        lines[end:end] = ["| Party | What it is | Zone | Tag | Domains |", "|---|---|---|---|---|", row, ""]
+    else:
+        lines.insert(rows[-1] + 1, row)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def add_wall_row(root, tag, other, why):
+    """The row in context.md's Walls table between two tags."""
+    path = root / "System" / "context.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## walls"), None)
+    if start is None:
+        raise Refusal("System/context.md has no `## Walls` table, so the wall could not be written. "
+                      "The party's row is there; add the wall by hand.")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+    row = table_row(["`%s`" % tag, "`%s`" % other, why])
+    if len(rows) < 2:
+        lines[end:end] = ["| Between | And | Why |", "|---|---|---|", row, ""]
+    else:
+        lines.insert(rows[-1] + 1, row)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def cmd_party(root, args, today):
+    """Add a party to System/context.md, or say what adding one would do.
+
+    The one step of setting up a piece of work that reaches outside the zone
+    it is for, and the one the user is asked about. It offers the tag itself,
+    from `tag_for` in the library, so nobody has to invent one; it is
+    idempotent, so an onboarding picked up again writes no second row; and it
+    refuses, in a question, where two parties share the name, because which
+    capacity a request means is the user's to answer.
+    """
+    name = " ".join(args.name.split())
+    if not name:
+        raise Refusal("A party needs a name.")
+    same = parties_called(root, name)
+    parties = load_context(root).get("parties", {})
+    if len(same) > 1:
+        each = ["`%s` in %s" % (tag, entry.get("zone") or "no zone") for tag, entry in same]
+        counts = {2: "Two", 3: "Three", 4: "Four"}
+        raise Refusal("%s of your parties are called %s: %s, and %s. Which one is this?"
+                      % (counts.get(len(same), str(len(same))), name,
+                         ", ".join(each[:-1]), each[-1]))
+    if same and not args.also:
+        tag, entry = same[0]
+        where = entry.get("zone") or "no zone"
+        return "%s is already a party, `%s`, in %s, with %s." % (
+            entry.get("party") or name, tag, where, say_projects(projects_of(root, tag, where)))
+    if args.also and not same:
+        raise Refusal("%s is not a party yet, so there is no first capacity for --also to stand beside. "
+                      "Add it without --also." % name)
+    zone = party_zone(root, args, name, required=not args.check)
+    tag = tag_for(name, parties, zone)
+    if not tag:
+        raise Refusal('No tag can be made from "%s": a tag is %s. What should it be?' % (name, TAG_RULE))
+    if not TAG_RE.match(tag):                     # the library offers only valid tags; belt and braces
+        raise Refusal('"%s" will not work as a tag: it must be %s.' % (tag, TAG_RULE))
+    other = strip_tag(args.walled_from or "")
+    if other:
+        if other == tag:
+            raise Refusal("A wall needs two parties, not `%s` twice." % tag)
+        if other not in parties:
+            raise Refusal("`%s` is not a party tag in System/context.md, so no wall can name it. "
+                          "The tags are %s." % (other, ", ".join(sorted(parties)) or "none yet"))
+    if args.check:
+        where = ", in %s" % zone if zone else ""
+        return "%s is not a party yet, and the tag would be `%s`%s." % (name, tag, where)
+    what = " ".join((args.what or "").split()) or f"<What {name} is>"
+    add_party_row(root, name, what, zone, tag)
+    said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}."]
+    if other:
+        add_wall_row(root, tag, other, args.why or "<Why their material never meets>")
+        said.append(f"Added a wall between `{tag}` and `{other}`, so neither ever informs the other in writing.")
+    elif same:
+        said.append("`%s` and `%s` are both %s with no wall between them, which the workspace check warns "
+                    "about until one is added." % (same[0][0], tag, name))
+    said.append("Commit System/context.md on its own, in the workspace's own repository at its top folder: "
+                "a project is in its zone's repository, and one commit never spans the two.")
+    said.append('Next, once that row is committed: scaffold.py project --zone %s --name "<Project>" '
+                '--party %s --thread "<Thread>", which is refused while the row is not there.' % (zone, tag))
     return "\n".join(said)
 
 
@@ -842,13 +1016,22 @@ def cmd_undo(root, args, today):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Create a zone, a project or a thread.")
+    ap = argparse.ArgumentParser(description="Create a zone, a party, a project or a thread.")
     ap.add_argument("--root", help="workspace folder (default: the one this script is in)")
     ap.add_argument("--today", help="YYYY-MM-DD to stamp instead of today")
     sub = ap.add_subparsers(dest="command", required=True)
     z = sub.add_parser("zone", help="a new zone, with its own git repository")
     z.add_argument("name", help="the zone's name, one that can be said aloud")
     z.add_argument("--holds", required=True, help="what the zone holds, in a few words, for System/context.md")
+    y = sub.add_parser("party", help="a new party in System/context.md; commit it before the project")
+    y.add_argument("--name", required=True, help="the party's name, as a person would say it")
+    y.add_argument("--zone", help="the zone it belongs to; needed where the workspace has more than one")
+    y.add_argument("--what", help="what it is, in a few words, for the table")
+    y.add_argument("--also", action="store_true",
+                   help="a second row for an organisation already in Parties, in another capacity")
+    y.add_argument("--walled-from", dest="walled_from",
+                   help="a party tag whose material must never meet this one's: writes the Walls row")
+    y.add_argument("--why", help="why the wall stands, for the Walls table")
     p = sub.add_parser("project", help="a new project, with its first thread")
     p.add_argument("--zone", required=True)
     p.add_argument("--name", required=True)
@@ -882,9 +1065,9 @@ def main(argv=None):
     u = sub.add_parser("undo", help="revert a rename or a deletion, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
-    for each in (p, t, r):
+    for each in (y, p, t, r):
         each.add_argument("--check", action="store_true",
-                          help="say whether the name would do, and make nothing")
+                          help="say what this would do, and make nothing")
     args = ap.parse_args(argv)
 
     try:
@@ -895,8 +1078,9 @@ def main(argv=None):
         if not (root / "System" / "templates").is_dir():
             raise Refusal(f"{root} is not an installed workspace: System/templates is missing.")
         today = args.today or datetime.date.today().isoformat()
-        run = {"zone": cmd_zone, "project": cmd_project, "thread": cmd_thread, "rename": cmd_rename,
-               "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park, "wake": cmd_park}[args.command]
+        run = {"zone": cmd_zone, "party": cmd_party, "project": cmd_project, "thread": cmd_thread,
+               "rename": cmd_rename, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
+               "wake": cmd_park}[args.command]
         print(run(root, args, today))
     except Refusal as exc:
         print(exc, file=sys.stderr)

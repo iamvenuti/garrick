@@ -41,7 +41,8 @@
   "v0.25.0",
   "v0.26.0",
   "v0.27.0",
-  "v0.28.0"
+  "v0.28.0",
+  "v0.29.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -111,7 +112,8 @@
    "db05d59f2bc646dd3d8efe9309db7cb29d251da50e6f7378076271a3267905cc",
    "48445fc738487afaf712c8e6bb1fd88b2e72c6828101dda8aa1ccd3a690af95c",
    "f57667fb4d05886395311da31b0b3a6906c22595cf4a033f54f1cd1a5ef70c88",
-   "12314e6cb36cfa18319ea4f925a27ba174012cfb175160148ae2cf728319fe9a"
+   "12314e6cb36cfa18319ea4f925a27ba174012cfb175160148ae2cf728319fe9a",
+   "a27e81cb5b7a899ac0b4b4c6eaad149a11a6c95dac158ab93427bd000b624709"
   ],
   "System/jobs/agent.py": [
    "daa36e5d296f62c69a3f2e9bedfed3c51879950c2b777537e668b31f613a545b",
@@ -165,7 +167,8 @@
    "038c9af3130577a8c6d52b91d3477078b2f79ba0de53c59e3a19c9cc34fa834f",
    "0691bc66c27c98cca6de934a547a599bf3f4c535142a124b6d0e79f198ed8da8",
    "504f25920b6102122a63d0dc65afa2e9df5d66f7ed43b90014a695c1dac08c09",
-   "508f07eff4ebaeed590c38615c5c12781ed65725583322ffa26de7759d36e27a"
+   "508f07eff4ebaeed590c38615c5c12781ed65725583322ffa26de7759d36e27a",
+   "0ac7a9f9d3f0a4fb3a129763d6add31b6fefae08cc11818b5528ba359f8534aa"
   ],
   "System/skills/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -180,13 +183,15 @@
    "9ffca653ebcb3dbb1d4caef93364e066b5dd4ea3ad952cf190c0076cac6b0f48",
    "9508d66f3ee361e8ad0e02719f4919fcb52b6966901bb66dabd9fec12a493143",
    "6db2238aeca43a7334962196e8913b4f3a128709858ccbeeb66330181b83d98e",
-   "68adb697b322974305509f9ca368ec46c8cf8641f306120296e8192fffc515d7"
+   "68adb697b322974305509f9ca368ec46c8cf8641f306120296e8192fffc515d7",
+   "1d7ccc3e3dd2c6bab9f1691bb73b972c91dbad18f7d7efa9920eaef680a9bba7"
   ],
   "System/skills/intake/intake.py": [
    "3f8a28871b14b6f63d5f86bc7db5d93628a98f812993285ed24b8cc6724d9f17",
    "7bfec7b872578d8f79f5eb635a3f4c8bd655e1b0d36d766572fad8d552f859d7",
    "68785afbbfeaa96182e376b4fa97dfbc3089587e3da65215c5f079b772cc2697",
-   "3e97a10d10591b0fc9c4b7051a2e8d5ca45ce5d3580eebff98feb7c4a74a5f2a"
+   "3e97a10d10591b0fc9c4b7051a2e8d5ca45ce5d3580eebff98feb7c4a74a5f2a",
+   "b2ca8de03c90b42cfc781baaeb2ed4170ac66de1888bd284704b53caf347e9d3"
   ],
   "System/skills/interview/SKILL.md": [
    "21a6c77dbec49ac06c6af3f958a5005a4f754e3905de3d76ed8b292e3027b004",
@@ -194,7 +199,8 @@
    "e0c882f162c6743ba08f189c0b067df49b6d59ee8d3e4913232f3ab94860bdb9",
    "657b6110ca1fecc8a53a63f68fa1764a73610c7d5b17ed7e16984866bad8342e",
    "97b874568602f6b9589613c06909f477529a67c695a9d83dd6816c1b301fa699",
-   "0dff6785a598b1ca7a2afda3dbee2e07f3e54d00b36dc2b58b9dba065165b34d"
+   "0dff6785a598b1ca7a2afda3dbee2e07f3e54d00b36dc2b58b9dba065165b34d",
+   "11fe894a576f84b6f9e84e74325a588c9c76fbde7a3788786d3f788900d513cb"
   ],
   "System/skills/knowledge/SKILL.md": [
    "a8c2461a9b068a233d196a71dfeb8b0f401d176396beb3f99bfbbf657e9cda7f",
@@ -208,7 +214,8 @@
    "e06dca48556b62b907dd9f5f24a5040c4eb3400f4bdaf5e96961f4c379f0e060",
    "ec0c92bb9222af0d99b94d116f3b09383dc9d4572d9cb6a43db789b761d9eb0a",
    "627d788802d3be08376d9286ff5de400b333377e566f6dfc17f209d20422fd78",
-   "b3e5e07e8e7b96d17f33867fd685789a56f7517e994748a14375ee88e6cab672"
+   "b3e5e07e8e7b96d17f33867fd685789a56f7517e994748a14375ee88e6cab672",
+   "b8499934859ea97c7160e094195eea510c4efa0dcc6a0d67cba8b9f244fe124d"
   ],
   "System/skills/meetings/ingest.py": [
    "fd95c5762a86e1990e9d9a15285d574ac3fde77a6a5334ad314ea8d11ab1b5d7",
@@ -237,13 +244,15 @@
    "dddc2df4e0d81f0d7b9b3de1c6c42b75d7383c6d34c70b106f36823139fd2e37",
    "3ff832166e50f687a63d55c8e7ed1f098628d03334093c10e444f8881a9ee497",
    "93e879ecaae344278c9e4a40d4c164bdf9e17cd92f90fdd0eaf7687cbcf31c94",
-   "cc0817218deea4c94c845cafafcf65750e66a8caa4549830b3da1716992675c9"
+   "cc0817218deea4c94c845cafafcf65750e66a8caa4549830b3da1716992675c9",
+   "1fc4d4fc467881fce5724de4ae466f3f0c2743f5c32e1bad4a1720abdfef9611"
   ],
   "System/skills/todo/SKILL.md": [
    "68b9930c1cba46362462c267f5ea7bc0891aaef86da8ac653e8369573735749b",
    "77780fa4cd2765c373e6a9e171945234a175571bdbbba064c076b17473df6afd",
    "4d277ac7edd198c138544de4bd75376743557253013cc3bac6d0825df62375de",
-   "de5a3152a269de77e97cffa842cee45dc52cfe62a4d8d527b05e8e44987c1d68"
+   "de5a3152a269de77e97cffa842cee45dc52cfe62a4d8d527b05e8e44987c1d68",
+   "006bdd0de22f2e3864e452c7fd608b4f665f1fb59e7d5e1ef095c21a356b99aa"
   ],
   "System/skills/todo/todo.py": [
    "89adefbdc7dfb9015ead89cca66ab1599f6df9d9cb5f807dc047b88ef3993337",
@@ -278,7 +287,8 @@
    "49803084e7982640551deb896394014003cff7a7b255525f566056a92bcb8dc8",
    "69f71bd6856c82774733a93ac4b57ee36dca0370f8c1cae3f1f9da1c148581de",
    "a20fa8f101a59fd59feccaa74571e8c35c2743c5c884020bfd6dfbf929b9be41",
-   "bd0ba1ad4ff8312dc06102ae8a00c3488cf8efd03a233442d5690701459057a2"
+   "bd0ba1ad4ff8312dc06102ae8a00c3488cf8efd03a233442d5690701459057a2",
+   "782dc52953db69577c11e546e32de683b69ee2753079802692731f83b1dd4104"
   ],
   "System/status/app/GarrickStatus.swift": [
    "d3784d2d7528d6b56d09c0a1b2b82400921bf1240a2101ea093903dafc09a934",
@@ -294,14 +304,16 @@
   ],
   "System/status/ask-brief.md": [
    "3eed5cc6e026b716c1fb84364758d7cbec4efa574896b229330a1ab508ed6f7f",
-   "266529ae2a2a1ceda5f279e3e6064ee163ccd7337aa5ebd049278f0807621edf"
+   "266529ae2a2a1ceda5f279e3e6064ee163ccd7337aa5ebd049278f0807621edf",
+   "b4015ff1b676a12bb848872ac14eaff4e0cba51eaf4eca486e6500a111ef111c"
   ],
   "System/status/ask.py": [
    "435df657187ff4f18b2019abcf418cf1de8974e50aa0a35d966dc2d5d523824a",
    "f791c65f106d3f6968dd5f2c6fad3b11b0d513a5986fce20bbdd7480b1a25072",
    "a6ec6c22d4eb47759acf14b22cf1d14b4c6a968ba8dbe2f7dcc6ccc436777783",
    "06c2c90bba14b64cfed96502f462dc3ebdd1f613838d3643d005a0f803b69cef",
-   "b0685cfbf3a36102e8e5381a72c9b87c6d5d2e87678b9a5e88692ab57cc4db2e"
+   "b0685cfbf3a36102e8e5381a72c9b87c6d5d2e87678b9a5e88692ab57cc4db2e",
+   "b49889dcd6a5187f86a344e88799a3edce47d7bd0df485a0ee2eabd65aea2474"
   ],
   "System/status/effort.py": [
    "04d6305220dc789485af6071bd06d207f0f668025b320670352f6d24f0b0f216"
@@ -374,7 +386,8 @@
    "eef73cd850bd8107cf983b45ea64668a069fea7149ab25c7927924a7a90e7a59",
    "b09c345a92ee128ae851bbded625e3084459a3b4e06fba2b0402e09a9ddc33ab",
    "b4b7e7e159f62eb2aec33ef9ba12fcb1aaa904f199be0d891b78b514cbbde43d",
-   "1e7e73ce4cd756684ad475c604f57a14858047ea3c70bf248259d85f82d21b74"
+   "1e7e73ce4cd756684ad475c604f57a14858047ea3c70bf248259d85f82d21b74",
+   "e157b0fd7f8253bce3c2c1a7e36aa30bfe77ce8bb6fa5d026cd68c5e23caa8cc"
   ],
   "System/templates/project/Deliverables/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -384,6 +397,9 @@
   ],
   "System/templates/project/{{PROJECT}}.md": [
    "30d2f32a5fe3ae080c3348b288910cf467ae995616138c7fb3b9491327909c61"
+  ],
+  "System/templates/published.md": [
+   "bc3c6112caf5c6a1f0830d37af409cdd8726788973f0e63a091633ceac6853cd"
   ],
   "System/templates/thread/{{THREAD}}.md": [
    "b22ad7dd0527af0cf8f9cb273ffc20ca3992c211a53dd1a22e50350ac36282fd",
@@ -399,7 +415,8 @@
   ],
   "System/templates/zone/Todo.md": [
    "b5810e00726903f99c5c4fbf4684db799ab4a30c586bce16a63c5d7f0bdf9211",
-   "c8fa0cd94a10b2d36afd3509d9a8eb9f0b5acdb9d5dde160a3fe3343aa3969e9"
+   "c8fa0cd94a10b2d36afd3509d9a8eb9f0b5acdb9d5dde160a3fe3343aa3969e9",
+   "400ec53b0b2339ba90d34ab3432d7099445de7e62962db7b34b1e29c4a1f3594"
   ],
   "System/tools/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -419,7 +436,8 @@
    "d8b72a4d615770a61e1ee5f3faa7a4d38eb8dbf8ea705100ff95422155054928",
    "ba7ae2b7207df3cdb8798e49d1638bbae183d3ad65a21ef56511670bf6f6ff96",
    "8ff670ec6a2a86782d98f75a5386cae5a01dc840d94c34748f894d297b79a1c3",
-   "15b5995bf0a61e79aba460604720f1aa8bf7d7534c0eb29e2b753df78a7d7fe6"
+   "15b5995bf0a61e79aba460604720f1aa8bf7d7534c0eb29e2b753df78a7d7fe6",
+   "836ad94c6fdc385c8881db6c177bce1080fc1537f7796a89eaeefec5781c5333"
   ],
   "System/tools/drift.py": [
    "0a17922485bac102a4d7148a429601e11c946c2c1d8924fc8a04729a001ebce9",
@@ -440,7 +458,8 @@
    "ab23b6b981835e86cd167e48946a3323e6f3969c6a2d2bd540c0bf0cf0c8ae17",
    "c563339c8007dcca4052e0dc82cf12b113f7cecc1a7ba511b61470d312fccefc",
    "49df62503737fda35abcb7d6e49033b0871c6aae891c24181eb99bf4878261e6",
-   "2784507ff75774aa8adb4daa2e3f46709e870f48c14859d058226ee5fc7f99a2"
+   "2784507ff75774aa8adb4daa2e3f46709e870f48c14859d058226ee5fc7f99a2",
+   "67e9caffd0e546ae1a3b82bc2e49c4eb1e695fd4dc7a1524b6e8deb81f705731"
   ],
   "System/tools/operations.py": [
    "96ee9cc1ee7dffece435517c5a633f5803fcd53dea669c2033a37ae6bcb35050"
@@ -529,7 +548,8 @@
   "Todo.md": [
    "# {{ZONE}}: open actions\n\nOne line per action: what, for whom, by when. Tick it when done.\n\n## Inbox\n\n- [ ] <action> \u00b7 <project or person> \u00b7 <date>\n\n## Done\n",
    "# {{ZONE}}: open actions\n\nOne line per action: what, which thread it is for, and by when. An action that belongs to no thread names its party or person instead. Tick a line when it is done.\n\n## Inbox\n\n- [ ] <action> \u00b7 <project>, <thread> \u00b7 <date>\n\n## Done\n",
-   "# {{ZONE}}: open actions\n\nOne line per action, Obsidian Tasks style. It opens with the thread it is for, `[[Thread]]: `, or with the project when the project is a single thread; an action that belongs to no thread opens with its party or person instead. The dates go last: `\ud83d\udcc5` when it is due, `\ud83d\udeeb` when it cannot start before, and for something you are waiting on, `#waiting` and `\u23f3` the day to chase. Tick a line when it is done.\n\n## Inbox\n\n- [ ] [[<Thread>]]: <action> \ud83d\udcc5 <YYYY-MM-DD>\n\n## Done\n"
+   "# {{ZONE}}: open actions\n\nOne line per action, Obsidian Tasks style. It opens with the thread it is for, `[[Thread]]: `, or with the project when the project is a single thread; an action that belongs to no thread opens with its party or person instead. The dates go last: `\ud83d\udcc5` when it is due, `\ud83d\udeeb` when it cannot start before, and for something you are waiting on, `#waiting` and `\u23f3` the day to chase. Tick a line when it is done.\n\n## Inbox\n\n- [ ] [[<Thread>]]: <action> \ud83d\udcc5 <YYYY-MM-DD>\n\n## Done\n",
+   "# {{ZONE}}: open actions\n\nOne line per action, Obsidian Tasks style. It opens with the thread it is for, `[[Thread]]: `, or with the project when the project is a single thread; an action that belongs to no thread opens with its party or person instead. The dates go last: `\ud83d\udcc5` when it is due, `\ud83d\udeeb` when it cannot start before, and for something you are waiting on, `#waiting` and `\u23f3` the day to chase. Tick a line when it is done.\n\nThe line below is an example, there to show the shape. It is a task like any other, so the first real action takes it out: whoever writes that action deletes this line in the same edit. `System/tools/check.py` warns while both are here.\n\n## Inbox\n\n- [ ] [[<Thread>]]: <action> \ud83d\udcc5 <YYYY-MM-DD>\n\n## Done\n"
   ]
  }
 }

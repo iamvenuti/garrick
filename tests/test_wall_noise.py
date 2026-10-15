@@ -1,7 +1,8 @@
 """False alarms the wall check no longer raises: a zone's archive read as a
 project, the code of HTML pages read as wording, a list of links to Knowledge
-pages read as one run of words, and files git ignores read as the project's own.
-Each test pairs the case that must pass with one that must still be found.
+pages read as one run of words, files git ignores read as the project's own,
+and the published ledger's shipped header read as a quotation. Each test
+pairs the case that must pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
 from each other, as in fixtures.py.
@@ -14,7 +15,7 @@ import sys
 import unittest
 
 from fixtures import HAVE_GIT, git, meeting_page, write
-from test_walls_deterministic import SECRET, WallCase, _copy_tools, _real_repo, _run
+from test_walls_deterministic import REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 
@@ -198,6 +199,87 @@ class TestIgnoredFiles(WallCase):
         write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
         write(self.acme / "Notes.md", "Built for Birch & Co pipelines.\n")
         self.assertEqual(["Zones/Work/Acme Review/Notes.md"], [f.path for f in self.walls()])
+
+
+# Real content, in one ledger only: never common wording, whatever the header.
+HANDOVER = "The board asked for the Nordic volumes to be split by depot before the handover.\n"
+
+
+class TestPublishedLedger(WallCase):
+    """#91: every project's `Deliverables/published.md` opens with the same
+    shipped explanation, so two walled ledgers are not quoting each other."""
+
+    TEMPLATE = REPO / "template" / "System" / "templates" / "published.md"
+
+    def setUp(self):
+        super().setUp()
+        self.shipped = self.root / "System" / "templates" / "published.md"
+        write(self.shipped, self.TEMPLATE.read_text(encoding="utf-8"))
+        self.ledgers = {}
+        for project, row in ((self.acme, "| 2026-10-01 | `260301 - Pricing memo.md` | `Pricing memo.md` | Dana | share |\n"),
+                             (self.birch, "| 2026-10-02 | `260302 - Sizing.md` | `Sizing.md` | Theo | here |\n")):
+            self.ledgers[project] = write(project / "Deliverables" / "published.md",
+                                          self.shipped.read_text(encoding="utf-8") + row)
+
+    def test_both_ledgers_can_hold_the_shipped_header(self):
+        self.assertEqual([], self.walls())
+
+    def test_the_header_is_common_only_because_it_is_shipped(self):
+        """The reproduction: with no template to vouch for the wording, each
+        ledger reads as a quotation of the other."""
+        self.shipped.unlink()
+        self.assertEqual({"Zones/Work/Acme Review/Deliverables/published.md",
+                          "Zones/Work/Birch Entry/Deliverables/published.md"},
+                         {f.path for f in self.walls()})
+
+    def test_a_quotation_of_real_content_is_still_refused(self):
+        for project, ledger in self.ledgers.items():
+            ledger.write_text(ledger.read_text(encoding="utf-8") + "\n" + HANDOVER, encoding="utf-8")
+        self.assertEqual({"Zones/Work/Acme Review/Deliverables/published.md",
+                          "Zones/Work/Birch Entry/Deliverables/published.md"},
+                         {f.path for f in self.walls()})
+
+    def test_a_heading_stands_directly_above_the_table(self):
+        """Load-bearing, not decoration: no run of words crosses a heading, so
+        the heading is what keeps the shipped explanation and the rows a
+        project writes under it from reading as one sentence."""
+        lines = [line for line in self.TEMPLATE.read_text(encoding="utf-8").splitlines() if line.strip()]
+        table = next(i for i, line in enumerate(lines) if line.startswith("| Date |"))
+        self.assertTrue(lines[table - 1].startswith("#"), lines[table - 1])
+
+    def test_the_rows_still_read_as_a_ledger(self):
+        """The header the skill copies must not break the table drift.py reads."""
+        from drift import ledger_rows
+        rows, bad = ledger_rows(self.ledgers[self.acme])
+        self.assertEqual(([("2026-10-01", "260301 - Pricing memo.md", "share")]),
+                         [(r["date"], r["file"], r["authoritative"]) for r in rows])
+        self.assertEqual([], bad)
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "deliverables"])
+
+
+class TestChangelogIsCommon(WallCase):
+    """#91: `System/garrick-changelog.md` is Garrick's published release notes,
+    so two notes that describe a feature in its words are not quoting each other."""
+
+    NOTES = ("# Garrick 0.25.0\n\n- A row of the published ledger is never deleted, because the row is "
+             "the record of what left the workspace, and drift.py reads it without comparing it again.\n")
+    BORROWED = ("# How this works\n\nA row of the published ledger is never deleted, because the row is "
+                "the record of what left the workspace, and drift.py reads it without comparing it again.\n")
+
+    def borrow(self):
+        write(self.acme / "Threads" / "Pricing" / "How it works.md", self.BORROWED)
+        write(self.birch / "Threads" / "Market Sizing" / "How it works.md", self.BORROWED)
+
+    def test_wording_borrowed_from_the_release_notes_is_not_a_leak(self):
+        write(self.root / "System" / "garrick-changelog.md", self.NOTES)
+        self.borrow()
+        self.assertEqual([], self.walls())
+
+    def test_the_same_wording_without_the_release_notes_is_a_quotation(self):
+        self.borrow()
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/How it works.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/How it works.md"},
+                         {f.path for f in self.walls()})
 
 
 if __name__ == "__main__":

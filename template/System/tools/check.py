@@ -2376,8 +2376,12 @@ class QuoteIndex:
 # into System/generated/ or a note dropped into System/ can carry what one
 # party said, and would then exempt whatever it repeats from the wall check.
 # The local file beside an instruction file is read with it, by every side.
+# The changelog is there for the same reason: it is Garrick's published
+# release notes, so a note that describes a Garrick feature tends to borrow
+# its wording, on whichever side of a wall it sits.
 SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
-                "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md")
+                "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
+                "System/garrick-changelog.md")
 SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Knowledge")
 
 

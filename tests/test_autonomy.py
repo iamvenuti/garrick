@@ -379,6 +379,19 @@ class WallRefusalTest(unittest.TestCase):
 
     SENTENCE = ("A wall holds some material back from this project, so I have not used it. "
                 "Nothing was written.")
+    FIRST = "A wall holds some material back from this project, so I have not used it."
+    # Every route that can meet a wall. The rule gives the words; the four that
+    # refuse in their own voice quote them, and so does the demo the user watches.
+    ROUTES = (REPO / "template" / "System" / "rules.md",
+              SKILLS / "meetings" / "SKILL.md",
+              SKILLS / "intake" / "SKILL.md",
+              SKILLS / "intake" / "intake.py",
+              SKILLS / "threads" / "SKILL.md",
+              REPO / "examples" / "demo" / "video-script.md")
+    # A sentence of the refusal's shape: it opens "A wall" and goes on to hold
+    # material or something back or out. Enough to catch a wording written in the
+    # obvious way, which is how all of them so far were written.
+    REFUSAL_SHAPE = re.compile(r"A wall\b[^.\"]*\b(?:material|something)\b[^.\"]*\b(?:back|out)\b[^.\"]*\.")
     DEMO = REPO / "examples" / "demo"
     FAR_SIDE = (DEMO / "content" / "Wikis" / "Meetings" / "wiki" / "sources"
                 / "260915-cobalt-renewal-for-acme.md")
@@ -404,6 +417,25 @@ class WallRefusalTest(unittest.TestCase):
                 return ast.literal_eval(node.value)
         self.fail("intake.py has no WALL_REFUSAL")
 
+    def said_in(self, path: Path) -> str:
+        """What a route says, flattened. A skill or a page as it is written; a tool as
+        the strings it holds, since a literal may be wrapped mid-sentence in source."""
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".py":
+            return flat(" ".join(node.value for node in ast.walk(ast.parse(text))
+                                 if isinstance(node, ast.Constant) and isinstance(node.value, str)))
+        return flat(text)
+
+    def shipped_files(self):
+        """Everything the user ends up with or watches: the workspace, the demo, the
+        docs, the deck, the installer. Not `tests/`, which quotes the wording to hold
+        routes to it, and not `CHANGELOG.md`, which quotes every wording there ever
+        was."""
+        for root in ("template", "examples", "docs", "presentation"):
+            yield from sorted(path for path in (REPO / root).rglob("*")
+                              if path.is_file() and path.suffix in (".md", ".py", ".html"))
+        yield from sorted(REPO.glob("*.py"))
+
     def far_side_names(self) -> set:
         """Every party tag, party name and person's name the demo workspace holds."""
         config = json.loads((self.DEMO / "config.json").read_text(encoding="utf-8"))
@@ -418,15 +450,39 @@ class WallRefusalTest(unittest.TestCase):
 
     def test_the_rule_gives_the_words_rather_than_leaving_them_to_be_paraphrased(self):
         self.assertEqual(self.SENTENCE, self.refusal())
+        self.assertTrue(self.SENTENCE.startswith(self.FIRST), self.SENTENCE)
         self.assertIn("No party, no person, no subject, no tag", self.walls)
 
     def test_every_route_that_can_hit_a_wall_says_the_same_sentence(self):
-        """One sentence, wherever the wall is met: the rule, the brief, the filing."""
-        for path in (REPO / "template" / "System" / "rules.md",
-                     SKILLS / "meetings" / "SKILL.md",
-                     SKILLS / "intake" / "SKILL.md"):
-            self.assertIn(self.SENTENCE, flat(path.read_text(encoding="utf-8")), path.name)
+        """One sentence, wherever the wall is met: the rule, the brief, the filing, the
+        wrap, and the demo that shows a wall holding."""
+        for path in self.ROUTES:
+            self.assertIn(self.SENTENCE, self.said_in(path), str(path.relative_to(REPO)))
         self.assertIn(self.SENTENCE, self.wall_refusal_constant())
+
+    def test_a_route_cannot_arrive_with_a_wording_of_its_own(self):
+        """The routes above are not a list a later change may quietly forget. Every
+        shipped file is swept for a sentence of the refusal's shape, and each one found
+        has to be the rule's, whole, in a file the list knows: a route added with a
+        wording of its own fails here, and so does one added with the right wording and
+        no entry beside the others. The sweep reads the obvious shape and no more, which
+        is why the words live in the rule and not in this test."""
+        strays, unlisted = [], []
+        for path in self.shipped_files():
+            said = self.said_in(path)
+            found = self.REFUSAL_SHAPE.findall(said)
+            if not found:
+                continue
+            where = str(path.relative_to(REPO))
+            for sentence in found:
+                if sentence != self.FIRST:
+                    strays.append("%s says %r" % (where, sentence))
+            if said.count(self.FIRST) != said.count(self.SENTENCE):
+                strays.append("%s drops \"Nothing was written.\"" % where)
+            if path not in self.ROUTES:
+                unlisted.append(where)
+        self.assertEqual([], strays)
+        self.assertEqual([], unlisted)
 
     def test_the_sentence_names_no_far_side_party_or_person(self):
         said = self.refusal().lower()

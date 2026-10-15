@@ -907,6 +907,18 @@ time.sleep(120)
 '''
 
 
+HELD = r'''
+import os, sys, time
+started, release = sys.argv[1], sys.argv[2]
+with open(started + ".tmp", "w") as f:
+    f.write(str(os.getsid(0)))
+os.rename(started + ".tmp", started)
+deadline = time.time() + 300                # only so a test that died cannot leave it running for ever
+while not os.path.exists(release) and time.time() < deadline:
+    time.sleep(0.05)
+'''
+
+
 def gone(pid, within=10.0):
     """Whether `pid` has gone, waiting up to `within` seconds for it to."""
     deadline = time.time() + within
@@ -988,16 +1000,24 @@ class StopAndLockTest(FakeAssistants):
                                               for m in LOGLINE.finditer((self.jobs / "sweep.log").read_text())])
         self.assertFalse((self.jobs / "sweep.alert.json").exists())     # a stop is no failure to notify
 
-    def brief_run(self, name, *flags, ignore_hup=False):
-        """job.py running a command that says it has started, then ends well
-        after two seconds; with `ignore_hup`, started as `nohup` starts it."""
+    def held_run(self, name, *flags, ignore_hup=False):
+        """job.py running a command that has started and waits to be released,
+        so the run is still going whatever the machine is doing; with
+        `ignore_hup`, started as `nohup` starts it. Returns the run, the
+        command's session, and the file that releases it."""
         started = self.tmp / ("%s.started" % name)
-        script = ("import os, time; open(%r, 'w').write(str(os.getsid(0))); time.sleep(2)" % str(started))
-        argv = [sys.executable, str(JOBS / "job.py"), name] + list(flags) + ["--cwd", str(self.tmp), "--", sys.executable, "-c", script]
+        release = self.tmp / ("%s.release" % name)
+        script = self.tmp / ("%s.held.py" % name)
+        script.write_text(HELD, encoding="utf-8")
+        argv = ([sys.executable, str(JOBS / "job.py"), name] + list(flags)
+                + ["--cwd", str(self.tmp), "--", sys.executable, str(script), str(started), str(release)])
         hup = (lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN)) if ignore_hup else None
         proc = subprocess.Popen(argv, env=dict(os.environ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=hup)
-        self.addCleanup(lambda: proc.poll() is None and proc.kill())
-        return proc, started
+        self.addCleanup(lambda: proc.poll() is None and (proc.kill(), proc.wait()))
+        self.wait_for(started)
+        session = int(started.read_text())
+        self.addCleanup(self.kill_group, session)        # in a session of its own, so job.py's end does not take it
+        return proc, session, release
 
     def wait_for(self, path, within=30):
         deadline = time.time() + within
@@ -1007,20 +1027,24 @@ class StopAndLockTest(FakeAssistants):
 
     def test_a_run_under_nohup_outlives_a_hangup(self):
         # A session hook starts a job with nohup; the hook's end sends SIGHUP, which nohup ignores and so must job.py.
-        proc, started = self.brief_run("sweep", ignore_hup=True)
-        self.wait_for(started)
+        proc, command, release = self.held_run("sweep", ignore_hup=True)
         proc.send_signal(signal.SIGHUP)
+        # The command is waiting to be released, so a run that is gone now was stopped by the hangup.
+        # One that heeded it but is slow to go is caught below: it ends 129, not 0.
+        with self.assertRaises(subprocess.TimeoutExpired, msg="the hangup stopped a run under nohup"):
+            proc.wait(timeout=2)
+        release.write_text("go")
         self.assertEqual(0, proc.wait(timeout=30))
         beat = json.loads((self.jobs / "sweep.heartbeat.json").read_text())
         self.assertEqual((0, True, None), (beat["exit"], beat["ok"], beat["reason"]))
         self.assertEqual([("sweep", "0")], [(m.group(2), m.group(3)) for m in LOGLINE.finditer((self.jobs / "sweep.log").read_text())])
 
     def test_a_hangup_still_stops_a_run_that_heeds_it(self):
-        proc, started = self.brief_run("sweep")
-        self.wait_for(started)
-        proc.send_signal(signal.SIGHUP)
+        proc, command, release = self.held_run("sweep")
+        proc.send_signal(signal.SIGHUP)                             # the command is waiting: only the signal can end it
         self.assertEqual(129, proc.wait(timeout=30))
         self.assertIn("was stopped by SIGHUP", json.loads((self.jobs / "sweep.heartbeat.json").read_text())["reason"])
+        self.assertTrue(gone(command), "the command outlived the hangup")
 
     def test_detach_runs_on_in_a_session_of_its_own(self):
         r = subprocess.run([sys.executable, str(JOBS / "job.py"), "sweep", "--detach", "--cwd", str(self.tmp), "--",

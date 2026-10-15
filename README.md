@@ -4,13 +4,15 @@
 
 [![Tests](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml/badge.svg)](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml) [![MIT licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg) ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 
-**Garrick remembers your work and knows whose confidences you hold.**
+**Leave a thread, jump to another. Come back to the next action.**
 
-An AI chief of staff for your knowledge work, running on the agent you already use. Everything stays in files you own.
+Garrick keeps your place in every line of work you run with Claude or Codex, in plain files you own.
 
-Underneath, Claude Code or Codex does the work, in its desktop app or a terminal. Ask Garrick to file a conversation, prepare a brief or close a session. It keeps the record in plain folders on your Mac, so the next session picks up from the saved notes, whichever agent runs it.
+Your assistant's memory remembers the project. It can't tell you which thread is waiting, what comes next, or what was only in your head when you stopped. Garrick can: every thread has one resume point, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
 
-Your work may involve customers, partners under NDA and internal projects. Garrick records whose information you hold, gives the agent rules for using it, and checks project files for specific signs of information crossing a declared boundary.
+The Garrick App shows where every thread stands and opens any of them in one move, in the Claude or Codex app or in a cmux tab of its own. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
+
+Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. The record is plain Markdown in folders on your Mac, and updates keep your edits.
 
 https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 
@@ -22,7 +24,7 @@ https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).
-3. **Own the interface:** [terminal setup](docs/terminal-setup.md), [Obsidian](docs/extras/obsidian.md), [cmux](docs/extras/cmux.md) and [the status page](docs/extras/status-page.md).
+3. **Own the interface:** [terminal setup](docs/terminal-setup.md), [Obsidian](docs/extras/obsidian.md), [cmux](docs/extras/cmux.md) and [the Garrick App](docs/extras/status-page.md).
 4. **Work from anywhere:** [phone access](docs/extras/phone-access.md).
 
 ## Choose how you work
@@ -40,7 +42,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 ## What Garrick keeps for you
 
-- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving and “open [thread]” when you return.
+- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving, “hold this” when you're interrupted, and “open [thread]” or “back” when you return.
 - **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read.
 - **Declared information boundaries.** You choose which pairs of parties must be kept apart. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links and names from across a wall, and wording copied from a walled meeting, its transcript or another party's project files.
 - **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.
@@ -50,7 +52,9 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 ## Who it's for
 
-People holding confidences from several sources: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give them separate party tags and declare the pair, even if both belong to one company.
+People who already use Claude or Codex every day and run several lines of work at once: a few projects, partners and internal asks, put down and picked up all day. If you have one line of work, your assistant's own project memory is probably enough.
+
+It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give them separate party tags and declare the pair, even if both belong to one company.
 
 At work, use the assistant and account your employer approves. Files stay on your disk, but content the assistant reads goes to its provider. Garrick does not control the provider's retention or training settings.
 
@@ -77,21 +81,21 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, the status page, cmux and phone access are optional.](docs/architecture/overview.png)
+![Garrick as a shell around Claude Code or Codex, in four layers. On top, the Garrick App navigates your zones, projects and threads, and opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. You work on the record: Knowledge, Meetings and the work threads, each with its resume point, and mail, files and recordings are filed into it for you. Underneath, Claude or Codex is the model doing the work across the whole record. It reads the rules first, and the rules, the walls and a check on every commit apply to all of it.](docs/architecture/overview.png)
 
-Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
+Download the [diagram page](docs/architecture/overview.html) and open it in a browser for the same drawing, in dark mode too, with a note on each layer. cmux is optional, and so are the ways in.
 
 </details>
 
 ## Core and extras
 
-Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
+Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. The core has no desktop app; the Garrick App is one of the extras.
 
-[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page, which opens in a browser or in the Garrick app for the Mac. Add one when it solves a problem you have; none is required for the first session.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and the Garrick App, which shows where every thread stands, on the Mac or in a browser. Add one when it solves a problem you have; none is required for the first session.
 
 ## Status and documentation
 
-Early, for macOS. See the [changelog](CHANGELOG.md).
+Early, for macOS, and built from one person's working week. See the [changelog](CHANGELOG.md).
 
 - [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
 - [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).

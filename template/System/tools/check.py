@@ -1726,6 +1726,11 @@ TODO_LABEL_RE = re.compile(r"^- \[ \] \[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]
 # any text after it stays part of the description, unread.
 TASKS_FIELD_RE = re.compile(r"(?:\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2}|#[^\s#]+))$")
 TASKS_DATE_RE = re.compile(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕)\uFE0F? *\d{4}-\d{2}-\d{2}")
+# Every task line of a list, ticked or not, and the `<angle bracket>` placeholder
+# that marks the example line a new zone's Todo.md opens with to show the shape.
+# The example is a task like any other, so it goes when a real action arrives.
+TODO_TASK_RE = re.compile(r"^- \[[ xX]\] ")
+TODO_EXAMPLE_RE = re.compile(r"<[^<>\n]+>")
 INBOX_GROWTH = 20  # open actions added to a list's Inbox in a week, past which triage is not keeping up
 
 
@@ -1764,9 +1769,10 @@ def system_threads(ws: Workspace) -> set:
 def check_todo(ws: Workspace) -> List[Finding]:
     """Each zone's Todo.md: an open action that opens with a thread's link
     leads to a live note, in the zone or a project in System/; its dates come
-    last, where Obsidian Tasks reads them; the Inbox does not grow by more
-    than INBOX_GROWTH in a week. In a zone the check settings name under
-    `todo-labels`, every open action opens with its thread's link."""
+    last, where Obsidian Tasks reads them; the example action a new list is
+    started with is gone once a real one has arrived; the Inbox does not grow
+    by more than INBOX_GROWTH in a week. In a zone the check settings name
+    under `todo-labels`, every open action opens with its thread's link."""
     out = []
     strict = set(setting_zones(ws, "todo-labels"))
     system = system_threads(ws)
@@ -1797,6 +1803,16 @@ def check_todo(ws: Workspace) -> List[Finding]:
                                ("1 open action does not open with its thread's link, `[[Thread]]: `" if unlabelled == 1 else
                                 "%d open actions do not open with their thread's link, `[[Thread]]: `" % unlabelled),
                                "Open actions in %s do not name their thread" % zone.name))
+        tasks = [l for l in text.splitlines() if TODO_TASK_RE.match(l)]
+        examples = [l for l in tasks if TODO_EXAMPLE_RE.search(l)]
+        real = len(tasks) - len(examples)
+        if examples and real:
+            out.append(Finding(WARNING, "todo", r,
+                               "the example action the list was started with is still here, under %d real one%s; "
+                               "it is a task like any other, so anything that counts open actions counts it and "
+                               "anything that reads the nearest deadline trips over its `<YYYY-MM-DD>`: take it out"
+                               % (real, "" if real == 1 else "s"),
+                               "The %s list still holds the example action it was started with" % zone.name))
         unread = sum(1 for l in open_lines if TASKS_DATE_RE.search(tasks_description(l)))
         if unread:
             out.append(Finding(WARNING, "todo", r,

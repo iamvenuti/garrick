@@ -287,6 +287,19 @@ class SkillsTest(unittest.TestCase):
                        "unticked lines that name this thread"):
             self.assertIn(needle, threads, needle)
 
+    def test_the_example_line_goes_with_the_first_real_action(self):
+        """A new zone's list opens with an example line to show the shape. It is a
+        task like any other, so every skill that writes a real action takes it out
+        in the same edit, and the list's own header says so."""
+        for name in ("todo", "threads", "meetings", "interview"):
+            text = flat((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("**The example line goes with the first real action.**", text, name)
+            self.assertIn("delete it in the same edit that writes the first real line", text, name)
+        todo = flat((SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("It never deletes a line**, but for the example line", todo)
+        header = flat((REPO / "template" / "System" / "templates" / "zone" / "Todo.md").read_text(encoding="utf-8"))
+        self.assertIn("the first real action takes it out", header)
+
     def test_what_is_owed_comes_from_the_todo_list(self):
         """Nothing updates a meeting page's actions table once an action is done:
         what is still open is the zone's Todo.md, for a question and for a brief."""
@@ -392,6 +405,26 @@ class RepositoryInstructionsTest(unittest.TestCase):
         self.assertIn("The one exception is the maintainer's own name", rule[0])
         for place in ("`LICENSE`", "the deck's byline", "commit metadata"):
             self.assertIn(place, rule[0], place)
+
+    def test_a_test_never_reads_this_mac(self):
+        """The rule, and the check that section's own rule requires. The status page
+        offers only the launchers that will work on the Mac it was built on, so a test
+        asserting what it offers asserts a fact about the machine running it: it passes
+        where it was written and fails in CI. The helpers all take an `apps` argument
+        for exactly this purpose, so a test says which apps exist instead of asking."""
+        rule = [line for line in section(self.text, "## Rules for this repository").splitlines()
+                if line.startswith("- **A test never reads this Mac.**")]
+        self.assertEqual(1, len(rule), rule)
+        for phrase in ("builds its own app bundles", "sets its own card fields"):
+            self.assertIn(phrase, rule[0], phrase)
+        bare = re.compile(r"\b(launcher_state|launchers_installed|cmux_installed)\(\s*\)")
+        hits = []
+        for path in sorted((REPO / "tests").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for m in bare.finditer(text):
+                hits.append("%s:%d: %s" % (path.name, text.count("\n", 0, m.start()) + 1, m.group(1)))
+        self.assertEqual([], hits, "a test asks this Mac which apps it has; pass the apps "
+                                   "to look in instead:\n" + "\n".join(hits))
 
 
 class ThreadListingTest(unittest.TestCase):

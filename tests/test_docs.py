@@ -200,6 +200,35 @@ class LatestReleaseTest(unittest.TestCase):
 
 DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
+WORDS = {n: w for n, w in enumerate(
+    "no one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+class HarnessTableTest(unittest.TestCase):
+    """What has been tested in each assistant is a record of runs made on a version,
+    so it goes stale on its own. The one number on the page that is not a record is
+    how many skills ship: it is read off the folder here, so the page cannot keep
+    claiming an older count."""
+
+    def setUp(self):
+        self.text = (REPO / "docs" / "harnesses.md").read_text(encoding="utf-8")
+        self.skills = sorted(p.name for p in (REPO / "template" / "System" / "skills").iterdir()
+                             if p.is_dir() and not p.name.startswith("."))
+
+    def test_the_page_says_how_many_skills_ship_now(self):
+        self.assertTrue(self.skills)
+        word = WORDS[len(self.skills)]
+        self.assertIn("%s skills ship now" % word.capitalize(), self.text,
+                      "%d skills ship; the page claims another count" % len(self.skills))
+        row = [l for l in self.text.splitlines() if l.startswith("| Finds the skills |")]
+        self.assertEqual(1, len(row), row)
+        self.assertEqual(2, row[0].count("%s ship now" % word), row[0])
+
+    def test_no_row_claims_a_count_that_has_moved_on(self):
+        """A row that named the count it had not been rechecked with was the way this
+        went stale: the count belongs to the sentence that reads it off the folder."""
+        for stale in ("rechecked with five", "rechecked with four", "all four skills", "all five skills"):
+            self.assertNotIn(stale, self.text, stale)
 
 
 class FeedbackTest(unittest.TestCase):

@@ -65,6 +65,11 @@ check and the status page find the thread in `System/`.
    4's second kind), each line opening with its thread as the `meetings`
    skill's step 8 says. A line the user moved to another section is never
    reworded, moved or ticked.
+   **The example line goes with the first real action.** A list nobody has
+   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   it in the same edit that writes the first real line. It is a task like any
+   other, so anything that counts open actions counts it, and `check.py`
+   warns while a real action and the example sit in one list.
 7. **Expire, archive, tidy**:
    ```sh
    python3 System/skills/todo/todo.py all --zone <Zone>
@@ -104,6 +109,7 @@ paths, round numbers.
 - **It never reads another zone's pages** for this zone's list, and never
   writes one zone's actions into another's.
 - **It never rewords, moves or ticks a line the user has triaged.**
-- **It never deletes a line.** Expired and done lines go to `archive/`,
-  where they can be read and pasted back.
+- **It never deletes a line**, but for the example line a new list is started
+  with, which step 6 takes out with the first real action. Expired and done
+  lines go to `archive/`, where they can be read and pasted back.
 - **It sends nothing.** A digest on the phone is not this skill's to send.

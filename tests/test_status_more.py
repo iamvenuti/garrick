@@ -905,7 +905,8 @@ class El {
     const el = this, list = () => el.className.split(/\s+/).filter(Boolean);
     return { contains: (c) => list().includes(c),
              add: (...cs) => { el.className = list().concat(cs.filter((c) => !list().includes(c))).join(" "); },
-             remove: (...cs) => { el.className = list().filter((c) => !cs.includes(c)).join(" "); } };
+             remove: (...cs) => { el.className = list().filter((c) => !cs.includes(c)).join(" "); },
+             toggle: (c, on) => { if (on === undefined ? !list().includes(c) : on) el.classList.add(c); else el.classList.remove(c); } };
   }
   get dataset() {
     const el = this;
@@ -1483,14 +1484,31 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
     OLD = {"v": 2, "c": {"top": ["graph", "threads"], "left": ["todo"], "right": ["inboxes"], "bottom": [],
                          "status-left": ["checks", "repos"], "status-right": ["wikis"], "status-bottom": []}, "h": []}
 
+    # What a window running 0.31.0 saved after its user moved Inboxes to the
+    # left and hid Waiting on you: the four cards #143 took away among the rest.
+    BEFORE_143 = {"v": 2, "c": {"top": ["recent", "due"], "left": ["thought", "inboxes", "todo"], "right": ["waiting"],
+                                "bottom": ["threads", "graph"], "status-left": ["checks", "repos"],
+                                "status-right": ["wikis"], "status-bottom": []}, "h": ["waiting"]}
+
     def test_a_window_with_nothing_saved_takes_the_new_order(self):
         out = self.run_js(None)
-        self.assertEqual(["recent", "due"], out["slots"]["top"])
-        self.assertEqual(["thought", "todo"], out["slots"]["left"])
-        self.assertEqual(["waiting", "inboxes"], out["slots"]["right"])
-        self.assertEqual(["threads", "graph"], out["slots"]["bottom"])
+        self.assertEqual(["threads"], out["slots"]["top"])          # #143: Threads leads
+        self.assertEqual(["todo"], out["slots"]["left"])
+        self.assertEqual(["inboxes"], out["slots"]["right"])
+        self.assertEqual(["graph"], out["slots"]["bottom"])
         self.assertEqual([], out["hidden"])
         self.assertIsNone(out["saved"])                     # and nothing is written until something is moved
+
+    def test_a_saved_layout_loses_only_the_cards_that_are_gone(self):
+        out = self.run_js(self.BEFORE_143)
+        self.assertEqual([], out["slots"]["top"])                       # Recent work and Due and overdue go
+        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])     # A thought goes; Inboxes stays where it was dragged
+        self.assertEqual([], out["slots"]["right"])                     # Waiting on you goes, hidden or not
+        self.assertEqual(["threads", "graph"], out["slots"]["bottom"])  # Threads stays where this window put it
+        self.assertEqual(["checks", "repos"], out["slots"]["status-left"])
+        self.assertEqual(["wikis"], out["slots"]["status-right"])
+        self.assertEqual([], out["hidden"])                             # and Settings lists no hidden card
+        self.assertEqual(self.BEFORE_143, json.loads(out["saved"]))    # nothing rewritten just for loading
 
     def test_a_saved_layout_keeps_every_card_where_it_was_put(self):
         moved = json.loads(json.dumps(self.OLD))
@@ -1500,27 +1518,25 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         moved["c"]["status-bottom"] = ["wikis"]
         moved["h"] = ["wikis"]
         out = self.run_js(moved)
-        self.assertEqual(["thought", "inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
-        self.assertEqual(["waiting"], out["slots"]["right"])        # which it emptied: only the new card is there
+        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
+        self.assertEqual([], out["slots"]["right"])
         self.assertEqual(["wikis"], out["slots"]["status-bottom"])
         self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
-        self.assertEqual(["recent", "due", "graph", "threads"], out["slots"]["top"])   # the new cards lead, the rest as saved
+        self.assertEqual(["graph", "threads"], out["slots"]["top"])
 
-    def test_a_card_this_release_added_keeps_the_place_the_build_gave_it(self):
-        out = self.run_js(self.OLD)
-        self.assertEqual(["recent", "due", "graph", "threads"], out["slots"]["top"])
-        self.assertEqual(["thought", "todo"], out["slots"]["left"])
-        self.assertEqual(["waiting", "inboxes"], out["slots"]["right"])
-        self.assertEqual([], out["slots"]["bottom"])        # nothing the saved layout named moves for them
+    def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
+        out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
+        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Open actions, unnamed, ahead of what was put back
+        self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):
         out = self.run_js({"v": 2, "c": {"top": ["ghost", "threads"]}, "h": ["ghost"]})
-        self.assertEqual(["recent", "due", "threads"], out["slots"]["top"])
+        self.assertEqual(["threads"], out["slots"]["top"])
         self.assertEqual([], out["hidden"])
 
     def test_an_older_layout_than_the_one_in_use_is_not_replayed(self):
         out = self.run_js({"v": 1, "c": {"top": ["todo"]}, "h": ["threads"]})
-        self.assertEqual(["recent", "due"], out["slots"]["top"])     # v1 is ignored, as it always was
+        self.assertEqual(["threads"], out["slots"]["top"])     # v1 is ignored, as it always was
         self.assertEqual([], out["hidden"])
         self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                 # and v2 is still what save() writes
         self.assertIn("if(L&&L.v===2)", status.LAYOUT_JS)
@@ -1530,6 +1546,157 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         self.assertIn("if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme'&&k!=='garrick-launchers')ks.push(k)",
                       status.LAYOUT_JS)                              # the layout goes with the window's own storage
         self.assertIn("in the order this Garrick builds", self.page())
+
+
+# A script of the page against a page status.py wrote, with what a window had
+# kept under its own keys: then each button's onclick in turn, by id or by
+# data-to, and what the page shows afterwards.
+PAGE_HARNESS = r"""
+const vm = require("vm");
+const [html, js, kept, clicks] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+const doc = new El("#document");
+parse(html, doc);
+const store = Object.assign({}, kept), said = [], copied = [];
+const ctx = { JSON, String, Array, Object, Promise, setTimeout: () => 0, clearTimeout: () => {},
+  localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
+                  removeItem: (k) => { delete store[k]; } },
+  document: { querySelectorAll: (s) => doc.querySelectorAll(s), querySelector: (s) => doc.querySelector(s),
+              createElement: (t) => new El(t), getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null,
+              addEventListener: () => {} } };
+ctx.window = { GarrickCopy: (t) => { copied.push(t); return Promise.resolve(); }, GarrickSay: (t) => { said.push(t); } };
+ctx.GarrickCopy = ctx.window.GarrickCopy;
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+(async () => {
+  for (const c of clicks) {
+    const b = c.startsWith("to:") ? doc.querySelector('button[data-to="' + c.slice(3) + '"]') : doc.querySelectorAll("#" + c)[0];
+    b.onclick();
+    await new Promise((r) => setImmediate(r));
+  }
+  const names = (sel) => doc.querySelectorAll(sel).map((r) => JSON.parse(r.getAttribute("data-card")).n);
+  const box = doc.querySelectorAll("#thought-left")[0];
+  const gsum = doc.querySelector(".tview .gsum");
+  process.stdout.write(JSON.stringify({ store, said, copied,
+    work: names("#zone-work>.tunit>.thread"), acme: names("#sub-work-acme-review>.thread"),
+    on: doc.querySelectorAll(".torder button").filter((b) => b.classList.contains("on")).map((b) => b.getAttribute("data-to")),
+    gsum: gsum && gsum.textContent,
+    left: box ? { hidden: box.hidden, text: doc.querySelectorAll("#thought-text")[0].textContent } : null }));
+})();
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestThreadsByNameOrRecent(StatusCase):
+    """#143: the Threads card lists each zone's projects and threads by name,
+    or most recently touched first, and the window remembers which."""
+
+    def setUp(self):
+        super().setUp()
+        acme = self.root / "Zones" / "Work" / "Acme Review" / "Threads"
+        for name, day in (("Renewal", "2026-03-12"), ("Zebra", "2026-03-05")):
+            write(acme / name / (name + ".md"),
+                  thread_note("Acme Review", name).replace("updated: 2026-03-01", "updated: " + day))
+        sizing = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        sizing.write_text(sizing.read_text(encoding="utf-8").replace("updated: 2026-03-01", "updated: 2026-03-20"),
+                          encoding="utf-8")
+
+    def run_js(self, kept=None, clicks=()):
+        import subprocess
+        html = self.page(show_graph=False)
+        done = subprocess.run(["node", "-e", PAGE_HARNESS, json.dumps([html, status.TVIEW_JS, kept or {}, list(clicks)])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_by_name_is_the_default(self):
+        out = self.run_js()
+        self.assertEqual(["Acme Review", "Birch Entry"], out["work"])
+        self.assertEqual(["Pricing", "Renewal", "Zebra"], out["acme"])
+        self.assertEqual(["name"], out["on"])
+        self.assertIn("· by name ·", out["gsum"])
+        self.assertNotIn("garrick-threads-order", out["store"])        # nothing written until a choice is made
+
+    def test_recent_lists_the_most_recently_touched_first_and_is_remembered(self):
+        out = self.run_js(clicks=["to:recent"])
+        self.assertEqual(["Birch Entry", "Acme Review"], out["work"])   # 20 March, then Acme's newest, 12 March
+        self.assertEqual(["Renewal", "Zebra", "Pricing"], out["acme"])
+        self.assertEqual(["recent"], out["on"])
+        self.assertIn("· most recently touched first ·", out["gsum"])
+        self.assertEqual("recent", out["store"]["garrick-threads-order"])
+        again = self.run_js(kept=out["store"])                          # the next load keeps it
+        self.assertEqual(["Birch Entry", "Acme Review"], again["work"])
+        self.assertEqual(["Renewal", "Zebra", "Pricing"], again["acme"])
+        self.assertEqual(["recent"], again["on"])
+        back = self.run_js(kept=out["store"], clicks=["to:name"])
+        self.assertEqual(["Acme Review", "Birch Entry"], back["work"])
+        self.assertEqual(["Pricing", "Renewal", "Zebra"], back["acme"])
+        self.assertIn("· by name ·", back["gsum"])
+        self.assertEqual("name", back["store"]["garrick-threads-order"])
+
+    def test_an_unknown_choice_is_ignored(self):
+        out = self.run_js(kept={"garrick-threads-order": "loudest"})
+        self.assertEqual(["Acme Review", "Birch Entry"], out["work"])
+        self.assertEqual(["name"], out["on"])
+
+    def test_reset_view_forgets_the_choice(self):
+        self.assertIn("if(k.indexOf('garrick-')===0&&k!=='garrick-status-theme'&&k!=='garrick-launchers')ks.push(k)",
+                      status.LAYOUT_JS)                                 # every garrick- key but those two goes
+        self.assertIn("st.set('garrick-threads-order',o)", status.TVIEW_JS)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestAThoughtLeftBehind(StatusCase):
+    """#143 took the A thought card away. A browser that still holds what was
+    typed into it shows that text once, offering Copy, so nobody loses it; a
+    new browser shows nothing."""
+
+    TEXT = "Ask Birch & Co about the <second> site\nand the dates"
+
+    def run_js(self, kept=None, clicks=()):
+        import subprocess
+        html = self.page(show_graph=False)
+        done = subprocess.run(["node", "-e", PAGE_HARNESS, json.dumps([html, status.HOME_JS, kept or {}, list(clicks)])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_new_browser_has_no_card_and_no_message(self):
+        html = self.page()
+        self.assertNotIn('id="thought"', html)
+        self.assertNotIn("<textarea", html)
+        out = self.run_js()
+        self.assertEqual({"hidden": True, "text": ""}, out["left"])
+        self.assertEqual({}, out["store"])
+
+    def test_a_kept_thought_is_shown_with_copy(self):
+        out = self.run_js(kept={"garrick-thought": self.TEXT})
+        self.assertEqual({"hidden": False, "text": self.TEXT}, out["left"])   # as text, never as markup
+        self.assertEqual(self.TEXT, out["store"]["garrick-thought"])          # kept until it is copied or closed
+        html = self.page()
+        tab = html[html.index('id="tab-overview"'):]
+        self.assertLess(tab.index('id="thought-left"'), tab.index('data-slot="top"'))   # above the cards
+        self.assertIn('<button class="act" type="button" id="thought-copy">Copy</button>', tab)
+
+    def test_copy_copies_it_and_it_is_gone_from_the_browser(self):
+        out = self.run_js(kept={"garrick-thought": self.TEXT}, clicks=["thought-copy"])
+        self.assertEqual([self.TEXT], out["copied"])
+        self.assertNotIn("garrick-thought", out["store"])
+        self.assertEqual(["Copied your thought. It is gone from this browser."], out["said"])
+        self.assertFalse(out["left"]["hidden"])                               # still on screen until this page goes
+        later = self.run_js(kept=out["store"])
+        self.assertTrue(later["left"]["hidden"])                              # once
+
+    def test_close_lets_it_go(self):
+        out = self.run_js(kept={"garrick-thought": self.TEXT}, clicks=["thought-close"])
+        self.assertTrue(out["left"]["hidden"])
+        self.assertNotIn("garrick-thought", out["store"])
+        self.assertEqual([], out["copied"])
+
+    def test_an_empty_box_says_nothing_and_is_cleared(self):
+        out = self.run_js(kept={"garrick-thought": "  \n"})
+        self.assertTrue(out["left"]["hidden"])
+        self.assertNotIn("garrick-thought", out["store"])
 
 
 class TestWhatALaunchSays(StatusCase):

@@ -983,6 +983,20 @@ class Effort:
                    "" if self.total["sessions"] == 1 else "s", (" " + E(" · ".join(parts)) + ".") if parts else ""))
 
 
+def torder_switch() -> str:
+    """By name, Recent: the order of each zone's projects and threads on the
+    Threads card. Recent is most recently touched first (#143)."""
+    return ('<div class="tmodes torder" role="group" aria-label="Order">%s</div>'
+            % "".join('<button type="button" data-to="%s"%s aria-pressed="%s">%s</button>'
+                      % (k, ' class="on"' if k == "name" else "", "true" if k == "name" else "false", label)
+                      for k, label in (("name", "By name"), ("recent", "Recent"))))
+
+
+# The quiet chip a live thread's row carries when no open action names it.
+NO_NEXT = ('<span class="chip nores" title="No open action names this thread, in its zone&#39;s Todo.md or in its own notes">'
+           'no next action</span>')
+
+
 def tview_switch() -> str:
     """Updated, Time, Cost: what the Threads card's bars and figures show."""
     return ('<div class="tmodes" role="group" aria-label="What the bars show">%s</div>'
@@ -994,6 +1008,8 @@ def tview_switch() -> str:
 # of cells; the view shows one. A unit (a project with its threads, or a
 # thread alone) carries data-a, its place by name, and data-s and data-c, its
 # figures, so each view can put the largest first and Updated put them back.
+# By name and Recent choose the order underneath: Recent puts the most
+# recently touched first, read from each unit's first row's data-r.
 TVIEW_CSS = r"""
 .tmodes{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px;margin:0 0 8px}
 .tmodes button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;cursor:pointer}
@@ -1010,13 +1026,21 @@ TVIEW_CSS = r"""
 TVIEW_JS = r"""
 document.querySelectorAll('.tview').forEach(function(v){
 var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,x){try{localStorage.setItem(k,x)}catch(e){}}};
-function order(c,m){var key=m==='time'?'s':m==='cost'?'c':null,kids=[].filter.call(c.children,function(x){return x.dataset.a!==undefined});
-kids.sort(function(a,b){if(key){var d=(+b.dataset[key]||0)-(+a.dataset[key]||0);if(d)return d}return a.dataset.a-b.dataset.a});
+/* a unit's last touch is on its first row: the thread's own, or its project's, which is its newest thread's */
+function rec(x){var t=x.classList.contains('thread')?x:x.querySelector('.thread');return(t&&t.dataset.r)||''}
+function order(c){var m=v.dataset.tm,key=m==='time'?'s':m==='cost'?'c':null,recent=v.dataset.to==='recent',kids=[].filter.call(c.children,function(x){return x.dataset.a!==undefined});
+kids.sort(function(a,b){if(key){var d=(+b.dataset[key]||0)-(+a.dataset[key]||0);if(d)return d}
+if(recent){var ra=rec(a),rb=rec(b);if(ra!==rb)return rb>ra?1:-1}return a.dataset.a-b.dataset.a});
 var tail=[].filter.call(c.children,function(x){return x.matches('details.parked')})[0]||null;kids.forEach(function(k){c.insertBefore(k,tail)})}
-function mode(m){v.dataset.tm=m;v.querySelectorAll('.tmodes button').forEach(function(b){b.classList.toggle('on',b.dataset.tm===m)});
-v.querySelectorAll('.tsort').forEach(function(c){order(c,m)});st.set('garrick-threads-view',m)}
-v.querySelectorAll('.tmodes button').forEach(function(b){b.onclick=function(){mode(b.dataset.tm)}});
-var m=st.get('garrick-threads-view');if(m&&v.querySelector('.tmodes button[data-tm="'+m+'"]'))mode(m)});
+function sort(){v.querySelectorAll('.tsort').forEach(order)}
+function mode(m){v.dataset.tm=m;v.querySelectorAll('.tmodes button[data-tm]').forEach(function(b){b.classList.toggle('on',b.dataset.tm===m)});sort();st.set('garrick-threads-view',m)}
+/* By name or Recent, remembered as the folds are, and said in the line under the card */
+function by(o){v.dataset.to=o;v.querySelectorAll('.tmodes button[data-to]').forEach(function(b){b.classList.toggle('on',b.dataset.to===o);b.setAttribute('aria-pressed',b.dataset.to===o?'true':'false')});sort();
+var g=v.querySelector('.gsum');if(g)g.textContent=g.textContent.replace(/by name|most recently touched first/,o==='recent'?'most recently touched first':'by name');st.set('garrick-threads-order',o)}
+v.querySelectorAll('.tmodes button[data-tm]').forEach(function(b){b.onclick=function(){mode(b.dataset.tm)}});
+v.querySelectorAll('.tmodes button[data-to]').forEach(function(b){b.onclick=function(){by(b.dataset.to)}});
+var m=st.get('garrick-threads-view');if(m&&v.querySelector('.tmodes button[data-tm="'+m+'"]'))mode(m);
+var o=st.get('garrick-threads-order');if(o&&v.querySelector('.tmodes button[data-to="'+o+'"]'))by(o)});
 """
 
 
@@ -3297,19 +3321,15 @@ def cost_chart(L: dict) -> str:
 
 
 # ------------------------------------------------- what you were doing, what you owe
-# Overview opens on four things, in this order: the threads you touched most
-# recently with each one's next action beside it, what is due or overdue
-# across every zone, somewhere to put a thought that is not yet work, and
-# what waits on a decision from you. The graph keeps every mode it has and
-# sits behind Explore at the foot of the same tab.
+# Overview opens on the Threads card (#143): each live thread with its next
+# action under its name, or a `no next action` chip where nothing names it,
+# listed by name or most recently touched first. Open actions and the
+# inboxes sit beside it, and the graph keeps every mode it has behind Explore
+# at the foot of the same tab.
 #
 # Nothing here is coloured for age. The days since a note moved are a figure
 # and nothing more; red belongs to the thread's own next action, which
 # thread_actions() works out.
-
-RECENT = 6           # threads Recent work lists, most recently touched first
-DUE_SHOWN = 12       # actions Due and overdue draws; the figure above stays exact
-WAITING_SHOWN = 8    # threads Waiting on you names under each heading
 
 
 def when_chip(a: dict, today: dt.date) -> str:
@@ -3322,114 +3342,6 @@ def when_chip(a: dict, today: dt.date) -> str:
         "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b"))
     return '<span class="tdate %s">%s %s</span>' % ("overdue" if a["late"] else "today" if when == today else "",
                                                     "Chase" if a["waiting"] else "Due", E(rel))
-
-
-def thread_where(r: dict, styles: Dict[str, dict]) -> str:
-    """Under a thread's name: its project, where that is not its own name, and
-    its zone in the zone's colour."""
-    zone = '<span%s>%s</span>' % (zone_attr(r["zone"], styles), zone_name(r["zone"], styles))
-    return (E(r["project"]) + " · " + zone) if r["thread"] != r["project"] else zone
-
-
-def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
-    """The threads whose notes moved last, each with its next action beside it
-    and how long since it was touched. The order is `touched`, the later of
-    `updated:` and an unwrapped checkpoint's day, so work recorded this
-    afternoon and not yet wrapped leads. Parked and finished work stays out, as
-    it stays out of the counts."""
-    rows = [r for z in T.values() for r in z["rows"]]
-    rows.sort(key=lambda r: (r.get("touched") is None, -(r["touched"].toordinal() if r.get("touched") else 0),
-                             r["thread"].casefold()))
-    body = ""
-    for r in rows[:RECENT]:
-        days = (today - r["updated"]).days if r["updated"] else None
-        a = r.get("next")
-        if a:
-            nxt = '<div class="hnext"><div class="ttext">%s</div>%s</div>' % (md_inline(a["text"]), when_chip(a, today))
-        else:
-            nxt = ('<div class="hnext"><span class="chip nores" title="No open action names this thread, in its zone\'s '
-                   'Todo.md or in its own notes">nothing says what happens next</span></div>')
-        if r.get("flagged"):
-            nxt += '<span class="chip late" title="The check reported %d finding%s against a file in this thread">check</span>' % (
-                r["flagged"], "" if r["flagged"] == 1 else "s")
-        nxt += checkpoint_chip(r)
-        body += ('<div class="hrow" data-ok="%d"><div class="hname"><a href="%s">%s</a><small>%s</small></div>%s'
-                 '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
-                 % (0 if r.get("urgent") else 1, E(link(r["note"])), E(r["thread"]), thread_where(r, styles), nxt,
-                    "%dd" % days if days is not None else "—"))
-    if not body:
-        body = '<p class="muted">No live threads yet.</p>'
-    foot = ('<p class="hint">Last touched is a figure, not a fault. A thread reads as urgent when its own next action is '
-            'overdue, when a <code>#waiting</code> line\'s chase date has come, or when the check names one of its files.</p>')
-    live = sum(len(z["rows"]) for z in T.values())
-    return card("recent", "Recent work", "%s, most recently touched first" % (
-        "every live thread" if live <= RECENT else "%d of %d live threads" % (RECENT, live)), body + foot)
-
-
-def due_card(lists: List[dict], today: dt.date, styles: Dict[str, dict]) -> str:
-    """Every open action whose day has come, across every zone: a due date
-    today or earlier, or a `#waiting` line to chase today or earlier. The
-    Todo tab holds the rest, and the buttons that change a line."""
-    rows = [r for z in lists for _, group in z["groups"] for r in group if r["when"] and r["when"] <= today]
-    rows.sort(key=lambda r: (r["when"], r["zone"].casefold(), r["alpha"]))
-    body = ""
-    for r in rows[:DUE_SHOWN]:
-        thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(r["label"])) if r["link"] and r["label"]
-               else '<span class="thr">%s</span>' % E(r["label"]) if r["label"] else "")
-        body += ('<div class="hrow due" data-ok="%d"><div class="hname"><span%s>%s</span></div>'
-                 '<div class="hnext"><div class="ttext">%s%s</div></div>%s</div>'
-                 % (0 if r["late"] else 1, zone_attr(r["zone"], styles), zone_name(r["zone"], styles),
-                    thr, md_inline(r["text"]), when_chip(r, today)))
-    more = len(rows) - DUE_SHOWN
-    if more > 0:
-        body += '<p class="hint">and %d more, on the Todo tab</p>' % more
-    if not rows:
-        body = '<p class="muted">Nothing is due today, and nothing is overdue.</p>'
-    late = sum(1 for r in rows if r["late"])
-    meta = "%d due today or earlier · %d overdue or due a chase" % (len(rows), late)
-    return card("due", "Due and overdue", meta,
-                '<div class="hacts"><a class="act" href="#todolist">Open the list</a></div>' + body)
-
-
-def thought_card() -> str:
-    """Somewhere to put a thought that is not yet work. It stays in this
-    browser: the page writes nothing into the workspace, so a thought becomes
-    work when you file it, and not before."""
-    return card("thought", "A thought", "not yet work, and kept in this browser",
-                '<textarea id="thought" class="hthought" rows="4" aria-label="A thought that is not yet work" '
-                'placeholder="Something you do not want to lose, before it is a thread, a note or an action…"></textarea>'
-                '<div class="hacts"><button class="act" type="button" id="thought-copy">Copy</button>'
-                '<button class="act" type="button" id="thought-clear">Clear</button>'
-                '<span class="hint" id="thought-kept"></span></div>'
-                '<p class="hint">This box is this browser\'s own, and nothing in it reaches your workspace on its own. '
-                'Copy it into a note, or paste it to your assistant and say where it belongs.</p>')
-
-
-def waiting_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
-    """What waits on a decision from you: a live thread with nothing saying
-    what happens next, and one whose note has no Resume here block to resume
-    from. Neither is a failure, and neither is about age."""
-    live = [r for z in T.values() for r in z["rows"]]
-    groups = [("Nothing says what happens next", "no open action names it",
-               sorted((r for r in live if not r.get("next")), key=lambda r: r["thread"].casefold())),
-              ("No resume block", "nothing in the note says where it stands",
-               sorted((r for r in live if not r.get("resume")), key=lambda r: r["thread"].casefold()))]
-    body = ""
-    for title, why, rows in groups:
-        if not rows:
-            continue
-        body += '<p class="hgroup">%s · %s</p>' % (E(title), E(why))
-        for r in rows[:WAITING_SHOWN]:
-            body += ('<div class="hrow bare" data-ok="1"><div class="hname"><a href="%s">%s</a><small>%s</small></div>'
-                     '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
-                     % (E(link(r["note"])), E(r["thread"]), thread_where(r, styles),
-                        "%dd" % (today - r["updated"]).days if r["updated"] else "—"))
-        if len(rows) > WAITING_SHOWN:
-            body += '<p class="hint">and %d more</p>' % (len(rows) - WAITING_SHOWN)
-    if not body:
-        body = '<p class="muted">Nothing is waiting on a decision from you.</p>'
-    n = len({(r["zone"], r["project"], r["thread"]) for _, _, rows in groups for r in rows})
-    return card("waiting", "Waiting on you", "%d thread%s" % (n, "" if n == 1 else "s") if n else "nothing", body)
 
 
 def start_card() -> str:
@@ -3448,42 +3360,41 @@ def start_card() -> str:
 
 
 HOME_CSS = r"""
-.hrow{display:grid;grid-template-columns:minmax(0,32%) minmax(0,1fr) auto;gap:10px;align-items:start;padding:8px 6px;border-top:1px solid var(--grid);border-radius:8px}
-.hrow:first-child{border-top:0}.hrow:hover{background:var(--wash)}
-.hrow.bare{grid-template-columns:minmax(0,1fr) auto}.hrow.due{grid-template-columns:minmax(0,96px) minmax(0,1fr) auto}
-.hname{min-width:0}.hname>a{font-weight:560;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hname small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hnext{min-width:0;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
-.hnext .ttext{flex:1 1 140px;min-width:0}
-.hgroup{margin:10px 2px 2px;font-size:11.5px;color:var(--muted)}.hgroup:first-child{margin-top:0}
 .chip.late{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
 .hacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
-.hthought{display:block;width:100%;min-height:78px;resize:vertical;font:inherit;font-size:13.5px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-.hthought:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .hsay{font-family:var(--display);font-size:17px;margin:12px 0}
-@media (max-width:820px){.hrow{grid-template-columns:minmax(0,1fr) auto}.hrow .hnext{grid-column:1/-1}}
+.thread .t .tnext .tdate{font-size:10.5px;padding:0 6px;margin-left:6px;border-radius:6px}
+.torder{margin-right:8px}
+.hleft{margin:0 0 16px;padding:12px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--accent)}
+.hleft p{margin:0 0 8px}.hleft p.hint{margin:0}
+.hleft pre{margin:0 0 10px;padding:8px 10px;max-height:200px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:13px;background:var(--raise);border:1px solid var(--line);border-radius:8px;user-select:text}
 """
 
 
-# The thought pad: this browser's own storage, like the folds and the theme,
-# and cleared by Reset view with the rest. The page writes nothing into the
-# workspace, so a thought is kept where a window keeps what is only its own.
+# A thought, the card #102 added and #143 took away, kept what was typed into
+# it in this browser's own storage. A browser that still holds some shows it
+# once, in a message at the top of the Overview offering Copy, so nobody
+# loses a note they left there. A successful Copy or Close removes it from
+# the browser; until then it shows again on the next load.
+THOUGHT_LEFT = ('<div class="hleft" id="thought-left" role="region" aria-label="A thought you left on this page" hidden>'
+                '<p><b>A thought you left on this page.</b> The <i>A thought</i> card is gone. This is what you had typed '
+                'into it, still kept in this browser only.</p><pre id="thought-text"></pre>'
+                '<div class="hacts"><button class="act" type="button" id="thought-copy">Copy</button>'
+                '<button class="act" type="button" id="thought-close">Close</button></div>'
+                '<p class="hint">Paste it to your assistant and say where it belongs, or make it an action with '
+                '<i>＋ Add</i> on the Todo tab. Once copied or closed, it is gone from this browser.</p></div>')
+
 HOME_JS = r"""
-(function(){var t=document.getElementById('thought');if(!t)return;
-var KEY='garrick-thought',st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
-var kept=document.getElementById('thought-kept');
-function mark(){if(kept)kept.textContent=t.value.trim()?'Kept in this browser.':''}
-t.value=st.get(KEY)||'';mark();
-t.addEventListener('input',function(){st.set(KEY,t.value);mark()});
+(function(){var box=document.getElementById('thought-left');if(!box)return;
+var KEY='garrick-thought',t=null;try{t=localStorage.getItem(KEY)}catch(e){}
+function drop(){try{localStorage.removeItem(KEY)}catch(e){}}
+if(t===null)return;if(!t.trim()){drop();return}
+document.getElementById('thought-text').textContent=t;box.hidden=false;
 var c=document.getElementById('thought-copy');
-if(c)c.onclick=function(){if(!t.value.trim()){t.focus();return}
-if(window.GarrickCopy)GarrickCopy(t.value);if(window.GarrickSay)GarrickSay('Copied the thought.')};
-var x=document.getElementById('thought-clear');
-if(x)x.onclick=function(){if(!t.value){t.focus();return}
-if(!x.classList.contains('armed')){x.classList.add('armed');x.textContent='Click again to clear';
-setTimeout(function(){x.classList.remove('armed');x.textContent='Clear'},4000);return}
-x.classList.remove('armed');x.textContent='Clear';t.value='';st.set(KEY,'');mark();t.focus()};
-})();
+if(c)c.onclick=function(){var say=window.GarrickSay||function(){},done=function(){drop();say('Copied your thought. It is gone from this browser.')};
+if(!window.GarrickCopy){say('Select the text and copy it by hand.');return}
+var p=GarrickCopy(t);if(p&&p.then)p.then(done,function(){say('Could not copy. Select the text and copy it by hand.')});else done()};
+var x=document.getElementById('thought-close');if(x)x.onclick=function(){drop();box.hidden=true}})();
 """
 
 
@@ -4492,24 +4403,37 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     def live_dot(state, what):
         return ('<span class="live %s" title="%s"></span>' % (state, E("A session is open in %s, %s" % (what, state)))) if state else ""
 
+    # Recent, on the Threads card, lists by `touched`: the later of `updated:`
+    # and an unwrapped checkpoint's day, so work recorded this afternoon and
+    # not yet wrapped leads. A row carries it as data-r, a project's row its
+    # newest thread's, and TVIEW_JS sorts on it.
+    def touched(*rs):
+        days = [r["touched"] for r in rs if r.get("touched")]
+        return max(days).isoformat() if days else ""
+
     def row_html(r, sub=False, figures=None, parked=False, place=0):
         days = (now.date() - r["updated"]).days if r["updated"] else None
         k = not parked and bool(r.get("urgent"))
         # The party tags are the card's, not the row's: under a name they read as part of it.
         chips = "" if parked else (
-            ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
+            ("" if r.get("next") else NO_NEXT)
+            + ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
             + checkpoint_chip(r) + urgent_chip(r))
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
+        # What happens next, under the name: the thread's own next action, in
+        # the row's muted text, with its date chip when it has a date (#143).
+        a = None if parked else r.get("next")
+        nxt = ('<small class="tnext">%s%s</small>' % (md_inline(a["text"]), when_chip(a, now.date()) if a["when"] else "")) if a else ""
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
                 max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
-        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s><div class="t"><a href="%s">%s</a>%s%s</div>%s'
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s%s</div>%s'
                 '<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
                 % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
-                   ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "",
-                   E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
+                   ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
+                   E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"), nxt,
                    ("<small>%s</small>" % under if under else (chips and "<small>%s</small>" % chips)),
                    bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "")), k
 
@@ -4576,10 +4500,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                     max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             urg = 0 if parked else sum(1 for r in items if r.get("urgent"))
-            head = ('<div class="thread proj" data-ok="%d" data-card="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
+            head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
                     'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
-                    % (0 if k else 1, E(project_card(zone, project, items, newest)), sid, n, "" if n == 1 else "s", CHEV,
+                    % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d needing a chase" % urg if urg else "",
                        " · %d without a resume block" % bare if bare else "", bar,
@@ -4605,8 +4529,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     new_bar = ('<div class="mg-new"><button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>')
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated">%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
-                        % (new_bar, tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
+                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        % (new_bar, torder_switch(), tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
 
 
     # ---- checks
@@ -4755,23 +4679,22 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
-    # The Overview opens on what you were doing and what you owe: the threads
-    # you touched last with their next actions, what is due, somewhere to put
-    # a thought, and what waits on you. Then the lists, and the graph behind
-    # Explore at the foot. A workspace with no project yet has none of that to
-    # show, so Start here takes the lead instead.
+    # The Overview opens on the Threads card: each live thread with its next
+    # action, or a `no next action` chip, listed by name or most recently
+    # touched first (#143). Open actions on the left, the inboxes on the right,
+    # and the graph behind Explore at the foot. A workspace with no project
+    # yet has no work to show, so Start here leads instead. A browser that
+    # still holds what it kept for A thought, the card #143 took away, shows it
+    # once above the cards (THOUGHT_LEFT).
     #
     # This is the order a window with nothing saved gets. A window that has
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = (recent_card(T, link, now.date(), ZS) + (due_card(lists, now.date(), ZS) if lists else "")
-            if anything else start_card())
-    left = thought_card() + todo_card
-    right = (waiting_card(T, link, now.date(), ZS) if anything else "") + inbox_card
-    overview = section("overview", False, '<div class="grid"><div class="slot full" data-slot="top">%s</div>'
+    lead = threads_card if anything else start_card() + threads_card
+    overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom">%s%s</div></div>' % (lead, left, right, threads_card, graph_card))
+                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
     # Needs attention leads the Status tab: what it lists is the machinery's.
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'

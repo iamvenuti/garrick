@@ -2,6 +2,12 @@
 
 What changed in each release. Dates are when the release was tagged. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Ticking a line on the status page, or any other commit made of named files alone, no longer takes about a minute on a workspace of a few thousand notes. Git gives a hook that kind of commit with `GIT_INDEX_FILE` pointing at a temporary index inside the repository being committed. The wall check inherited that variable and passed it to the git processes it starts in the workspace's *other* repositories, so each of them compared its own last commit against the committing zone's index, reported its whole tree as changed, and was then read back file by file. On a fixture of five repositories and 2,500 notes that was 2,033 git processes and 32 seconds, against 22 processes and under a second for the same commit made the ordinary way; it is now 24 either way. Every git process the check starts for a repository other than the one being committed runs with git's repository-local variables taken out, the list asked of git itself (`git rev-parse --local-env-vars`) rather than written down here, through one helper in `garrick_lib.py` that anything else committing named files can use. The repository being committed keeps them, because its temporary index is what the hook has to read: what is about to be committed, not what is on disk. Which repository that is goes by the repository a folder belongs to, the nearest `.git` at or above it, and never by what contains it, since the root repository holds every zone and both wikis and each of those is a repository of its own. That list git gives includes the settings a `-c` on the commit passes (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`), so `git -c … commit` now reaches the check's reads of the committing repository and no longer those of any other, which is what git itself does when it crosses into another repository. Nothing changes about what the check refuses, and the commit timeout is as it was. ([#106](https://github.com/iamvenuti/garrick/issues/106))
+
 ## [0.28.0] - 2026-10-15
 
 ### Added

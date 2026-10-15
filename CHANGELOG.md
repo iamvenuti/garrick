@@ -10,6 +10,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Changed
 
+- The optional zone guard no longer stops the first write a filing makes to the Meetings wiki. `System/rules.md` says that filing a conversation for a project you can name authorises the writes filing needs — the wiki page, that project's notes, the zone's `Todo.md` — so an assistant reading the rules asks nothing, while the hook saw a path outside the session's project and asked anyway, in the middle of the one workflow that had just been declared to need no question. The guard now stands aside for the Meetings wiki and only for it: every zone files its conversations there, and a write from any session goes through. Another project, another zone, the Knowledge wiki and `System/` are stopped exactly as before. What this costs is that a stray write to a meeting page from the wrong session goes unremarked, which the hook's README now says; two alternatives, letting a filing announce itself to the hook and leaving the prompt in place, were weighed and rejected in the issue. ([#97](https://github.com/iamvenuti/garrick/issues/97))
 - The command reference is `docs/commands.md`, under the name it already had; `docs/getting-started.md` stays as a pointer to it, for old links and the setup skill in existing workspaces. Its list of shipped skills now includes `todo`. ([#105](https://github.com/iamvenuti/garrick/issues/105))
 
 ### Fixed

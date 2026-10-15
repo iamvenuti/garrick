@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, thread_note, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
@@ -610,6 +610,73 @@ class TestKnowledgePages(GapCase):
               meeting_page("Work", "[birch]", "Wrap").replace("Decisions.", "As the rules say: " + rule.lower() + "."))
         write(self.page, "# Walls\n\n" + rule + ".\n")
         self.assertClean("knowledge")
+
+
+class TestNearSidePersonPartyTag(GapCase):
+    """A person who is a party, and also on the near side of a wall as themselves,
+    is not caught through the party's tag (#98)."""
+
+    def setUp(self):
+        super().setUp()
+        ctx_file = self.root / "System" / "context.md"
+        ctx = ctx_file.read_text()
+        ctx = ctx.replace(
+            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n",
+            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n"
+            "| Dana Rossi | Advisor | Work | `rossi` | |\n"
+        )
+        ctx = ctx.replace(
+            "| `acme` | `birch` | Competitors, and both are clients |\n",
+            "| `acme` | `birch` | Competitors, and both are clients |\n"
+            "| `acme` | `rossi` | Walled |\n"
+        )
+        ctx = ctx.replace(
+            "| Theo Marsh | `birch` | Managing partner |\n",
+            "| Theo Marsh | `birch` | Managing partner |\n"
+            "| Dana Rossi | `rossi` | Principal |\n"
+        )
+        self.ctx_without_near_side = ctx
+        self.ctx_with_near_side = ctx.replace(
+            "| Dana Rossi | `rossi` | Principal |\n",
+            "| Dana Rossi | `rossi` | Principal |\n"
+            "| Dana Rossi | `acme` | Advisor |\n"
+        )
+        self.ctx_file = ctx_file
+        self.note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+
+    def test_near_side_person_clears_party_tag(self):
+        self.ctx_file.write_text(self.ctx_with_near_side)
+        write(self.note, thread_note("Acme Review", "Pricing", "acme", "Dana Rossi joined the pilot."))
+        self.assertEqual([], [f for f in self.findings("walls") if "Pricing.md" in f.path])
+
+        write(self.note, thread_note("Acme Review", "Pricing", "acme", "Rossi joined the pilot."))
+        self.assertEqual([], [f for f in self.findings("walls") if "Pricing.md" in f.path])
+
+    def test_without_near_side_person_breach_is_reported(self):
+        self.ctx_file.write_text(self.ctx_without_near_side)
+        write(self.note, thread_note("Acme Review", "Pricing", "acme", "Dana Rossi joined the pilot."))
+        found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
+        self.assertEqual(1, len(found), found)
+        self.assertIn("names Dana Rossi", found[0].message)
+        self.assertNotIn('(as "rossi")', found[0].message)
+
+        write(self.note, thread_note("Acme Review", "Pricing", "acme", "Rossi joined the pilot."))
+        found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
+        self.assertEqual(1, len(found), found)
+        self.assertIn('names Dana Rossi (as "rossi")', found[0].message)
+
+
+class TestSharedSurname(GapCase):
+    def test_far_side_party_word_in_near_side_person(self):
+        ctx_file = self.root / "System" / "context.md"
+        ctx = ctx_file.read_text().replace(
+            "| Dana Whitlock | `acme` | Head of procurement |\n",
+            "| Dana Whitlock | `acme` | Head of procurement |\n| Anna Birch | `acme` | Analyst |\n")
+        ctx_file.write_text(ctx)
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        write(note, thread_note("Acme Review", "Pricing", "acme", "Birch is pricing below us."))
+        found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
+        self.assertEqual(1, len(found), found)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ class ZoneGuardTest(unittest.TestCase):
         self.root = base / "workspace"
         for folder in ("System/tools", "Zones/Work/Acme Review/Threads/Kickoff",
                        "Zones/Work/Birch Entry", "Zones/Personal/Home", "Wikis/Meetings/wiki",
-                       "Wikis/Knowledge/wiki"):
+                       "Wikis/Meetings/raw/inbox", "Wikis/Knowledge/wiki"):
             (self.root / folder).mkdir(parents=True)
         (self.root / "System" / "rules.md").write_text("# Rules\n")
         self.state = base / "state"
@@ -67,6 +67,31 @@ class ZoneGuardTest(unittest.TestCase):
 
     def test_a_file_loose_in_the_zone_goes_ahead(self):
         self.assertIsNone(self.claude(self.root / "Zones/Work/Todo.md"))
+
+    def test_filing_a_conversation_is_never_stopped(self):
+        # Every write a filing makes from a project session, first time, nothing
+        # remembered: the wiki page, the raw record, the project's own notes and
+        # the zone's Todo.md.
+        for target in ("Wikis/Meetings/wiki/2026-05-04 Acme Corp, kickoff.md",
+                       "Wikis/Meetings/wiki/index.md",
+                       "Wikis/Meetings/raw/inbox/kickoff.txt",
+                       "Wikis/Meetings/raw/2026-05-04 Acme Corp, kickoff.txt",
+                       "Zones/Work/Acme Review/Threads/Kickoff/Kickoff.md",
+                       "Zones/Work/Todo.md"):
+            for tool in ("Edit", "Write"):
+                self.session = "filing-%s-%s" % (tool, target)
+                self.assertIsNone(self.claude(self.root / target, tool=tool), target)
+        patch = ("*** Begin Patch\n*** Add File: %s\n+page\n*** End Patch\n"
+                 % (self.root / "Wikis/Meetings/wiki/2026-05-04 Acme Corp, kickoff.md"))
+        self.assertIsNone(self.codex(patch))
+
+    def test_the_meetings_wiki_is_the_only_place_it_stands_aside(self):
+        for target in ("System/tools/check.py", "Zones/Work/Birch Entry/Birch Entry.md",
+                       "Zones/Personal/Home/Home.md", "Wikis/Knowledge/wiki/index.md"):
+            self.session = "only-%s" % target
+            self.assertEqual(self.decision(self.claude(self.root / target))[0], "ask", target)
+            patch = "*** Begin Patch\n*** Update File: %s\n@@\n-a\n+b\n*** End Patch\n" % (self.root / target)
+            self.assertEqual(self.decision(self.codex(patch))[0], "deny", target)
 
     def test_outside_the_workspace_goes_ahead(self):
         self.assertIsNone(self.claude(Path(self.tmp.name) / "scratch" / "notes.md"))
@@ -124,6 +149,8 @@ class ZoneGuardTest(unittest.TestCase):
         decision, reason = self.decision(self.claude(self.root / "Wikis/Knowledge/wiki/index.md", home=wiki))
         self.assertIn("Wikis › Meetings", reason)
         self.assertIn("Wikis › Knowledge", reason)
+        # The other way round the Meetings wiki stands aside, as it does everywhere.
+        self.assertIsNone(self.claude(wiki / "wiki/index.md", home=self.root / "Wikis/Knowledge"))
 
     def test_the_session_home_stays_where_it_started(self):
         # A command changed folder to System/; the session still belongs to the thread.
@@ -207,13 +234,16 @@ class ZoneGuardTest(unittest.TestCase):
     def test_codex_names_every_place_a_patch_reaches(self):
         patch = ("*** Begin Patch\n*** Update File: Kickoff.md\n@@\n-a\n+b\n"
                  "*** Update File: %s\n@@\n-a\n+b\n"
+                 "*** Update File: %s\n@@\n-a\n+b\n"
                  "*** Update File: %s\n*** Move to: %s\n*** End Patch\n"
-                 % (self.root / "Wikis/Meetings/wiki/index.md", self.thread / "a.md",
+                 % (self.root / "Wikis/Knowledge/wiki/index.md",
+                    self.root / "Wikis/Meetings/wiki/index.md", self.thread / "a.md",
                     self.root / "Zones/Personal/Home/a.md"))
         _, reason = self.decision(self.codex(patch))
-        self.assertIn("Wikis › Meetings", reason)
+        self.assertIn("Wikis › Knowledge", reason)
         self.assertIn("Personal › Home", reason)
         self.assertNotIn("Kickoff.md", reason)
+        self.assertNotIn("Meetings", reason)      # the one place it stands aside for
 
     # Whatever happens, it never stops work by breaking
 

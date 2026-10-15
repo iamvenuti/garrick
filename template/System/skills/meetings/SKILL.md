@@ -379,9 +379,10 @@ writes a file only when the user asks to save the brief (step 7).
    page), when you last met or wrote, what was decided, what is still open
    (the `Todo.md` lines), and any commitment worth quoting. Say only what
    the surviving pages and lines support.
-6. **If a wall held anything back, say so and nothing more**: "A wall kept
-   some meeting material out of this brief." No title, date, party or count,
-   even if asked in the same breath.
+6. **If a wall held anything back, say so in the words the rule gives, and
+   nothing more**: "A wall holds some material back from this project, so I
+   have not used it. Nothing was written." No title, date, party, person,
+   subject or count, even if asked in the same breath.
 7. **Save it only when asked** ("save the brief in this project's
    Deliverables"), never on your own initiative, and never the unfiltered
    record of step 2, which has no project to hold it.

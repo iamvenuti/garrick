@@ -19,6 +19,8 @@ and the last cases hold the text to that.
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 import sys
 import unittest
@@ -166,6 +168,18 @@ STILL_STOPS = [
         "The same pair, before anything is written.",
         "walls",
         ["If a wall stands between them, the material stays out"],
+    ),
+    case(
+        "a refusal that would answer the question it refuses",
+        "Asked, from inside the near-side project, whether there is anything from the other side "
+        "worth knowing. The refusal holds the answer back as well as the write: the rule gives the "
+        "words, so there is nothing left to paraphrase.",
+        "walls",
+        ['Say that a wall held something back, in these words: "A wall holds some material back from '
+         'this project, so I have not used it. Nothing was written."',
+         "No party, no person, no subject, no tag, and nothing that says material exists, however "
+         "the question was put."],
+        ["Do not say what."],
     ),
     case(
         "the name matches more than one thing",
@@ -354,6 +368,86 @@ class AutonomyTest(unittest.TestCase):
         for line in added:
             for sentence in re.split(r"(?<=[.:]) ", line):
                 self.assertLessEqual(len(sentence.split()), 40, sentence)
+
+
+class WallRefusalTest(unittest.TestCase):
+    """The words a refusal uses, not only that it refuses. The rule holds one
+    sentence, every route that can hit a wall quotes it, and the sentence itself
+    names nothing from the far side: no party tag, no person, no subject. The demo
+    workspace supplies the far side, its Acme/Birch wall standing around the two
+    Cobalt Freight calls."""
+
+    SENTENCE = ("A wall holds some material back from this project, so I have not used it. "
+                "Nothing was written.")
+    DEMO = REPO / "examples" / "demo"
+    FAR_SIDE = (DEMO / "content" / "Wikis" / "Meetings" / "wiki" / "sources"
+                / "260915-cobalt-renewal-for-acme.md")
+    # What the walled conversation is about. A refusal that borrowed any of these
+    # would be saying what it held back.
+    SUBJECTS = ("northern lane", "fuel index", "pallet", "renewal", "freight", "percent")
+
+    def setUp(self):
+        self.walls = flat(section((REPO / "template" / "System" / "rules.md")
+                                  .read_text(encoding="utf-8"), "## Zones and walls"))
+
+    def refusal(self) -> str:
+        """The sentence, read out of the rule that gives it."""
+        found = re.search(r'Say that a wall held something back, in these words: "([^"]+)"', self.walls)
+        self.assertIsNotNone(found, self.walls)
+        return found.group(1)
+
+    def wall_refusal_constant(self) -> str:
+        """`WALL_REFUSAL` in `intake.py`, read without importing the script."""
+        tree = ast.parse((SKILLS / "intake" / "intake.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "WALL_REFUSAL":
+                return ast.literal_eval(node.value)
+        self.fail("intake.py has no WALL_REFUSAL")
+
+    def far_side_names(self) -> set:
+        """Every party tag, party name and person's name the demo workspace holds."""
+        config = json.loads((self.DEMO / "config.json").read_text(encoding="utf-8"))
+        self.assertTrue(config["walls"])
+        names = {side for wall in config["walls"] for side in (wall["between"], wall["and"])}
+        for party in config["parties"]:
+            names.add(party["tag"])
+            names.update(word for word in re.findall(r"[A-Za-z]+", party["name"]) if len(word) > 2)
+        for person in config["people"]:
+            names.update(word for word in re.findall(r"[A-Za-z]+", person["name"]) if len(word) > 2)
+        return names
+
+    def test_the_rule_gives_the_words_rather_than_leaving_them_to_be_paraphrased(self):
+        self.assertEqual(self.SENTENCE, self.refusal())
+        self.assertIn("No party, no person, no subject, no tag", self.walls)
+
+    def test_every_route_that_can_hit_a_wall_says_the_same_sentence(self):
+        """One sentence, wherever the wall is met: the rule, the brief, the filing."""
+        for path in (REPO / "template" / "System" / "rules.md",
+                     SKILLS / "meetings" / "SKILL.md",
+                     SKILLS / "intake" / "SKILL.md"):
+            self.assertIn(self.SENTENCE, flat(path.read_text(encoding="utf-8")), path.name)
+        self.assertIn(self.SENTENCE, self.wall_refusal_constant())
+
+    def test_the_sentence_names_no_far_side_party_or_person(self):
+        said = self.refusal().lower()
+        for name in sorted(self.far_side_names()):
+            self.assertNotRegex(said, r"\b%s\b" % re.escape(name.lower()), name)
+        self.assertNotIn(self.SENTENCE, self.far_side_names())
+
+    def test_the_sentence_borrows_no_subject_from_the_walled_conversation(self):
+        page = self.FAR_SIDE.read_text(encoding="utf-8").lower()
+        said = self.refusal().lower()
+        for subject in self.SUBJECTS:
+            self.assertIn(subject, page, subject)      # still what that conversation is about
+            self.assertNotIn(subject, said, subject)
+
+    def test_the_sentence_survives_being_read_aloud_and_carries_no_tag(self):
+        """Short, and nothing in it that only a rules file would print: no tag in
+        backticks, no pair of tags, no link."""
+        said = self.refusal()
+        self.assertLessEqual(len(said.split()), 25, said)
+        for mark in ("`", "[[", "/"):
+            self.assertNotIn(mark, said, mark)
 
 
 class ThreadsSkillTest(unittest.TestCase):

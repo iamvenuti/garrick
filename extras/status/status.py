@@ -2969,6 +2969,19 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
                html))
 
 
+def follow_settings() -> str:
+    """Settings › Explore: whether the graph follows the zone you are reading
+    on the Threads card (#142, FOLLOW_JS). On until switched off, and kept in
+    this window, as the graph's other choices are; only on a page with the graph."""
+    return ('<section class="setsec" id="follow-settings">%s%s<div class="launcher-row"><label class="launcher-choice">'
+            '<input type="checkbox" id="graph-follow" checked> <span>Follow the zone in view<small>Explore shows the zone you are '
+            'reading on the Threads card</small></span></label></div></section>'
+            % (set_head("Explore", "explore"), help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
+               'switches to it once it has filled the window for a moment. With the zones side by side, point at a column or open a '
+               'project or thread in it. The switch is for this page only: the zone you pick in Explore&#39;s drop-down still leads '
+               'the card and is what the page opens on. Picking All or a wiki pauses it until the page reloads. Kept in this window.')))
+
+
 def preview_section(flags: Dict[str, bool]) -> str:
     rows = "".join('<div class="flagrow"><b>%s</b><span class="chip%s">%s</span><small>%s</small></div>'
                    % (E(FLAGS[k][0]), " on" if on else "", "on" if on else "off", E(FLAGS[k][1])) for k, on in flags.items())
@@ -2990,9 +3003,10 @@ VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
-             styles: Optional[Dict[str, dict]] = None) -> str:
-    """The Settings dialog: which apps to open projects in, each zone's colour
-    and icon, About Garrick, and the preview features with which are switched on."""
+             styles: Optional[Dict[str, dict]] = None, graph: bool = False) -> str:
+    """The Settings dialog: which apps to open projects in, whether Explore
+    follows the zone in view (with the graph), each zone's colour and icon,
+    About Garrick, and the preview features with which are switched on."""
     stamp = workspace_stamp(ws)
     try:
         text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
@@ -3006,7 +3020,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
             '<div class="setcol">%s</div></div></dialog>'
-            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + zone_settings(list(zones), styles or {}) + menu_settings(),
+            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
+               + zone_settings(list(zones), styles or {}) + menu_settings(),
                about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
 
@@ -4042,6 +4057,9 @@ function leadZone(z){var box=document.querySelector('.tview .zones');if(!box)ret
 var all=[].slice.call(box.children).filter(function(d){return d.matches('details.zone[data-zone]')});
 all.sort(function(a,b){var x=a.dataset.zone,y=b.dataset.zone;return (x===z?0:1)-(y===z?0:1)||x.localeCompare(y)});
 all.forEach(function(d){box.appendChild(d)})}leadZone(zsel);
+/* Following the zone in view on the Threads card (#142, FOLLOW_JS) changes the graph and the drop-down for this page
+   only. Picking All or a wiki, which the card cannot be in, pauses it until the page reloads. */
+var held=false;function cardZone(z){return[].some.call(document.querySelectorAll('.tview .zones>details.zone[data-zone]'),function(d){return d.dataset.zone===z})}
 function modeFor(z){return st.get('garrick-graph-mode-'+z)||(G.modes&&G.modes[z])||G.mode}var mode=modeFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
@@ -4201,7 +4219,9 @@ cv.addEventListener('pointerleave',function(){if(!down){hover=null;delete cv.dat
    nodes shown, so a node the graph does not show is left alone; nothing is selected, centred or zoomed. */
 var lit=null;
 window.GarrickGraph={focus:function(u){if(down)return false;if(!u){if(lit&&hover===lit)hover=null;lit=null;wake();return false}
-var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true}};
+var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true},
+/* the place shown, and showing a zone as the drop-down would, without storing it or reordering the card (#142) */
+place:function(){return zsel},follow:function(z){if(held||z===zsel||places.indexOf(z)<0)return false;show(z);return true}};
 cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
@@ -4220,7 +4240,9 @@ pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close(
 var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode-'+zsel,mode)}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
-var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){zsel=zsl.value;st.set('garrick-graph-place',zsel);leadZone(zsel);mode=modeFor(zsel);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};
+function show(z){zsel=z;mode=modeFor(z);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
+/* a pick is stored, leads the card (#72) and is what a reload opens on */
+var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){var z=zsl.value;st.set('garrick-graph-place',z);leadZone(z);if(!cardZone(z))held=true;show(z)};
 document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode-'+zsel,mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
@@ -4240,6 +4262,43 @@ function recolor(){colors();draw()}
 if('MutationObserver' in window)new MutationObserver(recolor).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 var dark=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');if(dark)dark.addEventListener?dark.addEventListener('change',recolor):dark.addListener&&dark.addListener(recolor);
 if('IntersectionObserver' in window)new IntersectionObserver(function(es){es[0].isIntersecting?start():stop()}).observe(wrap);else start();
+})();
+"""
+
+
+# Explore follows the zone you are reading on the Threads card (#142). With
+# the zones stacked, one under another, the zone in view is the one whose
+# section fills most of the window, and it takes over once it has held the
+# view about 300 ms, so a zone scrolled quickly past is not followed. Side by
+# side, every zone is in view, so scrolling changes nothing: hovering a column
+# for as long does, and opening a project or thread inside one does at once.
+# The graph takes the zone as if it had been picked in its drop-down, but
+# stores nothing and leaves the card's order alone (GarrickGraph.follow), so
+# the pick stays what orders the card and what a reload opens on. The zone in
+# view when the page opens is where following starts, not a change, so a page
+# opens on the pick. Off when Settings › Explore says so, kept in this window.
+FOLLOW_JS = r"""
+(function(){
+var box=document.querySelector('.tview .zones'),G=window.GarrickGraph;if(!box||!G||!G.follow)return;
+var KEY='garrick-graph-follow',st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+function on(){return st.get(KEY)!=='0'}
+var cb=document.getElementById('graph-follow');if(cb){cb.checked=on();cb.onchange=function(){st.set(KEY,cb.checked?'1':'0');cancel()}}
+var ZONE='.tview .zones>details.zone[data-zone]';
+function shown(){return[].filter.call(box.children,function(d){return d.matches(ZONE)}).map(function(d){return{z:d.dataset.zone,r:d.getBoundingClientRect()}})
+.filter(function(o){return o.r.width>0&&o.r.height>0})}
+function stacked(rs){return rs.every(function(o){return Math.round(o.r.left)===Math.round(rs[0].r.left)})}
+function most(rs){var best=null,fill=0,H=window.innerHeight;rs.forEach(function(o){var h=Math.min(o.r.bottom,H)-Math.max(o.r.top,0);if(h>fill){fill=h;best=o.z}});return best}
+function inView(){var rs=shown();return rs.length&&stacked(rs)?most(rs):null}
+var seen=inView(),wait=null,t=0;
+function cancel(){clearTimeout(t);wait=null}
+function take(z){cancel();seen=z;G.follow(z)}
+/* a zone that differs from `same` is taken once it is still the one wanted 300 ms later */
+function want(z,same){if(z===wait)return;cancel();if(!z||z===same||!on())return;wait=z;t=setTimeout(function(){wait=null;take(z)},300)}
+function look(){var rs=shown();if(rs.length&&stacked(rs))want(most(rs),seen)}
+document.addEventListener('scroll',look,true);window.addEventListener('resize',look);
+function column(e){var rs=shown();if(!rs.length||stacked(rs))return undefined;var d=e.target&&e.target.closest&&e.target.closest(ZONE);return d?d.dataset.zone:null}
+document.addEventListener('mouseover',function(e){var z=column(e);if(z!==undefined)want(z,G.place())});
+document.addEventListener('click',function(e){if(!on()||!(e.target&&e.target.closest&&e.target.closest('.tunit')))return;var z=column(e);if(z)take(z)},true);
 })();
 """
 
@@ -4744,11 +4803,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after both. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS if show_graph else ""]
+               MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

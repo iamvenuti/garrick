@@ -621,7 +621,7 @@ class TestZoneOrder(StatusCase):
         self.assertLess(html.index('data-zone="Personal"'), html.index('data-zone="Work"'))    # by name, as built
         self.assertIn("function leadZone(z){", status.GRAPH_JS)
         self.assertIn("leadZone(zsel);", status.GRAPH_JS.split("function leadZone")[1])          # on load
-        self.assertIn("st.set('garrick-graph-place',zsel);leadZone(zsel);", status.GRAPH_JS)    # on each change
+        self.assertIn("st.set('garrick-graph-place',z);leadZone(z);", status.GRAPH_JS)          # on each pick
 class TestSettingsRowLines(StatusCase):
     """Settings (#73): a row's own grey line waits behind its section's "?", and is its tooltip meanwhile."""
 
@@ -1356,6 +1356,203 @@ class TestRowsLightTheGraph(StatusCase):
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual([True, False, False, False], json.loads(done.stdout))            # a parked thread stays off the graph
+
+
+# FOLLOW_JS against a page status.py wrote, with the zones' boxes made up
+# rather than laid out, a clock that moves only when told, and a graph that
+# records what it is asked to follow: the steps scroll, hover, click, wait or
+# flip the switch in Settings, and the graph says which zones it followed.
+FOLLOW_HARNESS = r"""
+const vm = require("vm");
+const [html, js, place, boxes, steps, saved] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+const doc = new El("#document");
+parse(html, doc);
+let geo = boxes, y = 0, now = 0, timers = [];
+const H = 600, zero = { left: 0, top: 0, bottom: 0, width: 0, height: 0 };
+El.prototype.getBoundingClientRect = function () {
+  const b = this.localName === "details" && geo[this.getAttribute("data-zone")];
+  return b ? { left: b[0], width: 300, top: b[1] - y, bottom: b[2] - y, height: b[2] - b[1] } : zero;
+};
+const on = {}, listen = (t, fn) => { (on[t] = on[t] || []).push(fn); };
+const fire = (t, target) => (on[t] || []).forEach((fn) => fn({ target }));
+const store = Object.assign({}, saved || {});
+let cur = place;
+const followed = [];
+const ctx = { JSON, String, Array, Object, Math, innerHeight: H,
+  setTimeout: (fn, ms) => { timers.push({ at: now + ms, fn }); return timers.length; },
+  clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].fn = null; },
+  localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+  document: { querySelectorAll: (s) => doc.querySelectorAll(s), querySelector: (s) => doc.querySelector(s),
+              getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null, addEventListener: listen },
+  addEventListener: listen };
+ctx.window = ctx;
+ctx.GarrickGraph = { place: () => cur, follow: (z) => { if (z === cur) return false; cur = z; followed.push(z); return true; } };
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+const zone = (z) => doc.querySelectorAll(".tview .zones>details.zone").filter((d) => d.getAttribute("data-zone") === z)[0];
+const cb = doc.querySelectorAll("#graph-follow")[0];
+for (const [op, arg] of steps) {
+  if (op === "scroll") { y = arg; fire("scroll", doc); }
+  else if (op === "wait") { now += arg; timers.forEach((t) => { if (t.fn && t.at <= now) { const f = t.fn; t.fn = null; f(); } }); }
+  else if (op === "hover") fire("mouseover", arg ? zone(arg).querySelector("summary") : doc.querySelector("header") || doc);
+  else if (op === "open") fire("click", zone(arg).querySelector(".tunit a"));
+  else if (op === "switch") { cb.checked = arg; cb.onchange(); }
+}
+process.stdout.write(JSON.stringify({ followed, place: cur, checked: cb ? cb.checked : null, store,
+  order: doc.querySelectorAll(".tview .zones>details.zone").map((d) => d.getAttribute("data-zone")) }));
+"""
+
+
+# GRAPH_JS with the Threads card's zones and the place drop-down real enough
+# to read: each step follows a zone or picks one, and says what the graph
+# shows, what the window stored and the order of the card's zones.
+PLACE_HARNESS = r"""
+const vm = require("vm");
+const [js, data, html, saved, steps] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+const doc = new El("#document");
+parse(html, doc);
+const any = new Proxy(function () {}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "length" ? 0 : any,
+                                        apply: () => any, construct: () => any });
+const sel = { value: "", onchange: null, options: [], selectedIndex: 0, className: "",
+              parentNode: { querySelectorAll: () => [], classList: { toggle: () => {} } } };
+const card = (s) => s.indexOf(".tview") === 0;
+const store = Object.assign({}, saved || {});
+const ctx = { JSON, String, Array, Object, Math, Date,
+              localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+              document: new Proxy({}, { get: (t, k) => k === "getElementById" ? (id) => id === "graph-data" ? { textContent: data } : any
+                                                       : k === "querySelectorAll" ? (s) => card(s) ? doc.querySelectorAll(s) : []
+                                                       : k === "querySelector" ? (s) => s === ".gzsel" ? sel : card(s) ? doc.querySelector(s) : any : any }),
+              Panel: any, requestAnimationFrame: () => 0, setTimeout: () => 0, addEventListener: () => {},
+              matchMedia: () => ({ matches: true }), IntersectionObserver: any, ResizeObserver: any, MutationObserver: any,
+              getComputedStyle: () => any, location: any, navigator: any, innerWidth: 800, innerHeight: 600, devicePixelRatio: 1 };
+ctx.window = ctx;
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+const G = ctx.window.GarrickGraph;
+const look = (ret) => ({ ret, place: G.place(), shows: sel.value, stored: store["garrick-graph-place"] || null,
+  order: doc.querySelectorAll(".tview .zones>details.zone").map((d) => d.getAttribute("data-zone")) });
+const out = [look(null)];
+for (const [op, z] of steps) {
+  if (op === "follow") out.push(look(G.follow(z)));
+  else { sel.value = z; sel.onchange(); out.push(look(null)); }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestExploreFollowsTheZoneInView(StatusCase):
+    """#142: Explore follows the zone you are reading on the Threads card,
+    without storing it or reordering the card."""
+
+    def setUp(self):
+        super().setUp()
+        zones = self.root / "Zones"
+        studio = zones / "Studio"
+        (studio / ".git").mkdir(parents=True)
+        write(studio / "AGENTS.md", "# Studio zone\n")
+        write(studio / "Todo.md", "# Studio: open actions\n\n## Inbox\n\n## Done\n")
+        write(studio / "Kiln Build" / "Kiln Build.md", project_hub("Studio", "Kiln Build", "", ["Glazes"]))
+        write(studio / "Kiln Build" / "Threads" / "Glazes" / "Glazes.md", thread_note("Kiln Build", "Glazes", ""))
+        garden = zones / "Personal" / "Garden Plan"
+        write(garden / "Garden Plan.md", project_hub("Personal", "Garden Plan", "", ["Beds"]))
+        write(garden / "Threads" / "Beds" / "Beds.md", thread_note("Garden Plan", "Beds", ""))
+
+    # Three zones, one under another, each 700 pixels tall in a window 600 tall.
+    STACKED = {"Personal": [0, 0, 700], "Studio": [0, 700, 1400], "Work": [0, 1400, 2100]}
+    SIDE = {"Personal": [0, 0, 500], "Studio": [320, 0, 500], "Work": [640, 0, 500]}
+
+    def follow(self, boxes, *steps, place="Personal", saved=None, html=None):
+        html = html or self.page()
+        done = subprocess.run(["node", "-e", FOLLOW_HARNESS, json.dumps([html, status.FOLLOW_JS, place, boxes,
+                                                                          [list(s) for s in steps], saved])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def places(self, *steps, saved=None):
+        html = self.page()
+        data = re.search(r'<script type="application/json" id="graph-data">(.*?)</script>', html, re.S).group(1)
+        done = subprocess.run(["node", "-e", PLACE_HARNESS, json.dumps([status.GRAPH_JS, data, html, saved, [list(s) for s in steps]])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_scrolling_into_the_next_zone_switches_explore_once_it_holds_the_view(self):
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 299))
+        self.assertEqual([], out["followed"])                                   # not yet
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 300))
+        self.assertEqual(["Studio"], out["followed"])                           # within half a second
+        self.assertEqual(["Personal", "Studio", "Work"], out["order"])          # and the card's order stands
+        self.assertNotIn("garrick-graph-place", out["store"])                   # nor is it stored
+        # Reading on down through the zone keeps the wait it started, rather than starting it again.
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 150), ("scroll", 720), ("wait", 150))
+        self.assertEqual(["Studio"], out["followed"])
+
+    def test_a_zone_scrolled_quickly_past_is_not_followed(self):
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 120), ("scroll", 1350), ("wait", 120), ("wait", 300))
+        self.assertEqual(["Work"], out["followed"])                             # Studio went by
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 120), ("scroll", 0), ("wait", 1000))
+        self.assertEqual([], out["followed"])                                   # back where it started: nothing changes
+        out = self.follow(self.STACKED, ("wait", 1000), ("scroll", 40), ("wait", 1000), place="*")
+        self.assertEqual([], out["followed"])                                   # the zone in view as the page opens is not a change
+
+    def test_side_by_side_a_hover_or_an_open_sets_it(self):
+        out = self.follow(self.SIDE, ("scroll", 200), ("wait", 1000))
+        self.assertEqual([], out["followed"])                                   # every zone is in view: scrolling changes nothing
+        out = self.follow(self.SIDE, ("hover", "Studio"), ("wait", 300))
+        self.assertEqual(["Studio"], out["followed"])
+        out = self.follow(self.SIDE, ("hover", "Studio"), ("wait", 100), ("hover", None), ("wait", 1000))
+        self.assertEqual([], out["followed"])                                   # passing over a column is not resting on it
+        out = self.follow(self.SIDE, ("open", "Work"))
+        self.assertEqual(["Work"], out["followed"])                             # opening a project or thread: at once
+        self.assertEqual(["Personal", "Studio", "Work"], out["order"])
+
+    def test_switched_off_nothing_changes(self):
+        off = {"garrick-graph-follow": "0"}
+        for boxes, steps in ((self.STACKED, [("scroll", 650), ("wait", 1000)]),
+                             (self.SIDE, [("hover", "Studio"), ("wait", 1000), ("open", "Work")])):
+            out = self.follow(boxes, *steps, saved=off)
+            self.assertEqual([], out["followed"])
+            self.assertFalse(out["checked"])                                    # Settings shows it off
+        out = self.follow(self.STACKED, ("scroll", 650), ("wait", 100), ("switch", False), ("wait", 1000), ("scroll", 1350), ("wait", 1000))
+        self.assertEqual([], out["followed"])                                   # switching it off drops a wait under way
+        self.assertEqual("0", out["store"]["garrick-graph-follow"])
+        out = self.follow(self.STACKED, ("switch", True), ("scroll", 650), ("wait", 300), saved=off)
+        self.assertEqual(["Studio"], out["followed"])
+
+    def test_on_by_default_and_only_with_the_graph(self):
+        html = self.page()
+        self.assertIn('<section class="setsec" id="follow-settings"><h3>Explore', html)
+        self.assertIn('<input type="checkbox" id="graph-follow" checked> <span>Follow the zone in view', html)
+        self.assertIn(status.FOLLOW_JS, html)
+        bare = self.page(show_graph=False)
+        self.assertNotIn("graph-follow", bare)
+        self.assertNotIn(status.FOLLOW_JS, bare)
+
+    def test_a_followed_zone_is_shown_not_stored_and_the_pick_still_orders_the_card(self):
+        out = self.places(("follow", "Personal"), ("pick", "Studio"), ("follow", "Work"))
+        self.assertEqual({"ret": None, "place": "Work", "shows": "Work", "stored": None,
+                          "order": ["Work", "Personal", "Studio"]}, out[0])     # as #72 leaves it
+        self.assertEqual({"ret": True, "place": "Personal", "shows": "Personal", "stored": None,
+                          "order": ["Work", "Personal", "Studio"]}, out[1])     # shown in the drop-down, not stored, card untouched
+        self.assertEqual({"ret": None, "place": "Studio", "shows": "Studio", "stored": "Studio",
+                          "order": ["Studio", "Personal", "Work"]}, out[2])     # a pick is stored and leads the card
+        self.assertEqual({"ret": True, "place": "Work", "shows": "Work", "stored": "Studio",
+                          "order": ["Studio", "Personal", "Work"]}, out[3])
+        reload = self.places(saved={"garrick-graph-place": "Studio"})[0]
+        self.assertEqual(("Studio", ["Studio", "Personal", "Work"]), (reload["place"], reload["order"]))   # the pick, not the zone last followed
+
+    def test_all_or_a_wiki_pauses_following_until_the_page_reloads(self):
+        for pick in ("*", "Meetings"):
+            with self.subTest(pick=pick):
+                out = self.places(("pick", pick), ("follow", "Studio"), ("pick", "Personal"), ("follow", "Studio"))
+                self.assertEqual((False, pick), (out[2]["ret"], out[2]["place"]))
+                self.assertEqual((False, "Personal"), (out[4]["ret"], out[4]["place"]))
+                again = self.places(("follow", "Studio"), saved={"garrick-graph-place": pick})
+                self.assertEqual((True, "Studio", pick), (again[1]["ret"], again[1]["place"], again[1]["stored"]))
 
 
 class TestSettingsFromTheMenu(unittest.TestCase):

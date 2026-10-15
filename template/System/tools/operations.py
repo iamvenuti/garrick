@@ -58,6 +58,9 @@ todo_lines keeps; park's and wake's is the note's own `status:`.
 `OPS` stays what it has been since 0.26.0: the six verbs that keep a durable
 record, derived from the table. A newer copy of this file found by an older
 status extra must not start recording verbs that extra knows nothing about.
+`checkpoint` is declared and deliberately left out of `RECORDED`: it keeps no
+journal entry and does not use `IDEM_WINDOW`, because it has state of its own
+to compare a repeat against, the block already in the thread note.
 
 The table declares; the handlers do the work, and do not move here.
 Standard library only; Python 3.9.
@@ -112,7 +115,7 @@ Op = collections.namedtuple("Op", "fields identity scope commits retry precheck"
 #             where the handler checks for itself.
 SCOPES = ("zone", "workspace", "machine", "none")
 RETRIES = ("safe", "unsafe")
-PRECHECKS = (None, "line", "status")
+PRECHECKS = (None, "line", "status", "checkpoint")
 # The fields every request may carry, whatever its verb: what it is, and the
 # correlation id the caller mints for it.
 ALWAYS = ("verb", "op")
@@ -160,6 +163,12 @@ DECLARED: Dict[str, Op] = {
     "close": _op(("zone", "project", "thread"), ("project", "thread"), "machine"),
     "startup": _op((), (), "machine"),
     "shutdown": _op((), (), "machine"),
+    # The checkpoint a session writes into a thread note as the work happens,
+    # sent as one JSON object to scaffold.py. The one declared verb the page
+    # cannot send: confirming a checkpoint is a wrap, and the page has no
+    # source for one. `read` asks for what is in the note and writes nothing.
+    "checkpoint": _op(("zone", "project", "thread", "base", "prev", "items", "drop", "read"),
+                      ("project", "thread"), "zone", False, "safe", "checkpoint"),
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),
@@ -258,6 +267,13 @@ def stale(verb: str, req: dict, found) -> Optional[str]:
         return None
     if kind == "line":
         return None if found else STALE_WHY[("line", None)]
+    if kind == "checkpoint":
+        # (the Resume here block's hash now, the key of the checkpoint in the
+        # note now) against the two the writer last read. Either one changed,
+        # and another writer has been here since: nothing is written.
+        here = tuple(found or (None, None))
+        return None if here == (_norm("base", req.get("base")), _norm("prev", req.get("prev"))) \
+            else STALE_WHY[("checkpoint", None)]
     if str(found or "").strip().lower() != SETS[verb]:
         return None
     return STALE_WHY[("status", verb)].format(name=name_of(verb, req))
@@ -281,7 +297,7 @@ def affirms(sentence: str) -> bool:
 
 def name_of(verb: str, req: dict) -> str:
     """What the request is about, for a sentence."""
-    if verb in ("park", "wake"):
+    if verb in ("park", "wake", "checkpoint"):
         for k in ("thread", "project"):
             if isinstance(req.get(k), str) and req[k].strip():
                 return req[k].strip()
@@ -320,6 +336,8 @@ STALE_WHY = {
     ("line", None): "that line has changed since the page was built; it rebuilds now, try again",
     ("status", "park"): "{name} was set aside already, so nothing was changed",
     ("status", "wake"): "{name} is active already, so nothing was changed",
+    ("checkpoint", None): "the thread note has moved on since it was read; nothing was written. "
+                          "Read the checkpoint again and write it afresh",
 }
 
 

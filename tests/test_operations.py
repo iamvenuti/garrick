@@ -82,7 +82,10 @@ class TestDeclared(unittest.TestCase):
             self.assertTrue(set(REQUESTS[verb]) - {"verb"} <= set(spec.fields), verb)   # nothing a real request carries is undeclared
 
     def test_the_table_declares_every_verb_and_nothing_else(self):
-        self.assertEqual(set(pa.VERBS) | set(pa.CMUX_VERBS) | {pa.JOURNAL_VERB}, set(ops.DECLARED))
+        # `checkpoint` is the one declared verb no page sends: confirming a
+        # checkpoint is a wrap, and the page has no source for one.
+        self.assertEqual(set(pa.VERBS) | set(pa.CMUX_VERBS) | {pa.JOURNAL_VERB} | {"checkpoint"},
+                         set(ops.DECLARED))
         self.assertEqual(sorted(ops.RECORDED), sorted(ops.OPS))
         self.assertTrue(set(ops.RECORDED) <= set(ops.DECLARED))
         for verb, spec in ops.DECLARED.items():

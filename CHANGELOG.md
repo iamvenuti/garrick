@@ -4,6 +4,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-16
+
 ### Added
 
 - The graph behind *Explore* follows the zone you are reading on the status page's Threads card. Since [#72](https://github.com/iamvenuti/garrick/issues/72) a zone picked in the graph has led the card, but nothing ran the other way: scroll down the card from Work into Personal and Explore still showed Work, so you picked the zone you had just been reading every time you got there. With the zones one under another, in a narrow window or the Mac app, the zone whose section fills most of the window now sets the graph once it has held the view for about 300 ms, so a zone scrolled quickly past is left alone. Side by side, every zone is in view and scrolling changes nothing; pointing at a column for as long, or opening a project or thread in it, sets it instead. The graph takes the zone as a pick would, with the same per-zone view and the drop-down showing it, but stores nothing and leaves the card's order alone: a card that reordered as you scrolled would move the column under your pointer. The zone you pick yourself stays the stored choice, still leads the card, and is what a reload opens on; the zone in view as the page opens is where following starts, not a change. Picking *All* or a wiki pauses following until the page reloads, since the card can be in neither. *Follow the zone in view*, under the new *Explore* section of Settings, switches it off; it is on by default, remembered in the window, and absent from a page built without the graph. ([#142](https://github.com/iamvenuti/garrick/issues/142))
@@ -765,7 +767,10 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/iamvenuti/garrick/compare/v0.31.0...v0.32.0
+[0.31.0]: https://github.com/iamvenuti/garrick/compare/v0.30.0...v0.31.0
+[0.30.0]: https://github.com/iamvenuti/garrick/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/iamvenuti/garrick/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/iamvenuti/garrick/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/iamvenuti/garrick/compare/v0.26.0...v0.27.0

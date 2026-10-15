@@ -19,6 +19,14 @@ functions below keep their signatures:
     link_on_the_way(base, path) -> Path or None
     landing(root, home, path) -> Path
     write_new(root, home, path, data) / write_over(...) / move_new(root, home, src, path)
+    resume_lines(text) -> [str] / resume_hash(text) -> str or None
+    read_checkpoint(text) -> dict or None
+    render_checkpoint(at, base, items) -> (block, key)
+    place_checkpoint(text, body) -> str or None
+    rebase_checkpoint(text, base) -> str or None
+    checkpoint_key(base, content) -> str
+    write_if_unchanged(note, text, expect) -> bool
+    same_action(line) -> str
     install_wall_hook(zone) -> Path
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
@@ -38,6 +46,7 @@ import datetime
 import email
 import email.policy
 import errno
+import hashlib
 import json
 import os
 import re
@@ -80,6 +89,30 @@ __all__ = [
     "write_new",
     "write_over",
     "move_new",
+    "RESUME_HEADING",
+    "RESUME_STOP_RE",
+    "resume_lines",
+    "resume_hash",
+    "CHECKPOINT_HEADING",
+    "CHECKPOINT_OPEN",
+    "CHECKPOINT_CLOSE",
+    "CHECKPOINT_DAYS",
+    "CHECKPOINT_KINDS",
+    "CHECKPOINT_LABELS",
+    "CHECKPOINT_STEMS",
+    "CHECKPOINT_ONE",
+    "CHECKPOINT_SAID",
+    "CHECKPOINT_UNCONFIRMED",
+    "checkpoint_key",
+    "checkpoint_span",
+    "checkpoint_item_line",
+    "read_checkpoint",
+    "render_checkpoint",
+    "place_checkpoint",
+    "rebase_checkpoint",
+    "said_time",
+    "write_if_unchanged",
+    "same_action",
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
@@ -916,6 +949,276 @@ def move_new(root: PathLike, home: PathLike, src: PathLike, path: PathLike) -> P
         os.close(inp)
     os.unlink(str(src))
     return path
+
+
+# ---------------------------------------------------------------------------
+# The resume point, and the checkpoint beside it
+# ---------------------------------------------------------------------------
+
+# A thread note's `## State of play` opens with `### Resume here`, the last
+# confirmed resume point, and under it may sit one `### Checkpoint` block:
+# what a session recorded as the work happened and has not wrapped yet.
+#
+# The block's extent is its two markers and nothing else. The heading cannot
+# end it: in a real note the resume table is followed by `---` and then every
+# dated entry, all of them still inside State of play and none of them a
+# heading, so a block read "until the next heading" would swallow the thread's
+# whole history and its key would never match its content again. The items are
+# the lines between the markers, the key is computed over those lines, and an
+# opening marker with no closing one has no extent: it is read and reported,
+# never resumed from and never rewritten.
+
+RESUME_HEADING = "### Resume here"
+# Where a Resume here block stops: the next heading, or the rule above the
+# dated entries. check.py's `resume_block()` reads it by the same rule, and
+# tests/test_checkpoint.py holds the two against each other.
+RESUME_STOP_RE = re.compile(r"^(#{1,3} |---\s*$)")
+
+CHECKPOINT_HEADING = "### Checkpoint"
+CHECKPOINT_OPEN = "<!-- garrick-checkpoint"
+CHECKPOINT_CLOSE = "<!-- /garrick-checkpoint -->"
+CHECKPOINT_OPEN_RE = re.compile(r"(?m)^<!--[ \t]*garrick-checkpoint[ \t][^\n]*?-->[ \t]*$")
+CHECKPOINT_CLOSE_RE = re.compile(r"(?m)^<!--[ \t]*/garrick-checkpoint[ \t]*-->[ \t]*$")
+# The sentence a person reads, which carries the time and so is left out of
+# the key: the same items written again a minute later are the same items.
+CHECKPOINT_SAID = ("Recorded since the resume point above and not yet wrapped. "
+                   "Only what is under Decided was decided, in the words quoted.")
+CHECKPOINT_UNCONFIRMED = "**Unconfirmed, "
+CHECKPOINT_DAYS = 7             # unconfirmed for longer than this, and the check says so
+
+# The kinds, in the order a block writes them: the name a request uses, the
+# label the line carries, and the stem of its item ids.
+CHECKPOINT_KINDS = (
+    ("made", "Made", "m"),
+    ("decided", "Decided", "d"),
+    ("considering", "Considering", "c"),
+    ("next", "Next action", "n"),
+    ("action", "To file", "a"),
+    ("deadline", "Deadline", "due"),
+    ("incomplete", "Incomplete", "i"),
+)
+CHECKPOINT_LABELS = {kind: label for kind, label, _ in CHECKPOINT_KINDS}
+CHECKPOINT_STEMS = {kind: stem for kind, _, stem in CHECKPOINT_KINDS}
+# One of each of these in a block, so its id is the stem itself.
+CHECKPOINT_ONE = ("next", "deadline", "incomplete")
+_CHECKPOINT_KIND_OF = {label: kind for kind, label, _ in CHECKPOINT_KINDS}
+_CHECKPOINT_ITEM_RE = re.compile(
+    r"^- \*\*([A-Z][A-Za-z ]*)\*\*[ \t]+(.*?)[ \t]*(?:<!--[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*-->)?[ \t]*$")
+_CHECKPOINT_FIELD_RE = re.compile(r"(\w+)=(\S+)")
+
+
+def resume_lines(text: str) -> List[str]:
+    """The lines of a note's `### Resume here` block, up to the next heading
+    or rule. The same reading as check.py's `resume_block()`, which is why a
+    `### Checkpoint` heading under the table ends the block cleanly and every
+    reader of a resume point keeps working."""
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == RESUME_HEADING.lower()), -1)
+    if start < 0:
+        return []
+    out: List[str] = []
+    for line in lines[start + 1:]:
+        if RESUME_STOP_RE.match(line.strip()):
+            break
+        out.append(line)
+    return out
+
+
+def _short_hash(parts: Iterable[str]) -> str:
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def resume_hash(text: str) -> Optional[str]:
+    """The fingerprint of a note's Resume here block, which a checkpoint
+    records as the confirmed point it was written against. None where the note
+    has no such block. Blank lines and trailing spaces do not change it."""
+    lines = [l.rstrip() for l in resume_lines(text) if l.strip()]
+    return _short_hash(lines) if lines else None
+
+
+def checkpoint_key(base: Optional[str], content: Iterable[str]) -> str:
+    """A checkpoint's key: its items and the resume point it was written
+    against. Never its time, and never the sentence a person reads, so the
+    same state written again at any interval has the same key."""
+    return _short_hash([base or "-"] + [l.rstrip() for l in content])
+
+
+def checkpoint_span(text: str) -> Optional[Tuple[int, Optional[int]]]:
+    """Where the checkpoint's markers are in `text`: the opening marker's
+    first byte, and the byte after the closing one. None where there is no
+    opening marker; `(start, None)` where the closing one is missing, which
+    leaves the block without an extent."""
+    head = CHECKPOINT_OPEN_RE.search(text)
+    if head is None:
+        return None
+    close = CHECKPOINT_CLOSE_RE.search(text, head.end())
+    return (head.start(), close.end() if close else None)
+
+
+def checkpoint_item_line(kind: str, text: str, item_id: str) -> str:
+    """One item as a block writes it: its kind in bold, what it holds, and its
+    id in a comment Obsidian hides."""
+    return "- **%s** %s <!-- %s -->" % (CHECKPOINT_LABELS[kind], text, item_id)
+
+
+def read_checkpoint(text: str) -> Optional[dict]:
+    """The checkpoint block in a note, or None where it has none.
+
+    A dict: `at`, `base` and `key` as the comment line carries them, `items`
+    (each with its `id`, `kind`, `text` and the `line` as written), `content`
+    (the lines the key covers), `span`, `extra` (a second opening marker),
+    `valid`, and `why` where it is not. An invalid block is returned rather
+    than hidden: it is shown and reported, never resumed from."""
+    head = CHECKPOINT_OPEN_RE.search(text)
+    if head is None:
+        return None
+    fields = dict(_CHECKPOINT_FIELD_RE.findall(head.group(0)))
+    block = {"at": fields.get("at"), "base": fields.get("base"), "key": fields.get("key"),
+             "span": (head.start(), None), "items": [], "content": [],
+             "extra": len(CHECKPOINT_OPEN_RE.findall(text)) > 1, "valid": False, "why": ""}
+    close = CHECKPOINT_CLOSE_RE.search(text, head.end())
+    if close is None:
+        block["why"] = "has no closing %s marker, so where it ends cannot be told" % CHECKPOINT_CLOSE
+        return block
+    block["span"] = (head.start(), close.end())
+    for line in text[head.end():close.start()].splitlines():
+        if not line.strip() or line.lstrip().startswith(CHECKPOINT_UNCONFIRMED):
+            continue
+        block["content"].append(line.rstrip())
+        m = _CHECKPOINT_ITEM_RE.match(line.rstrip())
+        kind = _CHECKPOINT_KIND_OF.get(m.group(1)) if m else None
+        if kind is None or not (m and m.group(3)):
+            block["why"] = block["why"] or "holds a line that is not an item: %s" % line.strip()[:60]
+            continue
+        block["items"].append({"id": m.group(3), "kind": kind,
+                               "text": m.group(2).strip(), "line": line.rstrip()})
+    if block["why"]:
+        return block
+    if not (block["at"] and block["base"] and block["key"]):
+        block["why"] = "has a comment line that does not carry at, base and key"
+        return block
+    if checkpoint_key(block["base"], block["content"]) != block["key"]:
+        block["why"] = "has been edited since it was written: its key does not match its items"
+        return block
+    block["valid"] = True
+    return block
+
+
+def said_time(at: str) -> str:
+    """A checkpoint's time as the sentence says it: "14:32 on 15 October
+    2026". The stamp itself where it cannot be read."""
+    try:
+        when = datetime.datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return str(at)
+    return "%02d:%02d on %d %s %d" % (when.hour, when.minute, when.day,
+                                      _MONTH_NAMES[when.month - 1], when.year)
+
+
+def render_checkpoint(at: str, base: Optional[str], items: List[dict]) -> Tuple[str, str]:
+    """(the block from its opening marker to its closing one, its key).
+
+    The comment line carries what a machine needs, the sentence after it what
+    a person needs, and then one line an item. Nothing else goes between the
+    markers, because the key covers every line that does."""
+    content = [item["line"].rstrip() for item in items]
+    key = checkpoint_key(base, content)
+    head = ["<!-- garrick-checkpoint at=%s base=%s key=%s -->" % (at, base or "-", key),
+            "%s%s.** %s" % (CHECKPOINT_UNCONFIRMED, said_time(at), CHECKPOINT_SAID), ""]
+    return "\n".join(head + content + [CHECKPOINT_CLOSE]), key
+
+
+def _under_resume(text: str) -> Optional[int]:
+    """The offset just after the last line of the Resume here block: where a
+    checkpoint goes, above the rule and the dated entries. None where the note
+    has no Resume here block."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == RESUME_HEADING.lower()), -1)
+    if start < 0:
+        return None
+    last = start
+    for i in range(start + 1, len(lines)):
+        if RESUME_STOP_RE.match(lines[i].strip()):
+            break
+        if lines[i].strip():
+            last = i
+    return sum(len(l) for l in lines[:last + 1])
+
+
+def place_checkpoint(text: str, body: str) -> Optional[str]:
+    """`text` with `body`, a block from one marker to the other, in place of
+    the checkpoint the note has, or under its Resume here block where it has
+    none. Every byte outside the two markers is left as it is, the dated
+    entries included. None where there is nowhere to put one: no Resume here
+    block, or a block whose closing marker is missing, which is never
+    rewritten."""
+    found = checkpoint_span(text)
+    if found is not None:
+        start, end = found
+        return None if end is None else text[:start] + body + text[end:]
+    at = _under_resume(text)
+    if at is None:
+        return None
+    return text[:at] + "\n" + CHECKPOINT_HEADING + "\n\n" + body + "\n" + text[at:]
+
+
+def rebase_checkpoint(text: str, base: str) -> Optional[str]:
+    """The note with its checkpoint written against `base`: the same items at
+    the same time, a new base and the key that follows from it. For the
+    interrupt, the one writer that rewrites Resume here without folding the
+    checkpoint, so that a hold does not make it stale. None where there is no
+    valid block to rebase."""
+    block = read_checkpoint(text)
+    if block is None or not block["valid"]:
+        return None
+    body, _ = render_checkpoint(block["at"], base, block["items"])
+    return place_checkpoint(text, body)
+
+
+def write_if_unchanged(note: PathLike, text: str, expect: bytes) -> bool:
+    """Write `text` over `note`, so long as the note still holds `expect`: a
+    temporary file beside it, the note read again and compared, then a rename.
+    False, and nothing written, where the note has moved on since it was read.
+    A kill before the rename leaves the note exactly as it was."""
+    note = Path(note)
+    tmp = note.with_name("." + note.name + ".checkpoint")
+    if tmp.exists():
+        tmp.unlink()                       # what a kill before a rename left behind
+    done = False
+    try:
+        tmp.write_bytes(text.encode("utf-8"))
+        if note.read_bytes() != expect:
+            return False
+        os.replace(str(tmp), str(note))
+        done = True
+        return True
+    finally:
+        if not done and tmp.exists():
+            tmp.unlink()
+
+
+# What `add()` in the status extra's todo_lines.py compares to refuse a line
+# the list already holds, and what merges a reworded checkpoint item into the
+# one already there: the text read as it would be heard, with the Tasks fields
+# and the todo skill's own `· [src]` and `(also in …)` left out. The two are
+# held against each other in tests/test_checkpoint.py, so the workspace has
+# one reading of "the same action" and not two that drift.
+_TASKS_PRIORITY_RE = re.compile(r" *([\U0001F53A⏫\U0001F53C\U0001F53D⏬])️?")
+_TASKS_DATE_RE = re.compile(r" *((?:\U0001F4C5|\U0001F4C6|\U0001F5D3|⏳|⌛|\U0001F6EB|➕|✅|❌)️?"
+                            r" *\d{4}-\d{2}-\d{2})")
+_TASKS_SRC_RE = re.compile(r"\s*·\s*\[src\]\(([^)\s]*)\)")
+_TASKS_ALSO_RE = re.compile(r"\s*\(also in ((?:[^()]|\([^()]*\))*)\)")
+
+
+def same_action(line: str) -> str:
+    """Two lines that say the same thing read the same way: one space between
+    words, no case, no trailing stop, and the Tasks fields, the `· [src]` and
+    the `(also in …)` left out, because a date says when to do a thing and not
+    what to do."""
+    body = line[6:] if line.startswith(("- [ ] ", "- [x] ")) else line
+    body = _TASKS_ALSO_RE.sub("", _TASKS_SRC_RE.sub("", body))
+    body = _TASKS_DATE_RE.sub("", _TASKS_PRIORITY_RE.sub("", body))
+    return re.sub(r"\s+", " ", body).strip().rstrip(".!").casefold()
 
 
 # ---------------------------------------------------------------------------

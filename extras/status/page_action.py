@@ -45,10 +45,13 @@ zone's repository, as the skills would:
     interrupt   a thread's place saved when something cuts in: {"zone", "project",
                 "thread"} or {"zone", "file"}, with "where", "next", and "keep"
                 and "by" if given; written into its Resume here block as a
-                wrap would, committed, then pushed on the interruption stack
+                wrap would, committed, then pushed on the interruption stack.
+                An unwrapped checkpoint under that block is rebased onto the
+                block just written, so a hold does not leave it stale
     back        the top of the stack taken off, or the thread named taken out;
                 the note is only read: the reply adds its "path" and its three
-                lines, "where", "next" and "keep". An empty stack says so and
+                lines, "where", "next" and "keep", and "checkpoint" where one
+                is waiting. An empty stack says so and
                 offers the most recent live thread, as "offer"
     stack       what is on it, top first, as "stack"; it changes nothing
     unstack     a thread, or all of a project, taken off it without reading
@@ -830,6 +833,51 @@ def saved_lines(note: Path) -> dict:
     return {"where": " ".join(lead).replace("**", "") or None, "next": row("Next action"), "keep": row("Keep in mind")}
 
 
+def checkpoint_lib(ws: Path):
+    """garrick_lib.py, found as prefs.py finds it: the checkpoint primitives,
+    so this file reads and writes the block exactly as scaffold.py does and
+    keeps no second reading of its own. None where the workspace has no copy
+    with them in it, which is every release before them."""
+    found = prefs()
+    lib = found.lib(ws) if found is not None and callable(getattr(found, "lib", None)) else None
+    return lib if lib is not None and callable(getattr(lib, "rebase_checkpoint", None)) else None
+
+
+def rebased(ws: Path, text: str) -> Optional[str]:
+    """`text` with its unwrapped checkpoint written against the Resume here
+    block that is in it now: the same items at the same time, a new base and
+    the key that follows. The interrupt is the one Garrick writer that
+    rewrites Resume here without folding the checkpoint, because it has to
+    take thirty seconds, so without this every hold would make the checkpoint
+    stale. None where there is nothing valid to rebase; best effort, as the
+    record is, and a failure never stops the hold."""
+    lib = checkpoint_lib(ws)
+    if lib is None:
+        return None
+    try:
+        base = lib.resume_hash(text)
+        return lib.rebase_checkpoint(text, base) if base else None
+    except Exception:
+        return None
+
+
+def waiting_checkpoint(ws: Path, note: Path) -> Optional[str]:
+    """The time an unwrapped checkpoint in `note` was written, as it is said:
+    what Back adds a clause for. None where there is none, or where the block
+    cannot be read: an invalid one is never resumed from, the check reports it,
+    and Back does not mention it. No content of the block is read here."""
+    lib = checkpoint_lib(ws)
+    if lib is None:
+        return None
+    try:
+        block = lib.read_checkpoint(note.read_text(encoding="utf-8"))
+        if block is None or not block["valid"]:
+            return None
+        return lib.said_time(block["at"]).split(" on ")[0]
+    except Exception:
+        return None
+
+
 def interrupt(ws: Path, req: dict, now: dt.datetime) -> str:
     """"I'm being interrupted": the three answers written into the Resume here
     block as a wrap would, committed in the zone, then the thread on top of the
@@ -839,19 +887,21 @@ def interrupt(ws: Path, req: dict, now: dt.datetime) -> str:
     where, step = answer(req, "where"), answer(req, "next")
     keep, by = answer(req, "keep", required=False), answer(req, "by", required=False, most=BY_MAX)
     with zone_lock(zone):
-        interrupt_note(zone, note, parts, name, where, step, keep, by, now)
+        interrupt_note(ws, zone, note, parts, name, where, step, keep, by, now)
         entry = entry_for(zone, parts, now)
         restack(ws, lambda entries: [entry] + [e for e in entries if stacked_note(ws, e) != note.resolve()])
         held_now = len(load_stack(ws))
     return "Held %s at %s%s" % (name, now.strftime("%H:%M"), "" if held_now == 1 else "; %d on the stack" % held_now)
 
 
-def interrupt_note(zone: Path, note: Path, parts: tuple, name: str, where: str, step: str, keep: Optional[str],
-                   by: Optional[str], now: dt.datetime) -> None:
+def interrupt_note(ws: Path, zone: Path, note: Path, parts: tuple, name: str, where: str, step: str,
+                   keep: Optional[str], by: Optional[str], now: dt.datetime) -> None:
     """The edit and its commit, under the zone's lock. Where it stands becomes
     the stamped answer; Next action and Keep in mind take theirs, a Keep in
     mind skipped is left as it was, or says nothing where there was none.
-    The other rows stay. `status:` stays active: an interruption is no park."""
+    The other rows stay. `status:` stays active: an interruption is no park.
+    An unwrapped checkpoint under the block is rebased onto what this wrote,
+    its items untouched, so a hold never makes one stale."""
     before = note.read_bytes()
     try:
         text = before.decode("utf-8")
@@ -898,7 +948,8 @@ def interrupt_note(zone: Path, note: Path, parts: tuple, name: str, where: str, 
         set_row(lines, rows, "Keep in mind", keep or "nothing", after="Next action")
     body = body[:span[0]] + "\n".join(lines) + body[span[1]:]
     body = dated_entry(body, now.date(), "Interrupted at %s%s." % (now.strftime("%H:%M"), ", by " + by if by else ""))
-    note.write_text("---\n%s\n---\n%s" % (fm, body), encoding="utf-8")
+    written = "---\n%s\n---\n%s" % (fm, body)
+    note.write_text(rebased(ws, written) or written, encoding="utf-8")
     commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200])
 
 
@@ -918,8 +969,10 @@ def back(ws: Path, req: dict) -> dict:
     """"Back": the top of the stack taken off, or, with a thread named, that
     one taken out from wherever it is, the others left in order. The note is
     read, never written: the reply carries its three lines and its path, for
-    the caller to open it and read them back. An empty stack says so, and
-    offers the live thread updated most recently."""
+    the caller to open it and read them back, with one clause more where an
+    unwrapped checkpoint is waiting (`checkpoint`, the time it was written).
+    An empty stack says so, and offers the live thread updated most
+    recently."""
     named = req.get("file") is not None or req.get("project") is not None
     if named:
         zone, note, parts, name = resume_note(ws, req)
@@ -944,7 +997,8 @@ def back(ws: Path, req: dict) -> dict:
                 "offer": latest}
     e = taken[0]
     name = e["project"] if not e.get("thread") else "%s, %s" % (e["project"], e["thread"])
-    lines = saved_lines(stacked_note(ws, e))
+    note = stacked_note(ws, e)
+    lines = saved_lines(note)
     said = ["Back to %s." % name]
     if lines["where"]:
         said.append(sentence(lines["where"]))
@@ -952,7 +1006,11 @@ def back(ws: Path, req: dict) -> dict:
         said.append(sentence("Next: " + lines["next"]))
     if lines["keep"] and lines["keep"].lower().rstrip(". ") not in ("nothing", "none"):
         said.append(sentence("Keep in mind: " + lines["keep"]))
-    out = dict(e, path=("Zones/%s/%s" % (e["zone"], e["file"])), name=name, left=len(load_stack(ws)), **lines)
+    at = waiting_checkpoint(ws, note)
+    if at:
+        said.append("There's also an unwrapped checkpoint from %s." % at)
+    out = dict(e, path=("Zones/%s/%s" % (e["zone"], e["file"])), name=name, left=len(load_stack(ws)),
+               checkpoint=at, **lines)
     out["say"] = " ".join(said)
     out["logged"] = said[0]         # the log names the thread; what was saved stays in the note
     return out

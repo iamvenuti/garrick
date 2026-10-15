@@ -82,7 +82,10 @@ class TestDeclared(unittest.TestCase):
             self.assertTrue(set(REQUESTS[verb]) - {"verb"} <= set(spec.fields), verb)   # nothing a real request carries is undeclared
 
     def test_the_table_declares_every_verb_and_nothing_else(self):
-        self.assertEqual(set(pa.VERBS) | set(pa.CMUX_VERBS) | {pa.JOURNAL_VERB}, set(ops.DECLARED))
+        # `checkpoint` is the one declared verb no page sends: confirming a
+        # checkpoint is a wrap, and the page has no source for one.
+        self.assertEqual(set(pa.VERBS) | set(pa.CMUX_VERBS) | {pa.JOURNAL_VERB} | {"checkpoint"},
+                         set(ops.DECLARED))
         self.assertEqual(sorted(ops.RECORDED), sorted(ops.OPS))
         self.assertTrue(set(ops.RECORDED) <= set(ops.DECLARED))
         for verb, spec in ops.DECLARED.items():
@@ -111,6 +114,48 @@ class TestDeclared(unittest.TestCase):
     def test_a_worker_and_a_reader_agree_on_the_words(self):
         self.assertEqual(("saved", "refused", "crashed", "unknown", "lost"), ops.OUTCOMES)
         self.assertEqual(("queued", "running", "completed", "failed"), ops.STATES)
+
+
+
+class TestCheckpointDeclared(unittest.TestCase):
+    """The checkpoint verb in the one table: declared, with its fields closed,
+    and deliberately out of `RECORDED`."""
+
+    def test_it_is_declared_with_the_fields_a_request_carries(self):
+        spec = ops.DECLARED["checkpoint"]
+        self.assertEqual(("zone", "project", "thread", "base", "prev", "items", "drop", "read"), spec.fields)
+        self.assertEqual(("project", "thread"), spec.identity)
+        self.assertEqual(("zone", False, "safe", "checkpoint"),
+                         (spec.scope, spec.commits, spec.retry, spec.precheck))
+
+    def test_its_fields_are_closed(self):
+        req = {"verb": "checkpoint", "zone": "Work", "project": "Acme", "thread": "Pricing",
+               "base": "9c1e4a7b20d3", "prev": None, "items": [], "drop": [], "read": True}
+        self.assertIsNone(ops.validate("checkpoint", req))
+        for field, value in (("where", "row 14"), ("file", "Acme/Threads/Pricing/Pricing.md"),
+                             ("key", "abc"), ("confirm", "Pricing")):
+            why = ops.validate("checkpoint", dict(req, **{field: value}))
+            self.assertIsNotNone(why, field)
+            self.assertIn(field, why, field)
+
+    def test_it_keeps_no_journal_entry_and_so_never_meets_the_window(self):
+        # A page action has no state of its own to compare a repeat against
+        # before it runs; a checkpoint has the note, so IDEM_WINDOW cannot
+        # reach it either way.
+        self.assertNotIn("checkpoint", ops.RECORDED)
+        self.assertNotIn("checkpoint", ops.OPS)
+        self.assertIn("checkpoint", ops.DECLARED)
+
+    def test_the_precheck_is_the_pair_the_writer_last_read(self):
+        req = {"verb": "checkpoint", "zone": "Work", "project": "Acme", "thread": "Pricing",
+               "base": "9c1e4a7b20d3", "prev": "5be0f1a2c3d4"}
+        self.assertIsNone(ops.stale("checkpoint", req, ("9c1e4a7b20d3", "5be0f1a2c3d4")))
+        for found in (("9c1e4a7b20d3", "0000deadbeef"), ("0000deadbeef", "5be0f1a2c3d4"), (None, None), None):
+            why = ops.stale("checkpoint", req, found)
+            self.assertEqual(ops.STALE_WHY[("checkpoint", None)], why, found)
+            self.assertTrue(only_in_the_negative(why), why)
+        first = {"verb": "checkpoint", "zone": "Work", "project": "Acme", "thread": "Pricing"}
+        self.assertIsNone(ops.stale("checkpoint", first, (None, None)))      # nothing read, nothing there
 
 
 # ---- what the page actually sends ----------------------------------------

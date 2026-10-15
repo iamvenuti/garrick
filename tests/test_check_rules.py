@@ -16,11 +16,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from fixtures import GIT_ENV, HAVE_GIT, commit_all, git, git_init, meeting_page, thread_note, write
+import datetime as dt
+
+import fixtures
+from fixtures import (GIT_ENV, HAVE_GIT, commit_all, git, git_init, meeting_page, project_hub, thread_note, write)
 from test_check import CheckCase
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
-from garrick_lib import fingerprint  # noqa: E402
+from garrick_lib import CHECKPOINT_CLOSE, fingerprint  # noqa: E402
 
 
 def settings(root: Path, data) -> None:
@@ -32,6 +35,10 @@ def commit_dated(folder: Path, message: str, when: str) -> None:
     subprocess.run(["git", "add", "-A"], cwd=str(folder), env=env, check=True, capture_output=True)
     subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull, "commit", "-q",
                     "--allow-empty", "-m", message], cwd=str(folder), env=env, check=True, capture_output=True)
+
+
+def rd(path: Path) -> str:
+    return Path(path).read_text(encoding="utf-8")
 
 
 def real_repo(folder: Path) -> None:
@@ -290,6 +297,144 @@ class TestResumeMore(CheckCase):
         write(self.acme / "Deliverables" / "260325 - Third memo.md", "x")
         commit_dated(self.work, "much later", "2026-03-25")
         self.assertFinds("resume", "warning", "last updated on 2026-03-01")
+
+
+class TestCheckpointFindings(CheckCase):
+    """The checkpoint beside a resume point: where the block sits, whether it
+    can be read, whether the resume point moved under it, and whether its items
+    still name what they say. Every finding is a warning, in the `resume`
+    category, and the check never changes the block.
+
+    The clock is given, never taken: the fixture's work is dated March 2026, so
+    `_now` is pinned a day after the checkpoint it writes.
+    """
+
+    AT = fixtures.CHECKPOINT_AT
+    NOW = dt.datetime(2026, 3, 15, 9, 0, tzinfo=dt.timezone(dt.timedelta(hours=1)))
+
+    def setUp(self):
+        super().setUp()
+        self.note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        clock = mock.patch.object(check, "_now", lambda: self.NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def put(self, items=fixtures.CHECKPOINT_ITEMS, at=None, base=None, note=None):
+        """A checkpoint in the thread note, and the note's text back."""
+        path = note or self.note
+        text = fixtures.checkpoint(rd(path), at=at or self.AT, items=items, base=base)
+        write(path, text)
+        return text
+
+    def test_a_fresh_checkpoint_is_clean(self):
+        self.put()
+        self.assertClean("resume")
+
+    def test_a_second_block_or_a_second_marker(self):
+        text = self.put()
+        start = text.index("\n### Checkpoint")
+        write(self.note, text + text[start:])
+        self.assertFinds("resume", "warning", "more than one `### Checkpoint` block")
+
+    def test_above_the_resume_point(self):
+        text = self.put()
+        write(self.note, moved(text, "## State of play\n", before=True))
+        self.assertFinds("resume", "warning", "sits above Resume here")
+
+    def test_outside_state_of_play(self):
+        text = self.put()
+        write(self.note, moved(text, "\n## Notes\n"))
+        self.assertFinds("resume", "warning", "outside `## State of play`")
+
+    def test_a_block_edited_by_hand(self):
+        text = self.put()
+        write(self.note, text.replace("dropping tier three", "dropping tier two"))
+        self.assertFinds("resume", "warning", "its key does not match its items")
+        self.assertFinds("resume", "warning", "do not resume from it")
+
+    def test_an_opening_marker_with_no_closing_one(self):
+        text = self.put()
+        write(self.note, text.replace(CHECKPOINT_CLOSE, ""))
+        self.assertFinds("resume", "warning", "has no closing")
+
+    def test_a_resume_point_that_moved_under_it(self):
+        self.put(base="0" * 12)
+        self.assertFinds("resume", "warning", "written against an older resume point")
+        self.assertFinds("resume", "warning", "wrap Pricing to settle it")
+
+    def test_a_file_it_says_it_made_that_is_not_there(self):
+        self.put(items=(("made", "`Deliverables/260314 - Price sheet.md`, saved 14:20", "m1"),))
+        self.assertFinds("resume", "warning", "records making `Deliverables/260314 - Price sheet.md`, which is not there")
+
+    def test_a_decision_with_no_quote_or_nobody_named(self):
+        self.put(items=(("decided", "go with the tier-two rate, the user at 14:25", "d1"),))
+        self.assertFinds("resume", "warning", "Decided item `d1` has no words quoted")
+        self.put(items=(("decided", '"Go with the tier-two rate"', "d1"),))
+        self.assertFinds("resume", "warning", "Decided item `d1` has nobody named")
+
+    def test_a_date_that_is_not_a_date(self):
+        self.put(items=(("action", "send Dana the price sheet, by Friday", "a1"),))
+        self.assertFinds("resume", "warning", "To file item gives `Friday` as a date")
+        self.put(items=(("deadline", 'next Friday, "it has to be in before the board"', "due"),))
+        self.assertFinds("resume", "warning", "Deadline item gives `next Friday` as a date")
+        self.put(items=(("action", "send Dana the price sheet, by 2026-03-20", "a1"),
+                        ("deadline", '2026-03-21, "before the board"', "due")))
+        self.assertClean("resume")
+
+    def test_a_link_into_the_meetings_wiki(self):
+        self.put(items=(("decided", '"As the kick-off settled it", the user at 14:25, '
+                                    "see [[260310-acme-kickoff]]", "d1"),))
+        self.assertFinds("resume", "warning", "names [[260310-acme-kickoff]]")
+        self.put(items=(("incomplete", "the note from `Wikis/Meetings/raw/260310-acme-kickoff.txt` is half read", "i"),))
+        self.assertFinds("resume", "warning", "names a path into the Meetings wiki")
+
+    def test_a_week_unconfirmed(self):
+        self.put()
+        self.assertClean("resume")
+        self.put(at="2026-03-06T14:32:10+01:00")
+        self.assertFinds("resume", "warning", "has gone 8 days unconfirmed")
+        self.assertFinds("resume", "warning", "its To file actions are on no list")
+
+    def test_a_finished_thread_is_holding_it_and_a_parked_one_is_not(self):
+        text = self.put()
+        write(self.note, text.replace("status: active", "status: parked"))
+        self.assertClean("resume")
+        write(self.note, text.replace("status: active", "status: done"))
+        self.assertFinds("resume", "warning", "finished and still holds the checkpoint from 14:32 on 14 March 2026")
+
+    def test_a_parked_project_holds_its_threads_parked_and_a_finished_one_finished(self):
+        self.put()
+        hub = self.acme / "Acme Review.md"
+        write(hub, rd(hub).replace("status: active", "status: parked"))
+        self.assertClean("resume")
+        write(hub, rd(hub).replace("status: parked", "status: done"))
+        self.assertFinds("resume", "warning", "finished and still holds the checkpoint")
+
+    def test_a_hub_that_keeps_the_resume_point_is_read_the_same_way(self):
+        hub = self.work / "Lone Thread" / "Lone Thread.md"
+        write(hub, project_hub("Work", "Lone Thread", "acme", [])
+              + "\n## State of play\n\n### Resume here\n\n**Where it stands, 1 March 2026.** Drafting.\n")
+        self.put(note=hub, base="0" * 12)
+        self.assertFinds("resume", "warning", "written against an older resume point",
+                         path="Zones/Work/Lone Thread/Lone Thread.md")
+
+    def test_the_block_is_never_rewritten(self):
+        before = self.put(base="0" * 12)
+        self.findings()
+        self.assertEqual(before, rd(self.note))
+
+
+def moved(text: str, where: str, before: bool = False) -> str:
+    """The note with its checkpoint block taken out and put back somewhere
+    else: above the resume point, or outside State of play. The resume block
+    itself is untouched, so the block's `base` still matches it."""
+    head = text.index("\n### Checkpoint")
+    tail = text.index(CHECKPOINT_CLOSE) + len(CHECKPOINT_CLOSE)
+    block, rest = text[head:tail], text[:head] + text[tail:]
+    if before:
+        at = rest.index(where) + len(where)
+        return rest[:at] + block + "\n" + rest[at:]
+    return rest + where + block + "\n"
 
 
 class TestDeliverablesMore(CheckCase):

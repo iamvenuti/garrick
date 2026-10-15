@@ -12,6 +12,8 @@
     python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
     python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
     python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
+    echo '{"verb":"checkpoint","zone":"Work","project":"Acme","thread":"Pricing", ...}' \
+      | python3 System/tools/scaffold.py checkpoint
 
 A name has to look like a name and store safely as a folder: letters and
 digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym.
@@ -58,12 +60,23 @@ naming it go in one commit, which `undo` reverts while it is still the zone's
 last commit. Both refuse while what they
 would change has changes not committed, or a cmux tab is mid-turn in it.
 
+`checkpoint` writes the unconfirmed record of what a session has done into a
+thread note, directly under its Resume here block, which it never touches, and
+between two markers that are the block's whole extent. Its request is one JSON
+object on standard input, because the fields are free text, and its reply is
+one JSON object on standard output: what it wrote, or that the same state was
+there already, or the name of the refusal and one line saying why. Every item
+carries the source its kind needs, items are replaced by id and removed only
+by `drop`, and `{"read": true, ...}` writes nothing and answers with what the
+note holds. It never writes `Todo.md` and never commits: the wrap does those.
+
 On success prints what it did in lines that can be read aloud; on refusal, one
-line saying why, and exits 1.
+line saying why, and exits 1. `checkpoint` prints JSON either way.
 """
 
 import argparse
 import datetime
+import json
 import os
 import re
 import shutil
@@ -75,11 +88,17 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
+    CHECKPOINT_KINDS,
+    CHECKPOINT_LABELS,
+    CHECKPOINT_ONE,
+    CHECKPOINT_STEMS,
     INBOX,
+    RESUME_HEADING,
     TAG_RE,
     TAG_RULE,
     ZONE_TEMPLATE,
     GitError,
+    checkpoint_item_line,
     git,
     hooks_path,
     init_repo,
@@ -88,7 +107,13 @@ from garrick_lib import (  # noqa: E402
     is_sayable,
     load_context,
     parse_frontmatter,
+    place_checkpoint,
+    read_checkpoint,
     record_written,
+    render_checkpoint,
+    resume_hash,
+    said_time,
+    same_action,
     skill_links,
     spoken_clash,
     spoken_of,
@@ -96,6 +121,7 @@ from garrick_lib import (  # noqa: E402
     table_row,
     tag_for,
     workspace_root,
+    write_if_unchanged,
 )
 
 IGNORED = {".DS_Store", "__pycache__"}
@@ -1015,6 +1041,428 @@ def cmd_undo(root, args, today):
     return f"Undone: {subject}."
 
 
+# --------------------------------------------------------------------------- checkpoint
+
+
+# What each kind of item may carry, and what it must. A field the kind does
+# not take is refused by name, as operations.py refuses one the verb does not
+# declare: an item that holds something nobody reads has no source for it.
+CHECKPOINT_ITEM_FIELDS = {
+    "made": ("path", "at"),
+    "decided": ("said", "by", "at"),
+    "considering": ("text", "said", "at"),
+    "next": ("text", "said", "by", "at"),
+    "action": ("text", "said", "date", "at"),
+    "deadline": ("date", "said", "at"),
+    "incomplete": ("text", "at"),
+}
+# The source each kind needs: a name for a field it must carry, a tuple for
+# one of several. Nothing in a checkpoint stands without one.
+CHECKPOINT_NEEDS = {
+    "made": ("path",),
+    "decided": ("said",),
+    "considering": (("text", "said"),),
+    "next": ("text",),
+    "action": ("text",),
+    "deadline": ("date",),
+    "incomplete": ("text",),
+}
+# A date is an ISO date and nothing else, and it is only ever written because
+# somebody said it: the kinds that may carry one, and the field that sources it.
+CHECKPOINT_DATED = {"action": "said", "deadline": "said"}
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+# An item id goes into an HTML comment and is read back out of it, so it is
+# letters, digits and hyphens and nothing else: an id with a space in it would
+# make the block unparsable the next time it was read.
+ITEM_ID = re.compile(r"[A-Za-z][A-Za-z0-9-]{0,15}\Z")
+MEETINGS_WIKI = ("Wikis", "Meetings")
+CHECKPOINT_TEXT_MAX = 400
+_WIKILINK_RE = re.compile(r"\[\[([^\]|#\n]+)")
+_MDLINK_RE = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)\)")
+_TICKED_RE = re.compile(r"`([^`\n]+)`")
+_GLOB_RE = re.compile(r"[*?\[\]]")
+_LIST_RE = re.compile(r"^(?:[-*+]\s*(?:\[[ xX]\]\s*)?|#{1,6}\s+|>\s*)+")
+
+# One line for each way a checkpoint is refused, by the name the reply carries
+# in `refused`. The precheck's words are operations.py's, so that a writer
+# reads the same sentence for a block that has moved as for a Todo line that
+# has: nothing here composes a second version of them.
+CHECKPOINT_WHY = {
+    "request": "A checkpoint is one JSON object on standard input, and {why}.",
+    "nothing": "There is nothing to checkpoint: no items, and nothing to drop.",
+    "id": "{id} {why}, and an item keeps the id and the kind it was written with: "
+          "drop it, or send the new one on its own.",
+    "kind": "A checkpoint item is one of {kinds}, and {kind} is none of them.",
+    "field": "A {label} item takes {takes}, and it was sent {names}.",
+    "source": "Every checkpoint item names its source, and this {label} item has no {needs}.",
+    "text": "A checkpoint item is one line of its own, and its {name} holds {what}.",
+    "date": "A date in a checkpoint is an ISO date and the words it was given in, and this {label} item {why}.",
+    "made": "`{path}` is not there, so there is nothing to record.",
+    "meetings": "A checkpoint carries no meeting material, and {link} leads into the Meetings wiki. "
+                "A decision that rests on a meeting waits for the wrap.",
+    "considering": "{id} is a Considering item, and nothing promotes one: a decision carries its own words, "
+                   "so send what was said rather than that item's id.",
+    "done": "{name} is finished, so there is nothing to checkpoint: its outcome is the record now.",
+    "parked": "{name} is parked, so there is nothing to checkpoint. Wake it first.",
+    "no-resume": "{note} has no {heading} block, so there is nothing to checkpoint under.",
+    "invalid": "The checkpoint in {note} {why}. It is left exactly as it is: read it, "
+               "and wrap the thread to settle it.",
+}
+
+
+class CheckpointRefusal(Refusal):
+    """A refusal with a name, so that a caller can tell them apart without
+    reading the sentence."""
+
+    def __init__(self, name, said):
+        super().__init__(said)
+        self.name = name
+
+
+def checkpoint_request(text):
+    """The one JSON object a checkpoint arrives as."""
+    try:
+        req = json.loads(text or "")
+    except ValueError:
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="this is not JSON"))
+    if not isinstance(req, dict):
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="this is not an object"))
+    if req.get("verb") not in (None, "checkpoint"):
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(
+            why="its verb is %s" % str(req.get("verb"))[:40]))
+    for name in ("items", "drop"):
+        if not isinstance(req.get(name, []), list):
+            raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="its %s is not a list" % name))
+    if any(not isinstance(item, dict) for item in req.get("items") or []):
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="an item is not an object"))
+    return req
+
+
+def one_line(value):
+    """A field as a block may carry it: one line, no list or heading marker in
+    front of it, so an item can never become a task line or a heading."""
+    return _LIST_RE.sub("", " ".join(str(value).split())).strip()
+
+
+def meetings_link(root, value):
+    """The link or path in `value` that leads into the Meetings wiki, or None.
+    A path that names the wiki, and a bare `[[name]]` a page in it answers to:
+    the checkpoint carries no meeting material, so neither goes in."""
+    wiki = root.joinpath(*MEETINGS_WIKI)
+    for target in _WIKILINK_RE.findall(value) + _MDLINK_RE.findall(value) + _TICKED_RE.findall(value):
+        bare = target.strip().split("|")[0].split("#")[0].strip().rstrip("/")
+        if not bare or "://" in bare:
+            continue
+        parts = [p for p in re.split(r"[\\/]+", bare) if p not in ("", ".")]
+        if not parts:
+            continue
+        lower = [p.lower() for p in parts]
+        if any(lower[i:i + 2] == [m.lower() for m in MEETINGS_WIKI] for i in range(len(lower) - 1)):
+            return target.strip()
+        if lower[0] == MEETINGS_WIKI[1].lower():
+            return target.strip()
+        if len(parts) == 1 and wiki.is_dir() and not _GLOB_RE.search(parts[0]):
+            name = parts[0] if parts[0].lower().endswith(".md") else parts[0] + ".md"
+            if next(wiki.rglob(name), None) is not None:
+                return target.strip()
+    return None
+
+
+def checkpoint_who(by):
+    return "the user" if one_line(by).lower() in ("user", "the user", "me") else one_line(by)
+
+
+def checkpoint_whose(by):
+    who = checkpoint_who(by)
+    return who + ("'" if who.endswith("s") else "'s")
+
+
+def checkpoint_text(item):
+    """What one item's line holds, after its kind and before its id: the file,
+    the words, the date, each with the source the kind needs."""
+    kind = item["kind"]
+    at = one_line(item.get("at") or "")
+    said = one_line(item.get("said") or "")
+    text = one_line(item.get("text") or "")
+    by = one_line(item.get("by") or "")
+    if kind == "made":
+        line = "`%s`" % one_line(item["path"])
+        return line + (", saved %s" % at if at else "")
+    if kind == "decided":
+        line = '"%s"' % said
+        if by:
+            line += ", %s" % checkpoint_who(by)
+        if at:
+            line += "%s at %s" % ("" if by else ",", at)
+        return line
+    if kind == "considering":
+        line = text or '"%s"' % said
+        line += "; not decided"
+        if text and said:
+            line += ', in their words "%s"' % said
+        return line
+    if kind == "next":
+        return text + (", %s" % checkpoint_whose(by) if by else "")
+    if kind == "action":
+        return "%s, %s" % (text, "by " + item["date"] if item.get("date") else "no date given")
+    if kind == "deadline":
+        return '%s, "%s"' % (item["date"], said)
+    return text                                                     # incomplete
+
+
+def checkpoint_shape(req):
+    """Every item of the request read as a kind with its fields, refused by
+    name where a kind, a field, a source or a date is wrong. Nothing outside
+    the request is read here."""
+    kinds = ", ".join(k for k, _, _ in CHECKPOINT_KINDS)
+    out = []
+    for item in req.get("items") or []:
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in CHECKPOINT_ITEM_FIELDS:
+            raise CheckpointRefusal("kind", CHECKPOINT_WHY["kind"].format(
+                kinds=kinds, kind="`%s`" % str(item.get("kind"))[:40] if item.get("kind") else "nothing"))
+        label = CHECKPOINT_LABELS[kind]
+        takes = CHECKPOINT_ITEM_FIELDS[kind]
+        given = one_line(item.get("id") or "")
+        if given and not ITEM_ID.fullmatch(given):
+            raise CheckpointRefusal("id", CHECKPOINT_WHY["id"].format(
+                id="`%s`" % given[:40], why="is not an id a block can carry back"))
+        extra = sorted(k for k in item if k not in takes and k not in ("kind", "id"))
+        if extra:
+            raise CheckpointRefusal("field", CHECKPOINT_WHY["field"].format(
+                label=label, takes=" and ".join(takes), names=" and ".join(extra)))
+        for need in CHECKPOINT_NEEDS[kind]:
+            names = (need,) if isinstance(need, str) else need
+            if not any(one_line(item.get(n) or "") for n in names):
+                raise CheckpointRefusal("source", CHECKPOINT_WHY["source"].format(
+                    label=label, needs=" or ".join(names)))
+        for name in takes:
+            value = item.get(name)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise CheckpointRefusal("text", CHECKPOINT_WHY["text"].format(
+                    name=name, what="something that is not text"))
+            if "<!--" in value or "-->" in value:
+                raise CheckpointRefusal("text", CHECKPOINT_WHY["text"].format(
+                    name=name, what="an HTML comment, which is where an item keeps its id"))
+            if len(one_line(value)) > CHECKPOINT_TEXT_MAX:
+                raise CheckpointRefusal("text", CHECKPOINT_WHY["text"].format(
+                    name=name, what="more than %d characters" % CHECKPOINT_TEXT_MAX))
+        date = one_line(item.get("date") or "")
+        if kind in CHECKPOINT_DATED and (date or kind == "deadline"):
+            if not ISO_DATE.match(date):
+                raise CheckpointRefusal("date", CHECKPOINT_WHY["date"].format(
+                    label=label, why="gives %s" % ("`%s`" % date[:40] if date else "none")))
+            try:
+                datetime.date.fromisoformat(date)
+            except ValueError:
+                raise CheckpointRefusal("date", CHECKPOINT_WHY["date"].format(
+                    label=label, why="gives `%s`, which is not a day" % date[:40]))
+            if not one_line(item.get(CHECKPOINT_DATED[kind]) or ""):
+                raise CheckpointRefusal("date", CHECKPOINT_WHY["date"].format(
+                    label=label, why="has a date nobody is recorded as giving"))
+        clean = {"kind": kind, "id": given or None}
+        clean.update({name: one_line(item[name]) for name in takes if item.get(name) is not None})
+        clean["body"] = checkpoint_text(clean)
+        out.append(clean)
+    return out
+
+
+def checkpoint_world(root, project_dir, items):
+    """The checks a request cannot answer on its own: a Made file that is
+    there, and no link into the Meetings wiki."""
+    for item in items:
+        if item["kind"] == "made":
+            path = item["path"]
+            where = Path(path).expanduser() if path.startswith(("~", "/")) else project_dir / path
+            if not where.exists():
+                raise CheckpointRefusal("made", CHECKPOINT_WHY["made"].format(path=path))
+        for name, value in item.items():
+            if name in ("kind", "id", "body") or not isinstance(value, str):
+                continue
+            link = meetings_link(root, value)
+            if link:
+                raise CheckpointRefusal("meetings", CHECKPOINT_WHY["meetings"].format(link="`%s`" % link))
+
+
+def checkpoint_merge(items, sent, drop):
+    """The items a block holds once the request is applied.
+
+    An item is replaced by its id; one that says the same thing as an item
+    already there, read as `same_action` reads a Todo line, is merged into it,
+    which is the backstop for a reworded duplicate; anything else is added
+    with an id of its own. Only an id under `drop` removes an item, so a
+    second writer cannot lose the first one's work."""
+    kept = [dict(item) for item in items if item["id"] not in drop]
+    for item in sent:
+        where = next((i for i, k in enumerate(kept) if k["id"] == item["id"]), -1) if item["id"] else -1
+        if where < 0 and item["kind"] in CHECKPOINT_ONE:
+            where = next((i for i, k in enumerate(kept) if k["kind"] == item["kind"]), -1)
+        if where < 0:
+            mark = same_action(item["body"])
+            where = next((i for i, k in enumerate(kept)
+                          if k["kind"] == item["kind"] and same_action(k["text"]) == mark), -1)
+        if where >= 0:
+            item_id = kept[where]["id"]
+            kept[where] = {"id": item_id, "kind": item["kind"], "text": item["body"],
+                           "line": checkpoint_item_line(item["kind"], item["body"], item_id)}
+        else:
+            item_id = checkpoint_id(kept, item["kind"])
+            kept.append({"id": item_id, "kind": item["kind"], "text": item["body"],
+                         "line": checkpoint_item_line(item["kind"], item["body"], item_id)})
+    order = {kind: i for i, (kind, _, _) in enumerate(CHECKPOINT_KINDS)}
+    return sorted(kept, key=lambda k: order.get(k["kind"], len(order)))
+
+
+def checkpoint_id(items, kind):
+    """The id a new item takes: the kind's stem for the kinds a block holds one
+    of, and the stem with the lowest number nobody else has for the rest."""
+    stem = CHECKPOINT_STEMS[kind]
+    if kind in CHECKPOINT_ONE:
+        return stem
+    taken = {item["id"] for item in items}
+    n = 1
+    while "%s%d" % (stem, n) in taken:
+        n += 1
+    return "%s%d" % (stem, n)
+
+
+def checkpoint_state(text):
+    """What a reply says is in the note now: the resume point's hash, the
+    block's key and time, and its items with their ids."""
+    block = read_checkpoint(text) or {}
+    return {"base": resume_hash(text), "key": block.get("key"), "at": block.get("at"),
+            "items": [{"id": i["id"], "kind": i["kind"], "line": i["line"]} for i in block.get("items", [])]}
+
+
+def checkpoint_read(name, text, state):
+    """The reply to `read: true`: what is there, whether it can be resumed
+    from, and one line saying so. It never refuses, because Open calls it on
+    whatever the note holds."""
+    block = read_checkpoint(text)
+    reply = {"ok": True, "wrote": False, "read": True, "valid": False, "stale": False, "why": ""}
+    reply.update(state)
+    if block is None:
+        reply["say"] = "No checkpoint in %s." % name
+        return reply
+    reply["valid"] = bool(block["valid"])
+    reply["why"] = block["why"]
+    if not block["valid"]:
+        reply["say"] = "The checkpoint in %s %s. Read it; do not resume from it." % (name, block["why"])
+        return reply
+    reply["stale"] = block["base"] != state["base"]
+    when = said_time(block["at"]).split(" on ")[0]
+    if reply["stale"]:
+        reply["say"] = ("A checkpoint from %s predates the last confirmed resume point in %s; "
+                        "read it, do not resume from it." % (when, name))
+    else:
+        reply["say"] = "An unwrapped checkpoint in %s from %s, with %d item%s." % (
+            name, when, len(block["items"]), "" if len(block["items"]) == 1 else "s")
+    return reply
+
+
+def checkpoint_now(args):
+    """The time to stamp: `--now`, or this moment with the machine's offset."""
+    if not getattr(args, "now", None):
+        return datetime.datetime.now().astimezone().replace(microsecond=0).isoformat()
+    try:
+        return datetime.datetime.fromisoformat(args.now).replace(microsecond=0).isoformat()
+    except ValueError:
+        raise Refusal("--now takes an ISO date and time, such as 2026-10-15T14:32:10+02:00.")
+
+
+def cmd_checkpoint(root, args, today):
+    """Write the unconfirmed record of what a session has done into a thread
+    note, or read what is there.
+
+    The request is one JSON object on standard input, because the fields are
+    free text, and the reply is one JSON object on standard output, whether it
+    wrote, wrote nothing, or refused. It never writes Resume here, never
+    writes `Todo.md`, and never commits: the wrap does those, and a commit
+    here would run the zone's wall check in the middle of the work."""
+    state = {"base": None, "key": None, "at": None, "items": []}
+    try:
+        return checkpoint_run(root, args, state)
+    except Refusal as exc:
+        reply = {"ok": False, "wrote": False, "refused": getattr(exc, "name", "where"), "say": str(exc)}
+        reply.update(state)
+        return reply
+
+
+def checkpoint_run(root, args, state):
+    req = checkpoint_request(args.stdin if getattr(args, "stdin", None) is not None else sys.stdin.read())
+    ops = operations()
+    if ops is not None and "checkpoint" in getattr(ops, "DECLARED", {}):
+        why = ops.validate("checkpoint", req)
+        if why:
+            raise CheckpointRefusal("fields", ops.say("refused", "checkpoint", req, why=why))
+    names = argparse.Namespace(zone=str(req.get("zone") or ""), project=str(req.get("project") or ""),
+                               thread=str(req.get("thread") or "") or None)
+    if not names.zone or not names.project:
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="it names no zone or project"))
+    zone_dir, project_dir, thread_dir, note = target_of(root, names)
+    name = "%s, %s" % (project_dir.name, thread_dir.name) if thread_dir else project_dir.name
+    raw = note.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise CheckpointRefusal("request", CHECKPOINT_WHY["request"].format(why="the note is not UTF-8 text"))
+    state.update(checkpoint_state(text))
+    if req.get("read"):
+        return checkpoint_read(name, text, state)
+
+    block = read_checkpoint(text)
+    if block is not None and not block["valid"]:
+        raise CheckpointRefusal("invalid", CHECKPOINT_WHY["invalid"].format(
+            note=note.name, why=block["why"]))
+    status = str(parse_frontmatter(note).get("status") or "").strip().lower()
+    if status in ("done", "parked"):
+        raise CheckpointRefusal(status, CHECKPOINT_WHY[status].format(name=name))
+    if state["base"] is None:
+        raise CheckpointRefusal("no-resume", CHECKPOINT_WHY["no-resume"].format(
+            note=note.name, heading=RESUME_HEADING))
+
+    sent = checkpoint_shape(req)
+    drop = [one_line(d) for d in (req.get("drop") or [])]
+    if not sent and not drop:
+        raise CheckpointRefusal("nothing", CHECKPOINT_WHY["nothing"])
+    held = (block or {}).get("items", [])
+    items = checkpoint_merge(held, sent, drop)
+    at = checkpoint_now(args)
+    body, key = render_checkpoint(at, state["base"], items)
+    # The repeat test comes first, and against the note rather than a clock:
+    # the same state sent again at any interval is already there, so there is
+    # nothing to write and nothing to refuse, however long ago the first went
+    # in and whatever key the sender last read.
+    if block is not None and key == block["key"]:
+        return {"ok": True, "wrote": False, "say": "Nothing new since the last checkpoint."}
+    if ops is not None and "checkpoint" in getattr(ops, "DECLARED", {}):
+        why = ops.stale("checkpoint", req, (state["base"], state["key"]))
+        if why:
+            raise CheckpointRefusal("moved", ops.say("refused", "checkpoint", req, why=why))
+    for item in sent:
+        was = next((k for k in held if k["id"] == item["id"]), None) if item["id"] else None
+        if was and was["kind"] == "considering" and item["kind"] == "decided":
+            raise CheckpointRefusal("considering", CHECKPOINT_WHY["considering"].format(id=item["id"]))
+        if was and was["kind"] != item["kind"]:
+            raise CheckpointRefusal("id", CHECKPOINT_WHY["id"].format(
+                id=item["id"], why="is a %s item and was sent as a %s one"
+                % (CHECKPOINT_LABELS[was["kind"]], CHECKPOINT_LABELS[item["kind"]])))
+    checkpoint_world(root, project_dir, sent)
+    text_new = place_checkpoint(text, body)
+    if text_new is None:
+        raise CheckpointRefusal("no-resume", CHECKPOINT_WHY["no-resume"].format(
+            note=note.name, heading=RESUME_HEADING))
+    if not write_if_unchanged(note, text_new, raw):
+        state.update(checkpoint_state(note.read_text(encoding="utf-8")))
+        raise CheckpointRefusal("moved", ops.say("refused", "checkpoint", req, why=ops.STALE_WHY[("checkpoint", None)])
+                                if ops is not None else "Nothing was written: the note changed while it was read.")
+    reply = {"ok": True, "wrote": True, "say": "Checkpoint: %s, %s." % (name, said_time(at).split(" on ")[0])}
+    reply.update(checkpoint_state(text_new))
+    return reply
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Create a zone, a party, a project or a thread.")
     ap.add_argument("--root", help="workspace folder (default: the one this script is in)")
@@ -1062,6 +1510,8 @@ def main(argv=None):
         k.add_argument("--zone", required=True)
         k.add_argument("--project", required=True)
         k.add_argument("--thread", help="the thread; without it, the project, and every thread in it with it")
+    c = sub.add_parser("checkpoint", help="write or read a thread note's checkpoint; the request is JSON on stdin")
+    c.add_argument("--now", help="the time to stamp instead of now, as 2026-10-15T14:32:10+02:00")
     u = sub.add_parser("undo", help="revert a rename or a deletion, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
@@ -1078,6 +1528,12 @@ def main(argv=None):
         if not (root / "System" / "templates").is_dir():
             raise Refusal(f"{root} is not an installed workspace: System/templates is missing.")
         today = args.today or datetime.date.today().isoformat()
+        if args.command == "checkpoint":
+            # One JSON object out, whether it wrote, wrote nothing or refused,
+            # because the caller is a script and reads the reply, not a line.
+            reply = cmd_checkpoint(root, args, today)
+            print(json.dumps(reply, ensure_ascii=False, sort_keys=True))
+            return 0 if reply.get("ok") else 1
         run = {"zone": cmd_zone, "party": cmd_party, "project": cmd_project, "thread": cmd_thread,
                "rename": cmd_rename, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
                "wake": cmd_park}[args.command]

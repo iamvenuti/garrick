@@ -53,6 +53,9 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
+    CHECKPOINT_DAYS,
+    CHECKPOINT_HEADING,
+    CHECKPOINT_LABELS,
     CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
@@ -79,7 +82,10 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter,
     parse_frontmatter_text,
     parse_mail_bytes,
+    read_checkpoint,
     read_version,
+    resume_hash,
+    said_time,
     say_changes,
     say_newer_release,
     say_version,
@@ -1466,6 +1472,54 @@ def live_status(fm: dict) -> bool:
     return str(fm.get("status") or "").strip().lower() not in ("done", "parked")
 
 
+def path_bases(ws: Workspace, project: Path, note: Path) -> List[Path]:
+    """Where a relative path written in a note may start: the note's folder and
+    those above it in the project, the project's own folders, the zone, the
+    workspace, the wikis and the skills."""
+    bases, d = [], note.parent
+    while d == project or project in d.parents:
+        bases.append(d)
+        d = d.parent
+    bases += [x for x in visible_dirs(project) if x not in bases]
+    bases += [project.parent, ws.root / "Zones", ws.root, ws.root / "Wikis"] + visible_dirs(ws.root / "Wikis")
+    bases += [ws.root / "System" / "skills"]
+    return bases
+
+
+def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: List[Path],
+                  inside: List[Optional[List[str]]], shared: bool) -> List[str]:
+    """The `backticked` paths on one line that are not there. Placeholders,
+    commands, web addresses, globs, Office parts and anything on another
+    machine are not paths, and a line that says its file sits on a shared drive
+    is left alone: the check does not read one. `inside` caches the project's
+    own files, listed on the first path not found. The Resume here block and
+    the checkpoint beside it are read the same way, which is why this is one
+    function and not two."""
+    out = []
+    for m in TICK_RE.finditer(line):
+        path = m.group(1).strip()
+        if (path.startswith(("<", "/tmp/", "/private/", "/var/")) or "://" in path or "*" in path
+                or COMMAND_RE.match(path) or OFFICE_PART_RE.match(path) or not PATHLIKE_RE.match(path)
+                or "/" not in path.rstrip("/")):
+            continue
+        if path.startswith(("~", "/")):
+            found = Path(path).expanduser().exists()
+        else:
+            found = any((b / path).exists() for b in bases)
+            if not found:
+                # Relative to a folder the line names elsewhere: any file in
+                # the project whose path ends the same way.
+                if inside[0] is None:
+                    inside[0] = ["/" + f.relative_to(project).as_posix() for f in walk_files(project)]
+                tail = "/" + path.strip("./").rstrip("/")
+                found = any(f.endswith(tail) or (path.endswith("/") and tail + "/" in f) for f in inside[0])
+        if not found and (shared or SHARE_RE.search(line)):
+            continue  # on a shared drive, which the check does not read
+        if not found:
+            out.append(path)
+    return out
+
+
 def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], spoken: str,
                     files: List[Optional[PathIndex]], shared: bool) -> List[Finding]:
     """Findings for one Resume here block: still the template's, a link that
@@ -1477,17 +1531,8 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                            "Resume here is still the template's (%s not filled in); say \"wrap %s\" to fill it"
                            % (", ".join(unfilled).lower() or "its date", spoken.rsplit(", ", 1)[-1]),
                            "Thread %s has no real resume point yet" % spoken))
-    # Where a relative path may start: the note's folder and those above it
-    # in the project, the project's own folders, the zone, the workspace, the
-    # wikis and the skills.
-    bases, d = [], note.parent
-    while d == project or project in d.parents:
-        bases.append(d)
-        d = d.parent
-    bases += [x for x in visible_dirs(project) if x not in bases]
-    bases += [project.parent, ws.root / "Zones", ws.root, ws.root / "Wikis"] + visible_dirs(ws.root / "Wikis")
-    bases += [ws.root / "System" / "skills"]
-    inside: Optional[List[str]] = None  # the project's files, listed on the first path not found
+    bases = path_bases(ws, project, note)
+    inside: List[Optional[List[str]]] = [None]  # the project's files, listed on the first path not found
     for line in block:
         for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
             target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
@@ -1499,29 +1544,156 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                 out.append(Finding(WARNING, "resume", rel(ws, note),
                                    "Resume here links [[%s]], which leads nowhere" % target,
                                    "Thread %s points at a note that is not there" % spoken))
-        for m in TICK_RE.finditer(line):
-            path = m.group(1).strip()
-            if (path.startswith(("<", "/tmp/", "/private/", "/var/")) or "://" in path or "*" in path
-                    or COMMAND_RE.match(path) or OFFICE_PART_RE.match(path) or not PATHLIKE_RE.match(path)
-                    or "/" not in path.rstrip("/")):
-                continue
-            if path.startswith(("~", "/")):
-                found = Path(path).expanduser().exists()
-            else:
-                found = any((b / path).exists() for b in bases)
-                if not found:
-                    # Relative to a folder the block names elsewhere: any file
-                    # in the project whose path ends the same way.
-                    if inside is None:
-                        inside = ["/" + f.relative_to(project).as_posix() for f in walk_files(project)]
-                    tail = "/" + path.strip("./").rstrip("/")
-                    found = any(f.endswith(tail) or (path.endswith("/") and tail + "/" in f) for f in inside)
-            if not found and (shared or SHARE_RE.search(line)):
-                continue  # on a shared drive, which the check does not read
-            if not found:
-                out.append(Finding(WARNING, "resume", rel(ws, note),
-                                   "Resume here names `%s`, which is not there" % path,
-                                   "Thread %s names a file that is not there" % spoken))
+        for path in unfound_paths(ws, project, note, line, bases, inside, shared):
+            out.append(Finding(WARNING, "resume", rel(ws, note),
+                               "Resume here names `%s`, which is not there" % path,
+                               "Thread %s names a file that is not there" % spoken))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The checkpoint beside a resume point
+# ---------------------------------------------------------------------------
+
+# `### Checkpoint` under Resume here: what a session recorded as the work
+# happened and has not wrapped yet. The check reads the block and never
+# changes it. A hand edit is the user's, and the next wrap folds the block in
+# and removes it; everything here is a warning, because unconfirmed work in
+# the note is better than unconfirmed work nowhere.
+CHECKPOINT_HEAD_RE = re.compile(r"(?mi)^###[ \t]+Checkpoint[ \t]*$")
+RESUME_HEAD_RE = re.compile(r"(?mi)^###[ \t]+Resume here[ \t]*$")
+STATE_OF_PLAY_RE = re.compile(r"(?mi)^##[ \t]+State of play[ \t]*$")
+SECTION_RE = re.compile(r"(?m)^##[ \t]+")
+# A path into the Meetings wiki, written as a path: `Wikis/Meetings/...` or
+# `Meetings/...`. A bare [[link]] that answers to a page there is resolved.
+MEETINGS_IN_PATH_RE = re.compile(r"(?i)(?:\bWikis[\\/])?\bMeetings[\\/]")
+# A Decided line as the tool writes it: the words quoted, then who said them
+# and when. Either half missing and the decision has no source.
+DECIDED_RE = re.compile(r'^"(?P<said>[^"]*)"(?P<by>.*)$')
+# Where a date sits on the lines that may carry one: last on a To file line,
+# first on a Deadline one. Neither reads a comma, so "by hand, no date given"
+# is not a date claimed badly.
+CHECKPOINT_DATES = {"action": re.compile(r",[ \t]+by[ \t]+([^,]+)$"),
+                    "deadline": re.compile(r"^([^,]*),")}
+
+
+def _now() -> datetime.datetime:
+    """Now, with this machine's offset: the one clock the check reads, for how
+    long a checkpoint has gone unconfirmed."""
+    return datetime.datetime.now().astimezone()
+
+
+def checkpoint_age(at: str) -> Optional[int]:
+    """How many days ago a checkpoint was written, or None where its stamp
+    cannot be read."""
+    try:
+        when = datetime.datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return None
+    now = _now()
+    if when.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return (now - when).days
+
+
+def checkpoint_findings(ws: Workspace, project: Path, note: Path, text: str, spoken: str, status: str,
+                        files: List[Optional[PathIndex]], shared: bool) -> List[Finding]:
+    """Findings for the checkpoint beside a resume point: where the block sits,
+    whether it can be read at all, whether the resume point moved out from
+    under it, whether its items still name what they say, and how long it has
+    gone unconfirmed. A parked thread keeps its checkpoint silently; a finished
+    one is holding work that is on no list."""
+    out: List[Finding] = []
+    heads = [m.start() for m in CHECKPOINT_HEAD_RE.finditer(text)]
+    block = read_checkpoint(text)
+    if not heads and block is None:
+        return out
+    name = spoken.rsplit(", ", 1)[-1]
+    said_at = said_time(block["at"]) if block and block.get("at") else "an unreadable time"
+
+    def warn(message: str, said: str) -> None:
+        out.append(Finding(WARNING, "resume", rel(ws, note), message, said))
+
+    if len(heads) > 1 or (block is not None and block["extra"]):
+        warn("it has more than one `%s` block, and one thread has one unwrapped checkpoint; keep the newer "
+             "and delete the rest, or say \"wrap %s\" to fold them in" % (CHECKPOINT_HEADING, name),
+             "Thread %s has more than one checkpoint" % spoken)
+    resume = RESUME_HEAD_RE.search(text)
+    if heads and resume is not None and min(heads) < resume.start():
+        warn("its `%s` block sits above Resume here; State of play opens with the confirmed resume point, "
+             "and the checkpoint goes under it" % CHECKPOINT_HEADING,
+             "Thread %s has its checkpoint above its resume point" % spoken)
+    play = STATE_OF_PLAY_RE.search(text)
+    if heads and play is not None:
+        after = SECTION_RE.search(text, play.end())
+        stop = after.start() if after else len(text)
+        if any(not play.end() <= h < stop for h in heads):
+            warn("its `%s` block sits outside `## State of play`, where nothing that reads the resume point "
+                 "will find it" % CHECKPOINT_HEADING,
+                 "Thread %s has its checkpoint outside State of play" % spoken)
+    if block is None:
+        return out
+
+    # Meeting material is reported whether the block can be read or not: a
+    # checkpoint carries none, and an invalid block is still in the note.
+    for line in block["content"]:
+        hit = "a path into the Meetings wiki" if MEETINGS_IN_PATH_RE.search(line) else None
+        if hit is None:
+            for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
+                target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
+                if not target or target.startswith("<") or "://" in target:
+                    continue
+                if files[0] is None:
+                    files[0] = PathIndex(ws, walk_files(ws.root))
+                wiki = ws.root / "Wikis" / "Meetings"
+                if any(wiki == f or wiki in f.parents for f in resolve(ws, note, target, files[0])):
+                    hit = "[[%s]]" % target
+                    break
+        if hit is not None:
+            warn("its checkpoint names %s; a checkpoint carries no meeting material, and a decision that "
+                 "rests on a meeting waits for the wrap, where the wall check runs" % hit,
+                 "Thread %s has a checkpoint naming meeting material" % spoken)
+    if not block["valid"]:
+        warn("the checkpoint %s; read it, do not resume from it, and say \"wrap %s\" to settle it"
+             % (block["why"], name), "Thread %s has a checkpoint that cannot be read" % spoken)
+        return out
+
+    if block["base"] != resume_hash(text):
+        warn("the checkpoint from %s was written against an older resume point, so a wrap or a hand edit has "
+             "left it behind; read it, do not resume from it, and wrap %s to settle it" % (said_at, name),
+             "Thread %s has a checkpoint older than its resume point" % spoken)
+    bases = path_bases(ws, project, note)
+    inside: List[Optional[List[str]]] = [None]
+    for item in block["items"]:
+        if item["kind"] == "made":
+            for path in unfound_paths(ws, project, note, item["text"], bases, inside, shared):
+                warn("its checkpoint records making `%s`, which is not there; the item stands as a note that "
+                     "the file has gone, and the wrap asks about it" % path,
+                     "Thread %s has a checkpoint naming a file that is not there" % spoken)
+        if item["kind"] == "decided":
+            m = DECIDED_RE.match(item["text"])
+            missing = "no words quoted" if m is None else ("nobody named" if not m.group("by").strip() else "")
+            if missing:
+                warn("its checkpoint's Decided item `%s` has %s, and a decision is recorded in the words it "
+                     "was made in, with who made it" % (item["id"], missing),
+                     "Thread %s has a checkpoint decision with no source" % spoken)
+        pattern = CHECKPOINT_DATES.get(item["kind"])
+        found = pattern.search(item["text"]) if pattern else None
+        given = found.group(1).strip() if found else ""
+        if given and given != "no date given" and not ISO_DATE_RE.match(given):
+            warn("its checkpoint's %s item gives `%s` as a date, and a date in a checkpoint is an ISO date "
+                 "somebody gave; with none it says \"no date given\""
+                 % (CHECKPOINT_LABELS[item["kind"]], given[:40]),
+                 "Thread %s has a checkpoint date that is not a date" % spoken)
+    days = checkpoint_age(block["at"])
+    if days is not None and days > CHECKPOINT_DAYS:
+        warn("its checkpoint from %s has gone %d days unconfirmed; wrap %s to settle it, or drop it: until it "
+             "is wrapped its To file actions are on no list" % (said_at, days, name),
+             "Thread %s has a checkpoint more than a week old" % spoken)
+    if status == "done":
+        warn("it is finished and still holds the checkpoint from %s, so whatever that block has not filed is "
+             "on no list; read it and file what is left" % said_at,
+             "Thread %s is finished with an unwrapped checkpoint" % spoken)
     return out
 
 
@@ -1564,32 +1736,46 @@ def check_resume(ws: Workspace) -> List[Finding]:
     not when someone opens the thread months later. Placeholders, commands,
     web addresses and anything on another machine are not paths. A hub that
     keeps the resume point of a project that is one thread is read the same
-    way, and a resume point that work has left behind is reported."""
+    way, and a resume point that work has left behind is reported.
+
+    The checkpoint beside the block is read too, on every thread and not only
+    a live one: a finished thread still holding one has unfiled work nobody
+    can see (checkpoint_findings)."""
     out = []
     files: List[Optional[PathIndex]] = [None]  # every file in the workspace, indexed on the first link
     for project, pfm in ws.projects:
         hub = project / (project.name + ".md")
-        if not hub.is_file() or not live_status(pfm):
-            continue  # finished, or set aside: nobody resumes it until it is woken
+        if not hub.is_file():
+            continue
         shared = bool(str(pfm.get("share") or "").strip())
+        state = str(pfm.get("status") or "").strip().lower()
+        live = live_status(pfm)
         holding = [hub]
-        block = resume_block(read_text(hub) or "")
-        if block:
+        hub_text = read_text(hub) or ""
+        block = resume_block(hub_text)
+        if live and block:
             out += resume_findings(ws, project, hub, block, project.name, files, shared)
+        out += checkpoint_findings(ws, project, hub, hub_text, project.name, state, files, shared)
         for thread in visible_dirs(project / "Threads"):
             note = thread / (thread.name + ".md")
             text = read_text(note) if note.is_file() else None
             if not text:
                 continue
+            spoken = "%s, %s" % (project.name, thread.name)
+            own = str(parse_frontmatter(note).get("status") or "").strip().lower()
+            # A parked project holds every thread in it parked, whatever its
+            # own note says, and a finished one holds them finished.
+            out += checkpoint_findings(ws, project, note, text, spoken, own if live else state, files, shared)
             block = resume_block(text)
             if block:
                 holding.append(note)
-            if not live_status(parse_frontmatter(note)):
-                continue
-            out += resume_findings(ws, project, note, block, "%s, %s" % (project.name, thread.name), files, shared)
-        stale = stale_resume(ws, project, holding)
-        if stale:
-            out.append(stale)
+            if not live or own in ("done", "parked"):
+                continue  # finished, or set aside: nobody resumes it until it is woken
+            out += resume_findings(ws, project, note, block, spoken, files, shared)
+        if live:
+            stale = stale_resume(ws, project, holding)
+            if stale:
+                out.append(stale)
     return out
 
 

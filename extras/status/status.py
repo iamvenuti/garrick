@@ -451,11 +451,75 @@ def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
     return False, None
 
 
+# The checkpoint beside a resume point: `### Checkpoint` under Resume here,
+# what a session recorded as the work happened and has not wrapped yet. Only
+# its comment line is read here, which carries when it was written and the
+# hash of the resume point it was written against; no content of the block
+# reaches the page, as resume_point() promises of the block above it. The page
+# gets no button either: confirming a checkpoint is a wrap, and a wrap needs an
+# assistant that knows the session.
+CHECKPOINT_MARK = re.compile(r"(?m)^<!--[ \t]*garrick-checkpoint[ \t]([^\n]*?)-->[ \t]*$")
+CHECKPOINT_FIELD = re.compile(r"(\w+)=(\S+)")
+MONTH_NAMES = tuple(m.capitalize() for m in sorted(MONTH, key=MONTH.get))
+
+
+def checkpoint_mark(note: Path, ws: Optional[Path]) -> Optional[dict]:
+    """The unwrapped checkpoint in a note, as its comment line carries it:
+    `at`, when it was written, `said` and `full`, that time short and long, and
+    `stale`, whether the resume point has moved since. None where the note has
+    no checkpoint. Stale needs the workspace's own `resume_hash`, so without
+    `garrick_lib.py` a block reads as current: the time it carries is true
+    either way, and only the second claim would be a guess."""
+    try:
+        body = note.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = CHECKPOINT_MARK.search(body)
+    if m is None:
+        return None
+    fields = dict(CHECKPOINT_FIELD.findall(m.group(1)))
+    try:
+        when = dt.datetime.fromisoformat(fields.get("at") or "")
+    except ValueError:
+        when = None
+    lib = workspace_lib(ws)
+    base = None
+    if lib is not None and callable(getattr(lib, "resume_hash", None)):
+        try:
+            base = lib.resume_hash(body)
+        except Exception:
+            base = None
+    said = "%02d:%02d" % (when.hour, when.minute) if when else "an unreadable time"
+    full = "%s on %d %s %d" % (said, when.day, MONTH_NAMES[when.month - 1], when.year) if when else said
+    return {"at": when, "said": said, "full": full,
+            "stale": bool(base and fields.get("base") and fields["base"] != base)}
+
+
+def checkpoint_chip(r: dict) -> str:
+    """A thread's unwrapped checkpoint as a pill: when it was written, or that
+    it is out of date where the resume point has moved since. Not coloured for
+    trouble: a checkpoint is work recorded, and what marks a thread on this
+    page is its own next action."""
+    mark = r.get("checkpoint")
+    if not mark:
+        return ""
+    if mark["stale"]:
+        return '<span class="chip" title="%s">checkpoint out of date</span>' % E(
+            "Its checkpoint from %s was written against an older resume point, so a wrap has left it behind: "
+            "read it, do not resume from it" % mark["full"])
+    return '<span class="chip" title="%s">unwrapped since %s</span>' % (
+        E("Work this session recorded at %s and no wrap has folded in yet. Open the thread to read it: "
+          "only a wrap confirms it" % mark["full"]), E(mark["said"]))
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
     note was last updated, read from frontmatter like "what's open"; and
     whether the note has a Resume here block, with that block's own date
-    (resume_point). A project
+    (resume_point), and its unwrapped checkpoint read from the comment line
+    alone (checkpoint_mark), with `touched`, the later of `updated:` and that
+    checkpoint's day: this afternoon's unwrapped work is newer than the last
+    wrap, and the views that order by what moved last say so. A project
     with no thread note is its own single thread, read from its hub, as in a
     workspace laid out before Garrick gave every project a Threads/ folder.
     A project whose hub says parked holds every live thread in it parked
@@ -484,11 +548,15 @@ def threads(ws: Path) -> Dict[str, dict]:
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
                 has_block, resumed = resume_point(note)
+                mark = checkpoint_mark(note, ws)
+                updated = as_date(fm.get("updated"))
+                when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
                 row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
                        "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": as_date(fm.get("updated")), "status": state,
-                       "resume": has_block, "resumed": resumed}
+                       "updated": updated, "status": state,
+                       "resume": has_block, "resumed": resumed,
+                       "checkpoint": mark, "touched": max(when) if when else None}
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
@@ -3258,10 +3326,12 @@ def thread_where(r: dict, styles: Dict[str, dict]) -> str:
 
 def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
     """The threads whose notes moved last, each with its next action beside it
-    and how long since it was touched. Parked and finished work stays out, as
+    and how long since it was touched. The order is `touched`, the later of
+    `updated:` and an unwrapped checkpoint's day, so work recorded this
+    afternoon and not yet wrapped leads. Parked and finished work stays out, as
     it stays out of the counts."""
     rows = [r for z in T.values() for r in z["rows"]]
-    rows.sort(key=lambda r: (r["updated"] is None, -(r["updated"].toordinal() if r["updated"] else 0),
+    rows.sort(key=lambda r: (r.get("touched") is None, -(r["touched"].toordinal() if r.get("touched") else 0),
                              r["thread"].casefold()))
     body = ""
     for r in rows[:RECENT]:
@@ -3275,6 +3345,7 @@ def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[
         if r.get("flagged"):
             nxt += '<span class="chip late" title="The check reported %d finding%s against a file in this thread">check</span>' % (
                 r["flagged"], "" if r["flagged"] == 1 else "s")
+        nxt += checkpoint_chip(r)
         body += ('<div class="hrow" data-ok="%d"><div class="hname"><a href="%s">%s</a><small>%s</small></div>%s'
                  '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
                  % (0 if r.get("urgent") else 1, E(link(r["note"])), E(r["thread"]), thread_where(r, styles), nxt,
@@ -4418,7 +4489,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         # The party tags are the card's, not the row's: under a name they read as part of it.
         chips = "" if parked else (
             ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
-            + urgent_chip(r))
+            + checkpoint_chip(r) + urgent_chip(r))
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (

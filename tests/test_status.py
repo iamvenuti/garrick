@@ -31,6 +31,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import build_workspace, meeting_page, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -610,6 +611,107 @@ class TestOpensOnTheWork(StatusCase):
             self.assertIn(button, tab)
         self.assertIn(".hthought:focus-visible{outline:2px solid var(--accent);outline-offset:1px}", status.HOME_CSS)
         self.assertNotIn("outline:none", status.HOME_CSS)                          # nothing here takes the focus ring away
+
+
+class TestCheckpointChip(StatusCase):
+    """The checkpoint beside a resume point, read from the block's comment line
+    and nothing else: a chip saying when the work was recorded, or that the
+    block is out of date, and the ordering of Recent work. No content of the
+    block reaches the page, and the page gets no button for it: confirming a
+    checkpoint is a wrap."""
+
+    def setUp(self):
+        super().setUp()
+        # Whether a block is out of date is the workspace's own `resume_hash`
+        # to answer, so the page reads a note the way the check does.
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
+        status._LIBS.clear()
+        self.addCleanup(status._LIBS.clear)
+
+    def note(self, project="Acme Review", thread="Pricing"):
+        return self.root / "Zones" / "Work" / project / "Threads" / thread / (thread + ".md")
+
+    def put(self, project="Acme Review", thread="Pricing", **kw):
+        note = self.note(project, thread)
+        note.write_text(fixtures.checkpoint(note.read_text(encoding="utf-8"), **kw), encoding="utf-8")
+        return note
+
+    def updated(self, project, thread, day):
+        note = self.note(project, thread)
+        note.write_text(note.read_text(encoding="utf-8").replace("updated: 2026-03-01", "updated: " + day),
+                        encoding="utf-8")
+
+    def recent(self, html):
+        """The thread names Recent work lists, in the order it lists them."""
+        start = html.index('<details class="card" id="recent"')
+        end = html.find('<details class="card" id="', start + 1)
+        block = html[start:end if end > 0 else len(html)]
+        return re.findall(r'<div class="hname"><a href="[^"]*">([^<]*)</a>', block)
+
+    def test_the_chip_says_when_the_work_was_recorded(self):
+        self.put()
+        html = self.page()
+        self.assertIn(">unwrapped since 14:32</span>", html)
+        self.assertIn("Work this session recorded at 14:32 on 14 March 2026 and no wrap has folded in yet", html)
+        self.assertNotIn("checkpoint out of date", html)
+
+    def test_a_block_a_wrap_left_behind_says_it_is_out_of_date(self):
+        self.put(base="0" * 12)
+        html = self.page()
+        self.assertIn(">checkpoint out of date</span>", html)
+        self.assertIn("was written against an older resume point", html)
+        self.assertNotIn("unwrapped since", html)
+
+    def test_no_content_of_the_block_reaches_the_page(self):
+        self.put()
+        html = self.page()
+        for held in ("tier-two rate as drafted", "dropping tier three", "row 14", "send Dana the price sheet",
+                     "tier-three tab is half filled", "Pricing memo.md", "garrick-checkpoint", "Unconfirmed"):
+            self.assertNotIn(held, html, held)
+
+    def test_the_page_offers_no_way_to_write_or_confirm_one(self):
+        self.put()
+        html = self.page()
+        self.assertNotIn('"checkpoint"', html)
+        self.assertNotIn("verb: 'checkpoint'", html)
+        self.assertNotIn("checkpoint", status.ZONE_VERBS)
+
+    def test_recent_work_orders_by_the_later_of_updated_and_the_checkpoint(self):
+        self.updated("Birch Entry", "Market Sizing", "2026-03-20")
+        self.assertEqual(["Market Sizing", "Pricing"], self.recent(self.page()))
+        self.put(at="2026-03-25T14:32:10+01:00")                    # unwrapped work since that wrap
+        self.assertEqual(["Pricing", "Market Sizing"], self.recent(self.page()))
+
+    def test_the_days_figure_stays_the_days_since_the_note_moved(self):
+        self.put(at="2026-03-25T14:32:10+01:00")
+        row = status.threads(self.root)["Work"]["rows"]
+        pricing = next(r for r in row if r["thread"] == "Pricing")
+        self.assertEqual(dt.date(2026, 3, 1), pricing["updated"])
+        self.assertEqual(dt.date(2026, 3, 25), pricing["touched"])
+
+    def test_a_block_that_cannot_be_read_still_carries_its_time(self):
+        note = self.put()
+        note.write_text(note.read_text(encoding="utf-8").replace("dropping tier three", "dropping tier two"),
+                        encoding="utf-8")
+        html = self.page()
+        self.assertIn("unwrapped since 14:32", html)        # the comment line is all the page reads
+        self.assertNotIn("dropping tier two", html)
+
+    def test_without_the_workspaces_own_library_the_time_still_shows(self):
+        self.put(base="0" * 12)
+        (self.root / "System" / "tools" / "garrick_lib.py").unlink()
+        status._LIBS.clear()
+        html = self.page()
+        self.assertIn("unwrapped since 14:32", html)        # true either way
+        self.assertNotIn("checkpoint out of date", html)    # the second claim would be a guess
+
+    def test_a_thread_with_no_checkpoint_has_no_chip(self):
+        html = self.page()
+        self.assertNotIn("unwrapped since", html)
+        self.assertNotIn("checkpoint out of date", html)
+        self.assertIsNone(status.checkpoint_mark(self.note(), self.root))
 
 
 class TestSelfContained(StatusCase):

@@ -16,6 +16,7 @@ Three levels of work, two memories, one system folder.
 | `System/generated/` | Pages a tool rebuilds, such as the status page. Its rule is under *Files* in `System/rules.md` |
 | `System/interviews/` | The interview skill's records, one per interview |
 | `System/setup.md` | How the user works here: their assistant, app and installed tools. Written by the setup skill; read it before suggesting a tool |
+| `System/garrick-docs/` | Garrick's own docs, as the installed release ships them. Every update replaces them |
 | `Zones/<Zone>/` | One side of life or work. Its own git repository |
 | `Zones/<Zone>/<Project>/` | One client, engagement or undertaking. The hub note is named after it |
 | `Zones/<Zone>/<Project>/Threads/<Thread>/` | One line of work, with one resume point |
@@ -30,6 +31,7 @@ Route every question by its subject, not by the folder the session happens to be
 - "Where did we land with X", "what did Y say" → `Wikis/Meetings/`.
 - "What do I owe them" → their zone's `Todo.md`: the unticked lines for that party or person, or for a thread of one of their projects. A meeting page's actions table is what was agreed at the time, not what is still open.
 - "What is X", "what does the research say about Y" → `Wikis/Knowledge/`.
+- "What is a wall", "how do I park a thread", or anything else about Garrick itself → `System/garrick-docs/`. Answer from those pages and name the page the answer came from.
 - "Where am I on X", "open X" → that thread's `Resume here` block.
 - A question that could belong to two zones → ask which. Never pick one silently.
 

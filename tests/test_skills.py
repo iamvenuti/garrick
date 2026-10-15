@@ -98,9 +98,11 @@ class SkillsTest(unittest.TestCase):
         self.assertIn("read this", triggers(SKILLS / "knowledge"))
 
     def test_intake_procedure_points_at_the_rules_and_the_two_memories(self):
-        text = (SKILLS / "intake" / "SKILL.md").read_text(encoding="utf-8")
+        text = flat((SKILLS / "intake" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("*Ways in*", "`meetings`", "`knowledge`", "file-reading", "file-to-project",
-                       "extract-attachment", "A wall held something back.", "## What this skill does not do"):
+                       "extract-attachment",
+                       "A wall holds some material back from this project, so I have not used it. "
+                       "Nothing was written.", "## What this skill does not do"):
             self.assertIn(needle, text, needle)
         rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
         self.assertIn("## Ways in", rules)

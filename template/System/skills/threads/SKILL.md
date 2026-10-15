@@ -233,7 +233,10 @@ per wrap: the one named, and nothing else.
    shared folder: ask who edits it next. Colleagues who edit it: the shared
    copy counts from now on (`share`); nobody, or colleagues who only read
    it: the copy here does (`here`). Re-read `Deliverables/published.md`
-   (make it with the header row when there is none) and append one row,
+   (when there is none, copy `System/templates/published.md` to it unchanged,
+   and never write the explanation yourself: every project's ledger opens with
+   the same shipped words, so the wall check reads them as common wording
+   rather than one project quoting another) and append one row,
    `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
    the destination relative to the folder the hub names in `shared:`, or the
    folder it went into (`Decks/`) when it kept its name. The file is a path

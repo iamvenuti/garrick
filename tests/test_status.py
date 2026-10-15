@@ -568,14 +568,27 @@ class TestOpensOnTheWork(StatusCase):
         end = html.index("</section>", start) if after < 0 else after
         return html[start:end]
 
-    def test_the_four_things_lead_and_the_graph_sits_behind_explore(self):
+    def row(self, html, name):
+        """One live thread's row on the Threads card, by its name."""
+        threads = self.rows(html, "threads").split('<details class="parked')[0]
+        start = threads.index('data-card="%s' % htmllib.escape('{"n":"%s"' % name, quote=True))
+        start = threads.rindex('<div class="thread', 0, start)
+        end = threads.find('<div class="thread', start + 1)
+        return threads[start:end if end > 0 else len(threads)]
+
+    def test_threads_lead_and_the_graph_sits_behind_explore(self):
+        # #143: Recent work, Due and overdue, A thought and Waiting on you are gone.
         self.actions("[[Pricing]]: send the floor 📅 %s" % self.now.date())
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["recent", "due", "thought", "todo", "waiting", "inboxes", "threads", "graph"], card_order(tab))
-        self.assertLess(tab.index('id="recent"'), tab.index('id="graph"'))         # the work, then the graph
+        self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card" id="threads" open>', tab)
+        self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
+        for gone in ("recent", "due", "thought", "waiting"):
+            self.assertNotIn('id="%s"' % gone, html, gone)
+        for gone in ("Recent work", "Due and overdue", "Waiting on you", "<textarea"):
+            self.assertNotIn(gone, html, gone)
         self.assertIn('<details class="card" id="graph">', tab)                    # folded shut: Explore opens it
-        self.assertIn('<details class="card" id="recent" open>', tab)
         self.assertNotIn('class="top"', tab)                                       # the figures stay on Status
         machinery = html[html.index('id="tab-status"'):html.index("</section>", html.index('id="tab-status"'))]
         for cid in ("jobs", "checks", "repos", "wikis"):                           # the Status tab is untouched
@@ -583,28 +596,37 @@ class TestOpensOnTheWork(StatusCase):
         self.assertIn('id="checks"', machinery)
         self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))
 
-    def test_the_next_action_sits_beside_the_thread(self):
+    def test_the_next_action_sits_under_the_threads_name(self):
         self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
                      "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
         html = self.page()
-        recent = self.rows(html, "recent")
-        self.assertIn("send the renewal floor to Dana", recent)
-        self.assertIn("chase the survey", recent)
-        self.assertIn('<span class="tdate overdue">Due Wed 18 Mar</span>', recent)
-        self.assertIn("Chase", recent)
-        due = self.rows(html, "due")
-        self.assertEqual(2, due.count('class="hrow due"'))                                  # both, across every zone
-        self.assertIn('href="#todolist"', due)
+        pricing = self.row(html, "Pricing")
+        self.assertIn('<small class="tnext">send the renewal floor to Dana<span class="tdate overdue">Due Wed 18 Mar</span></small>',
+                      pricing)
+        sizing = self.row(html, "Market Sizing")
+        self.assertIn("chase the survey", sizing)
+        self.assertIn(">Chase ", sizing)
+        for row in (pricing, sizing):
+            self.assertNotIn("no next action", row)
+
+    def test_an_undated_next_action_has_no_date_chip(self):
+        self.actions("[[Pricing]]: send the renewal floor to Dana")
+        pricing = self.row(self.page(), "Pricing")
+        self.assertIn('<small class="tnext">send the renewal floor to Dana</small>', pricing)
+        self.assertNotIn("tdate", pricing)
 
     def test_parked_and_finished_work_stays_out(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", status="parked"))
         done = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
         done.write_text(thread_note("Birch Entry", "Market Sizing", "birch", status="done"))
-        recent = self.rows(self.page(), "recent")
-        self.assertNotIn("Pricing", recent)
-        self.assertNotIn("Market Sizing", recent)
-        self.assertIn("No live threads yet.", recent)
+        self.actions("[[Pricing]]: send the floor 📅 2026-03-18")
+        threads = self.rows(self.page(), "threads")
+        parked = threads[threads.index('<details class="parked'):]
+        self.assertIn("Pricing", parked)                                     # in its fold, and quiet there
+        self.assertNotIn("send the floor", parked)
+        self.assertNotIn("no next action", parked)
+        self.assertNotIn(">Market Sizing<", threads)
 
     def test_age_alone_is_never_a_fault(self):
         self.touched("Acme Review", "Pricing", "2025-01-01")        # well over a year
@@ -664,27 +686,38 @@ class TestOpensOnTheWork(StatusCase):
 
     def test_a_thread_with_no_next_action_is_said_so_about_not_reddened(self):
         html = self.page()                                            # the fixture has no Todo lines at all
-        waiting = self.rows(html, "waiting")
-        self.assertIn("Nothing says what happens next", waiting)
-        self.assertIn("Pricing", waiting)
-        self.assertNotIn('class="chip late', waiting)                 # saying so is not calling it a fault
-        self.assertIn('data-ok="1"', waiting)
+        pricing = self.row(html, "Pricing")
+        self.assertIn('<span class="chip nores" title="No open action names this thread, in its zone&#39;s Todo.md '
+                      'or in its own notes">no next action</span>', pricing)
+        self.assertNotIn('class="chip late', pricing)                 # saying so is not calling it a fault
+        self.assertNotIn("tnext", pricing)
+        self.assertIn('data-ok="1"', pricing)
+        self.assertIn(">1 thread<", self.rows(html, "threads"))       # and the project's row adds no count for it
 
-    def test_somewhere_to_put_a_thought(self):
+    def test_a_missing_resume_block_keeps_its_count_on_the_project_row(self):
+        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        text = note.read_text(encoding="utf-8")
+        note.write_text(re.sub(r"### Resume here.*?(?=\n## |\Z)", "", text, flags=re.S), encoding="utf-8")
         html = self.page()
-        thought = self.rows(html, "thought")
-        self.assertIn('<textarea id="thought"', thought)
-        self.assertIn('aria-label="A thought that is not yet work"', thought)
-        self.assertIn("nothing in it reaches your workspace on its own", thought)
-        self.assertIn("garrick-thought", status.HOME_JS)               # this window's own storage, and nowhere else
-        self.assertIn("window.GarrickCopy=put", status.JS)
+        self.assertIn("1 thread · 1 without a resume block", self.rows(html, "threads"))
+        self.assertIn(">no resume block</span>", self.row(html, "Pricing"))
+
+    def test_by_name_or_recent(self):
+        threads = self.rows(self.page(), "threads")
+        self.assertIn('<div class="tview" data-tm="updated" data-to="name">', threads)
+        self.assertIn('<div class="tmodes torder" role="group" aria-label="Order"><button type="button" data-to="name" class="on" '
+                      'aria-pressed="true">By name</button><button type="button" data-to="recent" aria-pressed="false">Recent</button></div>',
+                      threads)
+        self.assertIn("· by name ·", threads)                         # the line under the card says which
+        self.assertIn("garrick-threads-order", status.TVIEW_JS)       # remembered in this window, and Reset view clears it
+        self.assertTrue("garrick-threads-order".startswith("garrick-"))
 
     def test_an_empty_workspace_offers_the_one_request(self):
         shutil.rmtree(self.root / "Zones" / "Work" / "Acme Review")
         shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry")
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["start", "thought", "todo", "inboxes", "threads", "graph"], card_order(tab))
+        self.assertEqual(["start", "threads", "todo", "inboxes", "graph"], card_order(tab))
         start = self.rows(html, "start")
         self.assertIn("help me prepare my next supplier call", start)              # the skill's own request
         self.assertIn("Nothing there yet: from an ordinary request to a saved brief", start)
@@ -692,8 +725,6 @@ class TestOpensOnTheWork(StatusCase):
         self.assertIn("written there, not here", start)
         for step in ("scaffold.py party", "git commit", "Shall I add it as a party"):   # the route is not copied here
             self.assertNotIn(step, html, step)
-        self.assertNotIn('id="recent"', tab)
-        self.assertNotIn('id="waiting"', tab)
 
     def test_a_long_name_and_a_long_action_keep_the_rows_whole(self):
         long_thread = "Supply Chain Resilience And Procurement Review Programme"
@@ -701,39 +732,31 @@ class TestOpensOnTheWork(StatusCase):
               thread_note("Acme Review", long_thread, "acme"))
         self.actions("[[%s]]: %s 📅 2026-03-01" % (long_thread, "chase the quote " * 20))
         html = self.page()
-        self.assertIn(long_thread, self.rows(html, "recent"))                      # whole, never cut
-        self.assertIn(long_thread, self.rows(html, "due"))
-        self.assertIn("chase the quote chase the quote", self.rows(html, "due"))
-        self.assertIn(".hname>a{font-weight:560;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-                      status.HOME_CSS)                                             # one line, cut by the browser
-        self.assertIn("overflow-wrap:anywhere", status.TODO_CSS)                   # a long action wraps inside its row
-        self.assertIn(".hnext .ttext{flex:1 1 140px;min-width:0}", status.HOME_CSS)
-        self.assertIn("@media (max-width:820px){.hrow{grid-template-columns:minmax(0,1fr) auto}", status.HOME_CSS)
+        row = self.row(html, long_thread)
+        self.assertIn(">%s</a>" % long_thread, row)                                # whole, never cut
+        self.assertIn("chase the quote " * 19, row)
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;"
+                      "text-overflow:ellipsis;white-space:nowrap}", status.CSS)    # one line, cut by the browser
+        self.assertIn(".thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}", status.CSS)
 
-    def test_every_new_card_can_be_reached_from_the_keyboard(self):
+    def test_every_control_can_be_reached_from_the_keyboard(self):
         self.actions("[[Pricing]]: send the floor 📅 2026-03-01")
         html = self.page()
-        tab = overview(html)
-        for cid in ("recent", "due", "thought", "waiting", "graph"):
-            block = self.rows(html, cid)
-            self.assertIn('<summary class="head">', block, cid)                    # the fold itself takes the focus
-            self.assertNotIn('tabindex="-1"', block, cid)
-        for cid in ("recent", "due", "thought", "waiting"):
-            for button in re.findall(r"<button[^>]*>", self.rows(html, cid)):
-                self.assertIn('type="button"', button, button)                     # never a submit, always focusable
-        self.assertRegex(self.rows(html, "recent"), r'<div class="hname"><a href="[^"]+">Pricing</a>')
-        for button in ("id=\"thought-copy\"", "id=\"thought-clear\""):
-            self.assertIn(button, tab)
-        self.assertIn(".hthought:focus-visible{outline:2px solid var(--accent);outline-offset:1px}", status.HOME_CSS)
+        threads = self.rows(html, "threads")
+        self.assertIn('<summary class="head">', threads)                           # the fold itself takes the focus
+        for button in re.findall(r'<button[^>]*data-to=[^>]*>', threads) + re.findall(r"<button[^>]*>", status.THOUGHT_LEFT):
+            self.assertIn('type="button"', button, button)                         # never a submit, always focusable
+            self.assertNotIn('tabindex="-1"', button, button)
+        self.assertEqual(2, len(re.findall(r'<button[^>]*data-to=', threads)))
         self.assertNotIn("outline:none", status.HOME_CSS)                          # nothing here takes the focus ring away
 
 
 class TestCheckpointChip(StatusCase):
     """The checkpoint beside a resume point, read from the block's comment line
     and nothing else: a chip saying when the work was recorded, or that the
-    block is out of date, and the ordering of Recent work. No content of the
-    block reaches the page, and the page gets no button for it: confirming a
-    checkpoint is a wrap."""
+    block is out of date, and the order Recent gives the Threads card. No
+    content of the block reaches the page, and the page gets no button for
+    it: confirming a checkpoint is a wrap."""
 
     def setUp(self):
         super().setUp()
@@ -758,12 +781,11 @@ class TestCheckpointChip(StatusCase):
         note.write_text(note.read_text(encoding="utf-8").replace("updated: 2026-03-01", "updated: " + day),
                         encoding="utf-8")
 
-    def recent(self, html):
-        """The thread names Recent work lists, in the order it lists them."""
-        start = html.index('<details class="card" id="recent"')
-        end = html.find('<details class="card" id="', start + 1)
-        block = html[start:end if end > 0 else len(html)]
-        return re.findall(r'<div class="hname"><a href="[^"]*">([^<]*)</a>', block)
+    def touched(self, html, name):
+        """What Recent on the Threads card sorts a row by: its data-r."""
+        card = 'data-card="%s' % htmllib.escape('{"n":"%s"' % name, quote=True)
+        tag = html[html.index(card):]
+        return re.search(r' data-r="([^"]*)"', tag[:tag.index(">")]).group(1)
 
     def test_the_chip_says_when_the_work_was_recorded(self):
         self.put()
@@ -793,11 +815,14 @@ class TestCheckpointChip(StatusCase):
         self.assertNotIn("verb: 'checkpoint'", html)
         self.assertNotIn("checkpoint", status.ZONE_VERBS)
 
-    def test_recent_work_orders_by_the_later_of_updated_and_the_checkpoint(self):
+    def test_recent_orders_by_the_later_of_updated_and_the_checkpoint(self):
         self.updated("Birch Entry", "Market Sizing", "2026-03-20")
-        self.assertEqual(["Market Sizing", "Pricing"], self.recent(self.page()))
+        html = self.page()
+        self.assertEqual(("2026-03-01", "2026-03-20"), (self.touched(html, "Pricing"), self.touched(html, "Market Sizing")))
         self.put(at="2026-03-25T14:32:10+01:00")                    # unwrapped work since that wrap
-        self.assertEqual(["Pricing", "Market Sizing"], self.recent(self.page()))
+        html = self.page()
+        self.assertEqual("2026-03-25", self.touched(html, "Pricing"))
+        self.assertEqual("2026-03-25", self.touched(html, "Acme Review"))      # the project's row, its newest thread's
 
     def test_the_days_figure_stays_the_days_since_the_note_moved(self):
         self.put(at="2026-03-25T14:32:10+01:00")

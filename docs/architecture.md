@@ -73,7 +73,7 @@ The cmux extra adds a ninth, `desk`, below.
 
 **The extras** are optional, in the repository's `extras/`. `install.py` installs none of them, and the workspace works without all of them. See [Extras](extras/index.md).
 
-- **The status page** builds one HTML page, shown in a browser, the Garrick Mac app or Obsidian. Its overview opens on recent work and what is due, then a box for a thought, then the live threads with no next action; the graph of every note sits behind *Explore*. A thread is marked by its own next action, a due date passed or a chase date come, or by a check finding in its folder, never by its age. See [the status page](extras/status-page.md), and [its actions](#the-status-pages-actions) below.
+- **The status page** builds one HTML page, shown in a browser, the Garrick Mac app or Obsidian. Its overview opens on the live threads, each with its next action or a *no next action* chip, by name or most recently touched first; the graph of every note sits behind *Explore*. A thread is marked by its own next action, a due date passed or a chase date come, or by a check finding in its folder, never by its age. See [the status page](extras/status-page.md), and [its actions](#the-status-pages-actions) below.
 - **Obsidian** browses the workspace as a linked vault. See [Obsidian](extras/obsidian.md).
 - **cmux**, with its `desk` skill, gives each thread a terminal tab of its own, opened and closed by voice or from the status page. See [cmux](extras/cmux.md).
 - **Phone access** reaches the workspace through the assistants' own remote features. See [Phone access](extras/phone-access.md).

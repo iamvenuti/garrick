@@ -866,9 +866,10 @@ def guide_mod():
     return _GD
 
 
-def guide_tab(ws: Path) -> str:
+def guide_tab(ws: Path) -> Tuple[str, str]:
     """The Guide tab: the docs this workspace was installed with, in System/garrick-docs/,
-    its links to Garrick's own files pointing at the release it runs."""
+    its links to Garrick's own files pointing at the release it runs. (The tab's body,
+    the pages that wait at the end of the page until it opens.)"""
     gd = guide_mod()
     try:
         text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
@@ -4800,21 +4801,23 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     shared = shared_launchers(ws)
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
+    guide_body, guide_pages = guide_tab(ws)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
-               section("guide", True, guide_tab(ws)), menu))
+               section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
-    # and WORK_JS after both.
+    # and WORK_JS after both. The Guide's pages come last of all, after every
+    # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
                MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s</body></html>' % (
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
-                "".join("<script>%s</script>" % js for js in scripts if js)))
+                "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 
 def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:

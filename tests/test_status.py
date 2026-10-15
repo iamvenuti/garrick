@@ -413,6 +413,10 @@ class TestGuide(StatusCase):
         start = html.index('<section class="tab" id="tab-guide"')
         return html[start:html.index("</section>", start)]
 
+    def pages(self, html):
+        start = html.index('<script type="text/html" id="guide-src">')
+        return html[start:html.index("</script>", start)]
+
     def test_the_tab_comes_after_status_and_holds_no_cards(self):
         html = self.page()
         self.assertEqual(["overview", "todo", "status", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
@@ -422,18 +426,19 @@ class TestGuide(StatusCase):
         for card in ('class="card', "data-slot", 'class="totab"'):           # never a place a card moves to
             self.assertNotIn(card, guide)
 
-    def test_the_pages_wait_in_a_template_until_the_tab_opens(self):
+    def test_the_pages_wait_as_text_at_the_end_until_the_tab_opens(self):
         html = self.page()
-        guide = self.guide(html)
-        inside = guide[guide.index('<template id="guide-src">'):guide.index("</template>")]
-        self.assertEqual(guide.count("<article"), inside.count("<article"))
-        self.assertNotIn("<article", html.replace(guide, ""))
+        self.assertEqual('<div class="gd" id="guide"></div>', self.guide(html).split(">", 1)[1])
+        start = html.index('<script type="text/html" id="guide-src">')
+        self.assertTrue(html.endswith("</script></body></html>"))
+        self.assertEqual(html.index("</script>", start) + len("</script></body></html>"), len(html))   # after every script
+        self.assertEqual(html.count("<article"), html[start:].count("<article"))
         self.assertIn("if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount()", status.JS)
         self.assertIn("GarrickGuide.reveal(id)", status.JS)                  # a link into it shows its page first
         self.assertIn("garrick-guide-page", status.guide_mod().GUIDE_JS)     # the last page read
 
     def test_every_page_in_reading_order(self):
-        guide = self.guide(self.page())
+        guide = self.pages(self.page())
         pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md"))
         ids = re.findall(r'<article class="gd-page" id="([^"]+)"', guide)
         self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
@@ -446,7 +451,7 @@ class TestGuide(StatusCase):
         self.assertIn('class="gd-q" type="search"', guide)
 
     def test_tables_code_headings_and_images(self):
-        guide = self.guide(self.page())
+        guide = self.pages(self.page())
         enforced = guide[guide.index('id="guide-enforced"'):]
         enforced = enforced[:enforced.index("</article>")]
         self.assertIn('<div class="gd-table"><table><thead><tr><th>Protection</th>', enforced)
@@ -457,7 +462,7 @@ class TestGuide(StatusCase):
 
     def test_every_link_stays_on_the_page_or_opens_on_github(self):
         html = self.page()
-        guide = self.guide(html)
+        guide = self.pages(html)
         ids = set(re.findall(r'\sid="([^"]+)"', html))
         hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', guide)]
         self.assertGreater(len(hrefs), 300)
@@ -475,12 +480,12 @@ class TestGuide(StatusCase):
     def test_a_link_into_garrick_opens_the_release_it_runs(self):
         write(self.root / "System" / "garrick-changelog.md", "# Changelog\n\n## [Unreleased]\n\n## [0.29.0] - 2026-10-15\n")
         write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "download"}))
-        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.guide(self.page()))]
+        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.pages(self.page()))]
         self.assertIn(status.PROJECT + "/blob/v0.29.0/template/System/rules.md#autonomy", hrefs)
         self.assertIn(status.PROJECT + "/blob/v0.29.0/extras/hooks/README.md", hrefs)
         self.assertIn(status.PROJECT + "/blob/v0.29.0/docs/architecture/overview.png", hrefs)   # in docs/, but not a page
         write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "clone"}))
-        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.guide(self.page()))]
+        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.pages(self.page()))]
         self.assertIn(status.PROJECT + "/blob/main/template/System/rules.md#autonomy", hrefs)   # a clone follows main
 
     def test_a_link_the_build_cannot_place_keeps_its_text(self):
@@ -497,10 +502,11 @@ class TestGuide(StatusCase):
 
     def test_no_docs_says_how_to_get_them(self):
         shutil.rmtree(self.root / "System" / "garrick-docs")
-        guide = self.guide(self.page())
+        html = self.page()
+        guide = self.guide(html)
         self.assertIn("no copy of Garrick&#x27;s docs", guide)
         self.assertIn("Garrick App", guide)
-        self.assertNotIn("<template", guide)
+        self.assertNotIn('id="guide-src"', html)
 
 
 class TestLayout(StatusCase):

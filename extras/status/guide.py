@@ -17,9 +17,10 @@ page itself to another app:
   in the browser like any web link;
 - an image is carried in the page as a `data:` URI.
 
-The pages go into the page inside a <template>, which the browser parses but
-neither lays out nor decodes, so the Guide costs the other tabs nothing until
-it is opened.
+The pages go into the page as the text of a <script type="text/html"> at the
+very end of it, after every script the other tabs run, which the browser
+reads past without parsing, laying out or decoding any of it. So the Guide
+costs the other tabs nothing until it is opened.
 
 `inline()` and `blocks()` are the one renderer. Without a way to resolve
 links they keep a link's text only, which is how the release notes are drawn.
@@ -470,14 +471,15 @@ class Docs:
         return title, body, r.headings
 
 
-def guide(docs: Optional[Path], ref: str = "main") -> str:
-    """The Guide tab's body: the contents, a search field, and each page,
-    all inside a <template> that GUIDE_JS puts on the page when the tab first
+def guide(docs: Optional[Path], ref: str = "main") -> Tuple[str, str]:
+    """The Guide tab: (its body, what goes at the end of the page). The
+    contents, a search field and each page are the text of a script element
+    at the end, which GUIDE_JS puts into the tab's body when the tab first
     opens. With no docs in the workspace, a line that says how to get them."""
     pages = doc_pages(docs) if docs is not None and docs.is_dir() else []
     if not pages:
         return ('<div class="gd-empty"><h2>Guide</h2><p>This workspace has no copy of Garrick&#x27;s docs yet. Update Garrick, '
-                'and they arrive in <code>System/garrick-docs/</code>; the Garrick App then shows them here.</p></div>')
+                'and they arrive in <code>System/garrick-docs/</code>; the Garrick App then shows them here.</p></div>', "")
     d = Docs(docs, ref)
     rendered = {p: d.render(p) for p in pages}
     toc, articles = [], []
@@ -494,8 +496,10 @@ def guide(docs: Optional[Path], ref: str = "main") -> str:
     side = ('<div class="gd-side"><input class="gd-q" type="search" placeholder="Search the Guide" autocomplete="off" '
             'aria-label="Search the Guide\'s titles and headings"><div class="gd-toc" role="navigation" aria-label="Guide contents">'
             '%s</div><p class="gd-none muted" hidden>No title or heading in the Guide matches.</p></div>' % "".join(toc))
-    return '<div class="gd" id="guide"><template id="guide-src">%s<div class="gd-main">%s</div></template></div>' % (
-        side, "".join(articles))
+    held = '%s<div class="gd-main">%s</div>' % (side, "".join(articles))
+    # Every character of the docs is escaped, so nothing in them can end the script early; this is the belt to that.
+    held = re.sub(r"</(script)", r"&lt;/\1", held, flags=re.I)
+    return '<div class="gd" id="guide"></div>', '<script type="text/html" id="guide-src">%s</script>' % held
 
 
 GUIDE_CSS = r"""
@@ -526,12 +530,14 @@ GUIDE_CSS = r"""
 @media (max-width:820px){.gd{grid-template-columns:1fr;gap:16px}.gd-side{position:static;max-height:none}.gd-page{padding:4px 18px 22px}}
 """
 
-# The Guide's script. Its pages sit in a <template> until the tab first opens,
-# or a link leads into it: JS's anchor handler asks GarrickGuide.reveal() for
-# an id it cannot find, and StatusTab mounts the Guide when it opens the tab.
+# The Guide's script. Its pages sit as text at the end of the page until the
+# tab first opens, or a link leads into it: JS's anchor handler asks
+# GarrickGuide.reveal() for an id it cannot find, and StatusTab mounts the
+# Guide when it opens the tab. This runs before that text is read, so a window
+# that reopens on the Guide, or a link into it, waits for DOMContentLoaded.
 # One page shows at a time, and the last one read is remembered in this window.
 GUIDE_JS = r"""
-(function(){var box=document.getElementById('guide'),src=document.getElementById('guide-src'),KEY='garrick-guide-page',ready=false,pages=[],items=[];
+(function(){var box=document.getElementById('guide'),KEY='garrick-guide-page',ready=false,pages=[],items=[];
 function get(){try{return localStorage.getItem(KEY)}catch(e){return null}}
 function put(v){try{localStorage.setItem(KEY,v)}catch(e){}}
 function show(id){var hit=null;pages.forEach(function(p){if(p.id===id)hit=p});if(!hit)hit=pages[0];
@@ -544,14 +550,15 @@ li.querySelectorAll('.gd-hs>li').forEach(function(h){var m=w.length>0&&has(h.tex
 li.hidden=!(t||n);if(!li.hidden)any=true});
 box.querySelectorAll('.gd-sec').forEach(function(s){s.hidden=!s.querySelector('.gd-it:not([hidden])')});
 box.querySelector('.gd-none').hidden=any}
-function mount(){if(ready||!box||!src)return;ready=true;box.appendChild(src.content.cloneNode(true));
+function mount(){var src=document.getElementById('guide-src');if(ready||!box||!src)return;ready=true;box.insertAdjacentHTML('beforeend',src.textContent);src.remove();
 pages=[].slice.call(box.querySelectorAll('.gd-page'));items=[].slice.call(box.querySelectorAll('.gd-it'));
 var q=box.querySelector('.gd-q');if(q){q.addEventListener('input',function(){find(q.value)});
 q.addEventListener('keydown',function(e){if(e.key==='Escape'&&q.value){q.value='';find('');e.stopPropagation()}})}show(get())}
 function reveal(id){if(!id||id.indexOf('guide-')!==0)return null;mount();var el=document.getElementById(id);if(!el)return null;
 var p=el.closest('.gd-page');if(p)show(p.id);return el}
 window.GarrickGuide={mount:mount,reveal:reveal};
-if(document.body.dataset.tab==='guide')mount();
-if(location.hash.indexOf('#guide-')===0){var el=reveal(location.hash.slice(1));if(el&&window.StatusTab){StatusTab('guide');el.scrollIntoView({block:'start'})}}
+function opened(){if(document.body.dataset.tab==='guide')mount();
+if(location.hash.indexOf('#guide-')===0){var el=reveal(location.hash.slice(1));if(el&&window.StatusTab){StatusTab('guide');el.scrollIntoView({block:'start'})}}}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',opened);else opened();
 })();
 """

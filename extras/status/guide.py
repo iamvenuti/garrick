@@ -409,7 +409,6 @@ class Docs:
         self.docs, self.ref = docs, ref
         self.pages = doc_pages(docs)
         self.images: Dict[str, Optional[str]] = {}
-        self.image_bytes = 0
 
     def github(self, path: str, fragment: str = "") -> str:
         return "%s/blob/%s/%s%s" % (PROJECT, urllib.parse.quote(self.ref, safe=""), urllib.parse.quote(path, safe="/"),
@@ -440,8 +439,8 @@ class Docs:
 
     def image(self, page: str, src: str) -> Optional[str]:
         """An image beside the docs as a data: URI, or None for one that is not there."""
-        if src.startswith(("data:", "http://", "https://")) or ":" in src.split("/", 1)[0]:
-            return None
+        if src.startswith(("data:", "http://", "https://", "/")) or ":" in src.split("/", 1)[0]:
+            return None                                    # the page loads nothing, and reads nothing outside the docs
         target = posixpath.normpath(posixpath.join(posixpath.dirname(page), urllib.parse.unquote(src.split("#", 1)[0])))
         if target.startswith("../") or target == "..":
             return None
@@ -452,7 +451,6 @@ class Docs:
             except OSError:
                 data = None
             self.images[target] = "data:%s;base64,%s" % (kind, base64.b64encode(data).decode("ascii")) if data else None
-            self.image_bytes += len(data or b"")
         return self.images[target]
 
     def render(self, page: str) -> Tuple[str, str, List[Tuple[int, str, str]]]:

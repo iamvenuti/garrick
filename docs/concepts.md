@@ -36,6 +36,20 @@ The project's own note, named after it: `<Project>/<Project>.md`. It says what t
 
 The `### Resume here` block at the top of a thread note's `## State of play` section. It says where the thread stands, the live artifact and how to rebuild it, the next action, what to keep in mind, who it waits on and the deadline. "Open X" reads it back in two sentences; "wrap X" rewrites it so it describes now and adds a dated entry below it, leaving the older entries as they are. See [One resume point per thread](principles.md#one-resume-point-per-thread).
 
+### Checkpoint
+
+The `### Checkpoint` block a session writes under [Resume here](#resume-here) as the work happens, so a session that ends without a wrap can still be resumed. Three things fire one and nothing else: a file saved for the thread, a decision stated in words that decide, or the next action changing. It holds what was made, what was decided and in whose words, what is only being considered, what is left half done, and the actions to file; everything in it is **unconfirmed**, and only a wrap, a finish or an interrupt confirms anything. It never touches the Resume here block above it, never writes the zone's [`Todo.md`](#todomd), and carries no meeting material. "Open X" reads it back as unconfirmed beside the confirmed point; the next wrap folds it in and removes it. `scaffold.py checkpoint` is the one thing that writes it.
+
+What a checkpoint does not cover, and nothing pretends otherwise:
+
+- work done after the last checkpoint and before the session ended. "Open X" says the time the checkpoint covers, so the gap is visible rather than claimed;
+- a session in which none of the three things happened: there is nothing to record and no block;
+- an assistant that does not load the rule. It is asked, not enforced: see [What is enforced, and what is asked](enforced.md), and [Claude Code and Codex](harnesses.md#what-has-been-tested) for what has been checked in each;
+- a workspace installed before the tool existed. The assistant says so once, and "wrap it" or "hold this" before you leave is what saves the place;
+- another machine. The block is not committed and zones are not pushed, so it stays on the machine that wrote it.
+
+No host's close event is used for any of it: none of them fires on a crash, a killed terminal or a closed lid, and none can hold a conversation, so none could supply what an item needs.
+
 ### Next action
 
 The row of the Resume here block that names the single next thing, small enough to start in two minutes, and whose it is. Open actions live in the zone's [`Todo.md`](#todomd), and the `todo` skill sweeps each live thread's next action into it, so the two say the same thing.

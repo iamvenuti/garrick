@@ -26,11 +26,17 @@ Both assistants read the same files, but that alone does not show they do the sa
 | Reads the local files beside Garrick's | 2.1.296, a session opened in a zone and one at the root of a fresh install: both applied a rule from `System/rules.local.md` and one from the zone's `AGENTS.local.md` to a note they were asked to write | 0.162.0-alpha.2, at the root, followed the root `AGENTS.md` to both of the root's local files, though a global instruction file on the test machine sent it to look for them in another folder. In a zone, asked for a one-line note, it read no instruction file but the zone's `AGENTS.md`: neither `System/rules.md` nor a local file. Not yet tested on a larger task |
 | Finds the skills | 2.1.284 found the four skills then shipped; eight ship now, and that has not been checked again | 0.159.2 found the four skills then shipped; eight ship now, and that has not been checked again |
 | Picks up a thread cold, in a fresh session | 2.1.284 answered "what's open" from the demo. Resuming a thread wrapped by the other assistant: not yet tested | Not yet tested |
+| Writes a checkpoint as the work happens | Not yet tested | Not yet tested |
+| Reads a checkpoint the other assistant wrote | Not yet tested | Not yet tested |
 | First-session approvals, on a clean account | Not yet tested | Not yet tested |
 | Unattended jobs | 2.1.287 and 2.1.288: the allow list, the deny profile, the settings sources and the permission mode, checked by hand | 0.160.0: a job that only reads ran read-only, writing nothing and with no connector, browser or web tools. Not yet run end to end through `job.py` |
 | Connectors in a job | Not yet tested live | Switched off for a job that only reads (0.160.0). With a job that writes: not yet tested |
 
 [Scheduled jobs](extras/scheduled-jobs.md) gives the details of each check. Another assistant counts as supported once it passes the same rows; following `AGENTS.md` alone does not establish it.
+
+The two checkpoint rows are what no code can settle. A [checkpoint](concepts.md#checkpoint) is written by the assistant while the work happens, so whether one appears at all depends on the assistant following `System/rules.md` and the `threads` skill; the tool only refuses a badly made one. **No host close event is used, by either assistant.** Claude Code has session-end and stop hooks and Codex has a turn-end notification, and none of them is any use here: none fires when a session is killed, a terminal closed or a lid shut, which are the cases a checkpoint exists for, and none can hold a conversation, so none could supply the words a decision has to be recorded in. The checkpoint is written in the turn where the thing happened, while the assistant still has it. What that leaves uncovered is listed under [Checkpoint](concepts.md#checkpoint).
+
+One known difference bears on reading one: a Codex session opened inside a zone has read only that zone's `AGENTS.md` (0.162.0-alpha.2, in the row above), so a session that never reaches `System/rules.md` has not been told to write or read a checkpoint at all. Until that row is rechecked, treat a checkpoint as something the assistant you are using may not know about.
 
 ## Why each zone is its own git repository
 

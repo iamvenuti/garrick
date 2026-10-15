@@ -686,10 +686,20 @@ class TestJoin(JournalCase):
         self.assertIsNotNone(run)
         self.assertIsNone(reply)
 
-    def test_outside_the_window_it_does_not(self):
-        self.start(op="a19f3c80", now=1000.0)
-        run, reply = self.start(op="b29f3c80", now=1000.0 + ops.IDEM_WINDOW + 1)
-        self.assertIsNotNone(run)
+    def test_outside_the_window_it_is_asked_about_and_does_not_run(self):
+        """#137: still running, but long enough that this is not a double click."""
+        first, _ = self.start(op="a19f3c80", now=1000.0)
+        first.running()
+        run, reply = self.start(op="b29f3c80", now=1000.0 + ops.IDEM_WINDOW + 60)
+        self.assertIsNone(run)
+        self.assertEqual((False, "asked", "a19f3c80", "a19f3c80"), (reply["ok"], reply["state"], reply["op"], reply["again"]))
+        self.assertTrue(reply["say"].startswith("The same request is still running, started 3 minutes ago, at "), reply["say"])
+        self.assertIn(": Parking Pricing. It has not been sent again. Do you want it done a second time once that one ends?",
+                      reply["say"])
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in self.j.records()})
+        run, reply = self.start(op="c39f3c80", now=1000.0 + ops.IDEM_WINDOW + 61, confirm="a19f3c80")
+        self.assertIsNotNone(run)                                               # confirmed: it queues behind the first
+        self.assertIsNone(reply)
 
     def test_a_dead_worker_is_not_joined(self):
         self.start(op="a19f3c80", now=1000.0)[0]
@@ -741,6 +751,128 @@ class TestJoin(JournalCase):
         run.close(other)
         _, reply = self.start(op="b29f3c80", now=1010.0)
         self.assertEqual("a19f3c80", reply["op"])
+
+
+class TestRepeatedLater(JournalCase):
+    """#137: past the double click's window, a request the record holds is not
+    run again unasked. It is told what was done and when, and asked."""
+
+    def saved(self, op="a19f3c80", said="Acme Review, Pricing is parked"):
+        first, reply = self.start(op=op)
+        self.assertIsNone(reply)
+        first.finish("saved", REQUESTS["park"], said=said)
+        first.close(REQUESTS["park"])
+        self.runs.remove(first)
+        return self.j.latest()[op]["done"]
+
+    def test_a_double_click_inside_the_window_is_answered_and_runs_nothing(self):
+        done = self.saved()
+        run, reply = self.start(op="b29f3c80", now=done + ops.IDEM_WINDOW - 1)
+        self.assertIsNone(run)
+        self.assertEqual({"ok": True, "say": "Acme Review, Pricing is parked", "op": "a19f3c80", "state": "completed",
+                          "outcome": "saved"}, reply)
+
+    def test_a_retry_past_the_window_is_asked_about_and_runs_nothing(self):
+        done = self.saved()
+        run, reply = self.start(op="b29f3c80", now=done + 300)
+        self.assertIsNone(run)
+        at = time.strftime("%H:%M", time.localtime(done))
+        self.assertEqual({"ok": False, "op": "a19f3c80", "state": "asked", "again": "a19f3c80",
+                          "say": "The same request was done 5 minutes ago, at %s: Acme Review, Pricing is parked. It has "
+                                 "not been done again. Do you want it done a second time?" % at}, reply)
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in self.j.records()})   # and no record of its own
+        self.assertFalse(self.j.run_path("b29f3c80").exists())
+
+    def test_the_whole_lookback_is_asked_about_and_after_it_the_request_is_new(self):
+        done = self.saved()
+        for later in (ops.IDEM_WINDOW + 1, ops.ASK_WAIT, ops.APP_WAIT, ops.LOOKBACK):
+            run, reply = self.start(op="b29f3c80", now=done + later)
+            self.assertEqual(("asked", None), (reply and reply["state"], run), later)
+        run, reply = self.start(op="b29f3c80", now=done + ops.LOOKBACK + 1)
+        self.assertIsNotNone(run)
+        self.assertIsNone(reply)
+
+    def test_a_confirmed_retry_runs(self):
+        done = self.saved()
+        run, reply = self.start(op="b29f3c80", now=done + 300, confirm="a19f3c80")
+        self.assertIsNone(reply)
+        self.assertIsNotNone(run)
+        self.assertEqual("a19f3c80", self.j.latest()["b29f3c80"]["request"]["confirm"])
+
+    def test_a_confirm_that_names_another_action_is_asked_again(self):
+        done = self.saved()
+        for confirm in ("c39f3c80", "", None, 7):
+            run, reply = self.start(op="b29f3c80", now=done + 300, confirm=confirm)
+            self.assertEqual(("asked", "a19f3c80"), (reply["state"], reply["again"]), confirm)
+
+    def test_a_confirm_answers_only_the_latest_question(self):
+        """Confirmed once, done once more; sent again with the same confirm, it
+        repeats the second action now, and is asked about that one."""
+        done = self.saved()
+        run, _ = self.start(op="b29f3c80", now=done + 300, confirm="a19f3c80")
+        run.finish("saved", REQUESTS["park"], said="Acme Review, Pricing is parked")
+        run.close(REQUESTS["park"])
+        later = self.j.latest()["b29f3c80"]["done"] + 300
+        run, reply = self.start(op="c39f3c80", now=later, confirm="a19f3c80")
+        self.assertIsNone(run)
+        self.assertEqual("b29f3c80", reply["again"])
+
+    def test_a_different_request_past_the_window_runs_as_usual(self):
+        done = self.saved()
+        run, reply = self.start(op="b29f3c80", now=done + 300, thread="Other")
+        self.assertIsNotNone(run)
+        self.assertIsNone(reply)
+
+    def test_a_failure_is_never_asked_about(self):
+        for outcome in ("refused", "crashed"):
+            first, _ = self.start(op="a19f3c80")
+            first.finish(outcome, REQUESTS["park"], why="a wall")
+            first.close(REQUESTS["park"])
+            self.runs.remove(first)
+            run, reply = self.start(op="b29f3c80", now=time.time() + 300)
+            self.assertIsNone(reply, outcome)
+            run.close(REQUESTS["park"])
+            self.runs.remove(run)
+            self.j.path.unlink()
+
+    def test_the_question_is_not_a_save_and_says_what_was(self):
+        done = self.saved(said="Acme Review, Pricing is parked")
+        _, reply = self.start(op="b29f3c80", now=done + 300)
+        self.assertFalse(reply["ok"])
+        self.assertNotIn("outcome", reply)                                    # nothing the page could read as saved
+        self.assertIn("Acme Review, Pricing is parked", reply["say"])          # what the first one did, in its words
+        self.assertTrue(reply["say"].endswith("?"))
+
+    def test_confirm_is_declared_for_every_recorded_verb_and_never_part_of_the_key(self):
+        for verb, req in REQUESTS.items():
+            self.assertIn("confirm", ops.OPS[verb].fields, verb)
+            self.assertNotIn("confirm", ops.OPS[verb].identity, verb)
+            self.assertIsNone(ops.validate(verb, dict(req, confirm="a19f3c80")), verb)
+            self.assertEqual(ops.identity_key(verb, req), ops.identity_key(verb, dict(req, confirm="a19f3c80")), verb)
+
+
+class TestClock(unittest.TestCase):
+    """#137: the window, the lookback and every client's wait, in one place
+    and derived from each other, rather than three files of unrelated numbers."""
+
+    def test_each_wait_is_derived_from_the_work_it_waits_for(self):
+        self.assertEqual(2 * ops.TURN_TIMEOUT + ops.COMMIT_TIMEOUT + ops.GIT_TIMEOUT, ops.ASK_WAIT)
+        self.assertGreater(ops.APP_WAIT, ops.ASK_WAIT)                      # ask.py's own message comes first
+        self.assertGreaterEqual(ops.LOOKBACK, ops.APP_WAIT)                 # the retry a client that gave up invites is recognised
+        self.assertLess(ops.IDEM_WINDOW, ops.LOOKBACK)
+
+    def test_the_status_extra_takes_its_numbers_from_it(self):
+        self.assertEqual((ops.GIT_TIMEOUT, ops.COMMIT_TIMEOUT), (pa.GIT_TIMEOUT, pa.COMMIT_TIMEOUT))
+        for name in ("GIT_TIMEOUT", "COMMIT_TIMEOUT", "TURN_TIMEOUT", "ASK_WAIT"):
+            self.assertEqual(getattr(ops, name), pa.clock(name), name)
+        text = (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"(?m)^(TURN_TIMEOUT|ASK_WAIT) = \d", text))   # no number of its own
+        self.assertIsNone(re.search(r"(?m)^(GIT_TIMEOUT|COMMIT_TIMEOUT) = \d", (REPO / "extras" / "status" / "page_action.py")
+                                    .read_text(encoding="utf-8")))
+
+    def test_the_app_holds_a_copy_of_its_wait_and_the_copy_is_held_here(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertEqual(float(ops.APP_WAIT), float(re.search(r"let askWait = ([\d.]+)", swift).group(1)))
 
 
 class TestReader(JournalCase):

@@ -80,6 +80,7 @@ HARNESS = textwrap.dedent(r"""
       // as the Obsidian plugin does it, once the page's script has already run
       if (what === "host") { ctx.GarrickReads = true; if (ctx.window.GarrickReady) ctx.window.GarrickReady(); }
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
+      if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
       out.push({ r, box: box.hidden ? "" : box.innerHTML, toast: toast.textContent, opacity: toast.style.opacity,
                  hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice() });
@@ -180,6 +181,39 @@ class TestWorkUnderNode(NodeCase):
         self.assertIn("Making Acme…", out[1]["box"])
         self.assertIn("No reply after 16 min. Look at git status in Work before trying again.", out[2]["box"])
         self.assertEqual("", out[3]["r"])
+
+    def test_a_request_done_already_is_asked_about_and_do_it_again_confirms_it(self):
+        """#137: past the double click's window the record asks rather than
+        doing it twice. The question stays, however quick, and its button sends
+        the same request once more, naming the action it was asked about."""
+        question = ("The same request was done 5 minutes ago, at 14:02: Birch Entry is parked. It has not been done again. "
+                    "Do you want it done a second time?")
+        asked = {"ok": False, "say": question, "op": "a19f3c80", "state": "asked", "again": "a19f3c80"}
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, asked), ("reload", 2),
+                          ("again", 3, 0))
+        sent, replied, rebuilt, again = out
+        self.assertIn('class="wk ask"', replied["box"])                      # neither a success nor a failure
+        self.assertIn(question, replied["box"])
+        self.assertIn('data-again="0">Do it again</button>', replied["box"])
+        self.assertEqual(0, replied["opacity"])                              # the box says it; the toast steps aside
+        self.assertFalse(replied["ticking"])
+        self.assertIn("Do it again", rebuilt["box"])                         # a rebuild keeps the question
+        self.assertEqual(2, again["posted"])
+        first, second = again["sent"][0]["act"], again["sent"][1]["act"]
+        self.assertNotIn("confirm", first)
+        self.assertEqual("a19f3c80", second["confirm"])                      # the action it was asked about
+        self.assertNotEqual(first["op"], second["op"])                       # and an id of its own
+        self.assertTrue(re.fullmatch(r"[0-9a-f]{16}", second["op"]))
+        self.assertEqual({k: v for k, v in first.items() if k != "op"}, {k: v for k, v in second.items() if k not in ("op", "confirm")})
+        self.assertNotIn("Do it again", again["box"])                        # the question gives way to the request
+        self.assertIn("Parking Birch Entry…", again["box"])
+        self.assertIn('class="wspin"', again["box"])
+
+    def test_dismissing_the_question_sends_nothing(self):
+        asked = {"ok": False, "say": "The same request was done…?", "op": "a19f3c80", "state": "asked", "again": "a19f3c80"}
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, asked), ("dismiss", 2, 0))
+        self.assertEqual("", out[-1]["box"])
+        self.assertEqual(1, out[-1]["posted"])
 
     def test_a_browser_gets_none_of_it(self):
         done = subprocess.run(["node", "-e", "const vm=require('vm');const c={window:{}};vm.createContext(c);"

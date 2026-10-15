@@ -30,8 +30,8 @@ beside the socket keeps a second from starting, and a client that hears
 nothing for ASK_WAIT seconds stops waiting and says so. That wait covers
 the slowest request the server can be given, an action that commits and so
 waits for the zone's wall check among them; and a client that gives up all
-the same says the change may still be on its way, rather than to ask again,
-which would do the action a second time.
+the same says the change may still be on its way and what to look at, never
+just to ask again. ASK_WAIT is operations.py's, from its clock.
 
 **The tier and the caps are the scheduled jobs'.** The session runs on
 GARRICK_ASK_TIER (`haiku`, or `sonnet`, `opus`), named as a tier, never a
@@ -53,11 +53,20 @@ JSON (ask-brief.md). Each action is checked against that list, then:
                Settings is refused, and the app checks it again. With the
                cmux extra's desk ready (`dk`), cmux opens it as a tab that
                starts the session, as the page's buttons do
-    park, wake run through page_action.act(), as the page's buttons do: the
-    todo-add   status field or the line, committed in the zone's repository
+    park, wake run through page_action.perform(), as the page's buttons do:
+    todo-add   the status field or the line, committed in the zone's
+               repository, with the durable record the page's clicks keep
 
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
-is carried into the next request as `<last-results>`. One line per request
+is carried into the next request as `<last-results>`.
+
+**A request sent again is asked about, not done twice.** The record
+recognises one that repeats an action it holds (operations.py): past a double
+click's window, the action comes back as a question, which goes into
+`<last-results>` like any result. When the user says yes, the session sends
+the same action again with `"again": true`, and this file adds the `confirm`
+that names the action asked about. Only a question from the turn before can
+be answered that way; anything else asks again. One line per request
 goes in ask.log in the jobs folder, and each action page_action.py runs in
 page-actions.log, as from the page.
 
@@ -90,15 +99,6 @@ JOB = "ask"
 FLAG = "ask"
 DEFAULT_TIER = "haiku"
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
-TURN_TIMEOUT = 60           # seconds: a turn that takes longer ends the session
-# Seconds a client waits for the server's answer, which has to be as long as
-# the slowest request can take: two turns, and an action that commits, whose
-# own limits are page_action's COMMIT_TIMEOUT (300) and GIT_TIMEOUT (60). A
-# shorter wait said the server had not answered while the commit was still
-# running, and the message told you to ask again, which did the action a
-# second time (#92). A test holds this against those two constants, so
-# raising either fails the suite until this follows.
-ASK_WAIT = 2 * TURN_TIMEOUT + 300 + 60
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
@@ -112,8 +112,8 @@ EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 # What a client says when it gives up all the same: the action may yet
 # finish, so nothing here invites another one.
 GAVE_UP = ("The ask server did not answer in %s. The change may still be on its way: an action that commits waits "
-           "for the zone's wall check. Look at the Todo list, or the thread, before you ask again, because asking "
-           "again does it a second time.")
+           "for the zone's wall check. Look at the Todo list, or the thread, before you ask again. If it went "
+           "through, asking again says so, and asks before doing it a second time.")
 
 
 class Bad(Exception):
@@ -148,6 +148,16 @@ def page_action():
     if _PA is None:
         _PA = _load("garrick_page_action", HERE / "page_action.py")
     return _PA
+
+
+# Seconds a turn may take, and a client waits for the server's answer: both
+# from operations.py's clock, through page_action.py, which derives the wait
+# from the slowest request the server can be given, two turns and an action
+# that commits, and the record's lookback from that wait (#137). A shorter
+# wait said the server had not answered while the commit was still running,
+# and the retry it prompted did the action a second time (#92).
+TURN_TIMEOUT = page_action().clock("TURN_TIMEOUT")
+ASK_WAIT = page_action().clock("ASK_WAIT")
 
 
 _PREFS = None
@@ -498,6 +508,7 @@ class Asker:
         self.session = session
         self.sent = None            # the hash of the list the session was last given
         self.results = ""           # what the last actions did, for the next turn
+        self.asked = {}             # each request the last turn was asked about: the action to confirm
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
         if not flag_on(self.ws):
@@ -529,6 +540,7 @@ class Asker:
         pa = page_action()
         done, launch, ok = [], [], True
         desk = None
+        asked, questions = {}, []
         for a in do:
             try:
                 kind, item = proposal(a, names, self.ws)
@@ -543,18 +555,32 @@ class Asker:
                 launch.append(item)
                 done.append("Opening %s%s" % (item["name"], " in " + item["app"].capitalize() if item["app"] else ""))
                 continue
-            try:
-                said, good = pa.act(self.ws, item), True
-            except pa.Refused as e:
-                said, good = str(e), False
-            except Exception as e:                  # a fault is a refusal, logged as the page's are
-                said, good = "%s: %s" % (type(e).__name__, e), False
-            pa.audit(item, good, said, via="ask")
-            done.append(said if good else "Refused: " + said)
+            same = canon(item)
+            if a.get("again") is True and same in self.asked:
+                item["confirm"] = self.asked[same]  # the user said yes to the question about it
+            out, logged, why = pa.perform(self.ws, item, pa.ops_lib(self.ws))
+            good = bool(out.get("ok"))
+            said = why or out.get("say") or ""       # a refusal in its own words, as before the record
+            pa.audit(item, good, logged or said, via="ask")
+            if out.get("again"):                    # done already: asked, not done again
+                asked[same] = out["again"]
+                questions.append(out["say"])
+                done.append(out["say"])
+            else:
+                done.append(said if good else "Refused: " + said)
             ok = ok and good
+        self.asked = asked
         self.results = "\n".join(done)
+        if questions and len(questions) == len(do):
+            say = questions[0]                      # what the session said it did did not happen: the question did
         return {"say": say, "done": done, "launch": launch, "ok": ok,
                 "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
+
+
+def canon(item: dict) -> str:
+    """A request as the record would recognise it again, for matching a yes to
+    the question it answers: everything it carries but its own ids."""
+    return json.dumps({k: v for k, v in item.items() if k not in ("op", "confirm")}, sort_keys=True, ensure_ascii=False)
 
 
 def off() -> dict:

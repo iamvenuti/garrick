@@ -109,11 +109,17 @@ queued, running (with the phase "checking" while the wall check runs), then
 completed, or failed with an outcome of refused, crashed or unknown. The reply
 to such a request then also carries "op", "state" and "outcome", and a
 failure's "say" is the module's sentence for that outcome, so a refusal
-never reads as saved. {"verb": "operations"} reads the open set back, and a
+never reads as saved. {"verb": "operations"} reads the open set back. A
 request identical to one under way, or just saved, is answered from the
-record instead of being done twice. Without the module, or with a jobs folder
-that cannot be written, every reply is what it was before: the record is
-best effort, as the audit log is, and stops nothing.
+record instead of being done twice; one that repeats an action the record
+holds, past that short window, is told what was done and when and asked
+whether it is meant a second time ("again" in the reply names that action),
+and only the same request sent with "confirm" naming it is done again.
+perform() is that whole path, which the ask box takes too, so a request
+typed into it is recognised as one clicked on the page is. Without the
+module, or with a jobs folder that cannot be written, every reply is what it
+was before: the record is best effort, as the audit log is, and stops
+nothing. How long each of those waits is operations.py's clock.
 
 Every request, done or refused, is one line in page-actions.log in the jobs
 folder (agent.py's jobs_dir(): GARRICK_JOBS_DIR, or ~/Library/Logs/garrick-jobs
@@ -170,9 +176,8 @@ REKEY_HOURS = 1
 # the same zone. A commit runs the zone's wall check, which on a large
 # workspace reads every meeting and project file the first time (see
 # check.py's NoteCache): a minute or more while another job has the disk.
-# The Obsidian plugin gives a request longer than all of them together.
-GIT_TIMEOUT = 60
-COMMIT_TIMEOUT = 300
+# The Obsidian plugin gives a request longer than all of them together. The
+# first two are operations.py's clock, read below once ops_lib() is defined.
 LOCK_WAIT = 45
 # A lock with no record of its own, left by an older job.py, holds for the
 # default limit job.py gives it: twice the watchdog's 1500 s, the sign-in
@@ -220,6 +225,24 @@ def ops_lib(ws: Optional[Path] = None):
                 break
         _OPS_LIBS[key] = found
     return _OPS_LIBS[key]
+
+
+# operations.py's clock (#137): how long a commit and a git command may take,
+# every client's wait derived from them, and how long the record recognises a
+# request sent again, in one place. Without operations.py, or with one older
+# than its clock, the numbers 0.31.0 used, frozen here: change the clock, not
+# these.
+BEFORE_CLOCK = {"GIT_TIMEOUT": 60, "COMMIT_TIMEOUT": 300, "TURN_TIMEOUT": 60, "ASK_WAIT": 480}
+
+
+def clock(name: str):
+    """One of operations.py's clock, by name, as ask.py takes its waits too."""
+    value = getattr(ops_lib(), name, None)
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else BEFORE_CLOCK[name]
+
+
+GIT_TIMEOUT = clock("GIT_TIMEOUT")
+COMMIT_TIMEOUT = clock("COMMIT_TIMEOUT")
 
 
 def refuse_undeclared(ws: Path, req: dict) -> None:
@@ -1535,26 +1558,19 @@ def act(ws: Path, req, today=None, now=None):
     return todo(ws, req)
 
 
-def main(argv=None) -> int:
+def perform(ws: Path, req, ops=None):
+    """One request, as a click sends it and as the ask box does: through the
+    durable record where operations.py keeps one for its verb, so that a
+    request repeating one the record holds is joined, answered or asked
+    about (operations.start()) rather than done again. Never raises.
+
+    Returns (the reply, what the audit log says in place of its sentence or
+    None, and the refusal or the fault in its own words, "" when there was
+    none, for a caller that words a failure itself, as the ask box does)."""
     global CURRENT
-    ap = argparse.ArgumentParser(description="Do what a status page button asks, reading one JSON request on stdin.")
-    ap.add_argument("--workspace", required=True)
-    args = ap.parse_args(argv)
-    ws = Path(args.workspace).expanduser().resolve()
-    req, logged, run, ops = None, None, None, None
+    out, logged, run, outcome, why = None, None, None, None, ""
     try:
-        outcome, why = None, ""
         try:
-            if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
-                raise Refused("not a Garrick workspace")
-            try:
-                req = json.loads(sys.stdin.read())
-            except ValueError:
-                raise Refused("not a request")
-            ops = ops_lib(ws)
-            if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
-                print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
-                return 0
             joined = None
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
                 try:
@@ -1564,7 +1580,7 @@ def main(argv=None) -> int:
                 except Exception:           # the record is best effort, as the audit log is
                     run = joined = None
             if joined is not None:
-                out = joined                # an identical request is under way, or has just saved
+                out = joined                # under way, just saved, or asked whether it is meant again
                 logged = "%s (%s)" % (joined["say"], joined["state"])
             else:
                 CURRENT = run
@@ -1587,6 +1603,31 @@ def main(argv=None) -> int:
         CURRENT = None
         if run is not None:
             run.close(req)              # a terminal record, whatever stopped us, then the lock
+    return out, logged, why
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Do what a status page button asks, reading one JSON request on stdin.")
+    ap.add_argument("--workspace", required=True)
+    args = ap.parse_args(argv)
+    ws = Path(args.workspace).expanduser().resolve()
+    req, logged = None, None
+    try:
+        if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
+            raise Refused("not a Garrick workspace")
+        try:
+            req = json.loads(sys.stdin.read())
+        except ValueError:
+            raise Refused("not a request")
+        ops = ops_lib(ws)
+        if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
+            print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
+            return 0
+        out, logged, _ = perform(ws, req, ops)
+    except Refused as e:
+        out = {"ok": False, "say": str(e)}
+    except Exception as e:              # a fault still answers in JSON, and is logged
+        out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
     audit(req, out["ok"], logged or out["say"])
     print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1

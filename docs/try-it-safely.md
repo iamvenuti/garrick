@@ -10,7 +10,7 @@ python3 examples/demo/build.py --target ~/Garrick-demo
 
 Run it from the folder Garrick came in: `~/Downloads/garrick` if you downloaded the release, `~/garrick-source` if you cloned it. It builds, at `~/Garrick-demo`, the workspace of a fictional advisor about four weeks into real use: Sam Rivera, two clients who compete, a wall between them, a carrier that works for both, a few projects with their threads, a month of filed meetings, and one call and a few emails still waiting to be filed. Run `cd ~/Garrick-demo`, start Claude Code or Codex there, and try "what's open", "open supplier map", "process the inbox" or "prep me for Cobalt" from inside a Birch thread. [The demo's README](../examples/demo/README.md) describes the world. It is a real workspace; only the people in it are invented.
 
-To start from an empty workspace instead, with only the demo's parties and walls filled in, run `python3 install.py --config examples/acme.json --target ~/Garrick-empty` and follow [Your first project](getting-started.md#your-first-project).
+To start from an empty workspace instead, with only the demo's parties and walls filled in, run `python3 install.py --config examples/acme.json --target ~/Garrick-empty` and follow [Your first project](commands.md#your-first-project).
 
 ## Nothing in your home config is written
 

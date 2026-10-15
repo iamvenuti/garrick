@@ -66,7 +66,7 @@ def example_targets():
 
 LATEST = re.compile(r"https://github\.com/iamvenuti/garrick/releases/latest/download/([^\s)`]+)")
 DOWNLOAD_FOLDER = re.compile(r"~/Downloads/([A-Za-z0-9._-]+)")
-BEGINNER = ("docs/first-steps.md", "docs/getting-started.md", "docs/try-it-safely.md",
+BEGINNER = ("docs/first-steps.md", "docs/commands.md", "docs/try-it-safely.md",
             "docs/first-session.md", "docs/updating.md")
 
 

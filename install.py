@@ -46,7 +46,7 @@ IGNORED_FILES = {".DS_Store"}
 # Wall examples the questions can show, never built from the user's own tags.
 EXAMPLE_WALLS = (("acme", "birch"), ("cedar", "dune"))
 # The one way to put your own address on the workspace's repositories when git had
-# none. docs/getting-started.md gives the same command; a test keeps them alike.
+# none. docs/commands.md gives the same command; a test keeps them alike.
 OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done'
 
 # What the assistant may run without asking, when the last question is answered

@@ -195,6 +195,7 @@ class Workspace:
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
+    checkouts: Optional[List[Path]] = None  # the Garrick checkouts inside a project, found on first use
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
     cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
 
@@ -2400,14 +2401,75 @@ SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "Sys
                 "System/garrick-changelog.md")
 SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Knowledge")
 
+# A Garrick checkout kept inside the workspace is where those files come from.
+# The repository in the project about it, or a release unpacked to read, holds
+# the shipped original of every file above, under `template/`, with the
+# changelog at its top; the installer copies them into the positions
+# SHARED_FILES and SHARED_FOLDERS name. So a checkout's copies are shared
+# where they sit: shipped wording is wording every side reads whether or not
+# this workspace has installed it yet. Otherwise a checkout cannot commit a
+# new template, or a line added to the rules, whose words the workspace's own
+# notes already use, which is the whole purpose of shipping it.
+#
+# Only what it ships. A checkout's documentation, examples and tests are
+# ordinary files of the project that keeps it, and the commit hook reads them
+# as such: that is what keeps real material out of a repository on its way to
+# being public.
+CHECKOUT_TREE = "template"                  # the tree the installer copies
+CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
+CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree
+
+
+def is_checkout(folder: Path) -> bool:
+    """Is `folder` the top of a Garrick checkout? Recognised by the installer,
+    the VERSION file it stamps into a workspace, and the tree it copies."""
+    return ((folder / CHECKOUT_TREE).is_dir()
+            and all((folder / name).is_file() for name in CHECKOUT_MARKS))
+
+
+def checkouts(ws: Workspace) -> List[Path]:
+    """Every Garrick checkout inside a project, each found at its top, with
+    nothing below one looked in. A project is where one is kept, and a project
+    is where it counts: the walls are checked on a project's files, and a
+    commit made inside the checkout is checked as that project's."""
+    if ws.checkouts is None:
+        found: List[Path] = []
+        for project, _ in ws.projects:
+            if is_checkout(project):
+                found.append(project)
+                continue
+            for folder, dirs, _ in os.walk(project):
+                here = Path(folder)
+                keep = []
+                for d in sorted(dirs):
+                    if d in SKIP_DIRS:
+                        continue
+                    if is_checkout(here / d):
+                        found.append(here / d)
+                    else:
+                        keep.append(d)
+                dirs[:] = keep
+        ws.checkouts = found
+    return ws.checkouts
+
 
 def shared_files(ws: Workspace) -> List[Path]:
-    """Every shared file that exists: SHARED_FILES, and all under SHARED_FOLDERS."""
+    """Every shared file that exists: SHARED_FILES, and all under
+    SHARED_FOLDERS, in the workspace and in each Garrick checkout it keeps,
+    where the checkout holds them before an install moves them."""
     out = [ws.root / name for name in SHARED_FILES]
     for name in SHARED_FOLDERS:
         folder = ws.root / name
         if folder.is_dir():
             out += list(walk_files(folder))
+    for checkout in checkouts(ws):
+        tree = checkout / CHECKOUT_TREE
+        out += [tree / name for name in SHARED_FILES]
+        out += [checkout / shipped for shipped in CHECKOUT_APART.values()]
+        for name in SHARED_FOLDERS:
+            folder = tree / name
+            if folder.is_dir():
+                out += list(walk_files(folder))
     return [p for p in out if p.is_file()]
 
 
@@ -3113,7 +3175,13 @@ def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
     being committed, its index, which is what the commit will hold; for every
     other, its last commit."""
     out: Dict[Path, str] = {}
-    for top in workspace_repos(ws):
+    tops = workspace_repos(ws)
+    if committing is not None and committing not in tops:
+        # A repository inside a project, such as a Garrick checkout: its own
+        # shipped files are shared wording, so an edit it leaves unstaged must
+        # not decide what the check reads there either.
+        tops = tops + [committing]
+    for top in tops:
         if top == committing:
             names, spec = _git(["diff", "--name-only", "--no-renames", "-z"], top), ":%s"
         elif _git(["rev-parse", "--verify", "-q", "HEAD"], top) is not None:

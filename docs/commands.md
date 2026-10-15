@@ -137,7 +137,7 @@ The full procedure, including how it resolves a mangled or ambiguous name, is `S
 
 ## What a project published
 
-A deck or a workbook that leaves the workspace, copied to a shared cloud folder where colleagues read or edit it, gets one row in `Deliverables/published.md`, in its project: the date, the file, where it went, who received it, and which copy counts from now on (`share` when colleagues edit it there, `here` when they only read it). The `threads` skill adds the row when a wrap finishes such a deliverable, and asks who edits it next.
+A deck or a workbook that leaves the workspace, copied to a shared cloud folder where colleagues read or edit it, gets one row in `Deliverables/published.md`, in its project: the date, the file, where it went, who received it, and which copy counts from now on (`share` when colleagues edit it there, `here` when they only read it). The `threads` skill adds the row when a wrap finishes such a deliverable, and asks who edits it next. A project that has no ledger yet gets one copied from `System/templates/published.md`, so every project's ledger opens with the same shipped explanation rather than one written fresh each time; two projects across a wall are then not quoting each other.
 
 ```markdown
 | Date | File | Destination | Recipients | Authoritative |

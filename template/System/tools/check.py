@@ -2579,13 +2579,14 @@ class QuoteIndex:
 # into System/generated/ or a note dropped into System/ can carry what one
 # party said, and would then exempt whatever it repeats from the wall check.
 # The local file beside an instruction file is read with it, by every side.
-# The changelog is there for the same reason: it is Garrick's published
-# release notes, so a note that describes a Garrick feature tends to borrow
-# its wording, on whichever side of a wall it sits.
+# The changelog and the docs are there for the same reason: they are Garrick's
+# published release notes and documentation, so a note that describes a
+# Garrick feature tends to borrow their wording, on whichever side of a wall
+# it sits.
 SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
                 "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
                 "System/garrick-changelog.md")
-SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Knowledge")
+SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/garrick-docs", "Wikis/Knowledge")
 
 # A Garrick checkout kept inside the workspace is where those files come from.
 # The repository in the project about it, or a release unpacked to read, holds
@@ -2600,7 +2601,9 @@ SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "Wikis/Kn
 # Only what it ships. A checkout's documentation, examples and tests are
 # ordinary files of the project that keeps it, and the commit hook reads them
 # as such: that is what keeps real material out of a repository on its way to
-# being public.
+# being public. That holds for its docs/ too, though the installer ships them
+# as System/garrick-docs: a page being written is where real material would
+# leave for the public repository, so it counts as shared only once installed.
 CHECKOUT_TREE = "template"                  # the tree the installer copies
 CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
 CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree

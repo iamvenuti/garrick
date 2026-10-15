@@ -620,11 +620,12 @@ class TestParkBothWays(ManageCase):
                 pa.act(self.root, req)
         # a field the table does not declare, the one refusal the two make
         # differently: argparse names the flag, operations.py names the field
-        bad = self.cli("park", "--thread", "Pricing", "--confirm", "Pricing")
+        # (undo's `commit`: `confirm` is park's own since #137, naming an earlier park it was asked about)
+        bad = self.cli("park", "--thread", "Pricing", "--commit", "abc1234")
         self.assertEqual(2, bad.returncode)
-        self.assertIn("--confirm", bad.stderr)
-        reply = self.page(verb="park", zone="Work", project="Acme", thread="Pricing", confirm="Pricing")
-        self.assertEqual("Not done. Park takes no confirm field.", reply["say"])
+        self.assertIn("--commit", bad.stderr)
+        reply = self.page(verb="park", zone="Work", project="Acme", thread="Pricing", commit="abc1234")
+        self.assertEqual("Not done. Park takes no commit field.", reply["say"])
 
     def test_the_two_dated_entry_copies_agree_where_a_note_has_an_anchor(self):
         """scaffold.py's dated_entry writes rename's entry and now park's;

@@ -157,7 +157,11 @@ let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
 let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
 // (ASK_WAIT), so its own message comes first; past it, the request is let go.
-let askWait = 180.0
+// Both cover the slowest request the box can make, an action that commits and
+// waits for the zone's wall check among them, because a box that gives up
+// while that commit runs used to invite the retry that added the line twice
+// (#92). A test holds this against ask.py's ASK_WAIT.
+let askWait = 510.0
 
 // Settings › Opening a thread, from the choices the workspace keeps, as
 // status.py's shared_launchers() reads them (garrick_lib's PREFERENCES_FILE,
@@ -190,8 +194,11 @@ func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
 		let timedOut = !late.isCancelled && p.terminationReason == .uncaughtSignal
 		late.cancel()
 		let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-		let none: [String: Any] = ["say": timedOut ? "Garrick did not answer in \(Int(askWait)) seconds. Ask again." : "No answer.",
-		                           "ok": false]
+		// It may yet finish, so this says what to look at and never to ask again (#92).
+		let gaveUp = "Garrick did not answer in \(Int(askWait / 60)) minutes. The change may still be on its way: "
+			+ "an action that commits waits for the zone's wall check. Look at the Todo list, or the thread, "
+			+ "before you ask again, because asking again does it a second time."
+		let none: [String: Any] = ["say": timedOut ? gaveUp : "No answer.", "ok": false]
 		DispatchQueue.main.async { done(said ?? none) }
 	}
 }

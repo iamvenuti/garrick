@@ -182,6 +182,10 @@ One meeting at a time, even when several files are waiting.
    `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`. Otherwise open the
    line with the party or person the action is for, `<Party>: `, and never
    guess a thread. Touch no other line.
+   **The example line goes with the first real action.** A list nobody has
+   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   it in the same edit that writes the first real line. It is a task like any
+   other, so anything that counts open actions counts it.
 9. **Commit.** The meeting page, the raw file, any new person page, the
    index and the log all live in the Wikis repository; `Todo.md` lives in
    the zone's own, separate repository. That is two commits, not one, and
@@ -379,9 +383,10 @@ writes a file only when the user asks to save the brief (step 7).
    page), when you last met or wrote, what was decided, what is still open
    (the `Todo.md` lines), and any commitment worth quoting. Say only what
    the surviving pages and lines support.
-6. **If a wall held anything back, say so and nothing more**: "A wall kept
-   some meeting material out of this brief." No title, date, party or count,
-   even if asked in the same breath.
+6. **If a wall held anything back, say so in the words the rule gives, and
+   nothing more**: "A wall holds some material back from this project, so I
+   have not used it. Nothing was written." No title, date, party, person,
+   subject or count, even if asked in the same breath.
 7. **Save it only when asked** ("save the brief in this project's
    Deliverables"), never on your own initiative, and never the unfiltered
    record of step 2, which has no project to hold it.

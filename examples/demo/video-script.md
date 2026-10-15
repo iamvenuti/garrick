@@ -36,7 +36,7 @@ Each beat gives what Sam says, what the assistant should say back, and what is o
 
 **Sam:** "Prep me for Cobalt."
 
-**Assistant:** "Cobalt: you last met Marta Quill on the 22nd, with Iris, and she quoted about 140 euros a pallet from March. You owe her Birch's volume forecast by Friday the 2nd. A wall kept some meeting material out of this brief."
+**Assistant:** "Cobalt: you last met Marta Quill on the 22nd, with Iris, and she quoted about 140 euros a pallet from March. You owe her Birch's volume forecast by Friday the 2nd. A wall holds some material back from this project, so I have not used it. Nothing was written."
 
 **Screen:** first the Meetings index with both Cobalt calls visible, *Cobalt Freight renewal, for Acme* on 15 September and *Cobalt Freight northern lane, for Birch* on 22 September. Then the Walls table in `System/context.md`, with `acme` and `birch` on one row. Caption: *Sam met Cobalt twice, once for each client. Only one of those calls is Birch's to use.*
 

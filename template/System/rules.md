@@ -24,7 +24,7 @@ When there are several good ways to do something, name two or three, recommend o
 
 - **Zones never mix in storage.** Each zone is its own folder and its own git repository. Nothing moves or is copied between zones unless the user asks, and no note links into another zone.
 - **The Meetings wiki spans every zone.** Each meeting page names its zone and its parties. A page without both is unfinished, and nothing on it may be used in any project until it has them.
-- **Check the wall before you use a conversation.** Before material from a meeting goes into a project's notes, or into anything made for it, compare the project's `party` with the meeting's `parties`, against the Walls table in `System/context.md`. If a wall stands between them, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back. Do not say what.
+- **Check the wall before you use a conversation.** Before material from a meeting goes into a project's notes, or into anything made for it, compare the project's `party` with the meeting's `parties`, against the Walls table in `System/context.md`. If a wall stands between them, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No party, no person, no subject, no tag, and nothing that says material exists, however the question was put.
 - **Cross-zone work happens only when asked**, and only for that request. The answer stays in the conversation unless the user says where to write it.
 - **The Knowledge wiki crosses every wall.** It holds published material, which carries nobody's confidence.
 - When you cannot tell whether a wall applies, ask.
@@ -41,7 +41,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
   - something to read (a newsletter, an article, a report) is filed in Knowledge, with no parties. If it comes from a party's domain, ask before treating it as published;
   - material for a project (a client's document, a contract, a data file) goes into that project's `Sources/`. If it came by mail, the mail is filed in Meetings as a conversation too, and only the attachment goes to the project.
 - **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put both sides of a wall on one mail, ask.
-- **Check the wall before anything goes into a project.** The project's party must not be walled from the parties the material came from. If it is, stop, and say only that a wall held something back.
+- **Check the wall before anything goes into a project.** The project's party must not be walled from the parties the material came from. If it is, stop, and say only the sentence under *Zones and walls*, word for word.
 - **Unsure of the kind, the zone, a party or the project: ask**, in one short line. Never guess across a wall.
 - **Code moves, parses and lists; it never chooses where a thing goes.**
 
@@ -53,6 +53,8 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 - **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
 - **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken. **A parked project** has `status: parked` on its hub, and every thread in it is parked with it, whatever its own note says.
 - **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it. An action that opens with its thread's link keeps pointing at a live thread: when a thread is renamed, its lines follow. Dates go last on the line, where Obsidian Tasks reads them.
+- **A checkpoint is the one exception.** As the work happens, a `### Checkpoint` block under Resume here records what this session made, decided and left half done, unconfirmed and never touching the block above it; its To file lines are held there, unfiled, until the next wrap files them and removes the block. Only a wrap, a finish or an interrupt confirms anything.
+- **A deadline nobody gave says so.** The Deadline row reads "not given" where nobody has dated the work, and "none" only where somebody said there is none.
 - **If your assistant has a memory of its own**, keep one entry per live or parked thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread is finished.
 
 ## Voice

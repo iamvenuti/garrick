@@ -31,6 +31,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import build_workspace, meeting_page, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -258,7 +259,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(10, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the zone icons Settings offers, the page's, the dialogs', the running actions', the menu's, the graph's
+        self.assertEqual(11, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the zone icons Settings offers, the page's, the dialogs', the running actions', the menu's, the Guide's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -398,6 +399,121 @@ class TestTabs(StatusCase):
         self.job(4)
         html = self.page()
         self.assertIn('data-tab="status">Status<span class="dot critical"', html)
+
+
+class TestGuide(StatusCase):
+    """#133: the Guide tab shows the docs the workspace was installed with,
+    and every link on it stays on the page or opens on GitHub."""
+
+    def setUp(self):
+        super().setUp()
+        spec = importlib.util.spec_from_file_location("garrick_install", REPO / "install.py")
+        install = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(install)
+        for rel in install.docs_files():                                       # as the installer ships them
+            target = self.root / "System" / "garrick-docs" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((REPO / "docs" / rel).read_bytes())
+
+    def guide(self, html):
+        start = html.index('<section class="tab" id="tab-guide"')
+        return html[start:html.index("</section>", start)]
+
+    def pages(self, html):
+        start = html.index('<script type="text/html" id="guide-src">')
+        return html[start:html.index("</script>", start)]
+
+    def test_the_tab_comes_after_status_and_holds_no_cards(self):
+        html = self.page()
+        self.assertEqual(["overview", "todo", "status", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
+        self.assertIn('data-tab="guide">Guide</button>', html)
+        guide = self.guide(html)
+        self.assertIn('id="tab-guide" hidden', guide)
+        for card in ('class="card', "data-slot", 'class="totab"'):           # never a place a card moves to
+            self.assertNotIn(card, guide)
+
+    def test_the_pages_wait_as_text_at_the_end_until_the_tab_opens(self):
+        html = self.page()
+        self.assertEqual('<div class="gd" id="guide"></div>', self.guide(html).split(">", 1)[1])
+        start = html.index('<script type="text/html" id="guide-src">')
+        self.assertTrue(html.endswith("</script></body></html>"))
+        self.assertEqual(html.index("</script>", start) + len("</script></body></html>"), len(html))   # after every script
+        self.assertEqual(html.count("<article"), html[start:].count("<article"))
+        self.assertIn("if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount()", status.JS)
+        self.assertIn("GarrickGuide.reveal(id)", status.JS)                  # a link into it shows its page first
+        self.assertIn("garrick-guide-page", status.guide_mod().GUIDE_JS)     # the last page read
+
+    def test_every_page_in_reading_order(self):
+        guide = self.pages(self.page())
+        pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md")
+                       if not p.relative_to(REPO / "docs").as_posix().startswith("assets/"))
+        ids = re.findall(r'<article class="gd-page" id="([^"]+)"', guide)
+        self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
+        self.assertEqual(["Start here", "Understand", "Do", "Extras", "Look up"], re.findall(r'<div class="gd-sec"><h3>([^<]+)</h3>', guide))
+        toc = re.findall(r'<li class="gd-it" data-p="guide-([^"]+)"', guide)
+        self.assertEqual(["try-it-safely", "first-steps", "terminal-setup", "first-session", "guided-session",
+                          "principles", "concepts", "architecture", "enforced", "harnesses", "updating", "extras-index"],
+                         toc[:12])
+        self.assertEqual("commands", toc[toc.index("extras-toolkit") + 1])      # each extras page, then Look up
+        self.assertIn('class="gd-q" type="search"', guide)
+
+    def test_tables_code_headings_and_images(self):
+        guide = self.pages(self.page())
+        enforced = guide[guide.index('id="guide-enforced"'):]
+        enforced = enforced[:enforced.index("</article>")]
+        self.assertIn('<div class="gd-table"><table><thead><tr><th>Protection</th>', enforced)
+        self.assertIn('<h2 id="guide-enforced--the-wall-checks-known-gaps">', enforced)
+        self.assertIn('<pre><code class="lang-sh">', guide)
+        self.assertRegex(guide, r'<img src="data:image/png;base64,[A-Za-z0-9+/=]{1000,}" alt="The Claude app')
+        self.assertEqual([], [s for s in re.findall(r'\ssrc="([^"]*)"', guide) if not s.startswith("data:image/")])
+
+    def test_every_link_stays_on_the_page_or_opens_on_github(self):
+        html = self.page()
+        guide = self.pages(html)
+        ids = set(re.findall(r'\sid="([^"]+)"', html))
+        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', guide)]
+        self.assertGreater(len(hrefs), 300)
+        for h in hrefs:
+            if h.startswith("#"):
+                self.assertIn(h[1:], ids, h)
+            else:
+                self.assertTrue(h.startswith(("https://", "http://", "mailto:")), h)
+            self.assertFalse(re.search(r"\.md(#|$)", h) and not h.startswith(status.PROJECT + "/blob/"), h)
+        for tag in re.findall(r'<a href="(?:https?|mailto):[^>]*>', guide):
+            self.assertIn('target="_blank" rel="noopener"', tag)              # outside, in a browser too
+        self.assertIn("#guide-principles--what-the-check-covers", hrefs)       # page to page, with a heading
+        self.assertIn("#guide-first-steps", hrefs)                             # page to page
+
+    def test_a_link_into_garrick_opens_the_release_it_runs(self):
+        write(self.root / "System" / "garrick-changelog.md", "# Changelog\n\n## [Unreleased]\n\n## [0.29.0] - 2026-10-15\n")
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "download"}))
+        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.pages(self.page()))]
+        self.assertIn(status.PROJECT + "/blob/v0.29.0/template/System/rules.md#autonomy", hrefs)
+        self.assertIn(status.PROJECT + "/blob/v0.29.0/extras/hooks/README.md", hrefs)
+        self.assertIn(status.PROJECT + "/blob/v0.29.0/docs/architecture/overview.png", hrefs)   # in docs/, but not a page
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "clone"}))
+        hrefs = [htmllib.unescape(h) for h in re.findall(r'<a href="([^"]*)"', self.pages(self.page()))]
+        self.assertIn(status.PROJECT + "/blob/main/template/System/rules.md#autonomy", hrefs)   # a clone follows main
+
+    def test_a_link_the_build_cannot_place_keeps_its_text(self):
+        gd = status.guide_mod()
+        docs = gd.Docs(self.root / "System" / "garrick-docs", "v1.0.0")
+        self.assertEqual("#guide-concepts--wall", docs.resolve("extras/cmux.md", "../concepts.md#wall"))
+        self.assertEqual("#guide-extras-cmux--a-sidebar", docs.resolve("extras/index.md", "#a-sidebar".join(("cmux.md", ""))))
+        self.assertEqual("#guide-extras-index--x", docs.resolve("extras/index.md", "#x"))
+        for bad in ("javascript:alert(1)", "file:///etc/passwd", "obsidian://open?vault=x", "/etc/passwd", "../../../x.md"):
+            self.assertIsNone(docs.resolve("concepts.md", bad), bad)
+        out = gd.inline("[x](javascript:alert(1)) and ![y](../../../secret.png)", lambda h: docs.resolve("concepts.md", h),
+                        lambda s: docs.image("concepts.md", s))
+        self.assertEqual("x and y", out)
+
+    def test_no_docs_says_how_to_get_them(self):
+        shutil.rmtree(self.root / "System" / "garrick-docs")
+        html = self.page()
+        guide = self.guide(html)
+        self.assertIn("no copy of Garrick&#x27;s docs", guide)
+        self.assertIn("Garrick App", guide)
+        self.assertNotIn('id="guide-src"', html)
 
 
 class TestLayout(StatusCase):
@@ -610,6 +726,107 @@ class TestOpensOnTheWork(StatusCase):
             self.assertIn(button, tab)
         self.assertIn(".hthought:focus-visible{outline:2px solid var(--accent);outline-offset:1px}", status.HOME_CSS)
         self.assertNotIn("outline:none", status.HOME_CSS)                          # nothing here takes the focus ring away
+
+
+class TestCheckpointChip(StatusCase):
+    """The checkpoint beside a resume point, read from the block's comment line
+    and nothing else: a chip saying when the work was recorded, or that the
+    block is out of date, and the ordering of Recent work. No content of the
+    block reaches the page, and the page gets no button for it: confirming a
+    checkpoint is a wrap."""
+
+    def setUp(self):
+        super().setUp()
+        # Whether a block is out of date is the workspace's own `resume_hash`
+        # to answer, so the page reads a note the way the check does.
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
+        status._LIBS.clear()
+        self.addCleanup(status._LIBS.clear)
+
+    def note(self, project="Acme Review", thread="Pricing"):
+        return self.root / "Zones" / "Work" / project / "Threads" / thread / (thread + ".md")
+
+    def put(self, project="Acme Review", thread="Pricing", **kw):
+        note = self.note(project, thread)
+        note.write_text(fixtures.checkpoint(note.read_text(encoding="utf-8"), **kw), encoding="utf-8")
+        return note
+
+    def updated(self, project, thread, day):
+        note = self.note(project, thread)
+        note.write_text(note.read_text(encoding="utf-8").replace("updated: 2026-03-01", "updated: " + day),
+                        encoding="utf-8")
+
+    def recent(self, html):
+        """The thread names Recent work lists, in the order it lists them."""
+        start = html.index('<details class="card" id="recent"')
+        end = html.find('<details class="card" id="', start + 1)
+        block = html[start:end if end > 0 else len(html)]
+        return re.findall(r'<div class="hname"><a href="[^"]*">([^<]*)</a>', block)
+
+    def test_the_chip_says_when_the_work_was_recorded(self):
+        self.put()
+        html = self.page()
+        self.assertIn(">unwrapped since 14:32</span>", html)
+        self.assertIn("Work this session recorded at 14:32 on 14 March 2026 and no wrap has folded in yet", html)
+        self.assertNotIn("checkpoint out of date", html)
+
+    def test_a_block_a_wrap_left_behind_says_it_is_out_of_date(self):
+        self.put(base="0" * 12)
+        html = self.page()
+        self.assertIn(">checkpoint out of date</span>", html)
+        self.assertIn("was written against an older resume point", html)
+        self.assertNotIn("unwrapped since", html)
+
+    def test_no_content_of_the_block_reaches_the_page(self):
+        self.put()
+        html = self.page()
+        for held in ("tier-two rate as drafted", "dropping tier three", "row 14", "send Dana the price sheet",
+                     "tier-three tab is half filled", "Pricing memo.md", "garrick-checkpoint", "Unconfirmed"):
+            self.assertNotIn(held, html, held)
+
+    def test_the_page_offers_no_way_to_write_or_confirm_one(self):
+        self.put()
+        html = self.page()
+        self.assertNotIn('"checkpoint"', html)
+        self.assertNotIn("verb: 'checkpoint'", html)
+        self.assertNotIn("checkpoint", status.ZONE_VERBS)
+
+    def test_recent_work_orders_by_the_later_of_updated_and_the_checkpoint(self):
+        self.updated("Birch Entry", "Market Sizing", "2026-03-20")
+        self.assertEqual(["Market Sizing", "Pricing"], self.recent(self.page()))
+        self.put(at="2026-03-25T14:32:10+01:00")                    # unwrapped work since that wrap
+        self.assertEqual(["Pricing", "Market Sizing"], self.recent(self.page()))
+
+    def test_the_days_figure_stays_the_days_since_the_note_moved(self):
+        self.put(at="2026-03-25T14:32:10+01:00")
+        row = status.threads(self.root)["Work"]["rows"]
+        pricing = next(r for r in row if r["thread"] == "Pricing")
+        self.assertEqual(dt.date(2026, 3, 1), pricing["updated"])
+        self.assertEqual(dt.date(2026, 3, 25), pricing["touched"])
+
+    def test_a_block_that_cannot_be_read_still_carries_its_time(self):
+        note = self.put()
+        note.write_text(note.read_text(encoding="utf-8").replace("dropping tier three", "dropping tier two"),
+                        encoding="utf-8")
+        html = self.page()
+        self.assertIn("unwrapped since 14:32", html)        # the comment line is all the page reads
+        self.assertNotIn("dropping tier two", html)
+
+    def test_without_the_workspaces_own_library_the_time_still_shows(self):
+        self.put(base="0" * 12)
+        (self.root / "System" / "tools" / "garrick_lib.py").unlink()
+        status._LIBS.clear()
+        html = self.page()
+        self.assertIn("unwrapped since 14:32", html)        # true either way
+        self.assertNotIn("checkpoint out of date", html)    # the second claim would be a guess
+
+    def test_a_thread_with_no_checkpoint_has_no_chip(self):
+        html = self.page()
+        self.assertNotIn("unwrapped since", html)
+        self.assertNotIn("checkpoint out of date", html)
+        self.assertIsNone(status.checkpoint_mark(self.note(), self.root))
 
 
 class TestSelfContained(StatusCase):

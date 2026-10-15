@@ -43,6 +43,22 @@ def key(line):
     return hashlib.sha1(line.rstrip().encode("utf-8")).hexdigest()[:16]
 
 
+def same_action(line):
+    """What `add()` compares to refuse a line the list already holds: the
+    label and the tags, since a line against another thread or carrying
+    another tag is another action; and the text, read as it would be heard:
+    one space between words, no case, no trailing stop. The Tasks fields are
+    left out, because a date says when to do a thing and not what to do, and
+    so are the `· [src]` and `(also in …)` the todo skill writes, which say
+    where it came from. The todo skill's rule is that two lines are the same
+    action when they share the thread, the person and the thing to deliver,
+    whatever the wording; this is as near to that as a comparison gets."""
+    body = line[6:] if line.startswith(("- [ ] ", "- [x] ")) else line
+    body = ALSO.sub("", SRC.sub("", body))
+    body = DATE.sub("", PRIORITY.sub("", body))
+    return re.sub(r"\s+", " ", body).strip().rstrip(".!").casefold()
+
+
 def fields_last(line):
     """Priority and date fields to the end, in their order, priority first."""
     prio = [m.group(1) for m in PRIORITY.finditer(line)]
@@ -291,8 +307,11 @@ def add(zone_dir, text, label=None, date=None, today=None):
     """A new open line in the zone's Todo.md: `- [ ] [[label]]: text`, with
     `📅` for its date, or `⏳` on a `#waiting` line. With no date it goes to
     the top of the Inbox; with one, where set_date would send it, so a dated
-    line is triaged already. A line already in the list is refused rather
-    than written twice. Returns (the line, its section, its key)."""
+    line is triaged already. A line the list already holds is refused rather
+    than written twice: `same_action()` says which those are, so a repeat
+    worded again, with another date, another spacing or another case, is refused
+    as the same line, and not only one typed out character for character.
+    Returns (the line, its section, its key)."""
     text = re.sub(r"\s+", " ", text or "").strip()
     text = re.sub(r"^-\s*\[[ xX]\]\s*", "", text)
     if not text:
@@ -306,7 +325,8 @@ def add(zone_dir, text, label=None, date=None, today=None):
         lines = _load(path)
     except OSError:
         raise NotFound
-    if any(l.rstrip() == line for l in lines):
+    mine = same_action(line)
+    if any(l.startswith("- [ ] ") and same_action(l) == mine for l in lines):
         raise ValueError("that line is already in the list")
     section = section_for(date, waiting, today) if date else "Inbox"
     try:

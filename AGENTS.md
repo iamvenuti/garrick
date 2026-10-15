@@ -61,4 +61,5 @@ To add it to a release already published, `gh release upload v0.25.0 /tmp/garric
 - **Harness-neutral.** Nothing in `template/` depends on one assistant. The entry point is `AGENTS.md`. The only per-assistant pieces are the skill links the installer makes (`.claude/skills`, `.agents/skills`); keep it that way.
 - **Fixed three levels.** Zone, project, thread. Do not add a configurable depth: the voice grammar depends on it.
 - **A rule a machine can check gets a check** in the same commit, once the checker exists.
+- **A test never reads this Mac.** A test that asserts what the page offers, or what a launcher says, builds its own app bundles and sets its own card fields. Anything that consults the machine passes on one and fails on another.
 - **Voice is a design constraint, not a feature.** Any name, prompt or reply format added here has to work when spoken and when heard.

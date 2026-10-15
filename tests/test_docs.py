@@ -13,7 +13,9 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -200,6 +202,35 @@ class LatestReleaseTest(unittest.TestCase):
 
 DISCUSSIONS = "https://github.com/iamvenuti/garrick/discussions"
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
+WORDS = {n: w for n, w in enumerate(
+    "no one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+class HarnessTableTest(unittest.TestCase):
+    """What has been tested in each assistant is a record of runs made on a version,
+    so it goes stale on its own. The one number on the page that is not a record is
+    how many skills ship: it is read off the folder here, so the page cannot keep
+    claiming an older count."""
+
+    def setUp(self):
+        self.text = (REPO / "docs" / "harnesses.md").read_text(encoding="utf-8")
+        self.skills = sorted(p.name for p in (REPO / "template" / "System" / "skills").iterdir()
+                             if p.is_dir() and not p.name.startswith("."))
+
+    def test_the_page_says_how_many_skills_ship_now(self):
+        self.assertTrue(self.skills)
+        word = WORDS[len(self.skills)]
+        self.assertIn("%s skills ship now" % word.capitalize(), self.text,
+                      "%d skills ship; the page claims another count" % len(self.skills))
+        row = [l for l in self.text.splitlines() if l.startswith("| Finds the skills |")]
+        self.assertEqual(1, len(row), row)
+        self.assertEqual(2, row[0].count("%s ship now" % word), row[0])
+
+    def test_no_row_claims_a_count_that_has_moved_on(self):
+        """A row that named the count it had not been rechecked with was the way this
+        went stale: the count belongs to the sentence that reads it off the folder."""
+        for stale in ("rechecked with five", "rechecked with four", "all four skills", "all five skills"):
+            self.assertNotIn(stale, self.text, stale)
 
 
 class FeedbackTest(unittest.TestCase):
@@ -232,3 +263,93 @@ class FeedbackTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def guide_module():
+    """extras/status/guide.py, whose renderer draws the docs in the Garrick App's Guide tab."""
+    spec = importlib.util.spec_from_file_location("garrick_guide", REPO / "extras" / "status" / "guide.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+GUIDE = guide_module()
+
+
+def anchors(path: Path) -> set:
+    """The heading anchors a Markdown page has, made as GitHub and the Guide make them."""
+    seen = {}
+
+    def anchor(level, text):
+        s = GUIDE.slug(text)
+        k = seen.get(s, 0)
+        seen[s] = k + 1
+        return s if not k else "%s-%d" % (s, k)
+    r = GUIDE.Renderer(anchor=anchor)
+    r.render(path.read_text(encoding="utf-8"))
+    return {hid for _, hid, _ in r.headings}
+
+
+def links(text: str):
+    """(line, target) for every link and image in a page, leaving out code."""
+    fenced = False
+    for n, line in enumerate(text.splitlines(), 1):
+        if GUIDE.FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        bare = GUIDE.CODE.sub("", line)
+        for m in GUIDE.IMAGE.finditer(bare):
+            yield n, m.group(2)
+        for m in GUIDE.LINK.finditer(GUIDE.IMAGE.sub("", bare)):
+            yield n, m.group(2)
+
+
+def broken_links(page: Path, root: Path = REPO) -> list:
+    """Each relative link or anchor in `page` that leads nowhere in the repository."""
+    found, cache = [], {}
+
+    def heads(path):
+        if path not in cache:
+            cache[path] = anchors(path)
+        return cache[path]
+    for n, target in links(page.read_text(encoding="utf-8")):
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            continue                                         # https:, mailto: and the like
+        path, _, fragment = target.partition("#")
+        dest = (page.parent / urllib.parse.unquote(path)).resolve() if path else page
+        where = "%s:%d: %s" % (page.relative_to(root).as_posix(), n, target)
+        if root.resolve() not in dest.parents and dest != root.resolve():
+            found.append(where + " leaves the repository")
+        elif not dest.exists():
+            found.append(where + " leads to no file")
+        elif fragment and dest.suffix == ".md" and fragment not in heads(dest):
+            found.append(where + " names no heading there")
+    return found
+
+
+class LinkTest(unittest.TestCase):
+    """#133: every relative link in docs/ and the README resolves, anchors included,
+    since the Guide turns each into an anchor on the page and a broken one goes nowhere."""
+
+    def test_every_link_and_anchor_resolves(self):
+        pages = sorted((REPO / "docs").rglob("*.md")) + [REPO / "README.md"]
+        self.assertGreater(len(pages), 20)
+        problems = [p for page in pages for p in broken_links(page)]
+        self.assertEqual([], problems)
+
+    def test_a_broken_link_or_anchor_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "docs").mkdir()
+            (root / "docs" / "a.md").write_text("# A\n\n## Here\n\nSee [b](b.md) and [here](#here).\n")
+            page = root / "docs" / "b.md"
+            page.write_text("# B\n\n[gone](missing.md), [nowhere](a.md#there), [here](#nope), [fine](a.md#here), "
+                            "[out](../../outside.md) and `[code](not-a-link.md)`.\n")
+            found = broken_links(page, root)
+        self.assertEqual(4, len(found), found)
+        self.assertTrue(any("missing.md leads to no file" in f for f in found))
+        self.assertTrue(any("a.md#there names no heading" in f for f in found))
+        self.assertTrue(any("#nope names no heading" in f for f in found))
+        self.assertTrue(any("leaves the repository" in f for f in found))

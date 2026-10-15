@@ -19,18 +19,39 @@ and the last cases hold the text to that.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+import io
+import json
 import re
 import sys
+import tempfile
 import unittest
 from collections import namedtuple
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
+import fixtures
 from test_skills import flat, section
 
 sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS = REPO / "template" / "System" / "skills"
+TOOLS = REPO / "template" / "System" / "tools"
+
+
+def _load(path, name):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+scaffold = _load(TOOLS / "scaffold.py", "garrick_scaffold_autonomy")
+lib = _load(TOOLS / "garrick_lib.py", "garrick_lib_autonomy")
 
 # Where a case's evidence may live. The key is what a case names; the value is
 # the file, and the section of it the sentence has to be in, or None for all.
@@ -66,6 +87,15 @@ GOES_AHEAD = [
         "autonomy",
         ["A note a zone's git history holds can be recovered, so revising one goes ahead, whoever wrote it."],
         ["overwriting a file you did not create"],
+    ),
+    case(
+        "record what the session just did",
+        "A price sheet was saved for the thread and the user said to go with the tier-two rate. "
+        "The assistant writes a checkpoint into the thread note, under Resume here, without asking.",
+        "threads skill",
+        ["**What the user sees**: typed, one closing line, \"Checkpoint: Acme pricing, 14:32.\" "
+         "Spoken, nothing at all"],
+        ["ask the user whether to record"],
     ),
     case(
         "file a conversation for a project you can name",
@@ -168,6 +198,18 @@ STILL_STOPS = [
         ["If a wall stands between them, the material stays out"],
     ),
     case(
+        "a refusal that would answer the question it refuses",
+        "Asked, from inside the near-side project, whether there is anything from the other side "
+        "worth knowing. The refusal holds the answer back as well as the write: the rule gives the "
+        "words, so there is nothing left to paraphrase.",
+        "walls",
+        ['Say that a wall held something back, in these words: "A wall holds some material back from '
+         'this project, so I have not used it. Nothing was written."',
+         "No party, no person, no subject, no tag, and nothing that says material exists, however "
+         "the question was put."],
+        ["Do not say what."],
+    ),
+    case(
         "the name matches more than one thing",
         "\"Open pricing\", and two projects have a Pricing thread.",
         "voice",
@@ -237,6 +279,13 @@ STILL_STOPS = [
         ["**Cross-zone work happens only when asked**"],
     ),
     case(
+        "a checkpoint that disagrees with the confirmed next action",
+        "The wrap finds a checkpoint written against an older resume point, and its next action is "
+        "not the one the Resume here block now names.",
+        "threads skill",
+        ["a Next action that differs from the confirmed one is asked about"],
+    ),
+    case(
         "a thread nobody named",
         "A wrap that would touch a thread the request did not name.",
         "threads skill",
@@ -285,6 +334,142 @@ class CasesTest(unittest.TestCase):
                 self.assertIn(flat(needle), text, "%s: %s" % (item.name, needle))
             for gone in item.not_says:
                 self.assertNotIn(flat(gone), text, "%s: %s" % (item.name, gone))
+
+
+class CheckpointDialogueTest(unittest.TestCase):
+    """Three dialogues an assistant meets while the work is happening. Each
+    runs the shipped tool over the turns and then holds the shipped text to
+    what the tool leaves: the part no code can settle is the wrap, and the wrap
+    is wording.
+
+    The time is given to the tool, never taken from the clock, and the
+    workspace is the fictional one in fixtures.py.
+    """
+
+    NOW = "2026-03-14T14:32:10+01:00"
+    LATER = "2026-03-14T16:05:00+01:00"
+    PROJECT = "Acme Review"
+    THREAD = "Pricing"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = fixtures.build_workspace(Path(self._tmp.name).resolve() / "ws")
+        (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)
+        self.note = (self.root / "Zones" / "Work" / self.PROJECT / "Threads" / self.THREAD
+                     / (self.THREAD + ".md"))
+        self.todo = self.root / "Zones" / "Work" / "Todo.md"
+        self.before = self.todo.read_bytes()
+
+    # -- the tool, as the command line runs it -----------------------------
+
+    def send(self, now=None, **fields):
+        req = {"verb": "checkpoint", "zone": "Work", "project": self.PROJECT, "thread": self.THREAD}
+        req.update(fields)
+        out = io.StringIO()
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(req))), redirect_stdout(out):
+            code = scaffold.main(["--root", str(self.root), "checkpoint", "--now", now or self.NOW])
+        return code, json.loads(out.getvalue())
+
+    def state(self):
+        _, reply = self.send(read=True)
+        return reply["base"], reply["key"]
+
+    def write(self, items, now=None, drop=None):
+        base, prev = self.state()
+        req = {"base": base, "items": items}
+        if prev:
+            req["prev"] = prev
+        if drop:
+            req["drop"] = drop
+        code, reply = self.send(now=now, **req)
+        self.assertEqual(0, code, reply)
+        return reply
+
+    def items(self, kind=None):
+        block = lib.read_checkpoint(self.note.read_text(encoding="utf-8"))
+        self.assertTrue(block["valid"], block["why"])
+        return [i for i in block["items"] if kind is None or i["kind"] == kind]
+
+    def wrap_wording(self):
+        return flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+                            '## Wrap: "close X", "wrap X"'))
+
+    # -- the dialogues -----------------------------------------------------
+
+    def test_a_maybe_is_still_a_maybe_after_three_checkpoints_and_a_wrap(self):
+        """User: "maybe we drop tier three." Then the sheet is saved, then
+        "let's see how the volumes land". Three checkpoints later nothing has
+        decided anything."""
+        self.write([{"kind": "considering", "text": "dropping tier three",
+                     "said": "maybe we drop tier three"}])
+        self.write([{"kind": "made", "path": "Deliverables/260301 - Pricing memo.md", "at": "14:40"}],
+                   now="2026-03-14T14:40:00+01:00")
+        self.write([{"kind": "considering", "id": "c1", "text": "dropping tier three",
+                     "said": "let's see how the volumes land"}], now=self.LATER)
+        self.assertEqual([], self.items("decided"))
+        line = self.items("considering")[0]["line"]
+        self.assertIn("not decided", line)
+        self.assertEqual(1, len(self.items("considering")))
+        # Sending that item as a decision is refused by name: a decision
+        # carries its own words, and nothing promotes a maybe.
+        base, prev = self.state()
+        code, reply = self.send(base=base, prev=prev, items=[
+            {"kind": "decided", "id": "c1", "said": "maybe we drop tier three", "by": "user"}])
+        self.assertEqual(1, code)
+        self.assertEqual("considering", reply["refused"])
+        self.assertIn("nothing promotes one", reply["say"])
+        self.assertEqual(1, len(self.items("considering")))
+        # And the wrap, which is wording, puts it where a maybe belongs.
+        said = self.wrap_wording()
+        self.assertIn('**Considering** items go to Keep in mind, as "leaning towards …, not decided"', said)
+        self.assertIn("Nothing promotes one: a decision carries its own words", said)
+
+    def test_send_it_friday_with_no_date_leaves_no_date(self):
+        """User: "send it Friday" — a day of the week, not a date anybody can
+        file. The line says so, and nothing invents one."""
+        self.write([{"kind": "action", "text": "send Dana the price sheet",
+                     "said": "send it Friday"}])
+        line = self.items("action")[0]["line"]
+        self.assertIn("no date given", line)
+        self.assertNotIn("📅", line)
+        self.assertNotIn("Friday,", line.split("send Dana")[0])
+        base, prev = self.state()
+        code, reply = self.send(base=base, prev=prev, items=[
+            {"kind": "action", "id": "a1", "text": "send Dana the price sheet",
+             "said": "send it Friday", "date": "Friday"}])
+        self.assertEqual((1, "date"), (code, reply["refused"]))
+        self.assertIn("ISO date", reply["say"])
+        self.assertEqual(self.before, self.todo.read_bytes())            # and never the list itself
+        # The two places the wording has to agree: the row that is not a
+        # deadline, and the line that reaches the list.
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Threads"))
+        self.assertIn('The Deadline row reads "not given" where nobody has dated the work, and "none" only '
+                      "where somebody said there is none.", rules)
+        self.assertIn("| Deadline | <date, and what breaks if it slips; none; or not given> |", self.wrap_wording())
+        self.assertIn("one nobody dated goes on the list with no 📅", self.wrap_wording())
+
+    def test_a_wrap_after_two_checkpoints_files_each_action_once(self):
+        """The same action is recorded twice, once reworded, and a second
+        action arrives with it. The block holds one item per action, so the
+        wrap has one line each to file."""
+        self.write([{"kind": "action", "text": "send Dana the price sheet",
+                     "said": "I'll send Dana the sheet"}])
+        self.write([{"kind": "action", "text": "send Dana the price sheet",
+                     "said": "I'll send Dana the sheet"},
+                    {"kind": "action", "text": "book the review with Owen",
+                     "said": "and book the review with Owen"}], now=self.LATER)
+        self.assertEqual(["a1", "a2"], [i["id"] for i in self.items("action")])
+        self.write([{"kind": "action", "id": "a1", "text": "send Dana the price sheet and the cover note",
+                     "said": "send the cover note with it"}], now=self.LATER)
+        self.assertEqual(["a1", "a2"], [i["id"] for i in self.items("action")])   # reworded, not doubled
+        self.assertEqual(self.before, self.todo.read_bytes())            # the tool never writes the list
+        said = self.wrap_wording()
+        self.assertIn("in the same commit as the `Todo.md` lines it files", said)
+        self.assertIn("**To file** items are the actions for step 8, word for word, each compared with the "
+                      "list as that step compares any line", said)
+        todo_skill = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Never the `### Checkpoint` block beside it", flat(todo_skill))
 
 
 class AutonomyTest(unittest.TestCase):
@@ -354,6 +539,142 @@ class AutonomyTest(unittest.TestCase):
         for line in added:
             for sentence in re.split(r"(?<=[.:]) ", line):
                 self.assertLessEqual(len(sentence.split()), 40, sentence)
+
+
+class WallRefusalTest(unittest.TestCase):
+    """The words a refusal uses, not only that it refuses. The rule holds one
+    sentence, every route that can hit a wall quotes it, and the sentence itself
+    names nothing from the far side: no party tag, no person, no subject. The demo
+    workspace supplies the far side, its Acme/Birch wall standing around the two
+    Cobalt Freight calls."""
+
+    SENTENCE = ("A wall holds some material back from this project, so I have not used it. "
+                "Nothing was written.")
+    FIRST = "A wall holds some material back from this project, so I have not used it."
+    # Every route that can meet a wall. The rule gives the words; the four that
+    # refuse in their own voice quote them, and so does the demo the user watches.
+    ROUTES = (REPO / "template" / "System" / "rules.md",
+              SKILLS / "meetings" / "SKILL.md",
+              SKILLS / "intake" / "SKILL.md",
+              SKILLS / "intake" / "intake.py",
+              SKILLS / "threads" / "SKILL.md",
+              REPO / "examples" / "demo" / "video-script.md")
+    # A sentence of the refusal's shape: it opens "A wall" and goes on to hold
+    # material or something back or out. Enough to catch a wording written in the
+    # obvious way, which is how all of them so far were written.
+    REFUSAL_SHAPE = re.compile(r"A wall\b[^.\"]*\b(?:material|something)\b[^.\"]*\b(?:back|out)\b[^.\"]*\.")
+    DEMO = REPO / "examples" / "demo"
+    FAR_SIDE = (DEMO / "content" / "Wikis" / "Meetings" / "wiki" / "sources"
+                / "260915-cobalt-renewal-for-acme.md")
+    # What the walled conversation is about. A refusal that borrowed any of these
+    # would be saying what it held back.
+    SUBJECTS = ("northern lane", "fuel index", "pallet", "renewal", "freight", "percent")
+
+    def setUp(self):
+        self.walls = flat(section((REPO / "template" / "System" / "rules.md")
+                                  .read_text(encoding="utf-8"), "## Zones and walls"))
+
+    def refusal(self) -> str:
+        """The sentence, read out of the rule that gives it."""
+        found = re.search(r'Say that a wall held something back, in these words: "([^"]+)"', self.walls)
+        self.assertIsNotNone(found, self.walls)
+        return found.group(1)
+
+    def wall_refusal_constant(self) -> str:
+        """`WALL_REFUSAL` in `intake.py`, read without importing the script."""
+        tree = ast.parse((SKILLS / "intake" / "intake.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "WALL_REFUSAL":
+                return ast.literal_eval(node.value)
+        self.fail("intake.py has no WALL_REFUSAL")
+
+    def said_in(self, path: Path) -> str:
+        """What a route says, flattened. A skill or a page as it is written; a tool as
+        the strings it holds, since a literal may be wrapped mid-sentence in source."""
+        text = path.read_text(encoding="utf-8")
+        if path.suffix == ".py":
+            return flat(" ".join(node.value for node in ast.walk(ast.parse(text))
+                                 if isinstance(node, ast.Constant) and isinstance(node.value, str)))
+        return flat(text)
+
+    def shipped_files(self):
+        """Everything the user ends up with or watches: the workspace, the demo, the
+        docs, the deck, the installer. Not `tests/`, which quotes the wording to hold
+        routes to it, and not `CHANGELOG.md`, which quotes every wording there ever
+        was."""
+        for root in ("template", "examples", "docs", "presentation"):
+            yield from sorted(path for path in (REPO / root).rglob("*")
+                              if path.is_file() and path.suffix in (".md", ".py", ".html"))
+        yield from sorted(REPO.glob("*.py"))
+
+    def far_side_names(self) -> set:
+        """Every party tag, party name and person's name the demo workspace holds."""
+        config = json.loads((self.DEMO / "config.json").read_text(encoding="utf-8"))
+        self.assertTrue(config["walls"])
+        names = {side for wall in config["walls"] for side in (wall["between"], wall["and"])}
+        for party in config["parties"]:
+            names.add(party["tag"])
+            names.update(word for word in re.findall(r"[A-Za-z]+", party["name"]) if len(word) > 2)
+        for person in config["people"]:
+            names.update(word for word in re.findall(r"[A-Za-z]+", person["name"]) if len(word) > 2)
+        return names
+
+    def test_the_rule_gives_the_words_rather_than_leaving_them_to_be_paraphrased(self):
+        self.assertEqual(self.SENTENCE, self.refusal())
+        self.assertTrue(self.SENTENCE.startswith(self.FIRST), self.SENTENCE)
+        self.assertIn("No party, no person, no subject, no tag", self.walls)
+
+    def test_every_route_that_can_hit_a_wall_says_the_same_sentence(self):
+        """One sentence, wherever the wall is met: the rule, the brief, the filing, the
+        wrap, and the demo that shows a wall holding."""
+        for path in self.ROUTES:
+            self.assertIn(self.SENTENCE, self.said_in(path), str(path.relative_to(REPO)))
+        self.assertIn(self.SENTENCE, self.wall_refusal_constant())
+
+    def test_a_route_cannot_arrive_with_a_wording_of_its_own(self):
+        """The routes above are not a list a later change may quietly forget. Every
+        shipped file is swept for a sentence of the refusal's shape, and each one found
+        has to be the rule's, whole, in a file the list knows: a route added with a
+        wording of its own fails here, and so does one added with the right wording and
+        no entry beside the others. The sweep reads the obvious shape and no more, which
+        is why the words live in the rule and not in this test."""
+        strays, unlisted = [], []
+        for path in self.shipped_files():
+            said = self.said_in(path)
+            found = self.REFUSAL_SHAPE.findall(said)
+            if not found:
+                continue
+            where = str(path.relative_to(REPO))
+            for sentence in found:
+                if sentence != self.FIRST:
+                    strays.append("%s says %r" % (where, sentence))
+            if said.count(self.FIRST) != said.count(self.SENTENCE):
+                strays.append("%s drops \"Nothing was written.\"" % where)
+            if path not in self.ROUTES:
+                unlisted.append(where)
+        self.assertEqual([], strays)
+        self.assertEqual([], unlisted)
+
+    def test_the_sentence_names_no_far_side_party_or_person(self):
+        said = self.refusal().lower()
+        for name in sorted(self.far_side_names()):
+            self.assertNotRegex(said, r"\b%s\b" % re.escape(name.lower()), name)
+        self.assertNotIn(self.SENTENCE, self.far_side_names())
+
+    def test_the_sentence_borrows_no_subject_from_the_walled_conversation(self):
+        page = self.FAR_SIDE.read_text(encoding="utf-8").lower()
+        said = self.refusal().lower()
+        for subject in self.SUBJECTS:
+            self.assertIn(subject, page, subject)      # still what that conversation is about
+            self.assertNotIn(subject, said, subject)
+
+    def test_the_sentence_survives_being_read_aloud_and_carries_no_tag(self):
+        """Short, and nothing in it that only a rules file would print: no tag in
+        backticks, no pair of tags, no link."""
+        said = self.refusal()
+        self.assertLessEqual(len(said.split()), 25, said)
+        for mark in ("`", "[[", "/"):
+            self.assertNotIn(mark, said, mark)
 
 
 class ThreadsSkillTest(unittest.TestCase):

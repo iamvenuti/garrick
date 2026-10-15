@@ -47,6 +47,12 @@ actions, and a workspace with none gets no card for them.
 A zone given a colour or an icon in Settings › Zones shows them wherever
 the page names it.
 
+**The Guide tab** shows Garrick's own docs: the copy in System/garrick-docs/
+that the installer and every update put there, drawn by guide.py beside this
+file. A link between two pages stays on the page, a link into Garrick's own
+files opens on GitHub at the release the workspace runs, and the pages cost
+the other tabs nothing until the Guide is opened.
+
 The buttons that act are carried out by page_action.py beside this file, for
 the Mac app and the Obsidian plugin. Preview features (FLAGS) stay off until
 System/garrick-flags.json switches them on. With the cmux extra beside this folder
@@ -451,11 +457,75 @@ def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
     return False, None
 
 
+# The checkpoint beside a resume point: `### Checkpoint` under Resume here,
+# what a session recorded as the work happened and has not wrapped yet. Only
+# its comment line is read here, which carries when it was written and the
+# hash of the resume point it was written against; no content of the block
+# reaches the page, as resume_point() promises of the block above it. The page
+# gets no button either: confirming a checkpoint is a wrap, and a wrap needs an
+# assistant that knows the session.
+CHECKPOINT_MARK = re.compile(r"(?m)^<!--[ \t]*garrick-checkpoint[ \t]([^\n]*?)-->[ \t]*$")
+CHECKPOINT_FIELD = re.compile(r"(\w+)=(\S+)")
+MONTH_NAMES = tuple(m.capitalize() for m in sorted(MONTH, key=MONTH.get))
+
+
+def checkpoint_mark(note: Path, ws: Optional[Path]) -> Optional[dict]:
+    """The unwrapped checkpoint in a note, as its comment line carries it:
+    `at`, when it was written, `said` and `full`, that time short and long, and
+    `stale`, whether the resume point has moved since. None where the note has
+    no checkpoint. Stale needs the workspace's own `resume_hash`, so without
+    `garrick_lib.py` a block reads as current: the time it carries is true
+    either way, and only the second claim would be a guess."""
+    try:
+        body = note.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = CHECKPOINT_MARK.search(body)
+    if m is None:
+        return None
+    fields = dict(CHECKPOINT_FIELD.findall(m.group(1)))
+    try:
+        when = dt.datetime.fromisoformat(fields.get("at") or "")
+    except ValueError:
+        when = None
+    lib = workspace_lib(ws)
+    base = None
+    if lib is not None and callable(getattr(lib, "resume_hash", None)):
+        try:
+            base = lib.resume_hash(body)
+        except Exception:
+            base = None
+    said = "%02d:%02d" % (when.hour, when.minute) if when else "an unreadable time"
+    full = "%s on %d %s %d" % (said, when.day, MONTH_NAMES[when.month - 1], when.year) if when else said
+    return {"at": when, "said": said, "full": full,
+            "stale": bool(base and fields.get("base") and fields["base"] != base)}
+
+
+def checkpoint_chip(r: dict) -> str:
+    """A thread's unwrapped checkpoint as a pill: when it was written, or that
+    it is out of date where the resume point has moved since. Not coloured for
+    trouble: a checkpoint is work recorded, and what marks a thread on this
+    page is its own next action."""
+    mark = r.get("checkpoint")
+    if not mark:
+        return ""
+    if mark["stale"]:
+        return '<span class="chip" title="%s">checkpoint out of date</span>' % E(
+            "Its checkpoint from %s was written against an older resume point, so a wrap has left it behind: "
+            "read it, do not resume from it" % mark["full"])
+    return '<span class="chip" title="%s">unwrapped since %s</span>' % (
+        E("Work this session recorded at %s and no wrap has folded in yet. Open the thread to read it: "
+          "only a wrap confirms it" % mark["full"]), E(mark["said"]))
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
     note was last updated, read from frontmatter like "what's open"; and
     whether the note has a Resume here block, with that block's own date
-    (resume_point). A project
+    (resume_point), and its unwrapped checkpoint read from the comment line
+    alone (checkpoint_mark), with `touched`, the later of `updated:` and that
+    checkpoint's day: this afternoon's unwrapped work is newer than the last
+    wrap, and the views that order by what moved last say so. A project
     with no thread note is its own single thread, read from its hub, as in a
     workspace laid out before Garrick gave every project a Threads/ folder.
     A project whose hub says parked holds every live thread in it parked
@@ -484,11 +554,15 @@ def threads(ws: Path) -> Dict[str, dict]:
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
                 has_block, resumed = resume_point(note)
+                mark = checkpoint_mark(note, ws)
+                updated = as_date(fm.get("updated"))
+                when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
                 row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
                        "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
                        "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": as_date(fm.get("updated")), "status": state,
-                       "resume": has_block, "resumed": resumed}
+                       "updated": updated, "status": state,
+                       "resume": has_block, "resumed": resumed,
+                       "checkpoint": mark, "touched": max(when) if when else None}
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
@@ -777,6 +851,32 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
               else "Read from the notes. A preview feature."))
     dialog = add_dialog("".join(add_tree(z["zone"], (projects or {}).get(z["zone"], [])) for z in lists)) if actions else ""
     return '<div id="todolist" class="todotab%s">%s%s%s</div>' % ("" if actions else " ro", bar, panes, dialog)
+
+
+_GD = None
+
+
+def guide_mod():
+    """guide.py, beside this file: the Markdown renderer, and the Guide tab's pages."""
+    global _GD
+    if _GD is None:
+        spec = importlib.util.spec_from_file_location("garrick_guide", str(Path(__file__).with_name("guide.py")))
+        _GD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GD)
+    return _GD
+
+
+def guide_tab(ws: Path) -> Tuple[str, str]:
+    """The Guide tab: the docs this workspace was installed with, in System/garrick-docs/,
+    its links to Garrick's own files pointing at the release it runs. (The tab's body,
+    the pages that wait at the end of the page until it opens.)"""
+    gd = guide_mod()
+    try:
+        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        text = None
+    ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
+    return gd.guide(ws.joinpath(*gd.DOCS), ref)
 
 
 _EF = None
@@ -2739,38 +2839,13 @@ def changelog_sections(text: str) -> List[Tuple[str, str, List[str]]]:
 
 
 def md_inline(s: str) -> str:
-    s = E(s)
-    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
-    s = re.sub(r"(?<![\w*])\*([^*]+)\*(?![\w*])", r"<i>\1</i>", s)
-    s = re.sub(r"\[\[([^\]|]*\|)?([^\]]*)\]\]", lambda m: m.group(2).rsplit("/", 1)[-1], s)   # [[a/b|c]] reads c, [[a/b]] reads b
-    return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)        # a link keeps its text: the page links only to Garrick
+    """A line of Markdown, through guide.py's renderer: a link keeps its text, since the page links only to Garrick."""
+    return guide_mod().inline(s)
 
 
 def md_block(lines: List[str]) -> str:
-    """The little Markdown a changelog uses: headings, paragraphs, bullets."""
-    out: List[str] = []
-    in_list = False
-    for line in lines:
-        if line.startswith("- "):
-            if not in_list:
-                out.append("<ul>")
-                in_list = True
-            out.append("<li>%s</li>" % md_inline(line[2:]))
-            continue
-        if in_list and line.startswith("  ") and line.strip():
-            out[-1] = out[-1][:-5] + " " + md_inline(line.strip()) + "</li>"
-            continue
-        if in_list:
-            out.append("</ul>")
-            in_list = False
-        if line.startswith("### "):
-            out.append("<h5>%s</h5>" % md_inline(line[4:]))
-        elif line.strip():
-            out.append("<p>%s</p>" % md_inline(line))
-    if in_list:
-        out.append("</ul>")
-    return "".join(out)
+    """A changelog section, through guide.py's renderer: its ### headings drawn as <h5>, its links as their text."""
+    return guide_mod().blocks("\n".join(lines), shift=2)
 
 
 def release_notes(text: Optional[str], edge: bool = False) -> str:
@@ -3258,10 +3333,12 @@ def thread_where(r: dict, styles: Dict[str, dict]) -> str:
 
 def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[str, dict]) -> str:
     """The threads whose notes moved last, each with its next action beside it
-    and how long since it was touched. Parked and finished work stays out, as
+    and how long since it was touched. The order is `touched`, the later of
+    `updated:` and an unwrapped checkpoint's day, so work recorded this
+    afternoon and not yet wrapped leads. Parked and finished work stays out, as
     it stays out of the counts."""
     rows = [r for z in T.values() for r in z["rows"]]
-    rows.sort(key=lambda r: (r["updated"] is None, -(r["updated"].toordinal() if r["updated"] else 0),
+    rows.sort(key=lambda r: (r.get("touched") is None, -(r["touched"].toordinal() if r.get("touched") else 0),
                              r["thread"].casefold()))
     body = ""
     for r in rows[:RECENT]:
@@ -3275,6 +3352,7 @@ def recent_card(T: Dict[str, dict], link: "Links", today: dt.date, styles: Dict[
         if r.get("flagged"):
             nxt += '<span class="chip late" title="The check reported %d finding%s against a file in this thread">check</span>' % (
                 r["flagged"], "" if r["flagged"] == 1 else "s")
+        nxt += checkpoint_chip(r)
         body += ('<div class="hrow" data-ok="%d"><div class="hname"><a href="%s">%s</a><small>%s</small></div>%s'
                  '<span class="num muted" title="Days since its note was last updated">%s</span></div>'
                  % (0 if r.get("urgent") else 1, E(link(r["note"])), E(r["thread"]), thread_where(r, styles), nxt,
@@ -3800,14 +3878,16 @@ document.querySelectorAll('.pchev').forEach(chev);
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
 window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
+if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount();       /* the Guide's pages go on the page the first time it opens */
 tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});document.body.dataset.tab=n;
 tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
 try{localStorage.setItem('garrick-tab',n)}catch(e){}window.dispatchEvent(new Event('resize'))};
 tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
 var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved||'overview');
-/* a sidebar link opens the tab its section is in, wherever the card has been moved */
+/* a sidebar link opens the tab its section is in, wherever the card has been moved; a link into
+   the Guide shows its page first (GUIDE_JS), so it never leaves the page in any host */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.getAttribute('href')==='#')return;
-var el=document.getElementById(a.getAttribute('href').slice(1)),sec=el&&el.closest('section.tab');if(!sec)return;
+var id=a.getAttribute('href').slice(1),el=(window.GarrickGuide&&GarrickGuide.reveal(id))||document.getElementById(id),sec=el&&el.closest('section.tab');if(!sec)return;
 StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
@@ -4418,7 +4498,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         # The party tags are the card's, not the row's: under a name they read as part of it.
         chips = "" if parked else (
             ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
-            + urgent_chip(r))
+            + checkpoint_chip(r) + urgent_chip(r))
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
@@ -4667,10 +4747,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           open_=False)
 
     todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
-    # Three tabs: Overview for where the work stands, Todo for the list, Status
-    # for the machinery behind it. Cards can be moved between Overview and
-    # Status from their headers, and Reset view puts them back. The figures at
-    # the top count the machinery's state, so they open the Status tab.
+    # Four tabs: Overview for where the work stands, Todo for the list, Status
+    # for the machinery behind it, and the Guide, Garrick's own docs. Cards can
+    # be moved between Overview and Status from their headers, and Reset view
+    # puts them back; the Guide holds no cards. The figures at the top count
+    # the machinery's state, so they open the Status tab.
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
@@ -4698,7 +4779,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
-            '<button type="button" role="tab" data-tab="status">Status%s</button></div>'
+            '<button type="button" role="tab" data-tab="status">Status%s</button>'
+            '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
@@ -4719,20 +4801,23 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     shared = shared_launchers(ws)
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
-            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
+    guide_body, guide_pages = guide_tab(ws)
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>%s'
+            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
+               section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
-    # and WORK_JS after both.
+    # and WORK_JS after both. The Guide's pages come last of all, after every
+    # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, WORK_JS, MENU_JS, GRAPH_JS if show_graph else ""]
+               MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
-            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
-                "".join("<script>%s</script>" % js for js in scripts if js)))
+            '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
+                "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 
 def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:

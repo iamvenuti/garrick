@@ -24,6 +24,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -204,6 +205,26 @@ class TestAdd(ActionCase):
         write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing"))
         self.add(text="Compare the two", target="Acme Review/Pricing")
         self.assertIn("- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]: Compare the two\n", (self.work / "Todo.md").read_text())
+
+    def test_a_repeat_is_refused_however_it_is_worded(self):
+        """#92: a request that comes a second time is written again from the
+        words, not copied, so the comparison cannot be the whole line. The
+        same thing to do on the same thread is the same line, whatever date
+        it carries and however it is spaced or capitalised; another thread,
+        or another tag, is another action."""
+        soon = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        self.assertEqual("Added to Inbox: Call Dana about the quote",
+                         self.add(text="Call Dana about the quote", target="Acme Review/Pricing"))
+        for req in ({"text": "Call Dana about the quote", "target": "Acme Review/Pricing"},
+                    {"text": "call Dana  about the quote.", "target": "Acme Review/Pricing"},
+                    {"text": "Call Dana about the quote", "target": "Acme Review/Pricing", "date": soon}):
+            with self.assertRaisesRegex(pa.Refused, "already in the list", msg=req):
+                self.add(**req)
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("Dana about the quote"))
+        self.assertEqual("Work: added to Inbox, Call Dana about the quote", self.last_commit()[0])
+        self.add(text="Call Dana about the quote", target="Acme Review")                    # another thread
+        self.add(text="Call Dana about the quote #waiting", target="Acme Review/Pricing")   # another tag
+        self.assertEqual(3, (self.work / "Todo.md").read_text().count("Dana about the quote"))
 
     def test_refusals_change_nothing(self):
         before = (self.work / "Todo.md").read_bytes()
@@ -962,6 +983,117 @@ Dana has it.
 | Waiting on | Dana |
 | Deadline | none |
 """
+
+
+class TestCheckpointAndTheStack(ActionCase):
+    """A hold rewrites Resume here without folding the checkpoint, because it
+    has to take thirty seconds, so it rebases the block instead: the same items
+    at the same time, against the block it just wrote. Back says one clause
+    more when one is waiting."""
+
+    AT = dt.datetime(2026, 10, 13, 14, 32)
+
+    def setUp(self):
+        super().setUp()
+        self.lib = pa.checkpoint_lib(self.root)
+        self.assertIsNotNone(self.lib, "the workspace's garrick_lib should carry the checkpoint primitives")
+
+    def put(self, **kw):
+        write(self.thread, fixtures.checkpoint(self.thread.read_text(), **kw))
+        git(self.work, "commit", "-qam", "a checkpoint")
+        return self.block()
+
+    def block(self):
+        return self.lib.read_checkpoint(self.thread.read_text())
+
+    def marked(self, text):
+        """The block from one marker to the other, and nothing around it."""
+        start, end = self.lib.checkpoint_span(text)
+        return text[start:end]
+
+    def stale(self):
+        text = self.thread.read_text()
+        return self.lib.read_checkpoint(text)["base"] != self.lib.resume_hash(text)
+
+    def hold(self, **answers):
+        answers.setdefault("where", "Halfway through the tier-two volumes")
+        answers.setdefault("next", "Fill in row 14 of the volume sheet")
+        return pa.act(self.root, dict(verb="interrupt", zone="Work", project="Acme Review",
+                                      thread="Pricing", **answers), now=self.AT)
+
+    def test_a_hold_rebases_the_checkpoint_instead_of_leaving_it_stale(self):
+        before = self.put()
+        self.assertTrue(before["valid"])
+        self.hold()
+        after = self.block()
+        self.assertTrue(after["valid"], after["why"])
+        self.assertEqual(before["at"], after["at"])                         # the same time it covers
+        self.assertEqual([i["line"] for i in before["items"]], [i["line"] for i in after["items"]])
+        self.assertNotEqual(before["base"], after["base"])                  # against the block just written
+        self.assertEqual(self.lib.resume_hash(self.thread.read_text()), after["base"])
+        self.assertFalse(self.stale())
+        self.assertIn("Interrupted 14:32", self.thread.read_text())
+        self.assertEqual(("Acme Review, Pricing: interrupted", ""), self.last_commit())
+
+    def test_the_hold_writes_the_rows_and_the_entry_around_it(self):
+        self.put()
+        self.hold(keep="Owen wants the lower rate")
+        text = self.thread.read_text()
+        self.assertLess(text.index("### Resume here"), text.index("### Checkpoint"))
+        self.assertIn("| Next action | Fill in row 14 of the volume sheet |", text)
+        self.assertIn("**13 October 2026.** Interrupted at 14:32.", text)   # below the rule, not in the block
+        self.assertLess(text.index("<!-- /garrick-checkpoint -->"), text.index("**13 October 2026.**"))
+        self.assertEqual(1, text.count("### Checkpoint"))
+
+    def test_a_block_edited_by_hand_is_left_exactly_as_it_is(self):
+        self.put()
+        write(self.thread, self.thread.read_text().replace("dropping tier three", "dropping tier two"))
+        git(self.work, "commit", "-qam", "a hand edit")
+        before = self.thread.read_text()
+        self.hold()
+        after = self.thread.read_text()
+        self.assertEqual(self.marked(before), self.marked(after))
+        self.assertFalse(self.block()["valid"])                             # reported, never rewritten
+
+    def test_a_thread_with_no_checkpoint_is_held_as_it_always_was(self):
+        self.assertEqual("Held Acme Review, Pricing at 14:32", self.hold())
+        self.assertIsNone(self.block())
+
+    def test_back_says_one_clause_more_when_a_checkpoint_is_waiting(self):
+        self.put()
+        self.hold(keep="Owen wants the lower rate")
+        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
+        self.assertTrue(said["say"].endswith("There's also an unwrapped checkpoint from 14:32."), said["say"])
+        self.assertEqual("14:32", said["checkpoint"])
+        self.assertIn("Keep in mind: Owen wants the lower rate.", said["say"])
+
+    def test_back_says_nothing_of_one_that_cannot_be_read_and_nothing_at_all_without_one(self):
+        self.hold()
+        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
+        self.assertNotIn("checkpoint", said["say"])
+        self.assertIsNone(said["checkpoint"])
+        self.put()
+        write(self.thread, self.thread.read_text().replace("dropping tier three", "dropping tier two"))
+        self.hold()
+        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
+        self.assertNotIn("checkpoint", said["say"])                         # never resumed from, so never offered
+        self.assertIsNone(said["checkpoint"])
+
+    def test_back_never_writes_the_note(self):
+        self.put()
+        self.hold()
+        before = self.thread.read_bytes()
+        pa.act(self.root, {"verb": "back"}, today=TODAY)
+        self.assertEqual(before, self.thread.read_bytes())
+
+    def test_without_the_library_the_hold_still_goes_through(self):
+        self.put()
+        with mock.patch.object(pa, "checkpoint_lib", lambda ws: None):
+            self.assertEqual("Held Acme Review, Pricing at 14:32", self.hold())
+            said = pa.act(self.root, {"verb": "back"}, today=TODAY)
+        self.assertNotIn("checkpoint", said["say"])
+        self.assertIn("Interrupted 14:32", self.thread.read_text())
+        self.assertTrue(self.stale())        # the resume point moved and nothing rebased the block
 
 
 class TestInterrupted(ActionCase):

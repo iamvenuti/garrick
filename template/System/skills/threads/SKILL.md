@@ -112,18 +112,35 @@ session touched several, ask which, naming them.
 1. Resolve X.
 2. Read that thread's `### Resume here` block. Nothing else: not the hub, not
    the working notes, not the dated entries, unless the user asks.
-3. Reply in two sentences: **where it stands**, then **the next action**. Fold
+3. **Read the checkpoint beside it**, the `### Checkpoint` block under Resume
+   here, with the tool rather than by eye, so both hashes are in hand from the
+   start:
+   ```sh
+   echo '{"verb": "checkpoint", "read": true, "zone": "Work", "project": "Acme", "thread": "Pricing"}' \
+     | python3 System/tools/scaffold.py checkpoint
+   ```
+   The reply gives `base`, `key`, the items with their ids, and one line to
+   say. There is usually none, and then there is nothing to add.
+4. Reply in two sentences: **where it stands**, then **the next action**. Fold
    in who it is waiting on when it is blocked, and the deadline when it is
    close. When **Keep in mind** says more than nothing, add it as a third
    sentence: it is what the user had in their head when they left.
-4. That thread is now the one in focus for this session: a later "wrap" with no
+   **A checkpoint adds one more sentence**, said as unconfirmed: what it
+   records has not been wrapped, and only what it has under Decided was
+   decided. Where the reply says it is stale or cannot be read, say that
+   instead and resume from Resume here: "a checkpoint from 14:32 predates the
+   last wrap; read it, don't resume from it."
+5. That thread is now the one in focus for this session: a later "wrap" with no
    name means it.
 
 Spoken: "Acme pricing: the price sheet went to Dana on Tuesday and we're waiting
 on her volumes. Next is the second draft once she replies, due Friday the 3rd."
+With a checkpoint: "Acme pricing: confirmed on Tuesday, waiting on Dana's
+volumes. Since then, not yet wrapped: the price sheet was saved at 14:20 and
+the next step is row 14 of the tier-two volumes."
 
 Written: the same two sentences, then the Resume here table as it stands in the
-note, and the note's path.
+note, then the checkpoint's own lines under its heading, and the note's path.
 
 **If the thread is done**, say so with its outcome in one sentence and ask
 whether to reopen it. Reopening sets `status: active` and writes a new Resume
@@ -140,10 +157,68 @@ did Pricing stand", "what's parked") reads it and leaves it parked.
 
 **If X names a zone** ("open Work"), treat it as "what's open in Work".
 
+## Checkpoint: as the work happens
+
+A wrap makes a thread resumable, and nothing but "wrap it" starts one. Most
+sessions end another way: a call, a closed lid, a crash, a context that ran
+out. A checkpoint is the small record written while the work is happening, so
+what the session produced survives either way. It sits in the thread note as a
+`### Checkpoint` block directly under Resume here, which it never touches, and
+the next wrap folds it in and removes it.
+
+**Three things fire one, and nothing else:**
+
+1. A file saved under the project's `Deliverables/`, or at the path the Live
+   artifact row names, in this session.
+2. The user stating a decision in words that decide: "we go with", "send it as
+   is", "drop tier three". A question, a "maybe" or a "let's see" is
+   *Considering*, which never becomes a decision on its own.
+3. The next action changing, by the user's words or because something saved
+   finished the old one.
+
+Not a clock, not every turn, and not because the user asked: "wrap it" and
+"hold this" stay their commands. Write it at the end of the turn where the
+event happened; one turn with three events makes one write. A long discussion
+with none of the three makes no checkpoint.
+
+**Write it with the tool**, which keeps the shape, the sources and the repeat
+test out of habit's hands. Send `base` and `prev` as the last read gave them:
+
+```sh
+python3 System/tools/scaffold.py checkpoint <<'EOF'
+{"verb": "checkpoint", "zone": "Work", "project": "Acme", "thread": "Pricing",
+ "base": "<base>", "prev": "<key, or leave the key out for the first>",
+ "items": [{"kind": "made", "path": "Deliverables/261015 - Price sheet.xlsx", "at": "14:20"},
+           {"kind": "decided", "said": "Go with the tier-two rate as drafted", "by": "user", "at": "14:25"},
+           {"kind": "considering", "text": "dropping tier three"},
+           {"kind": "next", "text": "fill in the tier-two volume on row 14", "by": "user"},
+           {"kind": "action", "text": "send Dana the price sheet", "said": "I'll send Dana the sheet"},
+           {"kind": "incomplete", "text": "the tier-three tab is half filled"}]}
+EOF
+```
+
+One item a thing, each with the source its kind needs: a `made` item its path,
+a `decided` item the words it was decided in and who said them, an `action` or
+a `deadline` an ISO date **only** where somebody gave one, and nothing where
+nobody did. An item is changed by sending its `id` again, and removed only
+under `drop`, so a second session cannot lose the first one's work. The tool
+refuses anything else in one line, which is the line to read: it never writes
+Resume here, never writes `Todo.md`, never commits, and carries no meeting
+material.
+
+**What the user sees**: typed, one closing line, "Checkpoint: Acme pricing,
+14:32." Spoken, nothing at all, because a sentence after every saved file gets
+in the way. Open and "where am I" mention it; the wrap settles it.
+
+**Where the tool is not there** (a workspace installed before it), say once
+that checkpoints are not available here, and that "wrap it" or "hold this"
+before leaving is what saves the place.
+
 ## List: "where am I", "what's open"
 
 1. List the live threads, most recently updated first (`updated:` in the
-   frontmatter; where two tie, the later commit to the note). Parked threads are
+   frontmatter, or an unwrapped checkpoint's own time where that is later;
+   where two tie, the later commit to the note). Parked threads are
    not live: leave them out, and end with how many are parked, if any.
    "What's parked" lists them instead, oldest first.
 2. "What's open in Work", "what's open for Acme": narrow to that zone, project
@@ -179,7 +254,30 @@ per wrap: the one named, and nothing else.
 4. **Run the wall check** (below) on anything from the Meetings wiki that the
    wrap would write into the note: quoted, paraphrased, summarised, or linked.
    That includes meeting material read earlier in this session.
-5. **Rewrite the Resume here block** so it describes now. Replace it; do not
+5. **Fold in the checkpoint**, if the note has one. Read it with
+   `{"verb": "checkpoint", "read": true, ...}`, then, in the one edit that
+   rewrites Resume here below, and in the same commit as the `Todo.md` lines
+   it files:
+   - **Made** items go to the Live artifact row where they are the artifact,
+     and into the dated entry either way;
+   - **Decided** items go into the dated entry with their quotes, said to
+     come from the checkpoint of 14:32;
+   - **Considering** items go to Keep in mind, as "leaning towards …, not
+     decided". Nothing promotes one: a decision carries its own words;
+   - the **Next action** becomes the row's, unless the user has since said
+     otherwise;
+   - **Incomplete** goes to Keep in mind, never to Where it stands as though
+     it were finished;
+   - **To file** items are the actions for step 8, word for word, each
+     compared with the list as that step compares any line; one nobody
+     dated goes on the list with no 📅, because no date is not a date;
+   - a **Deadline** goes to the Deadline row.
+   Then **remove the block**, heading and markers, in that same edit. A
+   checkpoint the reply calls stale or invalid is read and never resumed from:
+   show its items and ask in one line whether any still hold. Made and Decided
+   items carry their sources and fold without a question; a Next action that
+   differs from the confirmed one is asked about.
+6. **Rewrite the Resume here block** so it describes now. Replace it; do not
    append to it.
    ```markdown
    ### Resume here
@@ -194,12 +292,14 @@ per wrap: the one named, and nothing else.
    | Next action | <the single next thing, small enough to start in two minutes, and whose it is> |
    | Keep in mind | <what is only in your head: a decision half made and why, a doubt; or nothing> |
    | Waiting on | <who, or nobody> |
-   | Deadline | <date, and what breaks if it slips; or none> |
+   | Deadline | <date, and what breaks if it slips; none; or not given> |
    ```
-   Keep all six rows; a row that does not apply says "none" or "nobody". The
+   Keep all six rows; a row that does not apply says "none" or "nobody".
+   **Deadline has a third answer**: "not given", for a thread nobody has dated.
+   "None" claims there is no deadline, and nobody said that. The
    next action is one action, small enough to start in two minutes: "draft
    the pricing section" fails, "open the pricing sheet and fill in the
-   tier-two volume" passes. Anything more goes to `Todo.md` (step 7).
+   tier-two volume" passes. Anything more goes to `Todo.md` (step 8).
    **Keep in mind** holds what no file can tell a cold resume: the decision
    half made and which way you were leaning and why, a doubt about a figure,
    a thing noticed and not yet acted on. Write it from what was said in this
@@ -210,7 +310,7 @@ per wrap: the one named, and nothing else.
    **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
    end the moment it needs a change. Every path and link in the block must lead
    to something that exists now; `check.py` warns about one that does not.
-6. **Add a dated entry** directly below the `---` rule, above the earlier
+7. **Add a dated entry** directly below the `---` rule, above the earlier
    entries, so the newest is first:
    ```markdown
    **27 September 2026.** <One line on what the session did.> <What was decided
@@ -218,7 +318,7 @@ per wrap: the one named, and nothing else.
    they did not, marked as yours. What was left out on purpose, and why.>
    ```
    Never edit or compress earlier entries. They are the record.
-7. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
+8. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
    before editing. Append new actions for this thread under `## Inbox` as
    `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
    header gives, the dates last. Open the line with this thread's link, or
@@ -227,13 +327,20 @@ per wrap: the one named, and nothing else.
    finds its lines. A project in `System/` has no list of its own: its
    actions go in the `Todo.md` of the zone the user works from most, as the
    `todo` skill says.
+   **The example line goes with the first real action.** A list nobody has
+   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   it in the same edit that writes the first real line. It is a task like any
+   other, so anything that counts open actions counts it.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
    **A deliverable that left the workspace** in this session, copied to a
    shared folder: ask who edits it next. Colleagues who edit it: the shared
    copy counts from now on (`share`); nobody, or colleagues who only read
    it: the copy here does (`here`). Re-read `Deliverables/published.md`
-   (make it with the header row when there is none) and append one row,
+   (when there is none, copy `System/templates/published.md` to it unchanged,
+   and never write the explanation yourself: every project's ledger opens with
+   the same shipped words, so the wall check reads them as common wording
+   rather than one project quoting another) and append one row,
    `| YYYY-MM-DD | `<file>` | `<destination>` | <recipients> | share or here |`,
    the destination relative to the folder the hub names in `shared:`, or the
    folder it went into (`Decks/`) when it kept its name. The file is a path
@@ -250,10 +357,10 @@ per wrap: the one named, and nothing else.
    the newer one's row beside it. A file sent by mail rather than placed on
    a share gets a row too, dated `sent YYYY-MM-DD`. drift.py reads such a
    row and never compares it.
-8. **Set `updated:`** in the note's frontmatter to today.
-9. **Update the hub's `## Threads` line** only if the thread's purpose changed.
-   Re-read the hub first; change that one line.
-10. **Memory pointer.** If you, the assistant, keep a memory of your own, keep
+9. **Set `updated:`** in the note's frontmatter to today.
+10. **Update the hub's `## Threads` line** only if the thread's purpose changed.
+    Re-read the hub first; change that one line.
+11. **Memory pointer.** If you, the assistant, keep a memory of your own, keep
     one entry for this thread that says where its resume point is and nothing
     else: no status, no date, no summary.
     ```
@@ -262,7 +369,7 @@ per wrap: the one named, and nothing else.
     before anything else in the thread.
     ```
     Create it if missing, leave it if present. No memory, no step.
-11. **Commit in the zone's repository.** Stage by name only what this wrap
+12. **Commit in the zone's repository.** Stage by name only what this wrap
     touched and this thread's own changed files: the thread folder, the hub if
     edited, `Todo.md` if edited, and any `Deliverables/` or `Sources/` file this
     session made for the thread. Never `git add -A`.
@@ -274,7 +381,7 @@ per wrap: the one named, and nothing else.
     ```
     The message says what changed. One zone per commit. Never push: that leaves
     the machine and needs the user's yes.
-12. **Take it off the interruption stack** with `unstack`: a wrapped thread
+13. **Take it off the interruption stack** with `unstack`: a wrapped thread
     is not waiting for "back". Not on it, nothing changes.
 
 Spoken: "Acme pricing wrapped. Next is the second draft once Dana sends
@@ -311,11 +418,13 @@ wrap does.
    (a skipped Keep in mind stays as it was, or says `nothing` where the
    row was missing), leaves the other rows alone, sets `updated:`, adds the
    dated entry "Interrupted at 14:32, by <by>.", commits in the zone, and
-   puts the thread on top of the interruption stack (below). The thread
+   puts the thread on top of the interruption stack (below). A checkpoint
+   under the block is rebased onto what was just written, its items and its
+   time untouched, so a hold never makes one stale. The thread
    stays `status: active`: an interruption is not parking. When the zone's
    wall check refuses the commit, nothing is written; say so.
    **Without the status page extra** (no `System/status/page_action.py`),
-   make the same edit by hand and commit it as Wrap step 11 does. There is
+   make the same edit by hand and commit it as Wrap step 12 does. There is
    no stack then, so "back" offers the most recent thread instead.
 4. **Reply in one sentence**: "Acme pricing held. Say back when you're
    done." If what cut in is a thread of its own ("Birch renewal"), offer to
@@ -342,7 +451,9 @@ wrap does.
    the session there answers. Otherwise it is the thread in focus here.
 4. **Read the three lines back**, as the context to carry on from: where the
    user was, the next step, and Keep in mind when it says more than nothing.
-   Then name the next one still held, if any.
+   Where the reply carries a `checkpoint`, add one clause: "There's also an
+   unwrapped checkpoint from 14:32." Then name the next one still held, if
+   any.
 
 Spoken: "Back to Acme pricing. You were halfway through the tier-two volumes,
 and next is row 14. You weren't sure about the tier-two rate. Birch launch is
@@ -445,16 +556,21 @@ Closes a thread for good.
 5. **Hub:** re-read it, move the thread's line from `## Threads` to a
    `## Finished` section directly below it (create the section if missing),
    ending the line with the outcome in a few words.
-6. **Open actions:** if `Todo.md` still has unticked lines that name this
+6. **A checkpoint nobody folded in:** if the note still has a `### Checkpoint`
+   block, read it and ask in one line what to do with it, before the outcome is
+   written. Finishing over it would leave its To file actions on no list at
+   all. Fold what still holds into the outcome and the dated entry as Wrap step
+   5 does, then remove the block; drop the rest on the user's word.
+7. **Open actions:** if `Todo.md` still has unticked lines that name this
    thread (`Acme, Pricing`), name them and ask whether to tick, keep or drop
    them. Do not decide for the user.
-7. **Last thread in the project?** Ask whether the project is finished too. If
+8. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
-8. **Delete the memory pointer**, if there is one. A pointer that outlives its
+9. **Delete the memory pointer**, if there is one. A pointer that outlives its
    thread keeps announcing work that no longer exists.
-9. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
+10. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
    recorded".
-10. **Take it off the interruption stack** with `unstack`.
+11. **Take it off the interruption stack** with `unstack`.
 
 Spoken: "Acme pricing is closed. Two actions still point at it: tick them, keep
 them, or drop them?"
@@ -481,7 +597,10 @@ stay exactly where they are.
 3. **If the user gave a reason**, add it to that dated entry.
 4. **Commit** in the zone's repository: "Acme, Pricing: parked".
 5. **Keep the memory pointer**, if there is one. A parked thread is not
-   finished.
+   finished. **A checkpoint is kept too**, exactly as it is: parking sets work
+   aside, and what the last session recorded is part of where it stood. The
+   check says nothing about it while the thread is parked, and waking the
+   thread brings it back to be read and wrapped.
 6. **Parking takes it off the interruption stack**: run `unstack`. Waking
    puts nothing back.
 
@@ -685,11 +804,12 @@ Knowledge wiki needs no check: it carries nobody's confidence.
    against the project's party.
 6. **What passes** goes in as the least that serves: link the meeting page, and
    quote only where the wording is the point.
-7. **Say that a wall held something back, and nothing more.** "A wall kept some
-   meeting material out of this note." No title, date, party, person or count,
-   even if asked in the same breath. A question put straight to the Meetings
-   wiki ("what did Theo say?") is a different request; its answer stays in the
-   conversation and is never written here.
+7. **Say that a wall held something back, in the words the rule gives, and
+   nothing more.** "A wall holds some material back from this project, so I
+   have not used it. Nothing was written." No title, date, party, person,
+   subject or count, even if asked in the same breath. A question put straight
+   to the Meetings wiki ("what did Theo say?") is a different request; its
+   answer stays in the conversation and is never written here.
 8. **Material the user dictates** into a thread that belongs to a walled party:
    ask once before writing it. "That sounds like Birch material, and Birch is
    walled off from Acme. Write it anyway?"

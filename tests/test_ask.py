@@ -269,6 +269,40 @@ class TestCarryOut(AskCase):
         self.assertFalse(self.jobs.exists())                                         # no server, no socket, no log
 
 
+class TestAskingAgain(AskCase):
+    """#92: the box used to stop waiting while the commit was still running,
+    and tell you to ask again. The second turn writes the line from the words
+    again, so it need not be the line the first turn wrote."""
+
+    def test_the_wait_covers_the_slowest_request(self):
+        import re
+        pa = ask.page_action()
+        self.assertGreaterEqual(ask.ASK_WAIT, 2 * ask.TURN_TIMEOUT + pa.COMMIT_TIMEOUT + pa.GIT_TIMEOUT)
+        swift = (Path(ask.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        app = float(re.search(r"let askWait = ([\d.]+)", swift).group(1))
+        self.assertGreaterEqual(app, ask.ASK_WAIT)                  # ask.py's own message comes first
+        self.assertNotIn("Ask again", swift)                        # neither of them invites the retry
+        self.assertNotIn("Ask again", ask.GAVE_UP)
+        for said in (ask.GAVE_UP, swift):
+            self.assertIn("may still be on its way", said)
+            self.assertIn("Todo list", said)
+
+    def test_asking_again_leaves_one_line(self):
+        soon = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        line = {"verb": "todo-add", "zone": "Work", "text": "Call Dana about the quote",
+                "project": "Acme Review", "thread": "Pricing"}
+        again = dict(line, text="call Dana  about the quote.", date=soon)    # the same thing, worded again
+        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "Added it.", "do": [line]}),
+                                                 json.dumps({"say": "Added it.", "do": [again]})))
+        first = asker.ask("add call Dana about the quote to Pricing")
+        self.assertEqual(["Added to Inbox: Call Dana about the quote"], first["done"])
+        out = asker.ask("add call Dana about the quote to Pricing")
+        self.assertEqual(["Refused: that line is already in the list"], out["done"])
+        self.assertFalse(out["ok"])
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("Dana about the quote"))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+
 class TestHarness(AskCase):
     def test_tier_and_harness_are_checked(self):
         os.environ["GARRICK_ASK_TIER"] = "gpt-9"

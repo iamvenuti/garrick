@@ -205,6 +205,26 @@ class TestAdd(ActionCase):
         self.add(text="Compare the two", target="Acme Review/Pricing")
         self.assertIn("- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]: Compare the two\n", (self.work / "Todo.md").read_text())
 
+    def test_a_repeat_is_refused_however_it_is_worded(self):
+        """#92: a request that comes a second time is written again from the
+        words, not copied, so the comparison cannot be the whole line. The
+        same thing to do on the same thread is the same line, whatever date
+        it carries and however it is spaced or capitalised; another thread,
+        or another tag, is another action."""
+        soon = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+        self.assertEqual("Added to Inbox: Call Dana about the quote",
+                         self.add(text="Call Dana about the quote", target="Acme Review/Pricing"))
+        for req in ({"text": "Call Dana about the quote", "target": "Acme Review/Pricing"},
+                    {"text": "call Dana  about the quote.", "target": "Acme Review/Pricing"},
+                    {"text": "Call Dana about the quote", "target": "Acme Review/Pricing", "date": soon}):
+            with self.assertRaisesRegex(pa.Refused, "already in the list", msg=req):
+                self.add(**req)
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("Dana about the quote"))
+        self.assertEqual("Work: added to Inbox, Call Dana about the quote", self.last_commit()[0])
+        self.add(text="Call Dana about the quote", target="Acme Review")                    # another thread
+        self.add(text="Call Dana about the quote #waiting", target="Acme Review/Pricing")   # another tag
+        self.assertEqual(3, (self.work / "Todo.md").read_text().count("Dana about the quote"))
+
     def test_refusals_change_nothing(self):
         before = (self.work / "Todo.md").read_bytes()
         for req in ({"text": "", "target": "-"}, {"text": "x", "target": "../Personal"}, {"text": "x", "target": "Acme Review/Threads"},

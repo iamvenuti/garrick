@@ -206,5 +206,57 @@ class TestWhatCountsAsACheckout(CheckoutCase):
         self.assertEqual(set(), self.shared())
 
 
+class TestAnUnpackedCheckoutIsNotAnUnfinishedInstall(unittest.TestCase):
+    """A checkout unpacked from a release ZIP has no `.git`, so it is walked
+    like any folder of the project that keeps it. The templates it ships hold
+    placeholders by design and are no sign of an install left unfinished; an
+    ordinary file holding one still is, in the project and in the checkout."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        self.acme = self.root / "Zones" / "Work" / "Acme Review"
+        self.checkout = build_checkout(self.acme / "garrick")
+        templates = self.checkout / "template" / "System" / "templates"
+        write(templates / "zone" / "AGENTS.md", "# {{ZONE}} zone\n")
+        write(templates / "zone" / "Todo.md", "# {{ZONE}}: open actions\n")
+        write(templates / "project" / "{{PROJECT}}.md", "---\nparty: {{PARTY}}\ncreated: {{DATE}}\n---\n")
+        write(templates / "thread" / "{{THREAD}}.md", "# {{THREAD}}\n\nPart of [[{{PROJECT}}]].\n")
+        write(self.checkout / "release-hashes.json",
+              '{"v0.1.0": {"files": {"System/templates/project/{{PROJECT}}.md": "0"}}}\n')
+        self.assertFalse((self.checkout / ".git").exists())
+
+    def unfinished(self):
+        return sorted(f.path for f in check.run_checks(self.root) if f.check == "placeholders")
+
+    def test_the_templates_it_ships_are_templates(self):
+        self.assertEqual([], self.unfinished())
+
+    def test_an_ordinary_project_file_is_still_unfinished(self):
+        write(self.acme / "Sources" / "brief.md", "# Brief for {{PARTY}}\n")
+        self.assertEqual(["Zones/Work/Acme Review/Sources/brief.md"], self.unfinished())
+
+    def test_the_rest_of_the_checkout_is_still_read(self):
+        """Only the shipped templates: the checkout's docs, or a file in its
+        tree outside `System/templates/`, are read as before."""
+        write(self.checkout / "docs" / "zones.md", "# Zones\n\nThe {{ZONE}} zone.\n")
+        write(self.checkout / "template" / "System" / "rules.md", "# Rules for {{ZONE}}\n")
+        self.assertEqual(["Zones/Work/Acme Review/garrick/docs/zones.md",
+                          "Zones/Work/Acme Review/garrick/template/System/rules.md"], self.unfinished())
+
+    def test_a_folder_that_is_not_a_checkout_is_not_excused_by_its_name(self):
+        """The same tree with no installer beside it is somebody's folder
+        called `template`, and what it holds is checked as theirs."""
+        (self.checkout / "install.py").unlink()
+        self.assertEqual(["Zones/Work/Acme Review/garrick/release-hashes.json",
+                          "Zones/Work/Acme Review/garrick/template/System/templates/project/{{PROJECT}}.md",
+                          "Zones/Work/Acme Review/garrick/template/System/templates/thread/{{THREAD}}.md",
+                          "Zones/Work/Acme Review/garrick/template/System/templates/zone/AGENTS.md",
+                          "Zones/Work/Acme Review/garrick/template/System/templates/zone/Todo.md"],
+                         self.unfinished())
+
+
 if __name__ == "__main__":
     unittest.main()

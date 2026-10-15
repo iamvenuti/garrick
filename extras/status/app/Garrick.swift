@@ -56,6 +56,18 @@ let flags = info["GarrickStatusArgs"] as? [String] ?? []
 let cmuxBundle = "com.cmuxterm.app"
 let claudeBundle = "com.anthropic.claudefordesktop"
 let codexBundle = "com.openai.codex"
+// A Claude that is not running drops a deep link while its window is still
+// loading, so a cold Claude is started and the link waits for the window.
+// Claude's own log writes `boot: done` once the window has loaded; where that
+// log cannot be read, the fixed delay stands in and the link goes anyway.
+// extras/status/obsidian/main.js waits the same way and says the same words,
+// so the two hosts of one page behave alike.
+let claudeLog = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Claude/main.log")
+let claudeReadyMark = "boot: done"
+let claudeReadyPoll: TimeInterval = 0.5
+let claudeReadyCeiling: TimeInterval = 40
+let claudeReadySettle: TimeInterval = 1
+let claudeReadyFallback: TimeInterval = 15
 let maxAge: TimeInterval = 30 * 60
 // The jobs extra's folder, as agent.py's jobs_dir() finds it, and what the app
 // leaves there each time it fills its menu or panel: counts and zone names,
@@ -66,6 +78,43 @@ let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")
 // --check loads the page out of sight, acts on nothing, prints what it found
 // and quits: the test that the page loads, sees the app and is answered.
 let checking = CommandLine.arguments.contains("--check")
+
+// How a cold Claude's window was found: the mark in its log, the fixed delay
+// where the log could not be read, or the ceiling reached with no mark.
+enum ClaudeWindow { case ready, assumed, late }
+
+// Where Claude's log stands now, so only what it writes after the app is
+// started is read. nil where the log is not there at all.
+func claudeLogSize() -> UInt64? {
+	let attrs = try? FileManager.default.attributesOfItem(atPath: claudeLog.path)
+	return (attrs?[.size] as? NSNumber)?.uint64Value
+}
+
+// Waits for a cold Claude's window: the mark its log writes when the window has
+// loaded, read from where the log stood before the app was started, up to the
+// ceiling. Blocks, so it runs off the main thread, and never waits for ever:
+// every ending sends the link, and the caller says which ending it was.
+func awaitClaudeWindow(from: UInt64?, sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> ClaudeWindow {
+	guard let from, let handle = try? FileHandle(forReadingFrom: claudeLog) else {
+		sleep(claudeReadyFallback)
+		return .assumed
+	}
+	defer { try? handle.close() }
+	var waited: TimeInterval = 0
+	while waited < claudeReadyCeiling {
+		sleep(claudeReadyPoll)
+		waited += claudeReadyPoll
+		guard (try? handle.seek(toOffset: from)) != nil else {    // rotated under us: no mark to find
+			sleep(claudeReadyFallback)
+			return .assumed
+		}
+		if String(data: handle.availableData, encoding: .utf8)?.contains(claudeReadyMark) == true {
+			sleep(claudeReadySettle)                 // a moment for its URL handler to take the window over
+			return .ready
+		}
+	}
+	return .late
+}
 
 // What the app keeps between launches, in its own defaults: the three menu bar
 // settings, the menu as the page last gave it, and whether the window was open.
@@ -559,7 +608,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		watcher = src
 	}
 
-	func toast(_ text: String) {
+	// `alsoNotify: false` keeps a message in the window only. A launcher that
+	// opened at once passes it: the app it opened is in front, saying as much,
+	// and a notification for every click of the menu's icons would be noise.
+	// A cold start, which takes seconds, and every failure keep the notification.
+	func toast(_ text: String, alsoNotify: Bool = true) {
 		let quoted = (try? String(data: JSONSerialization.data(withJSONObject: [text]), encoding: .utf8)) ?? "[\"\"]"
 		web.evaluateJavaScript("""
 			(function(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;
@@ -568,7 +621,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		// The toast lives in the window. Asked from the menu, the panel or the
 		// Ask box with the window out of sight, the answer would go unseen, so it
 		// comes as a notification too.
-		if window == nil || !window.isVisible || !NSApp.isActive { notify(text) }
+		if alsoNotify, window == nil || !window.isVisible || !NSApp.isActive { notify(text) }
 	}
 
 	func notify(_ text: String) {
@@ -599,7 +652,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
-		if let text = body["copy"] as? String, !text.isEmpty {
+		// A Copy button's own text. A launch carries the phrase too, for an app
+		// built before 0.28.0; here the launcher owns the clipboard and says
+		// when it replaced it, so the copy is left to it and never happens twice.
+		if let text = body["copy"] as? String, !text.isEmpty, body["launch"] == nil {
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(text, forType: .string)
 		}
@@ -626,16 +682,55 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return folder
 	}
 
+	// The clipboard is replaced in one place only, and only where a launcher
+	// cannot take the phrase itself and did open the folder: Codex and cmux.
+	// The toast that follows says the clipboard now holds the phrase, so it is
+	// never replaced without the user being told in the same breath.
 	func copyText(_ text: String) {
 		guard !text.isEmpty else { return }
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(text, forType: .string)
 	}
 
+	// What a launcher says when it is done. Every sentence names the phrase one
+	// way or another, so no launcher leaves the phrase to be rebuilt: Claude
+	// types it into the session, Codex and cmux put it on the clipboard and say
+	// so, and Finder, which can take nothing, names it. The Obsidian plugin
+	// says the same words; tests/test_status_more.py compares the two.
+	func opened(_ app: String, _ name: String, _ phrase: String) -> String {
+		if phrase.isEmpty { return "Opened \(app) in \(name)." }
+		if app == "Claude" { return "Opened Claude in \(name) with “\(phrase)” typed in. Send it to resume." }
+		return "Opened \(app) in \(name). The clipboard now holds “\(phrase)”; paste it to resume."
+	}
+
+	func notOpened(_ app: String, _ name: String, _ phrase: String) -> String {
+		phrase.isEmpty ? "\(app) did not open \(name)."
+			: "\(app) did not open \(name). The phrase that resumes it is “\(phrase)”."
+	}
+
+	func showedInFinder(_ name: String, _ phrase: String) -> String {
+		phrase.isEmpty ? "Showed \(name) in Finder."
+			: "Showed \(name) in Finder. Nothing was copied; the phrase that resumes it is “\(phrase)”."
+	}
+
+	func startingClaude(_ name: String) -> String {
+		"Starting Claude, then opening \(name). This takes a few seconds."
+	}
+
+	func claudeWasLate(_ name: String, _ phrase: String) -> String {
+		phrase.isEmpty ? "Claude did not say its window was ready within forty seconds. Opened \(name) anyway."
+			: "Claude did not say its window was ready within forty seconds. Opened \(name) anyway; "
+			  + "if the session came up empty, the phrase that resumes it is “\(phrase)”."
+	}
+
 	// Open a project or thread folder, or the workspace root, in Claude, Codex or cmux, or show it
 	// in Finder. Claude gets the phrase typed into a new session, for you to send; Codex and cmux get
 	// the folder, and the phrase goes on the clipboard. Nothing is sent and no
 	// command is typed into a terminal. Says whether anything was opened.
+	// Every route reports on screen when it is done, a failure included, and
+	// not before: the page says it is opening, this says what opened. A cold
+	// Claude is started first and the link waits for its window, so the return
+	// value there says only that the wait began; startClaude() reports it.
 	// cmux with the cmux extra's desk ready (the page's menu says so, or the
 	// caller's row or Ask's answer does) goes through page_action.py instead:
 	// a tab in that folder that starts the assistant on the phrase, or on
@@ -658,7 +753,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			c.scheme = "claude"; c.host = "code"; c.path = "/new"
 			c.queryItems = [URLQueryItem(name: "folder", value: folder.path)] + (phrase.isEmpty ? [] : [URLQueryItem(name: "q", value: phrase)])
 			guard let url = c.url else { return false }
-			return NSWorkspace.shared.open(url)
+			let name = folder.lastPathComponent
+			// A running Claude takes the link at once, as it always has. A cold
+			// one would drop it while its window loads, so it is started first.
+			if NSRunningApplication.runningApplications(withBundleIdentifier: claudeBundle).isEmpty {
+				startClaude(url, name: name, phrase: phrase)
+				return true
+			}
+			return sendToClaude(url, name: name, phrase: phrase, window: nil)
 		case "codex":
 			guard let codex = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexBundle) else {
 				toast("Codex is not installed here any more. Rebuilding the page without it.")
@@ -669,28 +771,70 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				.map { codex.appendingPathComponent($0) }
 				.first { FileManager.default.isExecutableFile(atPath: $0.path) }
 			guard let cli else {
-				toast("Codex's own launcher is missing; reinstall the Codex app.")
+				// Each build checks for this launcher, so the page does not
+				// offer Codex without it; a page built before it went missing still can.
+				toast("Codex's own launcher is missing; reinstall the Codex app. Rebuilding the page without it.")
+				freshen(force: true)
 				return false
 			}
-			copyText(phrase)
 			let p = Process()
 			p.executableURL = cli
 			p.arguments = ["app", folder.path]
 			p.standardOutput = FileHandle.nullDevice
 			p.standardError = FileHandle.nullDevice
 			do { try p.run() } catch {
-				toast("Codex did not open that folder.")
+				toast(notOpened("Codex", folder.lastPathComponent, phrase))
 				return false
 			}
+			copyText(phrase)                 // it opened: the phrase goes over, and the toast says so
+			toast(opened("Codex", folder.lastPathComponent, phrase), alsoNotify: false)
 			return true
 		case "cmux":
-			copyText(phrase)
-			return openInCmux(folder.path)
+			return openInCmux(folder.path, phrase: phrase)
 		case "finder":
 			NSWorkspace.shared.activateFileViewerSelecting([folder])
+			toast(showedInFinder(folder.lastPathComponent, phrase), alsoNotify: false)
 			return true
 		default:
 			return false
+		}
+	}
+
+	// Sends the link to a Claude whose window is up, and says what happened.
+	// `window` is how a cold Claude's window was found, nil for a Claude that
+	// was already running; a wait that ran out says the session may have come
+	// up empty and names the phrase again.
+	@discardableResult
+	func sendToClaude(_ url: URL, name: String, phrase: String, window: ClaudeWindow?) -> Bool {
+		guard NSWorkspace.shared.open(url) else {
+			toast(notOpened("Claude", name, phrase))
+			return false
+		}
+		toast(window == .late ? claudeWasLate(name, phrase) : opened("Claude", name, phrase), alsoNotify: window != nil)
+		return true
+	}
+
+	// Starts a Claude that is not running, waits for its window, then sends the
+	// link. It says it is starting first, so a ten-second gap does not look
+	// like nothing happened, and says what opened when the link has gone.
+	// Nothing is sent to anybody: the phrase is typed into the new session, for
+	// you to send, exactly as it is for a Claude already running.
+	func startClaude(_ url: URL, name: String, phrase: String) {
+		guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundle) else { return }
+		let from = claudeLogSize()                   // before it starts: only what it writes from here counts
+		toast(startingClaude(name))
+		let cfg = NSWorkspace.OpenConfiguration()
+		cfg.activates = true
+		NSWorkspace.shared.openApplication(at: app, configuration: cfg) { [weak self] _, error in
+			guard let self else { return }
+			if error != nil {
+				DispatchQueue.main.async { self.toast(self.notOpened("Claude", name, phrase)) }
+				return
+			}
+			DispatchQueue.global(qos: .userInitiated).async {
+				let window = awaitClaudeWindow(from: from)
+				DispatchQueue.main.async { self.sendToClaude(url, name: name, phrase: phrase, window: window) }
+			}
 		}
 	}
 
@@ -756,7 +900,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Finder's Open With would: no socket, no password, no command typed.
 	// Says whether it was asked to; a failure after that is a toast of its own.
 	@discardableResult
-	func openInCmux(_ path: String) -> Bool {
+	// The phrase goes on the clipboard only once cmux has the folder, and the
+	// toast says so. A page built before 0.5.0 sends no phrase, and then
+	// nothing is copied and the toast names nothing to paste.
+	func openInCmux(_ path: String, phrase: String = "") -> Bool {
 		guard let folder = inWorkspace(path) else { return false }
 		guard let cmux = NSWorkspace.shared.urlForApplication(withBundleIdentifier: cmuxBundle) else {
 			toast("cmux is not installed here any more. Rebuilding the page without it.")
@@ -764,7 +911,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return false
 		}
 		NSWorkspace.shared.open([folder], withApplicationAt: cmux, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-			if error != nil { DispatchQueue.main.async { self.toast("cmux did not open that folder.") } }
+			DispatchQueue.main.async {
+				guard error == nil else { return self.toast(self.notOpened("cmux", folder.lastPathComponent, phrase)) }
+				self.copyText(phrase)
+				self.toast(self.opened("cmux", folder.lastPathComponent, phrase), alsoNotify: false)
+			}
 		}
 		return true
 	}

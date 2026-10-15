@@ -40,7 +40,8 @@
   "v0.24.0",
   "v0.25.0",
   "v0.26.0",
-  "v0.27.0"
+  "v0.27.0",
+  "v0.28.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -109,7 +110,8 @@
    "7dd610c77bcfae5861df44a850621452ae5301c1b724a78fcad5ac1d80dfafb5",
    "db05d59f2bc646dd3d8efe9309db7cb29d251da50e6f7378076271a3267905cc",
    "48445fc738487afaf712c8e6bb1fd88b2e72c6828101dda8aa1ccd3a690af95c",
-   "f57667fb4d05886395311da31b0b3a6906c22595cf4a033f54f1cd1a5ef70c88"
+   "f57667fb4d05886395311da31b0b3a6906c22595cf4a033f54f1cd1a5ef70c88",
+   "12314e6cb36cfa18319ea4f925a27ba174012cfb175160148ae2cf728319fe9a"
   ],
   "System/jobs/agent.py": [
    "daa36e5d296f62c69a3f2e9bedfed3c51879950c2b777537e668b31f613a545b",
@@ -205,7 +207,8 @@
    "dcde91400daab86a2c93679479871fc4d81753bae43fdbacb87129c95310fba0",
    "e06dca48556b62b907dd9f5f24a5040c4eb3400f4bdaf5e96961f4c379f0e060",
    "ec0c92bb9222af0d99b94d116f3b09383dc9d4572d9cb6a43db789b761d9eb0a",
-   "627d788802d3be08376d9286ff5de400b333377e566f6dfc17f209d20422fd78"
+   "627d788802d3be08376d9286ff5de400b333377e566f6dfc17f209d20422fd78",
+   "b3e5e07e8e7b96d17f33867fd685789a56f7517e994748a14375ee88e6cab672"
   ],
   "System/skills/meetings/ingest.py": [
    "fd95c5762a86e1990e9d9a15285d574ac3fde77a6a5334ad314ea8d11ab1b5d7",
@@ -219,7 +222,8 @@
    "0763369a0a5632901e1e8ba99b2af80419fa8dbe2ec641ca3191b8b2fbcc152a",
    "540d0db40a64a30bf69850a7b48c40157f84eb6826efb5feb9fea70b6c2affc8",
    "de4330cb929e689d770a695293e15cf0ed2b40dcb39753d1f64a52080e570d73",
-   "e448b3731ab52daf5c5e4513e0ed538f91017b349a6fac3750b9bba44abf375c"
+   "e448b3731ab52daf5c5e4513e0ed538f91017b349a6fac3750b9bba44abf375c",
+   "78dbb2e0db669c59161ed308e082dabf59118f61da9e05c6e919f71b9f2ecf93"
   ],
   "System/skills/threads/SKILL.md": [
    "28f2517a535fa9fe92bf4972f511c9a9533f6e6c0274d5de1d36b07a7d5c6ae7",
@@ -232,7 +236,8 @@
    "dc18ac8e72b331303bd65cc250a2bd6221f984fefd1d29bc322177493496c266",
    "dddc2df4e0d81f0d7b9b3de1c6c42b75d7383c6d34c70b106f36823139fd2e37",
    "3ff832166e50f687a63d55c8e7ed1f098628d03334093c10e444f8881a9ee497",
-   "93e879ecaae344278c9e4a40d4c164bdf9e17cd92f90fdd0eaf7687cbcf31c94"
+   "93e879ecaae344278c9e4a40d4c164bdf9e17cd92f90fdd0eaf7687cbcf31c94",
+   "cc0817218deea4c94c845cafafcf65750e66a8caa4549830b3da1716992675c9"
   ],
   "System/skills/todo/SKILL.md": [
    "68b9930c1cba46362462c267f5ea7bc0891aaef86da8ac653e8369573735749b",
@@ -272,7 +277,8 @@
    "db21d73e6dd5aa21be72e82132e58f163b4324c50de0b661bc53f8298b20215d",
    "49803084e7982640551deb896394014003cff7a7b255525f566056a92bcb8dc8",
    "69f71bd6856c82774733a93ac4b57ee36dca0370f8c1cae3f1f9da1c148581de",
-   "a20fa8f101a59fd59feccaa74571e8c35c2743c5c884020bfd6dfbf929b9be41"
+   "a20fa8f101a59fd59feccaa74571e8c35c2743c5c884020bfd6dfbf929b9be41",
+   "bd0ba1ad4ff8312dc06102ae8a00c3488cf8efd03a233442d5690701459057a2"
   ],
   "System/status/app/GarrickStatus.swift": [
    "d3784d2d7528d6b56d09c0a1b2b82400921bf1240a2101ea093903dafc09a934",
@@ -309,7 +315,8 @@
    "ec406a14e2fb08d1e6811462fdf2b63a9bd3db31818d23a5a8b7d30df65f3028",
    "7cb0307e6b71be3aa52fe24023dc535bba62ab2f79f8b539b12f07c4384fbde2",
    "2a7d6332f54928dd1fcc44e3a9ba0047cb9b9fc8df3fc8f930918f00c95eebfc",
-   "756770773d0327cfe0f8f5ccdeb251a32f3eedc94fdf9c1ed9cea07039d307a9"
+   "756770773d0327cfe0f8f5ccdeb251a32f3eedc94fdf9c1ed9cea07039d307a9",
+   "2eea07ab4b34f9a9bc8c8eb8bb933a6b0c919208ee9942b7e9f95cdee01a1b2f"
   ],
   "System/status/obsidian/manifest.json": [
    "edc0dad49b9ee8102d378a544e1c6d30cc171a86c8db40ff0a6aeb2e5d6f5f77"
@@ -360,7 +367,8 @@
    "9731d078f78547d59e877c617a845654a4307eaa8ad1c278d3a1b90bfa52f413",
    "752474f4627f9dd2e20bb9598a313337743851780b2bae64ae41df6a6474d5e4",
    "77c93cdcab1034bb2cb57b530c82e469364aa605db997f12df40c673d9f3c0d0",
-   "dd99eeece701733f5abd92c1690afbfd1d7b9c1bc84ac0a767ec221bf9244187"
+   "dd99eeece701733f5abd92c1690afbfd1d7b9c1bc84ac0a767ec221bf9244187",
+   "8b0f0b5a8cada3f2a90057a088eb04f022257a60b6281a31f14810b0c2cb5b85"
   ],
   "System/status/todo_lines.py": [
    "eef73cd850bd8107cf983b45ea64668a069fea7149ab25c7927924a7a90e7a59",
@@ -383,7 +391,8 @@
   ],
   "System/templates/zone/AGENTS.md": [
    "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b",
-   "4044d3d115cc0f88da989acb49eeeab02530819c9a45b9d22f829154181f03ca"
+   "4044d3d115cc0f88da989acb49eeeab02530819c9a45b9d22f829154181f03ca",
+   "dce961fa6d3500a58cbdc3bce72e85cf43a8885c2ca5d16ebcd886717d9364d8"
   ],
   "System/templates/zone/Inbox/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -430,7 +439,8 @@
    "131741cb377b6d58523b2371453059c845092a5344793e51b89217cf05054b4e",
    "ab23b6b981835e86cd167e48946a3323e6f3969c6a2d2bd540c0bf0cf0c8ae17",
    "c563339c8007dcca4052e0dc82cf12b113f7cecc1a7ba511b61470d312fccefc",
-   "49df62503737fda35abcb7d6e49033b0871c6aae891c24181eb99bf4878261e6"
+   "49df62503737fda35abcb7d6e49033b0871c6aae891c24181eb99bf4878261e6",
+   "2784507ff75774aa8adb4daa2e3f46709e870f48c14859d058226ee5fc7f99a2"
   ],
   "System/tools/operations.py": [
    "96ee9cc1ee7dffece435517c5a633f5803fcd53dea669c2033a37ae6bcb35050"
@@ -450,7 +460,8 @@
    "56d8ca57392896de3b827d9b43e5c4223c32b4cdd807746ba175f5c30d2ff11a",
    "ee7ca2a8304bf6c46831f221f1fea17cb97c784987ba8f6c2b0ccc680b926f21",
    "2887dcb20d9e745c6ea0e9db526663a5b8668f53abb3b6d51dbd75ac5d3a9628",
-   "8071ca88d110b41469f0c70271d707b3c92b854e1a48ccea97a7a8eff7474b6b"
+   "8071ca88d110b41469f0c70271d707b3c92b854e1a48ccea97a7a8eff7474b6b",
+   "68987f57a724bf60432c682799a7f3a3c9e9e82e9ea5f63c8e68a7d022db78d9"
   ],
   "System/tools/wiki_lint.py": [
    "3ae93a8033a762351cec9b55543db55ef7b5d09e81a8538dee2308cb6db65dd7"
@@ -509,7 +520,8 @@
  "zone": {
   "AGENTS.md": [
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
-   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
   ],
   "Inbox/.gitkeep": [
    ""

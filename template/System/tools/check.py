@@ -19,7 +19,10 @@ the walls check alone. `--staged` checks only the files
 staged in the git repository of the current folder, as they are staged, and
 prints one line per wall broken: it is what each zone's pre-commit hook runs.
 It keeps what it read of the other files in that repository's git folder, so
-the next commit reads only what changed since (see NoteCache).
+the next commit reads only what changed since (see NoteCache). That repository
+alone keeps git's repository-local variables; every other repository is read
+with them taken out, so the temporary index git builds for a commit of named
+files reaches nowhere else (see `_git_env` and `foreign_git_env`).
 `--install-hooks` writes that hook into every zone's repository, and into
 every git repository inside a project.
 
@@ -67,6 +70,7 @@ from garrick_lib import (  # noqa: E402
     is_webmail,
     knowledge_schema,
     fingerprint,
+    foreign_git_env,
     garrick_ignores,
     ignore_parts,
     load_context,
@@ -3014,7 +3018,8 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         try:
-            res = subprocess.run(["git", "show", ":" + name], cwd=str(top_path), capture_output=True, timeout=60)
+            res = subprocess.run(["git", "show", ":" + name], cwd=str(top_path), capture_output=True, timeout=60,
+                                 env=_git_env(top_path))
         except (OSError, subprocess.SubprocessError):
             continue
         data = res.stdout
@@ -3026,7 +3031,8 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
 
 def _git_bytes(args: List[str], cwd: Path) -> Optional[bytes]:
     try:
-        res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, timeout=60)
+        res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, timeout=60,
+                             env=_git_env(cwd))
     except (OSError, subprocess.SubprocessError):
         return None
     return res.stdout if res.returncode == 0 else None
@@ -3136,7 +3142,8 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
             if owner is None or not _in_sources(owner[0], top_path / name):
                 continue
             try:
-                res = subprocess.run(["git", "show", ":" + name], cwd=str(top_path), capture_output=True, timeout=60)
+                res = subprocess.run(["git", "show", ":" + name], cwd=str(top_path), capture_output=True, timeout=60,
+                                     env=_git_env(top_path))
             except (OSError, subprocess.SubprocessError):
                 continue
             if res.returncode == 0 and len(res.stdout) <= MAX_SOURCE_BYTES:
@@ -3361,9 +3368,69 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     return out
 
 
+# The repository whose commit is being checked, in staged mode: the one whose
+# git processes keep git's repository-local variables. None otherwise, when no
+# commit is in hand and those variables, if the environment holds any, speak
+# for no repository here.
+_COMMITTING: Optional[Path] = None
+
+# The top of the repository each folder belongs to, once looked up (see _own_top).
+_OWN_TOP: Dict[Path, Optional[Path]] = {}
+
+
+def _committing(repo: Optional[Path]) -> None:
+    """Remember whose commit this run is checking, as the top of its repository.
+    `None` forgets it: every git process then runs without git's
+    repository-local variables."""
+    global _COMMITTING
+    _OWN_TOP.clear()        # a repository may have been made since the last run
+    _COMMITTING = Path(repo).resolve() if repo is not None else None
+    if _COMMITTING is None:
+        return
+    # Asked inside the committing repository, so with its own environment.
+    top = _git(["rev-parse", "--show-toplevel"], _COMMITTING)
+    if top and top.strip():
+        _COMMITTING = Path(top.strip()).resolve()
+
+
+def _own_top(folder: Path) -> Optional[Path]:
+    """The nearest folder at `folder` or above it holding a `.git`: the top of
+    the repository that folder belongs to, as far as the filesystem can say,
+    and None when there is none above it. Kept per folder, and a walk, so it
+    costs no git process.
+
+    Which repository a folder belongs to is the question, and containment is no
+    answer to it: the workspace's root repository holds every zone and both
+    wikis, and each of those is a repository of its own."""
+    resolved = Path(folder).resolve()
+    if resolved not in _OWN_TOP:
+        _OWN_TOP[resolved] = next((c for c in [resolved, *resolved.parents] if (c / ".git").exists()), None)
+    return _OWN_TOP[resolved]
+
+
+def _git_env(repo: Path) -> Optional[Dict[str, str]]:
+    """The environment for a git process to be run against `repo`: this
+    process's own for the repository being committed, whose temporary index the
+    hook has to read, and one stripped of git's repository-local variables for
+    every other repository (`foreign_git_env`). None leaves the child to
+    inherit this process's environment.
+
+    A folder goes with the commit when the repository it belongs to is the one
+    being committed, which is its own top and not merely a folder above it. A
+    project or a thread inside the committing zone is the zone's and keeps the
+    variables; a zone inside the root repository, or a repository inside a
+    project, is its own and does not."""
+    if _COMMITTING is not None:
+        resolved = Path(repo).resolve()
+        if resolved == _COMMITTING or _own_top(resolved) == _COMMITTING:
+            return None
+    return foreign_git_env()
+
+
 def _git(args: List[str], cwd: Path) -> Optional[str]:
     try:
-        res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60)
+        res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60,
+                             env=_git_env(cwd))
     except (OSError, subprocess.SubprocessError):
         return None
     return res.stdout if res.returncode == 0 else None
@@ -3433,7 +3500,8 @@ def check_generated(ws: Workspace) -> List[Finding]:
         return out
     def git(*args):
         try:
-            return subprocess.run(["git", "-C", str(ws.root), *args], capture_output=True, text=True, timeout=30)
+            return subprocess.run(["git", "-C", str(ws.root), *args], capture_output=True, text=True, timeout=30,
+                                  env=_git_env(ws.root))
         except (OSError, subprocess.TimeoutExpired):
             return None
     tracked = git("ls-files", "--", "/".join(GENERATED))
@@ -3462,7 +3530,7 @@ def check_preferences(ws: Workspace) -> List[Finding]:
         return out
     try:
         tracked = subprocess.run(["git", "-C", str(ws.root), "ls-files", "--", PREFERENCES_FILE],
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True, timeout=30, env=_git_env(ws.root))
     except (OSError, subprocess.TimeoutExpired):
         return out
     if tracked.returncode == 0 and not tracked.stdout.strip():
@@ -3552,6 +3620,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
     file, a person page or a Knowledge page repeats a meeting. That comparison
     reads every meeting and project file, and is most of the time a full check
     takes on a large workspace; the commit hook still runs it on what is staged."""
+    _committing(Path(staged) if staged is not None else None)
     cache = NoteCache.for_repo(Path(staged)) if staged is not None else None
     ws = discover(Path(root).resolve(), cache)
     ws.quick = quick and staged is None

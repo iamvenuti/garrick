@@ -390,12 +390,28 @@ def is_generated(ws: Workspace, path: Path) -> bool:
     return Path(rel(ws, path)).parts[:2] == GENERATED
 
 
+TEMPLATES = ("System", "templates")
+
+
 def is_template_path(ws: Workspace, path: Path) -> bool:
+    """A template, whose placeholder marks are there for a script to fill: anything
+    under System/templates/, or in a folder under Zones/ whose name starts
+    with an underscore (`_project`). A Garrick checkout kept in a project
+    holds the shipped originals at the same position in the tree it ships,
+    `template/System/templates/`, and they are templates there too, found
+    through the checkout rather than by the folder's name: a clone is never
+    walked, being a repository of its own, but a release unpacked from its
+    ZIP has no `.git` and is."""
     parts = Path(rel(ws, path)).parts
-    if parts[:2] == ("System", "templates"):
+    if parts[:2] == TEMPLATES:
         return True
-    # Under Zones/, a leading underscore marks a template folder (`_project`).
-    return bool(parts) and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1])
+    if parts and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1]):
+        return True
+    for checkout in checkouts(ws):
+        tree = checkout / CHECKOUT_TREE
+        if tree in path.parents:
+            return path.relative_to(tree).parts[:2] == TEMPLATES
+    return False
 
 
 def say(n: int) -> str:
@@ -858,6 +874,8 @@ def check_placeholders(ws: Workspace) -> List[Finding]:
             continue
         if rel(ws, path) == "/".join(VERSION_STAMP):
             continue    # it lists the templates' files, whose names hold placeholders by design
+        if any(path == checkout / CHECKOUT_HASHES for checkout in checkouts(ws)):
+            continue    # a checkout's list of what each release shipped, the same names among it
         found = PLACEHOLDER_RE.findall(rel(ws, path))
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix == "":
             text = read_text(path)
@@ -2607,6 +2625,7 @@ SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/g
 CHECKOUT_TREE = "template"                  # the tree the installer copies
 CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
 CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree
+CHECKOUT_HASHES = "release-hashes.json"    # what each release shipped, file by file
 
 
 def is_checkout(folder: Path) -> bool:

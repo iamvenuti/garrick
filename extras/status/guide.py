@@ -514,7 +514,7 @@ GUIDE_CSS = r"""
 .gd-it.on>.gd-hs,.gd-toc.q .gd-hs{display:block}.gd-toc:not(.q) .gd-hs>li[data-l="3"]{display:none}.gd-hs>li[data-l="3"] a{padding-left:18px}
 .gd-main{min-width:0}
 .gd-page{max-width:820px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:6px 34px 30px;line-height:1.6;font-size:14.5px}
-.gd-page :is(h1,h2,h3,h4,h5,h6){scroll-margin-top:80px;line-height:1.25}
+.gd-page :is(h1,h2,h3,h4,h5,h6){line-height:1.25}
 .gd-page h1{font:600 30px/1.2 var(--display);margin:22px 0 14px}.gd-page h2{font:600 21px/1.25 var(--display);margin:30px 0 10px;padding-top:14px;border-top:1px solid var(--grid)}
 .gd-page h3{font-size:16px;margin:24px 0 8px}.gd-page h4{font-size:14.5px;margin:20px 0 6px}
 .gd-page a{color:var(--accent)}.gd-page a:hover{text-decoration:underline}

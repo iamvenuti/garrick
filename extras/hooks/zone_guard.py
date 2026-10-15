@@ -5,11 +5,15 @@ session was opened in.
 A session opened in a thread belongs to that thread's project. An edit there,
 or to a file lying loose in the project's zone folder (a zone's Todo.md), goes
 ahead. An edit anywhere else in the workspace (another project, another zone,
-a wiki, System/) is stopped once, with a sentence naming both places. A
-session opened at the workspace root, in System/, or outside any workspace,
-is never stopped: System/ describes the whole workspace, so its sessions work
-across it, and neither is an edit outside the workspace: the scratchpad, /tmp,
-the assistant's own memory.
+the Knowledge wiki, System/) is stopped once, with a sentence naming both
+places. The Meetings wiki is the one place it stands aside for: every zone
+files its conversations there, and the rules say that filing a conversation
+for a project you can name authorises the writes filing needs, the wiki page
+among them, so the guard asks nothing for it. A session opened at the
+workspace root, in System/, or outside any workspace, is never stopped:
+System/ describes the whole workspace, so its sessions work across it, and
+neither is an edit outside the workspace: the scratchpad, /tmp, the
+assistant's own memory.
 
 It is a hook for two harnesses, reading the event on stdin:
 
@@ -133,6 +137,17 @@ def home_place(names):
     return names[:1]           # System/, or another top-level folder
 
 
+def filing(target):
+    """Whether `target` is in the Meetings wiki, the one place the guard stands
+    aside for (as names below the root). Every zone files its conversations
+    there, and filing a conversation for a project the user named authorises
+    the writes it needs, the wiki page among them, so a session anywhere may
+    write there without being asked. The cost is that a stray write to a
+    meeting page from the wrong session goes unremarked; the rule in
+    System/rules.md is what covers that."""
+    return target[:2] == ["Wikis", "Meetings"]
+
+
 def allowed(home, target):
     """Whether a file at `target` may be written from a session homed at `home`
     (both as names below the root)."""
@@ -221,7 +236,7 @@ def outside(event):
     out = []
     for path in edits(event):
         names = parts(root, path, blind)
-        if names and not allowed(home, names):
+        if names and not allowed(home, names) and not filing(names):
             out.append((target_place(names), "/".join(names)))
     return home, out
 

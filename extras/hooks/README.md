@@ -9,12 +9,13 @@ It is optional. Core Garrick never depends on it, and the rule stands without it
 A session belongs to the project it was opened in: the folder at `Zones/<Zone>/<Project>`, whichever thread below it you started in. Before the assistant writes a file, the guard looks at where the file is:
 
 - **Inside the session's project**, or loose in its zone's folder (the zone's `Todo.md`): the edit goes ahead.
-- **Anywhere else in the workspace**, meaning another project, another zone, a wiki or `System/`: the edit stops once, with a sentence naming both places, such as *this session was opened in Work › Acme Review, and this edit is in System (System/tools/check.py)*.
+- **In the Meetings wiki**: the edit goes ahead, from whichever session. Every zone files its conversations there, and `System/rules.md` says that filing a conversation for a project you can name authorises the writes filing needs, the wiki page among them. Stopping that one would put a permission question in the middle of the workflow the rules had just said needs none.
+- **Anywhere else in the workspace**, meaning another project, another zone, the Knowledge wiki or `System/`: the edit stops once, with a sentence naming both places, such as *this session was opened in Work › Acme Review, and this edit is in System (System/tools/check.py)*.
 - **Outside the workspace** (a scratch folder, `/tmp`, the assistant's own memory): the edit goes ahead.
 
 A path is judged by where it really leads. A link inside the project to a folder in another zone counts as that zone, and on a disk that ignores case, as a Mac's does unless formatted otherwise, `zones/work` and `/users/...` count as `Zones/Work` and `/Users/...`.
 
-A session opened at the workspace root is never stopped, since it belongs to no project, and neither is one opened in `System/`, which governs every zone and wiki. A session opened in a zone's folder may write anywhere in that zone, and one opened in a wiki anywhere in that wiki.
+A session opened at the workspace root is never stopped, since it belongs to no project, and neither is one opened in `System/`, which governs every zone and wiki. A session opened in a zone's folder may write anywhere in that zone, and one opened in a wiki anywhere in that wiki. The Meetings wiki, as above, is open to every session; the Knowledge wiki is not.
 
 How each assistant stops:
 
@@ -23,7 +24,7 @@ How each assistant stops:
 
 It covers the file-editing tools: Edit, Write, MultiEdit and NotebookEdit in Claude Code, and `apply_patch` in Codex. A shell command that writes a file isn't covered; the rule in `System/rules.md` is what covers that. A scheduled job runs with `GARRICK_HEADLESS=1` and has nobody to ask, so the guard stands aside for it. It reads files only and never calls a model. If anything goes wrong inside it, the edit goes through: a broken guard never stops work.
 
-**What is and isn't enforced.** The guard is a reminder, not a gate: it records nothing about your answer. In Claude Code the question reaches you through the assistant's own permission prompt, which is where your consent belongs. On the Codex path the refusal only makes the assistant ask you, and a second attempt at the same place goes through whether you said yes or not. A shell command that writes a file isn't covered, and a guard that breaks lets the edit through. So what the guard gives you is the question, asked at the moment it matters; what keeps the work in the right place is the rule in `System/rules.md` and your answer to it.
+**What is and isn't enforced.** The guard is a reminder, not a gate: it records nothing about your answer. Because it stands aside for the Meetings wiki, a stray write to a meeting page from the wrong session goes unremarked; that is the price of leaving the guard and the rules saying the same thing about a filing, and the rule in `System/rules.md` is what covers it. In Claude Code the question reaches you through the assistant's own permission prompt, which is where your consent belongs. On the Codex path the refusal only makes the assistant ask you, and a second attempt at the same place goes through whether you said yes or not. A shell command that writes a file isn't covered, and a guard that breaks lets the edit through. So what the guard gives you is the question, asked at the moment it matters; what keeps the work in the right place is the rule in `System/rules.md` and your answer to it.
 
 ## Load it
 

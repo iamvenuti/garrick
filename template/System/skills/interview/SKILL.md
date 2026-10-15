@@ -171,8 +171,13 @@ step 7, and another session may have changes of its own in any repository.
    as `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the
    list's header gives: the thread just set up for it, or `<Party>: ` with
    the party or person when no thread fits, and a date only when one was
-   given. Commit each
-   zone's list in its own repository:
+   given.
+   **The example line goes with the first real action.** A list nobody has
+   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   it in the same edit that writes the first real line. It is a task like any
+   other, so anything that counts open actions counts it. In a workspace just
+   set up, this step is usually the edit that takes it out.
+   Commit each zone's list in its own repository:
    ```sh
    git -C "Zones/<Zone>" add -- Todo.md
    git -C "Zones/<Zone>" commit -m "Interview: open actions"

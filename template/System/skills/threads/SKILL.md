@@ -227,6 +227,10 @@ per wrap: the one named, and nothing else.
    finds its lines. A project in `System/` has no list of its own: its
    actions go in the `Todo.md` of the zone the user works from most, as the
    `todo` skill says.
+   **The example line goes with the first real action.** A list nobody has
+   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   it in the same edit that writes the first real line. It is a task like any
+   other, so anything that counts open actions counts it.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
    **A deliverable that left the workspace** in this session, copied to a

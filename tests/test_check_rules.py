@@ -379,8 +379,27 @@ class TestTodo(CheckCase):
         self.assertClean("todo")
 
     def test_template_line_is_not_a_thread(self):
+        """A list nobody has written to yet keeps its example: it shows the shape,
+        and there is no real action for it to sit under."""
         self.todo("- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>")
         self.assertClean("todo")
+
+    def test_the_example_goes_once_a_real_action_arrives(self):
+        """It is a task like any other: anything counting open actions counts it,
+        and `<YYYY-MM-DD>` is where a deadline should be."""
+        self.todo("- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>",
+                  "- [ ] [[Pricing]]: send the memo 📅 2026-03-20")
+        self.assertFinds("todo", "warning", "under 1 real one")
+        self.todo("- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>",
+                  "- [ ] [[Pricing]]: send the memo 📅 2026-03-20",
+                  "- [ ] Acme Corp: chase the invoice ⏳ 2026-03-22 #waiting")
+        self.assertFinds("todo", "warning", "under 2 real ones")
+
+    def test_a_ticked_line_counts_as_a_real_action(self):
+        """The example outlived the work it was supposed to be replaced by."""
+        self.todo("- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>",
+                  "- [x] [[Pricing]]: send the memo ✅ 2026-03-20")
+        self.assertFinds("todo", "warning", "still here")
 
     def test_label_leads_nowhere(self):
         self.todo("- [ ] [[Old Pricing]]: send the memo")

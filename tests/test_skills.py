@@ -287,6 +287,19 @@ class SkillsTest(unittest.TestCase):
                        "unticked lines that name this thread"):
             self.assertIn(needle, threads, needle)
 
+    def test_the_example_line_goes_with_the_first_real_action(self):
+        """A new zone's list opens with an example line to show the shape. It is a
+        task like any other, so every skill that writes a real action takes it out
+        in the same edit, and the list's own header says so."""
+        for name in ("todo", "threads", "meetings", "interview"):
+            text = flat((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("**The example line goes with the first real action.**", text, name)
+            self.assertIn("delete it in the same edit that writes the first real line", text, name)
+        todo = flat((SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("It never deletes a line**, but for the example line", todo)
+        header = flat((REPO / "template" / "System" / "templates" / "zone" / "Todo.md").read_text(encoding="utf-8"))
+        self.assertIn("the first real action takes it out", header)
+
     def test_what_is_owed_comes_from_the_todo_list(self):
         """Nothing updates a meeting page's actions table once an action is done:
         what is still open is the zone's Todo.md, for a question and for a brief."""

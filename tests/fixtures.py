@@ -19,7 +19,13 @@ TOOLS = Path(__file__).resolve().parent.parent / "template" / "System" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from garrick_lib import install_wall_hook  # noqa: E402
+from garrick_lib import (  # noqa: E402
+    checkpoint_item_line,
+    install_wall_hook,
+    place_checkpoint,
+    render_checkpoint,
+    resume_hash,
+)
 
 HAVE_GIT = shutil.which("git") is not None
 
@@ -126,6 +132,34 @@ def thread_note(project: str, thread: str, party: str = "acme", body: str = "", 
         "---\ntitle: %s\ntype: thread\nproject: \"[[%s]]\"\nparty: %s\nstatus: %s\ncreated: 2026-03-01\nupdated: 2026-03-01\n---\n\n"
         "# %s\n\n%s\n\n## State of play\n\n%s" % (thread, project, party, status, thread, body, closing)
     )
+
+
+CHECKPOINT_AT = "2026-03-14T14:32:10+01:00"
+# What a checkpoint holds in the tests that only need one to be there: a file
+# this session made, a decision in the words it was made in, something still
+# only being considered, the next step, an action nobody dated, and the work
+# left half done.
+CHECKPOINT_ITEMS = (
+    ("made", "`Deliverables/260301 - Pricing memo.md`, saved 14:20", "m1"),
+    ("decided", '"Go with the tier-two rate as drafted", the user at 14:25', "d1"),
+    ("considering", "dropping tier three; not decided", "c1"),
+    ("next", "fill in the tier-two volume on row 14, the user's", "n"),
+    ("action", "send Dana the price sheet, no date given", "a1"),
+    ("incomplete", "the tier-three tab is half filled", "i"),
+)
+
+
+def checkpoint(text: str, at: str = CHECKPOINT_AT, items=CHECKPOINT_ITEMS, base: str = None) -> str:
+    """A note with a valid `### Checkpoint` block under its Resume here block,
+    written the way `scaffold.py checkpoint` writes one: the markers, the
+    comment line carrying `at`, `base` and `key`, and one line an item. `base`
+    is the note's own resume point unless a test gives another, which is how a
+    stale block is made."""
+    lines = [{"line": checkpoint_item_line(kind, body, item_id)} for kind, body, item_id in items]
+    body, _ = render_checkpoint(at, base if base is not None else resume_hash(text), lines)
+    placed = place_checkpoint(text, body)
+    assert placed is not None, "the note has no Resume here block to put a checkpoint under"
+    return placed
 
 
 def meeting_page(zone: str = "Work", parties: str = "[acme]", title: str = "Kick-off") -> str:

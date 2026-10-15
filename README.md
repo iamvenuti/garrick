@@ -10,7 +10,7 @@ Garrick keeps your place in every line of work you run with Claude or Codex, in 
 
 Your assistant's memory remembers the project. It can't tell you which thread is waiting, what comes next, or what was only in your head when you stopped. Garrick can: every thread has one resume point, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
 
-You can see where every thread stands and open any of them in one move, from the Garrick App or a cmux tab per thread. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
+The Garrick App shows where every thread stands and opens any of them in one move, in the Claude or Codex app or in a cmux tab of its own. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
 
 Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. The record is plain Markdown in folders on your Mac, and updates keep your edits.
 
@@ -81,7 +81,7 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Garrick as a shell around Claude Code or Codex, in three layers. On top, where you switch: the Garrick App opens any thread at its next action, and cmux, optional, gives each thread a terminal tab. In the middle, the record: Knowledge, Meetings and the work threads, each with its resume point; mail, files and recordings are filed into it for you. At the bottom, Claude Code or Codex does the work and reads the rules and walls first, and a commit check lets a commit in or refuses one that crosses a wall.](docs/architecture/overview.png)
+![Garrick as a shell around Claude Code or Codex, in four layers. On top, the Garrick App navigates your zones, projects and threads, and opens a thread where you work. Below it, where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Then the record: Knowledge, Meetings and the work threads, each with its resume point; mail, files and recordings are filed into it for you. Underneath, Claude or Codex is the model doing the work: it reads the rules and walls first, and a commit check lets a commit in or refuses one that crosses a wall.](docs/architecture/overview.png)
 
 Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
 

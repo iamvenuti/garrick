@@ -8,7 +8,7 @@
     "legend": {
       "entries": {
         "frontend": {
-          "label": "Where you switch"
+          "label": "Navigate, or work"
         },
         "backend": {
           "label": "Work thread"
@@ -20,7 +20,7 @@
           "label": "Rules and checks"
         },
         "cloud": {
-          "label": "The agent underneath"
+          "label": "The model underneath"
         },
         "external": {
           "label": "Way in"
@@ -33,23 +33,24 @@
         "label": "Leave, jump, come back",
         "focus": [
           "app",
+          "desktop",
           "cmux",
           "threadA",
           "threadB"
         ],
-        "note": "Every thread keeps its resume point. The Garrick App opens any of them at its next action."
+        "note": "The Garrick App shows every thread and opens one where you work, at its next action."
       },
       {
         "id": "guard",
         "label": "The guard",
         "focus": [
-          "agent",
+          "model",
           "rules",
           "check",
           "threadA",
           "threadB"
         ],
-        "note": "The agent reads the rules first. A check before every commit refuses one that crosses a wall."
+        "note": "The model reads the rules first, and a check runs before every commit."
       },
       {
         "id": "in",
@@ -65,27 +66,41 @@
   },
   "components": [
     {
+      "id": "app",
+      "type": "frontend",
+      "label": "Garrick App",
+      "sublabel": "zones, projects, threads",
+      "pos": [
+        720,
+        40
+      ],
+      "size": [
+        220,
+        70
+      ]
+    },
+    {
       "id": "waysin",
       "type": "external",
       "label": "Mail, files, recordings",
       "sublabel": "filed for you",
       "pos": [
-        100,
-        40
+        40,
+        190
       ],
       "size": [
-        200,
+        220,
         70
       ]
     },
     {
-      "id": "app",
+      "id": "desktop",
       "type": "frontend",
-      "label": "Garrick App",
-      "sublabel": "every thread, opened in one move",
+      "label": "Claude or Codex app",
+      "sublabel": "the desktop app",
       "pos": [
-        620,
-        40
+        720,
+        190
       ],
       "size": [
         220,
@@ -96,13 +111,13 @@
       "id": "cmux",
       "type": "frontend",
       "label": "cmux",
-      "sublabel": "optional: a tab per thread",
+      "sublabel": "a terminal tab per thread",
       "pos": [
-        960,
-        40
+        1060,
+        190
       ],
       "size": [
-        200,
+        220,
         70
       ]
     },
@@ -112,11 +127,11 @@
       "label": "Knowledge",
       "sublabel": "what you read",
       "pos": [
-        100,
-        220
+        40,
+        340
       ],
       "size": [
-        200,
+        220,
         70
       ]
     },
@@ -126,11 +141,11 @@
       "label": "Meetings",
       "sublabel": "every conversation",
       "pos": [
-        360,
-        220
+        380,
+        340
       ],
       "size": [
-        200,
+        220,
         70
       ]
     },
@@ -140,8 +155,8 @@
       "label": "Thread",
       "sublabel": "resume point, next action",
       "pos": [
-        620,
-        220
+        720,
+        340
       ],
       "size": [
         220,
@@ -154,11 +169,25 @@
       "label": "Another thread",
       "sublabel": "resume point, next action",
       "pos": [
-        960,
-        220
+        1060,
+        340
       ],
       "size": [
-        200,
+        220,
+        70
+      ]
+    },
+    {
+      "id": "model",
+      "type": "cloud",
+      "label": "Claude or Codex",
+      "sublabel": "the model doing the work",
+      "pos": [
+        260,
+        490
+      ],
+      "size": [
+        220,
         70
       ]
     },
@@ -168,8 +197,8 @@
       "label": "Rules and walls",
       "sublabel": "what goes where, who never mixes",
       "pos": [
-        620,
-        400
+        720,
+        490
       ],
       "size": [
         220,
@@ -182,22 +211,8 @@
       "label": "Commit check",
       "sublabel": "catches a crossing",
       "pos": [
-        960,
-        400
-      ],
-      "size": [
-        200,
-        70
-      ]
-    },
-    {
-      "id": "agent",
-      "type": "cloud",
-      "label": "Claude Code or Codex",
-      "sublabel": "does the work, in an app or a terminal",
-      "pos": [
-        220,
-        400
+        1060,
+        490
       ],
       "size": [
         220,
@@ -208,9 +223,16 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "Where you switch",
+      "label": "Navigate and control",
       "wraps": [
-        "app",
+        "app"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Where you work",
+      "wraps": [
+        "desktop",
         "cmux"
       ]
     },
@@ -225,47 +247,64 @@
       ]
     },
     {
+      "kind": "region",
+      "label": "Underneath",
+      "wraps": [
+        "model"
+      ]
+    },
+    {
       "kind": "security-group",
       "label": "The guard",
       "wraps": [
         "rules",
         "check"
       ]
-    },
-    {
-      "kind": "region",
-      "label": "Underneath",
-      "wraps": [
-        "agent"
-      ]
     }
   ],
   "connections": [
     {
-      "id": "come-back",
+      "id": "opens",
       "from": "app",
-      "to": "threadA",
-      "label": "come back to the next action",
+      "to": "desktop",
+      "label": "opens a thread in",
       "variant": "emphasis",
       "fromSide": "bottom",
       "toSide": "top",
       "labelAt": [
-        730,
-        165
+        830,
+        150
       ]
     },
     {
-      "id": "tab",
-      "from": "cmux",
-      "to": "threadB",
-      "label": "or in a terminal",
+      "id": "opens-tab",
+      "from": "app",
+      "to": "cmux",
+      "label": "or in",
       "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "work",
+      "from": "desktop",
+      "to": "threadA",
+      "label": "at its next action",
+      "variant": "emphasis",
       "fromSide": "bottom",
       "toSide": "top",
       "labelAt": [
-        1060,
-        165
+        830,
+        300
       ]
+    },
+    {
+      "id": "work-tab",
+      "from": "cmux",
+      "to": "threadB",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
     },
     {
       "id": "to-knowledge",
@@ -275,8 +314,8 @@
       "fromSide": "bottom",
       "toSide": "top",
       "labelAt": [
-        200,
-        165
+        150,
+        300
       ]
     },
     {
@@ -289,22 +328,22 @@
     },
     {
       "id": "reads",
-      "from": "agent",
+      "from": "model",
       "to": "rules",
       "label": "reads the rules first",
       "variant": "emphasis",
       "fromSide": "right",
       "toSide": "left",
       "labelAt": [
-        530,
-        435
+        600,
+        512
       ]
     },
     {
       "id": "walls",
       "from": "rules",
       "to": "threadA",
-      "label": "works inside the walls",
+      "label": "writes inside the walls",
       "variant": "security",
       "fromSide": "top",
       "toSide": "bottom"
@@ -322,10 +361,10 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "Where you switch",
+      "title": "Navigate, then work",
       "items": [
-        "The Garrick App shows where every thread stands and opens any of them at its next action, on the Mac or in a browser",
-        "Say “hold this” when you are interrupted and “back” when you return. cmux gives each thread a terminal tab; Obsidian and phone access are optional too"
+        "The Garrick App is the control panel over your zones, projects and threads: where each one stands, what is due, park or wake a thread, tick an action",
+        "It opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Say “hold this” when interrupted and “back” when you return"
       ]
     },
     {
@@ -338,9 +377,9 @@
     },
     {
       "dot": "rose",
-      "title": "The guard, and the agent under it",
+      "title": "Underneath, and the guard",
       "items": [
-        "Claude Code or Codex does the work, in its desktop app or a terminal, and reads the rules first",
+        "Claude or Codex is the model doing the work, whichever app you use it in, and it reads the rules first",
         "Walls you declare tell it whose material never meets. A check before every commit catches links, names and copied wording across a wall, within limits: see Principles and limits"
       ]
     }

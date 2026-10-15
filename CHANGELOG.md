@@ -12,7 +12,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - The command reference is `docs/commands.md`, under the name it already had; `docs/getting-started.md` stays as a pointer to it, for old links and the setup skill in existing workspaces. Its list of shipped skills now includes `todo`. ([#105](https://github.com/iamvenuti/garrick/issues/105))
 - The README opens on what Garrick changes in a working day: leaving a thread, moving to another and coming back to its next action, with "hold this" and "back" for an interruption. It describes Garrick as a shell around Claude Code or Codex rather than an AI chief of staff. *Who it's for* starts with people who run several lines of work at once and says that one line of work is probably served by the assistant's own project memory; the walls follow, for work that holds other people's confidences. The status line says Garrick was built from one person's working week.
-- The overview diagram is drawn as the README now describes Garrick: a shell around Claude Code or Codex, with where you switch on top (the Garrick App and cmux), the record in the middle, and the agent under the rules and the commit check at the bottom. The README calls the status page the Garrick App.
+- The overview diagram is drawn as the README now describes Garrick: a shell around Claude Code or Codex, in four layers: the Garrick App on top, to navigate zones, projects and threads and open one; where you work below it, the Claude or Codex app or cmux; then the record; and underneath, Claude or Codex as the model, with the rules and the commit check. The README calls the status page the Garrick App.
 
 ### Fixed
 

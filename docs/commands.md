@@ -173,7 +173,7 @@ Tests the workspace against every rule a machine can check:
 - deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);
 - a deliverable of an anonymous project that names another party of its zone, one of their people, or a name its hub keeps out, Word, Excel and PowerPoint files included (a warning);
 - a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere, or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
-- in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, or an Inbox that grew by more than twenty in a week (warnings);
+- in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, the example action the list was started with still there under real ones, or an Inbox that grew by more than twenty in a week (warnings);
 - a link from one zone into another (an error), a note that writes the full path of a cloud-synced folder, and a link to a page name both wikis hold that does not say which (warnings);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
 - meeting and mail pages missing a zone or parties, or naming both sides of a wall (a warning), or with a date not written YYYY-MM-DD; a page in the Meetings wiki written for one party, with `party` in its frontmatter as a person page has, that cites a meeting across a wall (a warning);

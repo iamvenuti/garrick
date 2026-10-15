@@ -1579,8 +1579,9 @@ RELEASE_EVERY = datetime.timedelta(days=1)
 # newest release named there is the release the workspace runs.
 CHANGELOG_COPY = ("System", "garrick-changelog.md")
 # Garrick's docs, as the release ships them in docs/: the installer copies the
-# folder here and every update replaces it, so the assistant can answer from
-# them and the Garrick App's Guide tab can show them without fetching anything.
+# pages and the images they show here, and every update replaces them, so the
+# assistant can answer from them and the Garrick App's Guide tab can show them
+# without fetching anything.
 DOCS_COPY = ("System", "garrick-docs")
 UPDATE_COMMAND = "python3 System/tools/release.py update"
 _REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$")

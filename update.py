@@ -153,8 +153,9 @@ def shipped(zones):
     _tree(TEMPLATE / "System", "System", out, skip=("context.md",))
     if (REPO / "CHANGELOG.md").is_file():
         out["System/garrick-changelog.md"] = ((REPO / "CHANGELOG.md").read_bytes(), 0o644)
-    if (REPO / "docs").is_dir():
-        _tree(REPO / "docs", "/".join(install.lib().DOCS_COPY), out)
+    for rel in install.docs_files():
+        source = REPO / "docs" / rel
+        out["/".join(install.lib().DOCS_COPY + (rel,))] = (source.read_bytes(), source.stat().st_mode & 0o777)
     _tree(TEMPLATE / "Wikis", "Wikis", out)
     zone_template = TEMPLATE.joinpath(*install.lib().ZONE_TEMPLATE)
     for zone in zones:
@@ -1063,11 +1064,14 @@ def release_hashes(repo=REPO):
     zone = "template/" + "/".join(install.lib().ZONE_TEMPLATE) + "/"
     paths, zone_texts = {}, {}
     for tag in tags:
-        for line in run("ls-tree", "-r", "--name-only", tag).decode().splitlines():
+        listed = run("ls-tree", "-r", "--name-only", tag).decode().splitlines()
+        docs = set(install.shipped_docs([l[len("docs/"):] for l in listed if l.startswith("docs/")],
+                                        lambda n: run("show", "%s:docs/%s" % (tag, n)).decode("utf-8", "replace")))
+        for line in listed:
             in_zone = line.startswith((zone, OLD_ZONE_TEMPLATE))
             if line == "CHANGELOG.md":
                 rel = "System/garrick-changelog.md"
-            elif line.startswith("docs/"):
+            elif line.startswith("docs/") and line[len("docs/"):] in docs:
                 rel = "/".join(install.lib().DOCS_COPY) + line[len("docs"):]
             elif line.startswith(OLD_ZONE_TEMPLATE):
                 rel = None                  # copied into each zone, never to a path of its own

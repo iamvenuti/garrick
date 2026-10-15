@@ -19,9 +19,11 @@ if sys.version_info < (3, 9):
 import argparse
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
@@ -39,6 +41,41 @@ DEFAULT_ZONES = ["Work", "Personal"]
 # macOS privacy protection stops scheduled jobs from reading these folders.
 PROTECTED = ["Documents", "Desktop", "Downloads", "Library"]
 IGNORED_FILES = {".DS_Store"}
+
+# What of docs/ a workspace gets, in System/garrick-docs/: every page outside
+# docs/assets/, and the images those pages show. A file a page only links to
+# stays on GitHub, where the Guide sends that link.
+DOC_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
+DOC_CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.S)
+
+
+def shipped_docs(names, read):
+    """The files of docs/ a workspace gets, by their paths from docs/, given
+    every file there (`names`) and a way to read a page's text (`read`). The
+    installer, update.py's shipped() and its release_hashes() all ask this,
+    so the three agree on what Garrick writes."""
+    names = set(names)
+    pages = sorted(n for n in names if n.endswith(".md") and not n.startswith("assets/"))
+    out = set(pages)
+    for page in pages:
+        for target in DOC_IMAGE.findall(DOC_CODE.sub("", read(page))):
+            if target.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target):
+                continue                                  # a web address, or none of the docs' own
+            image = posixpath.normpath(posixpath.join(posixpath.dirname(page),
+                                                      urllib.parse.unquote(target.split("#", 1)[0])))
+            if image in names:
+                out.add(image)
+    return sorted(out)
+
+
+def docs_files(docs=None):
+    """shipped_docs() for a docs folder on disk, by default this Garrick's."""
+    docs = Path(docs) if docs is not None else REPO / "docs"
+    if not docs.is_dir():
+        return []
+    names = [p.relative_to(docs).as_posix() for p in docs.rglob("*")
+             if p.is_file() and p.name not in IGNORED_FILES and not any(part.startswith(".") for part in p.relative_to(docs).parts)]
+    return shipped_docs(names, lambda n: (docs / n).read_text(encoding="utf-8"))
 # The tag rule and the tag the questions offer live in the library, beside the
 # naming layer: `garrick_lib.TAG_RE`, `TAG_RULE` and `tag_for`. This file is not
 # shipped into a workspace, so a copy here could not be reached by the workspace's
@@ -650,9 +687,8 @@ def install(cfg, target, force=False, quiet=False):
     if (REPO / "CHANGELOG.md").is_file():
         w.copy_file(REPO / "CHANGELOG.md", root / "System" / "garrick-changelog.md")
     # Its docs, which the assistant answers from and the Garrick App's Guide tab shows.
-    if (REPO / "docs").is_dir():
-        w.mkdir(root.joinpath(*pl.DOCS_COPY))
-        w.copy_tree(REPO / "docs", root.joinpath(*pl.DOCS_COPY))
+    for rel in docs_files():
+        w.copy_file(REPO / "docs" / rel, root.joinpath(*pl.DOCS_COPY, *rel.split("/")))
 
     # The wikis: one repository for both.
     w.mkdir(root / "Wikis")

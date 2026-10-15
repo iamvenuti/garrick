@@ -407,7 +407,13 @@ class TestGuide(StatusCase):
 
     def setUp(self):
         super().setUp()
-        shutil.copytree(REPO / "docs", self.root / "System" / "garrick-docs")
+        spec = importlib.util.spec_from_file_location("garrick_install", REPO / "install.py")
+        install = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(install)
+        for rel in install.docs_files():                                       # as the installer ships them
+            target = self.root / "System" / "garrick-docs" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((REPO / "docs" / rel).read_bytes())
 
     def guide(self, html):
         start = html.index('<section class="tab" id="tab-guide"')
@@ -439,7 +445,8 @@ class TestGuide(StatusCase):
 
     def test_every_page_in_reading_order(self):
         guide = self.pages(self.page())
-        pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md"))
+        pages = sorted(p.relative_to(REPO / "docs").as_posix() for p in (REPO / "docs").rglob("*.md")
+                       if not p.relative_to(REPO / "docs").as_posix().startswith("assets/"))
         ids = re.findall(r'<article class="gd-page" id="([^"]+)"', guide)
         self.assertEqual(sorted(status.guide_mod().page_id(p) for p in pages), sorted(ids))
         self.assertEqual(["Start here", "Understand", "Do", "Extras", "Look up"], re.findall(r'<div class="gd-sec"><h3>([^<]+)</h3>', guide))

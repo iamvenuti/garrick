@@ -376,9 +376,9 @@ def page_id(rel: str, heading: str = "") -> str:
 
 
 def doc_pages(docs: Path) -> List[str]:
-    """Every Markdown page under the docs folder, by its path from there."""
-    return sorted(p.relative_to(docs).as_posix() for p in docs.rglob("*.md")
-                  if p.is_file() and not any(part.startswith(".") for part in p.relative_to(docs).parts))
+    """Every page in the docs folder outside assets/, as the installer ships them, by its path from there."""
+    return sorted(rel for rel in (p.relative_to(docs).as_posix() for p in docs.rglob("*.md") if p.is_file())
+                  if not rel.startswith("assets/") and not any(part.startswith(".") for part in rel.split("/")))
 
 
 def contents(docs: Path, pages: List[str]) -> List[Tuple[str, List[str]]]:

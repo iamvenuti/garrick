@@ -146,6 +146,29 @@ class TestDocs(Case):
         self.apply()
         self.assertEqual((REPO / "docs" / "concepts.md").read_bytes(), (self.root / self.DOC).read_bytes())
 
+    def test_install_update_and_the_release_hashes_ship_the_same_docs(self):
+        expected = {"System/garrick-docs/" + rel for rel in update.install.docs_files()}
+        self.assertIn("System/garrick-docs/assets/status-graph.png", expected)
+        self.assertEqual(expected, {p for p in self.stamp()["files"] if p.startswith("System/garrick-docs/")})
+        self.assertEqual(expected, {p for p in update.shipped(update.zones_of(self.root, self.stamp()))
+                                    if p.startswith("System/garrick-docs/")})
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="T", GIT_AUTHOR_EMAIL="t@example.invalid",
+                       GIT_COMMITTER_NAME="T", GIT_COMMITTER_EMAIL="t@example.invalid")
+
+            def git(*args):
+                subprocess.run(["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
+                                *args], check=True, capture_output=True, env=env)
+            git("init", "-q")
+            shutil.copytree(REPO / "docs", repo / "docs")
+            git("add", "-A")
+            git("commit", "-q", "-m", "docs")
+            git("tag", "v9.0.0")
+            known = update.release_hashes(repo)["paths"]
+        self.assertEqual(expected, {p for p in known if p.startswith("System/garrick-docs/")})
+        self.assertNotIn("System/garrick-docs/architecture/overview.html", known)
+
     def test_older_releases_docs_are_known_where_a_workspace_keeps_them(self):
         known = json.loads(update.RELEASE_HASHES.read_text())["paths"]
         self.assertIn("System/garrick-docs/principles.md", known)

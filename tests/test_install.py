@@ -236,7 +236,7 @@ class InstallTest(unittest.TestCase):
     def test_the_docs_come_with_it(self):
         # #133: the assistant answers from them, and the Garrick App's Guide tab shows them.
         docs = REPO / "docs"
-        shipped = sorted(p.relative_to(docs).as_posix() for p in docs.rglob("*") if p.is_file() and p.name != ".DS_Store")
+        shipped = load_installer().docs_files()
         copy = self.root / "System" / "garrick-docs"
         self.assertEqual(shipped, sorted(p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file()))
         for rel in shipped:
@@ -244,6 +244,23 @@ class InstallTest(unittest.TestCase):
         files = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
         self.assertIn("System/garrick-docs/concepts.md", files)               # Garrick's, so an update replaces them
         self.assertIn("System/garrick-docs/concepts.md", git(self.root, "ls-files"))
+        # The pages and the images they show; a file a page only links to stays on GitHub.
+        self.assertIn("extras/status-page.md", shipped)
+        self.assertIn("assets/status-graph.png", shipped)                     # extras/status-page.md shows it
+        for left in ("architecture/overview.html", "architecture/overview.png", "assets/social-preview.png",
+                     "assets/brand.md", "assets/garrick-lockup.svg"):
+            self.assertNotIn(left, shipped)
+            self.assertFalse((copy / left).exists(), left)
+
+    def test_only_an_image_a_page_shows_is_shipped(self):
+        texts = {"a.md": "# A\n\n![shown](assets/shown.png) and [linked](assets/linked.png)\n\n"
+                         "`![in code](assets/code.png)`\n\n```\n![fenced](assets/fenced.png)\n```\n",
+                 "extras/b.md": "![up](../assets/up.svg) ![web](https://example.com/x.png) ![gone](../assets/none.png)\n",
+                 "assets/note.md": "![from the assets](own.png)\n"}
+        names = list(texts) + ["assets/" + n for n in ("shown.png", "linked.png", "code.png", "fenced.png", "up.svg",
+                                                         "unused.png", "own.png")]
+        self.assertEqual(["a.md", "assets/shown.png", "assets/up.svg", "extras/b.md"],
+                         load_installer().shipped_docs(names, texts.__getitem__))
 
     def test_git_repositories(self):
         for repo in repos(self.root):

@@ -393,6 +393,26 @@ class RepositoryInstructionsTest(unittest.TestCase):
         for place in ("`LICENSE`", "the deck's byline", "commit metadata"):
             self.assertIn(place, rule[0], place)
 
+    def test_a_test_never_reads_this_mac(self):
+        """The rule, and the check that section's own rule requires. The status page
+        offers only the launchers that will work on the Mac it was built on, so a test
+        asserting what it offers asserts a fact about the machine running it: it passes
+        where it was written and fails in CI. The helpers all take an `apps` argument
+        for exactly this purpose, so a test says which apps exist instead of asking."""
+        rule = [line for line in section(self.text, "## Rules for this repository").splitlines()
+                if line.startswith("- **A test never reads this Mac.**")]
+        self.assertEqual(1, len(rule), rule)
+        for phrase in ("builds its own app bundles", "sets its own card fields"):
+            self.assertIn(phrase, rule[0], phrase)
+        bare = re.compile(r"\b(launcher_state|launchers_installed|cmux_installed)\(\s*\)")
+        hits = []
+        for path in sorted((REPO / "tests").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for m in bare.finditer(text):
+                hits.append("%s:%d: %s" % (path.name, text.count("\n", 0, m.start()) + 1, m.group(1)))
+        self.assertEqual([], hits, "a test asks this Mac which apps it has; pass the apps "
+                                   "to look in instead:\n" + "\n".join(hits))
+
 
 class ThreadListingTest(unittest.TestCase):
     """The listing behind "what's open", run exactly as the threads skill gives it,

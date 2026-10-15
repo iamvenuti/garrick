@@ -4,6 +4,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-15
+
 ### Added
 
 - The docs are in every workspace, and the Garrick App shows them. The installer copies Garrick's doc pages, and the images they show, into `System/garrick-docs/`, and an update replaces that copy as it does the release notes, so a file you changed there comes back as a `.new` beside it. The Garrick App has a fourth tab, *Guide*, after *Status*: the pages in reading order under Start here, Understand, Do, Extras and Look up, a search field that narrows the contents to the titles and headings that match, and the last page you read when you come back. It works the same in a browser, in the Mac app and in the Obsidian plugin: a link from one page to another stays in the tab and lands on its heading, a link to one of Garrick's own files opens it on GitHub at the release you run, and the images travel inside the page. The pages stay out of the page's layout until the tab first opens, so the Overview and Status tabs load as fast as before. `AGENTS.md` sends a question about Garrick itself, such as "what is a wall", to `System/garrick-docs/`, and the answer names the page it came from. The release notes in Settings are drawn by the same renderer, which no longer reads Markdown inside a code span. ([#133](https://github.com/iamvenuti/garrick/issues/133))

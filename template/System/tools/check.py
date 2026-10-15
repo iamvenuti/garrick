@@ -394,7 +394,7 @@ TEMPLATES = ("System", "templates")
 
 
 def is_template_path(ws: Workspace, path: Path) -> bool:
-    """A template, whose {{MARK}}s are there for a script to fill: anything
+    """A template, whose placeholder marks are there for a script to fill: anything
     under System/templates/, or in a folder under Zones/ whose name starts
     with an underscore (`_project`). A Garrick checkout kept in a project
     holds the shipped originals at the same position in the tree it ships,

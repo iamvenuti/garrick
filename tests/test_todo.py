@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from fixtures import build_workspace, write  # noqa: E402
+from fixtures import build_workspace, checkpoint, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("garrick_todo", str(REPO / "template" / "System" / "skills" / "todo" / "todo.py"))
@@ -274,3 +274,48 @@ class SweepJobTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckpointStaysOutTest(unittest.TestCase):
+    """The sweep reads the Resume here block's Next action and never the
+    checkpoint beside it, so an unconfirmed next action and the actions a
+    checkpoint is holding to file never turn into lines of their own."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        self.zone = self.root / "Zones" / "Work"
+        write(self.zone / "Todo.md", LIST)
+        self.note = self.zone / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        write(self.note, checkpoint(self.note.read_text()))
+
+    def test_no_line_of_the_block_is_a_task(self):
+        lines = [t["line"] for t in todo_lines.tasks(str(self.zone))]
+        self.assertTrue(lines)                                        # the list's own lines are found
+        for line in lines:
+            self.assertNotIn("<!--", line)
+        for held in ("send Dana the price sheet", "fill in the tier-two volume on row 14",
+                     "the tier-three tab is half filled"):
+            self.assertFalse([l for l in lines if held in l], held)
+
+    def test_the_sweep_leaves_the_list_and_the_block_as_they_are(self):
+        before = self.note.read_bytes()
+        day = dt.date(2026, 10, 15)
+        todo.expire(self.root, self.zone, day)
+        todo.archive(self.zone, day)
+        todo.tidy(self.zone)
+        self.assertEqual(before, self.note.read_bytes())              # the script never touches a thread note
+        text = (self.zone / "Todo.md").read_text()
+        self.assertNotIn("send Dana the price sheet", text)
+        self.assertNotIn("row 14", text)
+
+    def test_the_digest_counts_only_the_list(self):
+        said = todo.digest(self.zone, dt.date(2026, 10, 15))
+        self.assertNotIn("price sheet", said)
+        self.assertNotIn("row 14", said)
+
+    def test_the_skill_says_the_block_is_not_read(self):
+        skill = (REPO / "template" / "System" / "skills" / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Never\n     the `### Checkpoint` block beside it", skill)

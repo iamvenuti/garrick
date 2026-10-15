@@ -46,7 +46,10 @@ check and the status page find the thread in `System/`.
 3. **Read what may hold actions**, in this zone only:
    - the Meetings pages whose `zone` is this one, from the last 30 days
      (`Wikis/Meetings/wiki/sources/`), each one's actions table;
-   - each live thread's `Next action` row, in its Resume here block.
+   - each live thread's `Next action` row, in its Resume here block. Never
+     the `### Checkpoint` block beside it: what is in there is unconfirmed,
+     including its own next action and its To file lines, and the wrap that
+     folds it in is what files them.
 4. **Keep only what someone can act on**: one named owner and a concrete
    verb. A row owned by "the team" or by nobody, or one that restates a
    decision, stays on its page.

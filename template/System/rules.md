@@ -53,6 +53,8 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 - **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
 - **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken. **A parked project** has `status: parked` on its hub, and every thread in it is parked with it, whatever its own note says.
 - **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it. An action that opens with its thread's link keeps pointing at a live thread: when a thread is renamed, its lines follow. Dates go last on the line, where Obsidian Tasks reads them.
+- **A checkpoint is the one exception.** As the work happens, a `### Checkpoint` block under Resume here records what this session made, decided and left half done, unconfirmed and never touching the block above it; its To file lines are held there, unfiled, until the next wrap files them and removes the block. Only a wrap, a finish or an interrupt confirms anything.
+- **A deadline nobody gave says so.** The Deadline row reads "not given" where nobody has dated the work, and "none" only where somebody said there is none.
 - **If your assistant has a memory of its own**, keep one entry per live or parked thread that says where its resume point is, and nothing else. No status: the note has it. Delete the entry when the thread is finished.
 
 ## Voice

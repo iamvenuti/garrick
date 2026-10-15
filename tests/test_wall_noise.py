@@ -1,11 +1,13 @@
 """False alarms the wall check no longer raises: a zone's archive read as a
 project, the code of HTML pages read as wording, a list of links to Knowledge
 pages read as one run of words, files git ignores read as the project's own,
-and the published ledger's shipped header read as a quotation. Each test
-pairs the case that must pass with one that must still be found.
+the published ledger's shipped header read as a quotation, and a party who is
+a person caught through her party's tag. Each test pairs the case that must
+pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
-from each other, as in fixtures.py.
+from each other, as in fixtures.py, with Rowan Keeler, Zeta Rossi and Keeler
+added where a party is a person.
 """
 
 from __future__ import annotations
@@ -280,6 +282,125 @@ class TestChangelogIsCommon(WallCase):
         self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/How it works.md",
                           "Zones/Work/Birch Entry/Threads/Market Sizing/How it works.md"},
                          {f.path for f in self.walls()})
+
+
+class PersonPartyCase(WallCase):
+    """A party that is a person, walled from Birch & Co, so that a note in the
+    Birch project is the one being checked."""
+
+    PARTY = "| %s | Advisory client, one to one | Work | `%s` | |"
+    WALL = "| `%s` | `birch` | Her own affairs are not the market study |"
+
+    def party(self, name, tag, near_side_row=False, role="Herself"):
+        """Add a party that is `name`, tagged `tag`, walled from `birch`, with
+        a People row of her own and, when asked, one under `birch` too."""
+        path = self.root / "System" / "context.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("| Birch & Co |", (self.PARTY % (name, tag)) + "\n| Birch & Co |", 1)
+        text = text.replace("| `acme` | `birch` | Competitors, and both are clients |",
+                            "| `acme` | `birch` | Competitors, and both are clients |\n" + self.WALL % tag, 1)
+        rows = "| %s | `%s` | %s |" % (name, tag, role)
+        if near_side_row:
+            rows += "\n| %s | `birch` | In the market study, as herself |" % name
+        text = text.replace("| Theo Marsh | `birch` | Managing partner |",
+                            "| Theo Marsh | `birch` | Managing partner |\n" + rows, 1)
+        path.write_text(text, encoding="utf-8")
+
+    def note(self, text):
+        return write(self.birch / "Threads" / "Market Sizing" / "Notes.md", text)
+
+
+class TestPartyWhoIsAPerson(PersonPartyCase):
+    """#98: a party that is a person, Rowan Keeler (`keeler`), who also takes
+    part in a walled project as herself. The People row under that project's
+    party clears her full name, and has to clear the party's tag with it, since
+    the tag here is her surname.
+
+    `tests/test_wall_gaps.py` covers the rule as well, from the other side of
+    the wall and on the `GapCase` fixture. These tests are not that test over
+    again: they run from the Birch side on `WallCase`, and they add the two
+    cases that one does not reach, a tag that is not the party's name and the
+    commit passing the installed hook."""
+
+    JOINED = "Rowan Keeler joined the pilot, and wants the summary by Friday.\n"
+
+    def test_the_people_row_clears_her_name_and_the_tag_with_it(self):
+        self.party("Rowan Keeler", "keeler", near_side_row=True)
+        self.note(self.JOINED)
+        self.assertEqual([], self.walls())
+        self.note("Keeler joined the pilot, and wants the summary by Friday.\n")
+        self.assertEqual([], self.walls())
+
+    def test_without_the_near_side_row_the_same_note_is_still_refused(self):
+        self.party("Rowan Keeler", "keeler")
+        self.note(self.JOINED)
+        found = self.walls()
+        self.assertEqual(1, len(found), found)
+        self.assertEqual("Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md", found[0].path)
+        self.assertIn("names Rowan Keeler, or one of its people", found[0].message)
+        self.assertIn("wall stands between birch and keeler", found[0].message)
+
+    def test_an_unrelated_near_side_name_holding_the_word_clears_nothing(self):
+        """The containing name has to be a form of the walled party itself. An
+        analyst called Anna Birch at Acme does not make "Birch" safe to write."""
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "| Dana Whitlock | `acme` | Head of procurement |",
+            "| Dana Whitlock | `acme` | Head of procurement |\n| Anna Birch | `acme` | Analyst |", 1),
+            encoding="utf-8")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "Birch is pricing below us.\n")
+        [found] = self.walls()
+        self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Notes.md", found.path)
+        self.assertIn('names Birch & Co (as "birch"), or one of its people', found.message)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_her_name_passes_the_hook(self):
+        self.party("Rowan Keeler", "keeler", near_side_row=True)
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        self.note(self.JOINED)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+
+class TestWhichFormIsNamed(PersonPartyCase):
+    """#98 again, the part of it that says which form matched. A finding has to
+    read as a tag hit only where the tag is what the text holds."""
+
+    def test_the_most_telling_form_is_named_not_the_first_alphabetically(self):
+        """`rossi` sorts before `zeta rossi`, so trying the forms in
+        alphabetical order calls a note that writes her name in full a tag
+        hit. The forms are tried longest first for that reason."""
+        self.party("Zeta Rossi", "rossi")
+        self.note("Zeta Rossi joined the pilot, and wants the summary by Friday.\n")
+        [found] = self.walls()
+        self.assertIn("names Zeta Rossi, or one of its people", found.message)
+        self.assertNotIn('(as "', found.message)
+
+    def test_a_tag_hit_says_so(self):
+        self.party("Zeta Rossi", "rossi")
+        self.note("Rossi joined the pilot, and wants the summary by Friday.\n")
+        [found] = self.walls()
+        self.assertIn('names Zeta Rossi (as "rossi"), or one of its people', found.message)
+
+    def test_nothing_is_said_when_the_tag_reads_as_the_name_does(self):
+        """`names Keeler (as "keeler")` tells nobody anything."""
+        self.party("Keeler", "keeler", role="Herself, one name")
+        self.note("Keeler joined the pilot, and wants the summary by Friday.\n")
+        [found] = self.walls()
+        self.assertIn("names Keeler, or one of its people", found.message)
+        self.assertNotIn('(as "', found.message)
+
+    def test_names_hit_is_a_boolean_and_name_hit_gives_the_form(self):
+        """Two callers, two questions: the anonymous check asks whether a
+        deliverable names anybody, the wall check asks which form it holds."""
+        forms = [(False, "zeta rossi"), (False, "rossi")]
+        self.assertIs(True, check.names_hit("Zeta Rossi joined the pilot", forms))
+        self.assertIs(False, check.names_hit("nobody of that name", forms))
+        self.assertEqual("zeta rossi", check.name_hit("Zeta Rossi joined the pilot", forms))
+        self.assertIsNone(check.name_hit("nobody of that name", forms))
 
 
 if __name__ == "__main__":

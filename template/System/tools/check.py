@@ -2614,7 +2614,14 @@ def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, st
     mean either. A
     person's first name alone is matched only as written, capitalised, and not
     when it is an everyday word. A form that also names a party on this side of
-    the wall is dropped: it cannot tell the two apart.
+    the wall is dropped: it cannot tell the two apart, and so is a form that is
+    a run of whole words inside a near-side form of that same walled party,
+    which is a person declared on both sides as herself.
+
+    The forms come back longest first, so the one a finding names is the most
+    telling form the text holds: "Dana Rossi" where the note writes her name in
+    full, her party's tag `rossi` only where the full name is not there to be
+    found.
     """
     key = frozenset(walled_tags)
     if key not in ws.forms:
@@ -2669,7 +2676,10 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
                  if f not in near_side and not _in_near_side(f, both)]
         found += [(True, f) for f in sorted(firsts[tag])
                   if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]]
-        out[tag] = found
+        # Longest first. Which form a finding names decides whether it reads as
+        # a tag hit or a name hit, so it must be the most telling form the text
+        # holds and not whichever one the alphabet put first.
+        out[tag] = sorted(found, key=lambda f: (-len(f[1].split()), -len(f[1]), f[1]))
     return out
 
 
@@ -2678,9 +2688,10 @@ def padded_words(text: str) -> str:
     return " %s " % " ".join(words(text))
 
 
-def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> Optional[str]:
-    """Does `text` hold one of `forms`? `padded` is padded_words(text), when
-    the caller has it already."""
+def name_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> Optional[str]:
+    """The first of `forms` that `text` holds, or None. `name_forms` gives them
+    longest first, so that is the most telling form the text holds. `padded` is
+    padded_words(text), when the caller has it already."""
     if padded is None:
         padded = padded_words(text)
     for case_sensitive, form in forms:
@@ -2690,6 +2701,25 @@ def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = 
         elif " %s " % form in padded:
             return form
     return None
+
+
+def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
+    """Does `text` hold one of `forms`? `padded` is padded_words(text), when
+    the caller has it already."""
+    return name_hit(text, forms, padded) is not None
+
+
+def as_tag(ws: Workspace, tag: str, hit: str) -> str:
+    """How to say that the party's tag, not one of its names, is what matched:
+    ` (as "rossi")`, or nothing when a name matched, or when the tag reads as
+    the party's name does and saying it twice tells nobody anything.
+
+    Only ever the tag. The party's name and its tag are already in the
+    refusal; a person's name, an alias and a mail domain are not, and naming
+    one would put a walled name into a report that has never carried one."""
+    tag_form = " ".join(words(tag))
+    name_form = " ".join(words(ws.context["parties"].get(tag, {}).get("party") or ""))
+    return ' (as "%s")' % tag if hit == tag_form and tag_form != name_form else ""
 
 
 def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
@@ -2766,14 +2796,16 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
         scanned = without_party_field(text) + "\n" + path.name
         padded = padded_words(scanned)
         for b, forms in name_forms(ws, far).items():
-            hit = names_hit(scanned, forms, padded)
-            if b in reported or not forms or not hit:
+            if b in reported or not forms:
+                continue
+            hit = name_hit(scanned, forms, padded)
+            if hit is None:
                 continue
             a = sorted(t for t in tags if walled(ws.context, t, b))[0]
             reported.add(b)
-            as_tag = ' (as "%s")' % hit if hit == " ".join(words(b)) else ""
             out.append(Finding(ERROR, "walls", r,
-                               "names %s%s, or one of its people; a wall stands between %s and %s" % (party_name(ws, b), as_tag, a, b),
+                               "names %s%s, or one of its people; a wall stands between %s and %s"
+                               % (party_name(ws, b), as_tag(ws, b, hit), a, b),
                                "A note in %s names %s" % (where, party_name(ws, b))))
 
     # Quotes: a run of words held only across a wall, by a meeting page or its

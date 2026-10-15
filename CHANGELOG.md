@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Two of the routes that can meet a wall still refused in words of their own. [#116](https://github.com/iamvenuti/garrick/issues/116) made one sentence the shipped wording, "A wall holds some material back from this project, so I have not used it. Nothing was written.", and had the rule, the `meetings` skill, the `intake` skill and `intake.py` quote it; the `threads` skill's wall check went on saying "A wall kept some meeting material out of this note." when a wrap, a finish or a new thread held meeting material out of a note, and the demo's shot list scripted the assistant saying "A wall kept some meeting material out of this brief." in the beat the whole video is built around, so it showed a watcher a sentence the `meetings` skill no longer uses. Neither wording leaked anything. Both were the same defect in a milder form: a refusal that may be put another way is what let the leaking version exist in the first place, and the `threads` route is the one the rule describes most directly, material going into a project's notes. Both now quote the rule's sentence, and the `threads` step adds the subject to what never goes with it, beside the title, date, party, person and count it already withheld. `tests/test_autonomy.py` holds all six routes to the sentence it reads out of the rule, rather than the three the earlier fix listed, and then sweeps every file the user ends up with or watches for a sentence of a refusal's shape: a seventh route written with a wording of its own fails the suite, and so does one written with the right wording and not listed beside the others. ([#121](https://github.com/iamvenuti/garrick/issues/121))
+
 ## [0.29.0] - 2026-10-15
 
 ### Added

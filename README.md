@@ -81,9 +81,9 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Garrick as a shell around Claude Code or Codex, in four layers. On top, the Garrick App navigates your zones, projects and threads, and opens a thread where you work. Below it, where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Then the record: Knowledge, Meetings and the work threads, each with its resume point; mail, files and recordings are filed into it for you. Underneath, Claude or Codex is the model doing the work: it reads the rules and walls first, and a commit check lets a commit in or refuses one that crosses a wall.](docs/architecture/overview.png)
+![Garrick as a shell around Claude Code or Codex, in four layers. On top, the Garrick App navigates your zones, projects and threads, and opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. You work on the record: Knowledge, Meetings and the work threads, each with its resume point, and mail, files and recordings are filed into it for you. Underneath, Claude or Codex is the model doing the work across the whole record. It reads the rules first, and the rules, the walls and a check on every commit apply to all of it.](docs/architecture/overview.png)
 
-Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
+Download the [diagram page](docs/architecture/overview.html) and open it in a browser for the same drawing, in dark mode too, with a note on each layer. cmux is optional, and so are the ways in.
 
 </details>
 

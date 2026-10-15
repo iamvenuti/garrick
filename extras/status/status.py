@@ -1225,7 +1225,10 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # lost, and what the user reads comes from the record's own sentence, never
 # from the page: only the outcome "saved" is a success. A workspace without the
 # module is told so once. ACTION_LOST stays the last resort for a reply that
-# never comes.
+# never comes. A request the record finds done already, past a double click's
+# window, comes back as a question rather than a second edit (`again`, #137):
+# it stays on screen, however quick, with a Do it again button that sends the
+# same request once more with `confirm` naming the action it was asked about.
 #
 # It asks only a host that has said it can answer a request that reads: the
 # host sets window.GarrickReads as the page loads, and calls window.GarrickReady
@@ -1247,6 +1250,7 @@ WORK_CSS = r"""
 #work[hidden]{display:none}#work .wk{display:flex;gap:10px;align-items:flex-start;background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px}
 #work .wbody{display:flex;flex-direction:column;gap:2px;min-width:0}#work small,#work .wt{color:color-mix(in srgb,var(--surface) 72%,transparent);font-size:12px}
 #work .wt{font-weight:inherit;font-variant-numeric:tabular-nums;margin-left:4px}#work .bad{box-shadow:inset 3px 0 0 var(--critical)}
+#work .ask{box-shadow:inset 3px 0 0 var(--accent)}#work .wagain{align-self:flex-start;margin-top:4px;background:none;border:1px solid currentColor;border-radius:6px;color:inherit;font:inherit;font-size:12px;padding:2px 8px;cursor:pointer}
 #work .wspin{flex:none;width:11px;height:11px;margin-top:3px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wspin .8s linear infinite}
 @keyframes wspin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#work .wspin{animation:none;border-right-color:currentColor;opacity:.6}}
 #work .wx{flex:none;background:none;border:0;color:inherit;font:inherit;font-size:16px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}#work .wx:hover{opacity:1}
@@ -1283,8 +1287,8 @@ st.textContent=sel?sel+'{opacity:.45;pointer-events:none;cursor:default}':'';
 [].forEach.call(document.querySelectorAll('[data-work-held]'),function(b){b.disabled=false;b.removeAttribute('data-work-held')});
 if(sel)[].forEach.call(document.querySelectorAll(sel),function(b){if(!b.disabled){b.disabled=true;b.setAttribute('data-work-held','')}})}
 function render(){var now=Date.now();if(box){box.innerHTML=W.map(function(e,i){
-if(e.out)return'<div class="wk '+(e.out.ok?'ok':'bad')+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
-+'</span></div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
+if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
++'</span>'+(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
 +((e.phase===undefined?now-e.t0>=WHY*1000:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
 box.hidden=!W.length;document.body.style.setProperty('--work-h',W.length?box.offsetHeight+8+'px':'0px')}hold()}
@@ -1322,11 +1326,16 @@ if(e&&e.q.verb===q.verb){var now=Date.now();
 if(out&&out.state==='running'&&!out.outcome){   /* an identical request is already under way: this entry becomes that one, and nothing was saved */
 W.splice(W.indexOf(e),1);if(out.op&&!W.some(function(x){return x.op===out.op})&&SEEN.indexOf(out.op)<0)W.push({q:{verb:q.verb,zone:q.zone,op:out.op},op:out.op,say:out.say||'Working…',t0:now});
 keep();render();run();return}
-/* a success is the record's outcome "saved"; with no record, the reply's ok, as before */
-mark(e.op,out&&out.op);if(now-e.t0>TOAST*1000){e.out={ok:out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),say:out&&out.say||'That did not work.'};e.done=now;
+/* a success is the record's outcome "saved"; with no record, the reply's ok, as before. A request the record holds already
+   comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
+mark(e.op,out&&out.op);if(now-e.t0>TOAST*1000||out&&out.again){e.out={ok:out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),say:out&&out.say||'That did not work.',again:out&&out.again||''};e.done=now;
 var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
-if(box)box.addEventListener('click',function(e){var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
+/* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
+if(box)box.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('[data-again]');
+if(a&&a.dataset.again!==undefined){var w=W[+a.dataset.again];if(w&&w.out&&w.out.again){W.splice(W.indexOf(w),1);keep();render();
+GarrickAct(Object.assign({},w.q,{op:'',confirm:w.out.again}),w.say)}return}
+var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
 sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
     .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)) \

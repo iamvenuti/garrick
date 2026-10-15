@@ -38,6 +38,13 @@ non-blocking exclusive flock for the whole run: it survives pid reuse and
 goes with the process on SIGKILL. A record that is not terminal whose lock
 can be taken has no worker, and the next reader writes `unknown` for it.
 
+A request that repeats one the record holds is not simply run again. Inside
+IDEM_WINDOW, a double click, it joins the first or gets its saved result back;
+past it, until LOOKBACK, it is told what was done and when and asked whether
+it is meant a second time, and only a request whose `confirm` names that
+action runs again (`repeats()`, `asked()`). The numbers that decide it, and
+every client's wait they are derived from, are the clock below.
+
 `DECLARED` is the table every operation is declared in, one row per verb,
 whichever way the request arrives: the page's buttons, the ask box, a skill
 piping JSON into page_action.py, or scaffold.py on the command line. A row
@@ -87,7 +94,34 @@ except ImportError:             # not on Windows, where the status app does not 
 API = 1
 FILE = "operations.jsonl"
 JOURNAL_LOCK = "operations.lock"
-IDEM_WINDOW = 120               # seconds: a repeated request joins, or replays a save, inside it
+
+# ---- the clock ------------------------------------------------------------
+# Every number that decides how long a request may take, how long whoever sent
+# it waits, and so whether a request sent again is the one already made, in
+# one place, each derived from the ones above it (#137). page_action.py and
+# ask.py, in the status extra, take theirs from here; Garrick.app cannot read
+# Python, so it holds a copy of APP_WAIT that a test holds to this one.
+#
+#   the work     GIT_TIMEOUT and COMMIT_TIMEOUT bound what one action takes,
+#                and TURN_TIMEOUT one turn of the ask session
+#   the clients  ASK_WAIT and APP_WAIT: how long the ask box waits, which has
+#                to be as long as the slowest request can take, or the box gives
+#                up while the commit is still running and invites a second one
+#   the record   IDEM_WINDOW: a double click. Inside it a repeated request
+#                joins the one under way, or is answered with its save, and
+#                nothing runs. LOOKBACK: past the window and up to this long
+#                after the first one ended, a repeat is not run either. It is
+#                told what was done and when, and asked; only a request that
+#                carries `confirm` naming that action runs a second time. It
+#                covers the longest a client can wait, so the retry a client
+#                that gave up prompts is always one the record recognises.
+GIT_TIMEOUT = 60                # seconds: one git command
+COMMIT_TIMEOUT = 300            # seconds: a commit, its hooks and the zone's wall check (#76)
+TURN_TIMEOUT = 60               # seconds: one turn of the ask session
+ASK_WAIT = 2 * TURN_TIMEOUT + COMMIT_TIMEOUT + GIT_TIMEOUT     # 480: ask.py, for its server
+APP_WAIT = ASK_WAIT + 30        # 510: Garrick.app, for ask.py, so that ask.py's own message comes first
+IDEM_WINDOW = 120               # seconds: a double click, joined or answered with its save
+LOOKBACK = APP_WAIT             # seconds after the first one ended: asked about, never run unasked
 RECENT = 600                    # seconds: a terminal record is still offered to a page for this long
 KEEP = 86400                    # seconds: and kept in the file for this long
 COMPACT_BYTES = 512 * 1024
@@ -129,16 +163,18 @@ def _op(fields, identity=(), scope="none", commits=False, retry="unsafe", preche
 DECLARED: Dict[str, Op] = {
     # The six the page sends under the zone lock, and the only ones that keep
     # a record. Their prechecks are this file's; the rest check for themselves.
-    "park": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"),
+    # Each may carry `confirm`, naming the earlier action it was asked about
+    # (start()), and never part of what the request is.
+    "park": _op(("zone", "project", "thread", "file", "confirm"), ("project", "thread", "file"),
                 "zone", True, "safe", "status"),
-    "wake": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"),
+    "wake": _op(("zone", "project", "thread", "file", "confirm"), ("project", "thread", "file"),
                 "zone", True, "safe", "status"),
-    "todo-done": _op(("zone", "file", "key"), ("file", "key"), "zone", True, "safe", "line"),
-    "todo-undo": _op(("zone", "file", "key"), ("file", "key"), "zone", True, "safe", "line"),
-    "todo-date": _op(("zone", "file", "key", "date"), ("file", "key", "date"), "zone", True, "safe", "line"),
+    "todo-done": _op(("zone", "file", "key", "confirm"), ("file", "key"), "zone", True, "safe", "line"),
+    "todo-undo": _op(("zone", "file", "key", "confirm"), ("file", "key"), "zone", True, "safe", "line"),
+    "todo-date": _op(("zone", "file", "key", "date", "confirm"), ("file", "key", "date"), "zone", True, "safe", "line"),
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
-    "todo-add": _op(("zone", "text", "target", "date"), ("text", "target", "date"), "zone", True, "safe"),
+    "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
@@ -313,6 +349,17 @@ WORKING = {"park": "Parking {name}…", "wake": "Waking {name}…", "todo-done":
 ALREADY = {"park": "Already parking {name}…", "wake": "Already waking {name}…",
            "todo-done": "Already ticking that line…", "todo-undo": "Already reopening that line…",
            "todo-date": "Already changing that line's date…", "todo-add": "Already adding to {zone}…"}
+# What a request is told when it repeats one the record holds, past the window:
+# what was done and when, that this one did nothing, and the question. {when}
+# reads "4 minutes ago, at 14:02"; {said} is the earlier action's own sentence,
+# {doing} its label. Nothing here says this request was saved, because it was
+# not: what it repeats was, and the sentence says so in that action's words.
+AGAIN = {
+    "completed": "The same request was done {when}: {said} It has not been done again. "
+                 "Do you want it done a second time?",
+    "running": "The same request is still running, started {when}: {doing} It has not been sent again. "
+               "Do you want it done a second time once that one ends?",
+}
 # The sentence for each way an action ends other than saved. {what} is the
 # thing the action would have changed; {zone} where to look.
 SAYINGS = {
@@ -344,6 +391,29 @@ STALE_WHY = {
 def label(verb: str, req: dict, already: bool = False) -> str:
     table = ALREADY if already else WORKING
     return table[verb].format(name=name_of(verb, req), zone=req.get("zone") if isinstance(req.get("zone"), str) else "the zone")
+
+
+def _when(then: float, now: float) -> str:
+    """When something happened, said both ways: "4 minutes ago, at 14:02"."""
+    minutes = max(1, int(round((now - then) / 60.0)))
+    ago = "a minute ago" if minutes == 1 else "%d minutes ago" % minutes
+    return "%s, at %s" % (ago, time.strftime("%H:%M", time.localtime(then)))
+
+
+def _stop(text: str) -> str:
+    text = " ".join(str(text or "").split()).rstrip("…")
+    return text + ("" if not text or text[-1] in ".!?" else ".")
+
+
+def asked(rec: dict, now: float) -> dict:
+    """The reply to a request that repeats `rec` past the window: nothing ran,
+    and the question. `again` names the action to put in `confirm` to have it
+    done a second time; `ok` is false, since this request did nothing."""
+    if rec.get("state") in ("queued", "running"):
+        say = AGAIN["running"].format(when=_when(rec.get("at") or now, now), doing=_stop(rec.get("label") or "Working"))
+    else:
+        say = AGAIN["completed"].format(when=_when(rec.get("done") or rec.get("at") or now, now), said=_stop(rec.get("say") or "Done"))
+    return {"ok": False, "say": say, "op": rec["op"], "state": "asked", "again": rec["op"]}
 
 
 def _sentence(why: str, outcome: str) -> str:
@@ -605,10 +675,12 @@ def start(folder, req: dict, now: Optional[float] = None) -> Tuple[Optional[Run]
     """Begin the journal entry for a request of a declared verb.
 
     Returns (run, None) to carry on, (None, reply) when the request joins an
-    identical one that is under way or replays one that saved, and (None,
+    identical one that is under way, replays one that saved, or is asked
+    whether it is meant a second time (`repeats()` says which), and (None,
     None) when nothing can be recorded here: the caller then does exactly
-    what it would without this module. Raises BadOp for an op of the wrong
-    shape."""
+    what it would without this module. A request whose `confirm` names the
+    action it would be asked about carries on. Raises BadOp for an op of the
+    wrong shape."""
     now = time.time() if now is None else now
     verb = req["verb"]
     op = req.get("op")
@@ -633,17 +705,15 @@ def start(folder, req: dict, now: Optional[float] = None) -> Tuple[Optional[Run]
     try:
         with journal.lock():
             journal.settle_dead(now)
-            latest = list(journal.latest().values())
-            for rec in reversed(latest):
-                if rec.get("key") != key or rec["op"] == op:
-                    continue
-                if rec.get("state") in ("queued", "running") and now - (rec.get("at") or 0) <= IDEM_WINDOW:
-                    return _release(journal, fd, op), {"ok": True, "say": label(verb, req, already=True),
-                                                       "op": rec["op"], "state": "running"}
-            replay = _saved_replay(latest, key, zone, now)
-            if replay is not None:
-                return _release(journal, fd, op), {"ok": True, "say": replay["say"], "op": replay["op"],
+            how, earlier = repeats(list(journal.latest().values()), key, zone, op, now)
+            if how == "join":
+                return _release(journal, fd, op), {"ok": True, "say": label(verb, req, already=True),
+                                                   "op": earlier["op"], "state": "running"}
+            if how == "replay":
+                return _release(journal, fd, op), {"ok": True, "say": earlier["say"], "op": earlier["op"],
                                                    "state": "completed", "outcome": "saved"}
+            if how == "ask" and req.get("confirm") != earlier["op"]:
+                return _release(journal, fd, op), asked(earlier, now)
             rec = {"op": op, "key": key, "verb": verb, "zone": zone, "state": "queued", "phase": "", "at": now,
                    "request": _request(verb, req), "done": None, "outcome": None, "say": None,
                    "label": label(verb, req)}
@@ -655,18 +725,30 @@ def start(folder, req: dict, now: Optional[float] = None) -> Tuple[Optional[Run]
     return Run(journal, rec, fd), None
 
 
-def _saved_replay(latest: List[dict], key: str, zone: str, now: float) -> Optional[dict]:
-    """The `saved` record to return instead of doing the same thing again:
-    the latest one saved in this zone, if it has this key and is inside the
-    window. A different save in the zone since then (a wake after a park)
-    means the same request is a new one."""
+def repeats(latest: List[dict], key: str, zone: str, op: str, now: float) -> Tuple[Optional[str], Optional[dict]]:
+    """Whether a request with this identity key repeats an action the record
+    holds, and what comes of it: ("join", rec) or ("replay", rec) inside
+    IDEM_WINDOW, ("ask", rec) past it, or (None, None) to run.
+
+    One still under way, the latest with this key: joined inside the window of
+    its start, asked about past it for as long as it runs. One that saved: the
+    latest save in this zone, if it has this key, answered with inside the
+    window of its end and asked about until LOOKBACK. A different save in the
+    zone since then (a wake after a park) means the same request is a new
+    one. A refusal, a crash or an unknown is never remembered: trying again
+    is what each of those says to do."""
+    for rec in reversed(latest):
+        if rec.get("key") != key or rec["op"] == op:
+            continue
+        if rec.get("state") in ("queued", "running"):
+            return ("join" if now - (rec.get("at") or 0) <= IDEM_WINDOW else "ask"), rec
     saved = [r for r in latest if r.get("outcome") == "saved" and r.get("zone") == zone]
-    if not saved:
-        return None
-    last = max(saved, key=lambda r: r.get("done") or 0)
-    if last.get("key") == key and now - (last.get("done") or 0) <= IDEM_WINDOW:
-        return last
-    return None
+    if saved:
+        last = max(saved, key=lambda r: r.get("done") or 0)
+        age = now - (last.get("done") or 0)
+        if last.get("key") == key and age <= LOOKBACK:
+            return ("replay" if age <= IDEM_WINDOW else "ask"), last
+    return None, None
 
 
 def _release(journal: Journal, fd: int, op: str) -> None:

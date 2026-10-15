@@ -272,8 +272,8 @@ class TestPark(ActionCase):
 
     def test_a_field_park_does_not_declare_is_refused_by_name(self):
         before = self.thread.read_bytes()
-        with self.assertRaisesRegex(pa.Refused, "^park takes no confirm field$"):
-            self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md", confirm="Pricing")
+        with self.assertRaisesRegex(pa.Refused, "^park takes no commit field$"):     # undo's field, not park's
+            self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md", commit="abc1234")
         self.assertEqual(before, self.thread.read_bytes())
         self.assertEqual("start", self.last_commit()[0])
 
@@ -724,6 +724,81 @@ class TestJournal(ActionCase):
                           "outcome": "saved"}, second)
         self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))              # executed, the old key would have been refused
         self.assertEqual({"a19f3c80"}, {r["op"] for r in self.records()})         # the second left no record of its own
+
+    def age(self, seconds):
+        """Every record made `seconds` earlier, as if the clock had moved on."""
+        lines = []
+        for r in self.records():
+            for k in ("at", "done"):
+                if isinstance(r.get(k), (int, float)):
+                    r[k] -= seconds
+            lines.append(json.dumps(r))
+        (self.jobs / "operations.jsonl").write_text("\n".join(lines) + "\n")
+
+    def test_a_retry_after_the_window_is_asked_about_and_makes_no_second_edit(self):
+        """#137: the retry a client that gave up invites comes long after the
+        double click's window. It is recognised all the same, and asked about."""
+        import time
+        request = self.requests()["todo-add"]
+        first = self.run_script(dict(request, op="a19f3c80"))
+        self.assertEqual("saved", first["outcome"])
+        self.age(300)                                                             # five minutes on: past the window
+        head = git(self.work, "rev-parse", "HEAD")
+        second = self.run_script(dict(request, op="b29f3c80"))
+        self.assertEqual((False, "asked", "a19f3c80", "a19f3c80"),
+                         (second["ok"], second["state"], second["op"], second["again"]))
+        self.assertNotIn("outcome", second)                                       # this request did nothing
+        done = time.strftime("%H:%M", time.localtime(self.records()[-1]["done"]))
+        self.assertEqual("The same request was done 5 minutes ago, at %s: Added to Inbox: Book the room. It has not "
+                         "been done again. Do you want it done a second time?" % done, second["say"])
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))              # no second edit, no second commit
+        self.assertEqual(1, (self.work / "Todo.md").read_text().count("Book the room"))
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in self.records()})         # and no record of its own
+        self.assertIn("The same request was done", (self.jobs / "page-actions.log").read_text().splitlines()[-1])
+
+    def test_a_confirmed_retry_is_done_a_second_time(self):
+        """The user meant it: the line went in, was ticked by hand, and is wanted again."""
+        request = self.requests()["todo-add"]
+        self.run_script(dict(request, op="a19f3c80"))
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace("- [ ] Book the room", "- [x] Book the room ✅ 2026-10-05"))
+        git(self.work, "commit", "-q", "-am", "ticked by hand")
+        self.age(300)
+        asked = self.run_script(dict(request, op="b29f3c80"))
+        self.assertEqual("a19f3c80", asked["again"])
+        self.assertNotIn("- [ ] Book the room", todo.read_text())                # asked: nothing added yet
+        again = self.run_script(dict(request, op="c39f3c80", confirm=asked["again"]))
+        self.assertEqual((True, "c39f3c80", "saved"), (again["ok"], again["op"], again["outcome"]))
+        self.assertIn("- [ ] Book the room", todo.read_text())                   # the second edit
+        self.assertEqual("Work: added to Inbox, Book the room", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual("a19f3c80", [r for r in self.records() if r["op"] == "c39f3c80"][0]["request"]["confirm"])
+
+    def test_a_confirm_that_names_another_action_is_asked_again(self):
+        request = self.requests()["todo-add"]
+        self.run_script(dict(request, op="a19f3c80"))
+        self.age(300)
+        head = git(self.work, "rev-parse", "HEAD")
+        reply = self.run_script(dict(request, op="b29f3c80", confirm="ffffffff"))
+        self.assertEqual(("asked", "a19f3c80"), (reply["state"], reply["again"]))
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))
+
+    def test_a_different_request_after_the_window_runs_as_usual(self):
+        self.run_script(dict(self.requests()["todo-add"], op="a19f3c80"))
+        self.age(300)
+        other = self.run_script(dict(self.requests()["todo-add"], text="Call Dana", op="b29f3c80"))
+        self.assertEqual((True, "b29f3c80", "saved"), (other["ok"], other["op"], other["outcome"]))
+        self.assertIn("Call Dana", (self.work / "Todo.md").read_text())
+
+    def test_past_the_lookback_the_same_request_is_a_new_one(self):
+        """Then the record is not consulted, and the handler's own check is
+        the one that answers: the line is still open, so it is refused."""
+        ops = pa.ops_lib(self.root)
+        request = self.requests()["todo-add"]
+        self.run_script(dict(request, op="a19f3c80"))
+        self.age(ops.LOOKBACK + 5)
+        reply = self.run_script(dict(request, op="b29f3c80"))
+        self.assertEqual(("b29f3c80", "refused"), (reply["op"], reply["outcome"]))
+        self.assertIn("already in the list", reply["say"])
 
     def test_a_refusal_is_run_again(self):
         self.hook("exit 1\n")

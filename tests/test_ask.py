@@ -5,8 +5,8 @@ test needs the warm session itself.
     python3 -m unittest discover -s tests
 
 The session proposes; ask.py checks each proposal against the workspace list
-and runs it through page_action.act(), so the box can do what a page button
-can and nothing more.
+and runs it through page_action.perform(), so the box can do what a page
+button can and nothing more, and keeps the same record of it.
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ class FakeSession:
 
 
 class TestCarryOut(AskCase):
-    """Proposals run through page_action.act(), each logged as the page's are."""
+    """Proposals run through page_action.perform(), each logged as the page's are."""
 
     def test_actions_run_and_are_logged(self):
         session = FakeSession(json.dumps({"say": "Added it, and parked Pricing.", "do": [
@@ -277,10 +277,13 @@ class TestAskingAgain(AskCase):
     def test_the_wait_covers_the_slowest_request(self):
         import re
         pa = ask.page_action()
+        ops = pa.ops_lib()
         self.assertGreaterEqual(ask.ASK_WAIT, 2 * ask.TURN_TIMEOUT + pa.COMMIT_TIMEOUT + pa.GIT_TIMEOUT)
+        self.assertEqual((ops.ASK_WAIT, ops.TURN_TIMEOUT), (ask.ASK_WAIT, ask.TURN_TIMEOUT))   # the clock's, #137
         swift = (Path(ask.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
         app = float(re.search(r"let askWait = ([\d.]+)", swift).group(1))
         self.assertGreaterEqual(app, ask.ASK_WAIT)                  # ask.py's own message comes first
+        self.assertGreaterEqual(ops.LOOKBACK, app)                  # and the retry it invites is recognised
         self.assertNotIn("Ask again", swift)                        # neither of them invites the retry
         self.assertNotIn("Ask again", ask.GAVE_UP)
         for said in (ask.GAVE_UP, swift):
@@ -301,6 +304,86 @@ class TestAskingAgain(AskCase):
         self.assertFalse(out["ok"])
         self.assertEqual(1, (self.work / "Todo.md").read_text().count("Dana about the quote"))
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+
+class TestAskingLater(AskCase):
+    """#137: a request asked again past a double click's window goes through
+    the same record as the page's clicks, and is asked about, not done again."""
+
+    LINE = {"verb": "todo-add", "zone": "Work", "text": "Call Dana", "project": "Acme Review"}
+
+    def age(self, seconds):
+        path = self.jobs / "operations.jsonl"
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        for r in records:
+            for k in ("at", "done"):
+                if isinstance(r.get(k), (int, float)):
+                    r[k] -= seconds
+        path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    def tick_by_hand(self):
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace("- [ ] [[Acme Review]]: Call Dana", "- [x] [[Acme Review]]: Call Dana ✅ 2026-10-05"))
+        git(self.work, "commit", "-q", "-am", "ticked by hand")
+
+    def open_lines(self):
+        return (self.work / "Todo.md").read_text().count("- [ ] [[Acme Review]]: Call Dana")
+
+    def test_inside_the_window_it_is_answered_once(self):
+        session = FakeSession(*[json.dumps({"say": "Added it.", "do": [self.LINE]})] * 2)
+        asker = ask.Asker(self.root, session)
+        asker.ask("add call Dana to Acme")
+        head = git(self.work, "rev-parse", "HEAD")
+        out = asker.ask("add call Dana to Acme")
+        self.assertEqual(["Added to Inbox: Call Dana"], out["done"])                   # the first one's result
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))
+        self.assertEqual(1, self.open_lines())
+
+    def test_past_the_window_it_is_asked_and_a_yes_does_it_again(self):
+        session = FakeSession(json.dumps({"say": "Added it.", "do": [self.LINE]}),
+                              json.dumps({"say": "Added it.", "do": [self.LINE]}),
+                              json.dumps({"say": "Adding it again.", "do": [dict(self.LINE, again=True)]}))
+        asker = ask.Asker(self.root, session)
+        asker.ask("add call Dana to Acme")
+        self.tick_by_hand()
+        self.age(300)
+        head = git(self.work, "rev-parse", "HEAD")
+        out = asker.ask("add call Dana to Acme")
+        (question,) = out["done"]
+        self.assertTrue(question.startswith("The same request was done 5 minutes ago, at "), question)
+        self.assertIn(": Added to Inbox: Call Dana. It has not been done again. Do you want it done a second time?", question)
+        self.assertEqual((question, False), (out["say"], out["ok"]))                # not the session's "Added it."
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))                  # no second edit
+        self.assertEqual(0, self.open_lines())
+        yes = asker.ask("yes")
+        self.assertIn("<last-results>\n%s\n</last-results>" % question, session.seen[2])
+        self.assertEqual(["Added to Inbox: Call Dana"], yes["done"])
+        self.assertTrue(yes["ok"])
+        self.assertEqual(1, self.open_lines())                                       # the second edit, asked for
+        log = (self.jobs / "page-actions.log").read_text().splitlines()
+        self.assertEqual(3, len(log))                                                # each of the three, as the page's are
+        self.assertTrue(log[1].endswith("(ask)") and "The same request was done" in log[1], log[1])
+
+    def test_again_with_no_question_before_it_is_asked_all_the_same(self):
+        session = FakeSession(json.dumps({"say": "Added it.", "do": [self.LINE]}),
+                              json.dumps({"say": "Adding it again.", "do": [dict(self.LINE, again=True)]}))
+        asker = ask.Asker(self.root, session)
+        asker.ask("add call Dana to Acme")
+        self.tick_by_hand()
+        self.age(300)
+        out = asker.ask("add call Dana to Acme again")
+        self.assertTrue(out["done"][0].startswith("The same request was done"), out["done"])
+        self.assertEqual(0, self.open_lines())
+
+    def test_a_different_request_past_the_window_runs(self):
+        other = dict(self.LINE, text="Send Dana the deck")
+        session = FakeSession(json.dumps({"say": "Added it.", "do": [self.LINE]}),
+                              json.dumps({"say": "Added it.", "do": [other]}))
+        asker = ask.Asker(self.root, session)
+        asker.ask("add call Dana to Acme")
+        self.age(300)
+        out = asker.ask("add send Dana the deck to Acme")
+        self.assertEqual(["Added to Inbox: Send Dana the deck"], out["done"])
 
 
 class TestHarness(AskCase):

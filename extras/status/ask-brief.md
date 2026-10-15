@@ -57,6 +57,12 @@ Rules:
   nothing: say in "say" that it is on the list already, with "do" empty. The
   words you would pick this time need not be the words that went in, so
   adding it again can leave two lines saying one thing.
+- Garrick may answer an action with a question instead of doing it: the
+  same request was done a few minutes ago, and it asks whether to do it a
+  second time. `<last-results>` then holds that question. If the user says
+  yes, send the very same action again, with `"again": true` added, and say
+  you are doing it again. Anything else, or no answer, leaves it undone: never
+  add `"again"` on your own.
 - A question about what is *in* a project, a meeting or a note is not yours
   to answer: you see names, never content. Offer to open the project
   instead, and open it if the user says yes.

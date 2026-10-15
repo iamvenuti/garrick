@@ -4,6 +4,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-15
+
 ### Added
 
 - Three pages that explain the system you install, not only how to install it. [Concepts](docs/concepts.md) defines every term a user meets in the first week, from zone, thread and party to Resume here, the interruption stack and a `.new` file, and tells the Garrick repository apart from your own workspace; the other docs, the rules and the skills use the words as it defines them. [Architecture](docs/architecture.md) is the prose behind the overview diagram: the workspace, the rules, the skills, the tools, the guards, the assistant and the extras, then four flows through them, material coming in, a working day, the walls and an update. [What is enforced, and what is asked](docs/enforced.md) is one table of which protections code refuses and which depend on the assistant following `System/rules.md`, with the file or rule behind each, and names the wall check's one open gap, a party whose tag is an ordinary word of the language. The README's documentation list and `principles.md` link to all three. ([#105](https://github.com/iamvenuti/garrick/issues/105))
@@ -727,7 +729,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/iamvenuti/garrick/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/iamvenuti/garrick/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/iamvenuti/garrick/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/iamvenuti/garrick/compare/v0.25.0...v0.26.0

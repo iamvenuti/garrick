@@ -2646,6 +2646,8 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
         key = " ".join(words(heard))
         if tag and key:
             forms[tag].add(key)
+    near_people = {" ".join(words(p["name"])) for p in ctx["people"]
+                   if p["party"] in forms and p["party"] not in walled_tags}
     near_side = set()
     for tag in forms:
         if tag not in walled_tags:
@@ -2654,8 +2656,11 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
     for tag in sorted(walled_tags):
         if tag not in forms:
             continue
-        found = [(False, f) for f in sorted(forms[tag]) if not _in_near_side(f, near_side)]
-        found += [(True, f) for f in sorted(firsts[tag]) if not _in_near_side(f.lower(), near_side) and f.lower() not in forms[tag]]
+        both = near_people & forms[tag]
+        found = [(False, f) for f in sorted(forms[tag])
+                 if f not in near_side and not _in_near_side(f, both)]
+        found += [(True, f) for f in sorted(firsts[tag])
+                  if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]]
         out[tag] = found
     return out
 

@@ -666,5 +666,18 @@ class TestNearSidePersonPartyTag(GapCase):
         self.assertIn('names Dana Rossi (as "rossi")', found[0].message)
 
 
+class TestSharedSurname(GapCase):
+    def test_far_side_party_word_in_near_side_person(self):
+        ctx_file = self.root / "System" / "context.md"
+        ctx = ctx_file.read_text().replace(
+            "| Dana Whitlock | `acme` | Head of procurement |\n",
+            "| Dana Whitlock | `acme` | Head of procurement |\n| Anna Birch | `acme` | Analyst |\n")
+        ctx_file.write_text(ctx)
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        write(note, thread_note("Acme Review", "Pricing", "acme", "Birch is pricing below us."))
+        found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
+        self.assertEqual(1, len(found), found)
+
+
 if __name__ == "__main__":
     unittest.main()

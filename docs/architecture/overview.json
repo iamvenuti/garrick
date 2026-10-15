@@ -2,156 +2,107 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Garrick at a glance",
+    "title": "Garrick: a shell around Claude Code or Codex",
     "locale": "en",
     "quality_profile": "showcase",
     "legend": {
       "entries": {
-        "cloud": {
-          "label": "Way in"
-        },
-        "database": {
-          "label": "Memory"
+        "frontend": {
+          "label": "Where you switch"
         },
         "backend": {
           "label": "Work thread"
         },
-        "security": {
-          "label": "Rules"
+        "database": {
+          "label": "Memory"
         },
-        "frontend": {
-          "label": "Your assistant"
+        "security": {
+          "label": "Rules and checks"
+        },
+        "cloud": {
+          "label": "The agent underneath"
         },
         "external": {
-          "label": "Optional tool"
+          "label": "Way in"
         }
       }
     },
     "views": [
       {
+        "id": "switch",
+        "label": "Leave, jump, come back",
+        "focus": [
+          "app",
+          "cmux",
+          "threadA",
+          "threadB"
+        ],
+        "note": "Every thread keeps its resume point. The Garrick App opens any of them at its next action."
+      },
+      {
+        "id": "guard",
+        "label": "The guard",
+        "focus": [
+          "agent",
+          "rules",
+          "check",
+          "threadA",
+          "threadB"
+        ],
+        "note": "The agent reads the rules first. A check before every commit refuses one that crosses a wall."
+      },
+      {
         "id": "in",
         "label": "Ways in",
         "focus": [
-          "mail",
-          "files",
-          "recordings",
-          "sort",
+          "waysin",
           "meetings",
-          "knowledge",
-          "thread1"
+          "knowledge"
         ],
-        "note": "Recordings always become conversations. Mail and files are filed where they belong."
-      },
-      {
-        "id": "talk",
-        "label": "Talking to your assistant",
-        "focus": [
-          "assistant",
-          "rules",
-          "cmux",
-          "phone",
-          "status"
-        ],
-        "note": "You talk to your assistant at your desk or away from it. It reads the rules first, then works across everything."
+        "note": "Mail, files and recordings are filed for you: a conversation into Meetings, something to read into Knowledge."
       }
     ]
   },
   "components": [
     {
-      "id": "recordings",
-      "type": "cloud",
-      "label": "Recordings",
-      "sublabel": "a recorder, as text",
+      "id": "waysin",
+      "type": "external",
+      "label": "Mail, files, recordings",
+      "sublabel": "filed for you",
       "pos": [
-        40,
+        100,
         40
       ],
       "size": [
-        180,
+        200,
         70
       ]
     },
     {
-      "id": "mail",
-      "type": "cloud",
-      "label": "Mail",
-      "sublabel": "saved or forwarded",
-      "pos": [
-        760,
-        40
-      ],
-      "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "files",
-      "type": "cloud",
-      "label": "Files you drop in",
-      "sublabel": "documents, articles",
-      "pos": [
-        280,
-        40
-      ],
-      "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "sort",
+      "id": "app",
       "type": "frontend",
-      "label": "Filed where it belongs",
-      "sublabel": "your assistant sorts it",
+      "label": "Garrick App",
+      "sublabel": "every thread, opened in one move",
       "pos": [
-        520,
+        620,
         40
       ],
       "size": [
-        180,
+        220,
         70
       ]
     },
     {
-      "id": "meetings",
-      "type": "database",
-      "label": "Meetings",
-      "sublabel": "every conversation",
+      "id": "cmux",
+      "type": "frontend",
+      "label": "cmux",
+      "sublabel": "optional: a tab per thread",
       "pos": [
-        40,
-        220
+        960,
+        40
       ],
       "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "thread1",
-      "type": "backend",
-      "label": "Work thread 1",
-      "sublabel": "its state of play",
-      "pos": [
-        280,
-        220
-      ],
-      "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "thread2",
-      "type": "backend",
-      "label": "Work thread 2",
-      "sublabel": "its state of play",
-      "pos": [
-        520,
-        220
-      ],
-      "size": [
-        180,
+        200,
         70
       ]
     },
@@ -161,78 +112,8 @@
       "label": "Knowledge",
       "sublabel": "what you read",
       "pos": [
-        760,
+        100,
         220
-      ],
-      "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "rules",
-      "type": "security",
-      "label": "Rules",
-      "sublabel": "what goes where, who never mixes",
-      "pos": [
-        1000,
-        220
-      ],
-      "size": [
-        180,
-        70
-      ]
-    },
-    {
-      "id": "obsidian",
-      "type": "external",
-      "label": "Obsidian",
-      "sublabel": "optional: browse it all",
-      "pos": [
-        40,
-        420
-      ],
-      "size": [
-        160,
-        70
-      ]
-    },
-    {
-      "id": "status",
-      "type": "external",
-      "label": "Status page",
-      "sublabel": "optional: see and act",
-      "pos": [
-        290,
-        420
-      ],
-      "size": [
-        160,
-        70
-      ]
-    },
-    {
-      "id": "cmux",
-      "type": "external",
-      "label": "cmux",
-      "sublabel": "optional",
-      "pos": [
-        490,
-        420
-      ],
-      "size": [
-        160,
-        70
-      ]
-    },
-    {
-      "id": "assistant",
-      "type": "frontend",
-      "label": "Your assistant",
-      "sublabel": "Claude or Codex in its desktop app",
-      "pos": [
-        770,
-        420
       ],
       "size": [
         200,
@@ -240,16 +121,86 @@
       ]
     },
     {
-      "id": "phone",
-      "type": "external",
-      "label": "Phone",
-      "sublabel": "optional",
+      "id": "meetings",
+      "type": "database",
+      "label": "Meetings",
+      "sublabel": "every conversation",
       "pos": [
-        1090,
-        420
+        360,
+        220
       ],
       "size": [
-        160,
+        200,
+        70
+      ]
+    },
+    {
+      "id": "threadA",
+      "type": "backend",
+      "label": "Thread",
+      "sublabel": "resume point, next action",
+      "pos": [
+        620,
+        220
+      ],
+      "size": [
+        220,
+        70
+      ]
+    },
+    {
+      "id": "threadB",
+      "type": "backend",
+      "label": "Another thread",
+      "sublabel": "resume point, next action",
+      "pos": [
+        960,
+        220
+      ],
+      "size": [
+        200,
+        70
+      ]
+    },
+    {
+      "id": "rules",
+      "type": "security",
+      "label": "Rules and walls",
+      "sublabel": "what goes where, who never mixes",
+      "pos": [
+        620,
+        400
+      ],
+      "size": [
+        220,
+        70
+      ]
+    },
+    {
+      "id": "check",
+      "type": "security",
+      "label": "Commit check",
+      "sublabel": "catches a crossing",
+      "pos": [
+        960,
+        400
+      ],
+      "size": [
+        200,
+        70
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "cloud",
+      "label": "Claude Code or Codex",
+      "sublabel": "does the work, in an app or a terminal",
+      "pos": [
+        220,
+        400
+      ],
+      "size": [
+        220,
         70
       ]
     }
@@ -257,119 +208,113 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "Ways in",
+      "label": "Where you switch",
       "wraps": [
-        "recordings",
-        "files",
-        "sort",
-        "mail"
+        "app",
+        "cmux"
       ]
     },
     {
       "kind": "region",
-      "label": "The workspace: run by your assistant, browsed in any editor",
+      "label": "The record",
       "wraps": [
+        "knowledge",
         "meetings",
-        "thread1",
-        "thread2",
-        "knowledge"
+        "threadA",
+        "threadB"
       ]
     },
     {
       "kind": "security-group",
-      "label": "Work zone",
+      "label": "The guard",
       "wraps": [
-        "thread1",
-        "thread2"
-      ],
-      "pad": 14
+        "rules",
+        "check"
+      ]
     },
     {
       "kind": "region",
-      "label": "Tools around it",
+      "label": "Underneath",
       "wraps": [
-        "obsidian",
-        "status",
-        "cmux",
-        "assistant",
-        "phone"
+        "agent"
       ]
     }
   ],
   "connections": [
     {
-      "id": "rec",
-      "from": "recordings",
-      "to": "meetings",
-      "label": "always a conversation",
+      "id": "come-back",
+      "from": "app",
+      "to": "threadA",
+      "label": "come back to the next action",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
       "labelAt": [
-        130,
+        730,
         165
       ]
     },
     {
-      "id": "mail-in",
-      "from": "mail",
-      "to": "sort"
-    },
-    {
-      "id": "files-in",
-      "from": "files",
-      "to": "sort"
-    },
-    {
-      "id": "to-meetings",
-      "from": "sort",
-      "to": "meetings",
-      "label": "a conversation",
+      "id": "tab",
+      "from": "cmux",
+      "to": "threadB",
+      "label": "or in a terminal",
+      "variant": "dashed",
       "fromSide": "bottom",
-      "toSide": "right"
-    },
-    {
-      "id": "to-work",
-      "from": "sort",
-      "to": "thread1",
-      "label": "for a project",
-      "fromSide": "bottom",
-      "toSide": "top"
+      "toSide": "top",
+      "labelAt": [
+        1060,
+        165
+      ]
     },
     {
       "id": "to-knowledge",
-      "from": "sort",
+      "from": "waysin",
       "to": "knowledge",
       "label": "to read",
       "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        200,
+        165
+      ]
+    },
+    {
+      "id": "to-meetings",
+      "from": "waysin",
+      "to": "meetings",
+      "label": "a conversation",
+      "fromSide": "right",
       "toSide": "top"
     },
     {
-      "id": "reads-rules",
-      "from": "assistant",
+      "id": "reads",
+      "from": "agent",
       "to": "rules",
       "label": "reads the rules first",
       "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        530,
+        435
+      ]
+    },
+    {
+      "id": "walls",
+      "from": "rules",
+      "to": "threadA",
+      "label": "works inside the walls",
+      "variant": "security",
       "fromSide": "top",
       "toSide": "bottom"
     },
     {
-      "id": "talk-here",
-      "from": "cmux",
-      "to": "assistant",
-      "label": "or in a terminal",
-      "variant": "dashed"
-    },
-    {
-      "id": "talk-away",
-      "from": "phone",
-      "to": "assistant",
-      "label": "away from your desk",
-      "variant": "dashed"
-    },
-    {
-      "id": "status-reads",
-      "from": "status",
-      "to": "thread1",
-      "label": "where every thread stands",
-      "variant": "dashed",
+      "id": "lets-in",
+      "from": "check",
+      "to": "threadB",
+      "label": "a commit gets in, or is refused",
+      "variant": "security",
       "fromSide": "top",
       "toSide": "bottom"
     }
@@ -377,26 +322,26 @@
   "cards": [
     {
       "dot": "cyan",
-      "title": "Ways in",
+      "title": "Where you switch",
       "items": [
-        "Recordings always become conversations",
-        "Mail and files go where they belong: a conversation, a project, or something to read"
+        "The Garrick App shows where every thread stands and opens any of them at its next action, on the Mac or in a browser",
+        "Say “hold this” when you are interrupted and “back” when you return. cmux gives each thread a terminal tab; Obsidian and phone access are optional too"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "The record",
+      "items": [
+        "Each thread has one resume point: what is done, the next action, and what was only in your head",
+        "Meetings keeps every conversation, Knowledge what you read. All of it is plain Markdown in git, on your Mac"
       ]
     },
     {
       "dot": "rose",
-      "title": "One memory, walled use",
+      "title": "The guard, and the agent under it",
       "items": [
-        "Everything is remembered in one place",
-        "Declared walls tell the assistant to keep one party's meetings out of another's projects, with limited checks before a commit"
-      ]
-    },
-    {
-      "dot": "slate",
-      "title": "Tools around it",
-      "items": [
-        "You talk to your assistant in its desktop app, or in cmux or on your phone; it follows the rules and does the work across everything",
-        "Obsidian lets you browse all of it; the status page shows where every thread stands and what needs attention, and can park a thread or tick an action through checked operations that commit. Both are optional, like cmux and the phone"
+        "Claude Code or Codex does the work, in its desktop app or a terminal, and reads the rules first",
+        "Walls you declare tell it whose material never meets. A check before every commit catches links, names and copied wording across a wall, within limits: see Principles and limits"
       ]
     }
   ]

@@ -10,7 +10,7 @@ Garrick keeps your place in every line of work you run with Claude or Codex, in 
 
 Your assistant's memory remembers the project. It can't tell you which thread is waiting, what comes next, or what was only in your head when you stopped. Garrick can: every thread has one resume point, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
 
-You can see where every thread stands and open any of them in one move, from the status page, the Garrick app for the Mac, or a cmux tab per thread. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
+You can see where every thread stands and open any of them in one move, from the Garrick App or a cmux tab per thread. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
 
 Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. The record is plain Markdown in folders on your Mac, and updates keep your edits.
 
@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).
-3. **Own the interface:** [terminal setup](docs/terminal-setup.md), [Obsidian](docs/extras/obsidian.md), [cmux](docs/extras/cmux.md) and [the status page](docs/extras/status-page.md).
+3. **Own the interface:** [terminal setup](docs/terminal-setup.md), [Obsidian](docs/extras/obsidian.md), [cmux](docs/extras/cmux.md) and [the Garrick App](docs/extras/status-page.md).
 4. **Work from anywhere:** [phone access](docs/extras/phone-access.md).
 
 ## Choose how you work
@@ -81,7 +81,7 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Mail, transcripts and files enter the workspace; the assistant files them under its rules. You talk to it in its desktop app; Obsidian, the status page, cmux and phone access are optional.](docs/architecture/overview.png)
+![Garrick as a shell around Claude Code or Codex, in three layers. On top, where you switch: the Garrick App opens any thread at its next action, and cmux, optional, gives each thread a terminal tab. In the middle, the record: Knowledge, Meetings and the work threads, each with its resume point; mail, files and recordings are filed into it for you. At the bottom, Claude Code or Codex does the work and reads the rules and walls first, and a commit check lets a commit in or refuses one that crosses a wall.](docs/architecture/overview.png)
 
 Download the [interactive diagram](docs/architecture/overview.html) and open it in a browser. The diagram shows optional tools as well as the workspace.
 
@@ -89,9 +89,9 @@ Download the [interactive diagram](docs/architecture/overview.html) and open it 
 
 ## Core and extras
 
-Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. It has no desktop app of its own.
+Garrick is the installer, workspace template, rules, skills and Python tools. It needs git, Python and an assistant that can read and edit local files and run the tools. The core has no desktop app; the Garrick App is one of the extras.
 
-[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and a status page, which opens in a browser or in the Garrick app for the Mac. Add one when it solves a problem you have; none is required for the first session.
+[Extras](docs/extras/index.md) include Obsidian, cmux, a meeting recorder, mail fetching, phone access, scheduled jobs and the Garrick App, which shows where every thread stands, on the Mac or in a browser. Add one when it solves a problem you have; none is required for the first session.
 
 ## Status and documentation
 

@@ -165,8 +165,10 @@ folder that was checked. A link that stays inside that folder is fine.
      for another).
 
    **When a command refuses because of a wall, stop.** Leave the item where
-   it is, and say only: "A wall held something back." Not the project, not
-   the party, not the file. Never retry with other parties to get round it.
+   it is, and say only the sentence the rule gives: "A wall holds some
+   material back from this project, so I have not used it. Nothing was
+   written." Not the project, not the party, not the person, not the
+   subject, not the file. Never retry with other parties to get round it.
 
    **When a command refuses because of a link, stop too.** Leave the item and
    the link as they are and tell the user which folder holds the link. Never

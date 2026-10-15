@@ -70,7 +70,8 @@ TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".
 SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd|aw|wg|sv|vs|tr|rif|r)\s*(?:\[\d+\])?\s*:\s*", re.I)
 KINDS = ("transcript", "mail", "file", "unreadable")
 WALL_REFUSAL = ("Refused: a wall stands between that project's party and the parties this came from. "
-                "Nothing was moved. Tell the user only that a wall held something back.")
+                "Nothing was moved. Tell the user only this, word for word: \"A wall holds some "
+                "material back from this project, so I have not used it. Nothing was written.\"")
 
 
 # --------------------------------------------------------------------------- where

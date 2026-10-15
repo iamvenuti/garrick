@@ -47,6 +47,12 @@ actions, and a workspace with none gets no card for them.
 A zone given a colour or an icon in Settings › Zones shows them wherever
 the page names it.
 
+**The Guide tab** shows Garrick's own docs: the copy in System/garrick-docs/
+that the installer and every update put there, drawn by guide.py beside this
+file. A link between two pages stays on the page, a link into Garrick's own
+files opens on GitHub at the release the workspace runs, and the pages cost
+the other tabs nothing until the Guide is opened.
+
 The buttons that act are carried out by page_action.py beside this file, for
 the Mac app and the Obsidian plugin. Preview features (FLAGS) stay off until
 System/garrick-flags.json switches them on. With the cmux extra beside this folder
@@ -845,6 +851,31 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
               else "Read from the notes. A preview feature."))
     dialog = add_dialog("".join(add_tree(z["zone"], (projects or {}).get(z["zone"], [])) for z in lists)) if actions else ""
     return '<div id="todolist" class="todotab%s">%s%s%s</div>' % ("" if actions else " ro", bar, panes, dialog)
+
+
+_GD = None
+
+
+def guide_mod():
+    """guide.py, beside this file: the Markdown renderer, and the Guide tab's pages."""
+    global _GD
+    if _GD is None:
+        spec = importlib.util.spec_from_file_location("garrick_guide", str(Path(__file__).with_name("guide.py")))
+        _GD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GD)
+    return _GD
+
+
+def guide_tab(ws: Path) -> str:
+    """The Guide tab: the docs this workspace was installed with, in System/garrick-docs/,
+    its links to Garrick's own files pointing at the release it runs."""
+    gd = guide_mod()
+    try:
+        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
+    except OSError:
+        text = None
+    ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
+    return gd.guide(ws.joinpath(*gd.DOCS), ref)
 
 
 _EF = None
@@ -2807,38 +2838,13 @@ def changelog_sections(text: str) -> List[Tuple[str, str, List[str]]]:
 
 
 def md_inline(s: str) -> str:
-    s = E(s)
-    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
-    s = re.sub(r"(?<![\w*])\*([^*]+)\*(?![\w*])", r"<i>\1</i>", s)
-    s = re.sub(r"\[\[([^\]|]*\|)?([^\]]*)\]\]", lambda m: m.group(2).rsplit("/", 1)[-1], s)   # [[a/b|c]] reads c, [[a/b]] reads b
-    return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)        # a link keeps its text: the page links only to Garrick
+    """A line of Markdown, through guide.py's renderer: a link keeps its text, since the page links only to Garrick."""
+    return guide_mod().inline(s)
 
 
 def md_block(lines: List[str]) -> str:
-    """The little Markdown a changelog uses: headings, paragraphs, bullets."""
-    out: List[str] = []
-    in_list = False
-    for line in lines:
-        if line.startswith("- "):
-            if not in_list:
-                out.append("<ul>")
-                in_list = True
-            out.append("<li>%s</li>" % md_inline(line[2:]))
-            continue
-        if in_list and line.startswith("  ") and line.strip():
-            out[-1] = out[-1][:-5] + " " + md_inline(line.strip()) + "</li>"
-            continue
-        if in_list:
-            out.append("</ul>")
-            in_list = False
-        if line.startswith("### "):
-            out.append("<h5>%s</h5>" % md_inline(line[4:]))
-        elif line.strip():
-            out.append("<p>%s</p>" % md_inline(line))
-    if in_list:
-        out.append("</ul>")
-    return "".join(out)
+    """A changelog section, through guide.py's renderer: its ### headings drawn as <h5>, its links as their text."""
+    return guide_mod().blocks("\n".join(lines), shift=2)
 
 
 def release_notes(text: Optional[str], edge: bool = False) -> str:
@@ -3871,14 +3877,16 @@ document.querySelectorAll('.pchev').forEach(chev);
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
 window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
+if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount();       /* the Guide's pages go on the page the first time it opens */
 tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});document.body.dataset.tab=n;
 tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
 try{localStorage.setItem('garrick-tab',n)}catch(e){}window.dispatchEvent(new Event('resize'))};
 tabBtns.forEach(function(b){b.onclick=function(){StatusTab(b.dataset.tab)}});
 var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusTab(tSaved||'overview');
-/* a sidebar link opens the tab its section is in, wherever the card has been moved */
+/* a sidebar link opens the tab its section is in, wherever the card has been moved; a link into
+   the Guide shows its page first (GUIDE_JS), so it never leaves the page in any host */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.getAttribute('href')==='#')return;
-var el=document.getElementById(a.getAttribute('href').slice(1)),sec=el&&el.closest('section.tab');if(!sec)return;
+var id=a.getAttribute('href').slice(1),el=(window.GarrickGuide&&GarrickGuide.reveal(id))||document.getElementById(id),sec=el&&el.closest('section.tab');if(!sec)return;
 StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
@@ -4738,10 +4746,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                           open_=False)
 
     todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
-    # Three tabs: Overview for where the work stands, Todo for the list, Status
-    # for the machinery behind it. Cards can be moved between Overview and
-    # Status from their headers, and Reset view puts them back. The figures at
-    # the top count the machinery's state, so they open the Status tab.
+    # Four tabs: Overview for where the work stands, Todo for the list, Status
+    # for the machinery behind it, and the Guide, Garrick's own docs. Cards can
+    # be moved between Overview and Status from their headers, and Reset view
+    # puts them back; the Guide holds no cards. The figures at the top count
+    # the machinery's state, so they open the Status tab.
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
@@ -4769,7 +4778,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
-            '<button type="button" role="tab" data-tab="status">Status%s</button></div>'
+            '<button type="button" role="tab" data-tab="status">Status%s</button>'
+            '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
@@ -4790,19 +4800,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     shared = shared_launchers(ws)
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s</main>%s'
-            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab, menu))
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>%s'
+            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
+               section("guide", True, guide_tab(ws)), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
     # and WORK_JS after both.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, WORK_JS, MENU_JS, GRAPH_JS if show_graph else ""]
+               MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS),
                 "".join("<script>%s</script>" % js for js in scripts if js)))
 
 

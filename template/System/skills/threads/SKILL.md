@@ -692,11 +692,12 @@ Knowledge wiki needs no check: it carries nobody's confidence.
    against the project's party.
 6. **What passes** goes in as the least that serves: link the meeting page, and
    quote only where the wording is the point.
-7. **Say that a wall held something back, and nothing more.** "A wall kept some
-   meeting material out of this note." No title, date, party, person or count,
-   even if asked in the same breath. A question put straight to the Meetings
-   wiki ("what did Theo say?") is a different request; its answer stays in the
-   conversation and is never written here.
+7. **Say that a wall held something back, in the words the rule gives, and
+   nothing more.** "A wall holds some material back from this project, so I
+   have not used it. Nothing was written." No title, date, party, person,
+   subject or count, even if asked in the same breath. A question put straight
+   to the Meetings wiki ("what did Theo say?") is a different request; its
+   answer stays in the conversation and is never written here.
 8. **Material the user dictates** into a thread that belongs to a walled party:
    ask once before writing it. "That sounds like Birch material, and Birch is
    walled off from Acme. Write it anyway?"

@@ -27,7 +27,11 @@ through agent.py, read-only, given the last few exchanges again.
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
 beside the socket keeps a second from starting, and a client that hears
-nothing for ASK_WAIT seconds stops waiting and says so.
+nothing for ASK_WAIT seconds stops waiting and says so. That wait covers
+the slowest request the server can be given, an action that commits and so
+waits for the zone's wall check among them; and a client that gives up all
+the same says the change may still be on its way, rather than to ask again,
+which would do the action a second time.
 
 **The tier and the caps are the scheduled jobs'.** The session runs on
 GARRICK_ASK_TIER (`haiku`, or `sonnet`, `opus`), named as a tier, never a
@@ -87,7 +91,14 @@ FLAG = "ask"
 DEFAULT_TIER = "haiku"
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
 TURN_TIMEOUT = 60           # seconds: a turn that takes longer ends the session
-ASK_WAIT = 150              # seconds: a client waits this long for the server's answer, two turns and the actions
+# Seconds a client waits for the server's answer, which has to be as long as
+# the slowest request can take: two turns, and an action that commits, whose
+# own limits are page_action's COMMIT_TIMEOUT (300) and GIT_TIMEOUT (60). A
+# shorter wait said the server had not answered while the commit was still
+# running, and the message told you to ask again, which did the action a
+# second time (#92). A test holds this against those two constants, so
+# raising either fails the suite until this follows.
+ASK_WAIT = 2 * TURN_TIMEOUT + 300 + 60
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
@@ -97,6 +108,12 @@ APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
 EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
+
+# What a client says when it gives up all the same: the action may yet
+# finish, so nothing here invites another one.
+GAVE_UP = ("The ask server did not answer in %s. The change may still be on its way: an action that commits waits "
+           "for the zone's wall check. Look at the Todo list, or the thread, before you ask again, because asking "
+           "again does it a second time.")
 
 
 class Bad(Exception):
@@ -665,6 +682,12 @@ def serve_locked(ws: Path, path: Path) -> None:
             pass
 
 
+def how_long(seconds: float) -> str:
+    """A length of time as page_action.how_long() says it, so the box and the
+    page read the same. Said, never printed as a number of seconds."""
+    return "%d minutes" % round(seconds / 60) if seconds >= 120 else "%d s" % round(seconds)
+
+
 def call(ws: Path, op: str, text: str = "", start: bool = True) -> Optional[dict]:
     """One op to the workspace's server, starting it first if asked and needed."""
     path = sock_path(ws)
@@ -690,8 +713,7 @@ def call(ws: Path, op: str, text: str = "", start: bool = True) -> Optional[dict
             c.sendall((json.dumps({"op": op, "text": text}) + "\n").encode("utf-8"))
             reply = c.makefile(encoding="utf-8").readline()
         except socket.timeout:
-            return {"say": "The ask server did not answer in %d seconds. Ask again, or stop it with ask.py stop." % ASK_WAIT,
-                    "ok": False}
+            return {"say": GAVE_UP % how_long(ASK_WAIT), "ok": False}
         except OSError:
             reply = ""
     if not reply and start and op != "stop":     # reached a server on its way out

@@ -233,6 +233,18 @@ class InstallTest(unittest.TestCase):
         # The status page shows them from here, so it never fetches anything.
         self.assertEqual((REPO / "CHANGELOG.md").read_bytes(), (self.root / "System" / "garrick-changelog.md").read_bytes())
 
+    def test_the_docs_come_with_it(self):
+        # #133: the assistant answers from them, and the Garrick App's Guide tab shows them.
+        docs = REPO / "docs"
+        shipped = sorted(p.relative_to(docs).as_posix() for p in docs.rglob("*") if p.is_file() and p.name != ".DS_Store")
+        copy = self.root / "System" / "garrick-docs"
+        self.assertEqual(shipped, sorted(p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file()))
+        for rel in shipped:
+            self.assertEqual((docs / rel).read_bytes(), (copy / rel).read_bytes(), rel)
+        files = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
+        self.assertIn("System/garrick-docs/concepts.md", files)               # Garrick's, so an update replaces them
+        self.assertIn("System/garrick-docs/concepts.md", git(self.root, "ls-files"))
+
     def test_git_repositories(self):
         for repo in repos(self.root):
             self.assertTrue((repo / ".git").is_dir(), repo)
@@ -278,7 +290,11 @@ class InstallTest(unittest.TestCase):
                 continue
             self.assertNotIn(OPEN, path.name, path)
             if path.is_file():
-                self.assertNotIn(OPEN, path.read_text(errors="replace"), path)
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue                        # an image the docs carry: its bytes are not text
+                self.assertNotIn(OPEN, text, path)
 
     def test_context_filled(self):
         sys.path.insert(0, str(self.root / "System" / "tools"))

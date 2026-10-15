@@ -649,6 +649,10 @@ def install(cfg, target, force=False, quiet=False):
     # The release notes of this Garrick, which the status page shows without fetching anything.
     if (REPO / "CHANGELOG.md").is_file():
         w.copy_file(REPO / "CHANGELOG.md", root / "System" / "garrick-changelog.md")
+    # Its docs, which the assistant answers from and the Garrick App's Guide tab shows.
+    if (REPO / "docs").is_dir():
+        w.mkdir(root.joinpath(*pl.DOCS_COPY))
+        w.copy_tree(REPO / "docs", root.joinpath(*pl.DOCS_COPY))
 
     # The wikis: one repository for both.
     w.mkdir(root / "Wikis")

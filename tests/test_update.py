@@ -114,6 +114,44 @@ class TestWhatGarrickShips(Case):
         self.assertEqual(heads, {r: self.head(r) for r in heads})
 
 
+class TestDocs(Case):
+    """#133: Garrick's docs ship in System/garrick-docs/, Garrick-owned like the release notes."""
+    DOC = "System/garrick-docs/concepts.md"
+
+    def test_an_update_replaces_a_doc_garrick_wrote(self):
+        new = (REPO / "docs" / "concepts.md").read_bytes()
+        self.as_if_older(self.DOC, "# Concepts, as an older Garrick had them\n")
+        self.assertEqual([self.DOC], self.plan()["actions"]["replace"])
+        self.apply()
+        self.assertEqual(new, (self.root / self.DOC).read_bytes())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+
+    def test_a_doc_you_changed_gets_a_new_beside_it(self):
+        new = (REPO / "docs" / "concepts.md").read_bytes()
+        self.as_if_older(self.DOC, "# Concepts\n", "# Concepts\nmy own line\n")
+        self.assertEqual([self.DOC], self.plan()["actions"]["merge"])
+        self.apply()
+        self.assertEqual("# Concepts\nmy own line\n", (self.root / self.DOC).read_text())
+        self.assertEqual(new, (self.root / (self.DOC + ".new")).read_bytes())
+
+    def test_a_workspace_from_before_the_docs_gets_them(self):
+        stamp = self.stamp()
+        stamp["files"] = {k: v for k, v in stamp["files"].items() if not k.startswith("System/garrick-docs/")}
+        shutil.rmtree(self.root / "System" / "garrick-docs")
+        self.commit(self.root, "a Garrick from before the docs shipped")
+        self.set_stamp(stamp)
+        added = [a for a in self.plan()["actions"]["add"] if a.startswith("System/garrick-docs/")]
+        self.assertIn(self.DOC, added)
+        self.assertIn("System/garrick-docs/assets/status-graph.png", added)        # the images go with the pages
+        self.apply()
+        self.assertEqual((REPO / "docs" / "concepts.md").read_bytes(), (self.root / self.DOC).read_bytes())
+
+    def test_older_releases_docs_are_known_where_a_workspace_keeps_them(self):
+        known = json.loads(update.RELEASE_HASHES.read_text())["paths"]
+        self.assertIn("System/garrick-docs/principles.md", known)
+        self.assertFalse([p for p in known if p.startswith("docs/")])
+
+
 class TestSorting(Case):
     def test_an_untouched_older_file_is_replaced_and_committed(self):
         path = "System/tools/scaffold.py"

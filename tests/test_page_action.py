@@ -72,6 +72,11 @@ class ActionCase(unittest.TestCase):
         git(self.work, "init", "-q")
         git(self.work, "config", "user.name", "Sam Rivera")
         git(self.work, "config", "user.email", "sam@example.com")
+        # Every commit then starts `git maintenance run --auto`, which takes
+        # .git/objects/maintenance.lock once index.lock is gone: a commit the
+        # test did not wait for would still be writing while tearDown deletes.
+        git(self.work, "config", "maintenance.auto", "false")
+        git(self.work, "config", "gc.auto", "0")
         write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
               "- [ ] [[Pricing]]: Send the revised terms 📅 2026-10-09\n- [ ] Acme Corp: Invoice for September\n\n## Done\n")
         self.thread = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -837,9 +842,10 @@ class TestJournal(ActionCase):
     def test_a_worker_killed_midway_reads_back_unknown_with_what_to_check(self):
         import signal
         mark = Path(self._tmp.name) / "in-the-hook"
-        self.hook('touch "%s"\nsleep 3\n' % mark)
+        self.hook('echo $PPID > "%s.tmp"\nmv "%s.tmp" "%s"\nsleep 3\n' % (mark, mark, mark))   # the hook's parent is the commit
         worker = self.start(dict(self.requests()["todo-add"], op="a19f3c80"))
         self.wait_for(mark)
+        orphan = os.getpgid(int(mark.read_text()))             # the commit's own process group, which the kill leaves running
         os.kill(worker.pid, signal.SIGKILL)
         worker.wait(timeout=30)
         worker.stdout.close()
@@ -855,8 +861,16 @@ class TestJournal(ActionCase):
         self.assertEqual(1, len([r for r in self.records() if r["op"] == "a19f3c80" and r["state"] == "failed"]))   # written once
         import time
         deadline = time.time() + 30
-        while (self.work / ".git" / "index.lock").exists() and time.time() < deadline:
-            time.sleep(0.1)                                                       # the orphaned commit finishes before the folder goes
+        while time.time() < deadline:                          # the orphaned commit finishes before the folder goes
+            try:
+                os.killpg(orphan, 0)
+            except ProcessLookupError:
+                break
+            except PermissionError:                            # macOS: exited, not yet reaped by launchd
+                pass
+            time.sleep(0.1)
+        else:
+            self.fail("the orphaned commit was still running after 30 s")
 
     def test_without_the_module_every_reply_is_what_it_was(self):
         """A workspace and an extra with no operations.py anywhere: 0.26.0's replies, byte for byte."""

@@ -202,6 +202,7 @@ class Workspace:
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
     checkouts: Optional[List[Path]] = None  # the Garrick checkouts inside a project, found on first use
+    apart: Optional[set] = None  # what the checks leave out of a project's own files, listed on first use
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
     cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
 
@@ -396,22 +397,12 @@ TEMPLATES = ("System", "templates")
 def is_template_path(ws: Workspace, path: Path) -> bool:
     """A template, whose placeholder marks are there for a script to fill: anything
     under System/templates/, or in a folder under Zones/ whose name starts
-    with an underscore (`_project`). A Garrick checkout kept in a project
-    holds the shipped originals at the same position in the tree it ships,
-    `template/System/templates/`, and they are templates there too, found
-    through the checkout rather than by the folder's name: a clone is never
-    walked, being a repository of its own, but a release unpacked from its
-    ZIP has no `.git` and is."""
+    with an underscore (`_project`). The originals a Garrick checkout ships
+    are never asked about: the checks leave a checkout out whole (set_apart)."""
     parts = Path(rel(ws, path)).parts
     if parts[:2] == TEMPLATES:
         return True
-    if parts and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1]):
-        return True
-    for checkout in checkouts(ws):
-        tree = checkout / CHECKOUT_TREE
-        if tree in path.parents:
-            return path.relative_to(tree).parts[:2] == TEMPLATES
-    return False
+    return bool(parts) and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1])
 
 
 def say(n: int) -> str:
@@ -867,15 +858,14 @@ def split_findings(ws: Workspace, texts: Dict[Path, str]) -> List[Finding]:
 def check_placeholders(ws: Workspace) -> List[Finding]:
     """Installer placeholders left unfilled, in a file's name or its text.
     Files git ignores are not the install's: a package's own templates may
-    hold the same marks."""
+    hold the same marks. Nor is a Garrick checkout kept in a project, whose
+    templates hold them by design (set_apart)."""
     out = []
-    for path in walk_files(ws.root, ignored(ws)):
+    for path in walk_files(ws.root, set_apart(ws)):
         if is_template_path(ws, path) or is_generated(ws, path):
             continue
         if rel(ws, path) == "/".join(VERSION_STAMP):
             continue    # it lists the templates' files, whose names hold placeholders by design
-        if any(path == checkout / CHECKOUT_HASHES for checkout in checkouts(ws)):
-            continue    # a checkout's list of what each release shipped, the same names among it
         found = PLACEHOLDER_RE.findall(rel(ws, path))
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix == "":
             text = read_text(path)
@@ -2049,11 +2039,13 @@ TICKED_NOTE_RE = re.compile(r"(?<!`)`([^`\n*~/][^`\n*]*?\.md)`(?!`)")
 
 def live_files(folder: Path) -> Iterable[Path]:
     """Every file under `folder` outside archives, build output, hidden and
-    template folders, and any repository of its own kept inside a project,
-    such as a program's code: its files are not notes."""
+    template folders, any repository of its own kept inside a project, such
+    as a program's code, and any Garrick checkout, cloned or unpacked from a
+    release: their files are not notes."""
     for dirpath, dirnames, filenames in os.walk(folder):
         dirnames[:] = sorted(d for d in dirnames
-                             if not NOT_LIVE_DIR_RE.match(d) and not os.path.lexists(os.path.join(dirpath, d, ".git")))
+                             if not NOT_LIVE_DIR_RE.match(d) and not os.path.lexists(os.path.join(dirpath, d, ".git"))
+                             and not is_checkout(Path(dirpath) / d))
         for name in sorted(filenames):
             yield Path(dirpath) / name
 
@@ -2625,7 +2617,6 @@ SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/g
 CHECKOUT_TREE = "template"                  # the tree the installer copies
 CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
 CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree
-CHECKOUT_HASHES = "release-hashes.json"    # what each release shipped, file by file
 
 
 def is_checkout(folder: Path) -> bool:
@@ -2842,7 +2833,7 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
     for project, pfm in ws.projects:
         ptags = party_tags(ws, project / (project.name + ".md"), pfm)
         thread_tags: Dict[str, set] = {}
-        files = list(walk_files(project, ignored(ws)))
+        files = list(walk_files(project, set_apart(ws)))
         files += sorted(p for p in view if project in p.parents and not p.exists())  # deleted, but still in git
         for path in files:
             if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
@@ -3291,7 +3282,7 @@ def all_sources_findings(ws: Workspace) -> List[Finding]:
         out: List[Finding] = []
         for project, pfm in ws.projects:
             ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
-            for path in walk_files(project / "Sources", ignored(ws)):
+            for path in walk_files(project / "Sources", set_apart(ws)):
                 try:
                     if not _in_sources(project, path) or path.stat().st_size > MAX_SOURCE_BYTES:
                         continue
@@ -3312,11 +3303,12 @@ def check_walls(ws: Workspace) -> List[Finding]:
     """No project file links to, names, or quotes a party or meeting on the far
     side of a wall from the project's party, or came from a mail that is.
     Files git ignores are left out: they never reach the history the commit
-    hook guards, and an installed package's files are not the project's."""
+    hook guards, and an installed package's files are not the project's. So
+    is a Garrick checkout kept in the project (set_apart)."""
     out = []
     for project, pfm in ws.projects:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
-        for path in walk_files(project, ignored(ws)):
+        for path in walk_files(project, set_apart(ws)):
             if path.suffix.lower() not in TEXT_SUFFIXES:
                 continue
             text = read_text(path)
@@ -3557,6 +3549,20 @@ def ignored(ws: Workspace) -> set:
                 if name and not any(a == path or path in a.parents for a in areas):
                     ws.ignored.add(path)
     return ws.ignored
+
+
+def set_apart(ws: Workspace) -> set:
+    """What the checks that read a project's own files leave out: what git
+    ignores (see ignored), and every Garrick checkout kept in a project. A
+    checkout cloned with its `.git` is a repository of its own and is never
+    walked; one unpacked from a release ZIP has no `.git`, and is left out
+    the same way, so its docs, examples and shipped rules are not read as the
+    project's notes. Its shipped tree still counts as shared wording (see
+    shared_files), and a commit of its files is still checked as the
+    project's, by the commit hook, whichever repository makes it."""
+    if ws.apart is None:
+        ws.apart = ignored(ws) | set(checkouts(ws))
+    return ws.apart
 
 
 def check_inbox(ws: Workspace) -> List[Finding]:

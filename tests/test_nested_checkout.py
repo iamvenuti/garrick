@@ -207,10 +207,10 @@ class TestWhatCountsAsACheckout(CheckoutCase):
 
 
 class TestAnUnpackedCheckoutIsNotAnUnfinishedInstall(unittest.TestCase):
-    """A checkout unpacked from a release ZIP has no `.git`, so it is walked
-    like any folder of the project that keeps it. The templates it ships hold
-    placeholders by design and are no sign of an install left unfinished; an
-    ordinary file holding one still is, in the project and in the checkout."""
+    """A checkout unpacked from a release ZIP has no `.git`, and is left out
+    of the check as a clone is. The templates it ships hold placeholders by
+    design and are no sign of an install left unfinished; an ordinary file of
+    the project holding one still is."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -238,13 +238,12 @@ class TestAnUnpackedCheckoutIsNotAnUnfinishedInstall(unittest.TestCase):
         write(self.acme / "Sources" / "brief.md", "# Brief for {{PARTY}}\n")
         self.assertEqual(["Zones/Work/Acme Review/Sources/brief.md"], self.unfinished())
 
-    def test_the_rest_of_the_checkout_is_still_read(self):
-        """Only the shipped templates: the checkout's docs, or a file in its
-        tree outside `System/templates/`, are read as before."""
+    def test_nothing_else_in_the_checkout_is_read_either(self):
+        """A mark in its docs, or in its tree outside `System/templates/`, is
+        Garrick's to fix, not the install's (#148)."""
         write(self.checkout / "docs" / "zones.md", "# Zones\n\nThe {{ZONE}} zone.\n")
         write(self.checkout / "template" / "System" / "rules.md", "# Rules for {{ZONE}}\n")
-        self.assertEqual(["Zones/Work/Acme Review/garrick/docs/zones.md",
-                          "Zones/Work/Acme Review/garrick/template/System/rules.md"], self.unfinished())
+        self.assertEqual([], self.unfinished())
 
     def test_a_folder_that_is_not_a_checkout_is_not_excused_by_its_name(self):
         """The same tree with no installer beside it is somebody's folder
@@ -260,3 +259,124 @@ class TestAnUnpackedCheckoutIsNotAnUnfinishedInstall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# A sentence of Garrick's own docs: the checkout holds it, and a note on the
+# far side of the wall may well repeat it.
+DOCS = ("Every thread keeps one resume point, which is read before anything else "
+        "in the thread is opened.")
+
+
+class UnpackedCase(unittest.TestCase):
+    """Acme keeps a checkout unpacked from a release ZIP, with no `.git`;
+    Birch & Co, walled from Acme, is named in its docs."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        self.work = self.root / "Zones" / "Work"
+        self.acme = self.work / "Acme Review"
+        self.birch = self.work / "Birch Entry"
+        self.checkout = build_checkout(self.acme / "garrick")
+        # A name across the wall, a cloud folder's full path, a placeholder and
+        # a sentence of the docs, each in the places Garrick's own source has them.
+        write(self.checkout / "docs" / "walls.md", "# Walls\n\nAcme Corp and Birch & Co are walled apart.\n")
+        write(self.checkout / "docs" / "threads.md", "# Threads\n\n" + DOCS + "\n")
+        write(self.checkout / "examples" / "demo" / "content" / "birch.md", "# Birch\n\nA call with Theo Marsh.\n")
+        write(self.checkout / "template" / "System" / "rules.md",
+              "# Rules\n\nNever write ~/Library/CloudStorage/OneDrive-Acme/Shared into a note.\n")
+        write(self.checkout / "template" / "System" / "templates" / "thread" / "{{THREAD}}.md", "# {{THREAD}}\n")
+        write(self.checkout / "docs" / "zones.md", "# Zones\n\nThe {{ZONE}} zone.\n")
+        self.assertFalse((self.checkout / ".git").exists())
+        self.inside = "Zones/Work/Acme Review/garrick/"
+
+    def tearDown(self):
+        check._committing(None)
+
+    def found(self):
+        return sorted((f.check, f.path.split(":")[0]) for f in check.run_checks(self.root)
+                      if f.check in ("links", "walls", "placeholders"))
+
+
+
+class TestAnUnpackedCheckoutIsNotProjectNotes(UnpackedCase):
+    """#148: a checkout unpacked from a release ZIP was read file by file as
+    the notes of the project that keeps it. Its docs name parties and quote
+    the paths they warn against, so the checks that read a project's notes
+    reported Garrick's own pages. It is left out as a clone is, and a file of
+    the project beside it is checked as before."""
+
+    def test_it_is_found_as_a_checkout(self):
+        self.assertEqual([self.checkout], check.checkouts(check.discover(self.root)))
+
+    def test_its_own_files_raise_no_finding(self):
+        self.assertEqual([], [f for f in self.found() if f[1].startswith(self.inside)])
+
+    def test_a_project_file_beside_it_is_still_reported(self):
+        write(self.acme / "Notes" / "Setup.md",
+              "# Setup\n\nKept in ~/Library/CloudStorage/OneDrive-Acme/Shared for {{PARTY}}, as Birch & Co does.\n")
+        note = "Zones/Work/Acme Review/Notes/Setup.md"
+        self.assertEqual([("links", note), ("placeholders", note), ("walls", note)], self.found())
+
+    def test_the_same_tree_with_no_installer_is_read_as_the_project(self):
+        """Recognised by checkouts(), not by its look: without its installer it
+        is an ordinary folder of the project, and every rule applies to it."""
+        (self.checkout / "install.py").unlink()
+        found = self.found()
+        self.assertIn(("links", self.inside + "template/System/rules.md"), found)
+        self.assertIn(("placeholders", self.inside + "docs/zones.md"), found)
+        self.assertIn(("walls", self.inside + "docs/walls.md"), found)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_clone_reads_the_same(self):
+        unpacked = self.found()
+        env = mock.patch.dict(os.environ, NO_USER_GIT)
+        env.start()
+        self.addCleanup(env.stop)
+        git(self.checkout, "init", "-q")
+        commit_all(self.checkout, "Garrick")
+        self.assertEqual(unpacked, self.found())
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestAnUnpackedCheckoutAndTheCommitHook(UnpackedCase):
+    """The commit hook reads every project's files for the wording a staged
+    note might repeat. An unpacked checkout's docs were among them, filed
+    under the party of the project that keeps it, so a note across the wall
+    repeating a sentence of Garrick's docs was refused as a quotation."""
+
+    def setUp(self):
+        super().setUp()
+        env = mock.patch.dict(os.environ, NO_USER_GIT)
+        env.start()
+        self.addCleanup(env.stop)
+        shutil.rmtree(self.work / ".git")
+        git(self.work, "init", "-q")
+        git(self.work, "add", "-A")
+        git(self.work, "reset", "-q", "--", "Acme Review/garrick")  # unpacked, never committed
+        git(self.work, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull,
+            "commit", "-q", "-m", "start")
+
+    def staged(self, *names):
+        git(self.work, "add", "--", *names)
+        return [(f.severity, f.path) for f in check.run_checks(self.root, staged=self.work)]
+
+    def test_a_note_across_the_wall_may_repeat_its_docs(self):
+        write(self.birch / "Threads" / "Market Sizing" / "Method.md", "# Method\n\n" + DOCS + "\n")
+        self.assertEqual([], self.staged("Birch Entry/Threads/Market Sizing/Method.md"))
+
+    def test_the_same_sentence_in_a_project_note_still_counts(self):
+        write(self.acme / "Notes" / "Method.md", "# Method\n\n" + DOCS + "\n")
+        git(self.work, "add", "--", "Acme Review/Notes/Method.md")
+        git(self.work, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull,
+            "commit", "-q", "-m", "Acme's method")
+        write(self.birch / "Threads" / "Market Sizing" / "Method.md", "# Method\n\n" + DOCS + "\n")
+        self.assertEqual([("error", "Zones/Work/Birch Entry/Threads/Market Sizing/Method.md")],
+                         self.staged("Birch Entry/Threads/Market Sizing/Method.md"))
+
+    def test_a_commit_of_its_files_is_checked_as_the_project_s(self):
+        """Committed into the zone, its files are the project's, as a commit
+        made inside a clone is (#122)."""
+        self.assertEqual([("error", self.inside + "docs/walls.md")], self.staged("Acme Review/garrick/docs/walls.md"))

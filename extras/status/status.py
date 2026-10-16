@@ -529,27 +529,44 @@ def threads(ws: Path) -> Dict[str, dict]:
     with no thread note is its own single thread, read from its hub, as in a
     workspace laid out before Garrick gave every project a Threads/ folder.
     A project whose hub says parked holds every live thread in it parked
-    too, each marked `held`; `held` per zone names those projects."""
+    too, each marked `held`; `held` per zone names those projects.
+
+    For the Threads card's search (#140), names only: each row's `spoken:`
+    form, `finished` per zone, the threads `done` counts, with their
+    project, name and note, and `projects`, each project by name with its
+    hub's status (live, parked or done), its spoken form and whether it is
+    its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep = [], [], 0, []
+        rows, parked, done, asleep, finished, projects = [], [], 0, [], [], {}
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
             hub = project / (project.name + ".md")
             pfm = frontmatter(hub, ws)
-            hub_parked = hub.is_file() and as_text(pfm.get("status")).strip().lower() in PARKED
+            hub_state = as_text(pfm.get("status")).strip().lower() if hub.is_file() else ""
+            hub_parked = hub_state in PARKED
             if hub_parked:
                 asleep.append(project.name)
             found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
+            own = False
             if not any(n.is_file() for _, n in found) and hub.is_file() and \
                     as_text(pfm.get("type")).strip().lower() == "project":
-                found = [(project.name, hub)]
+                found, own = [(project.name, hub)], True
+            if hub.is_file() or any(n.is_file() for _, n in found):
+                projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
+                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own,
+                                          "hub": hub if hub.is_file() else None, "party": tags(pfm.get("party"))}
             for name, note in found:
                 fm = pfm if note == hub else frontmatter(note, ws)
                 state = as_text(fm.get("status")).strip().lower()
                 if state in DONE:
                     done += 1
+                    if note.is_file():
+                        finished.append({"zone": zone.name, "project": project.name, "thread": name, "note": note,
+                                         "hub": hub if hub.is_file() else None, "status": "done",
+                                         "party": tags(fm.get("party") or pfm.get("party")),
+                                         "updated": as_date(fm.get("updated")), "spoken": as_text(fm.get("spoken")).strip()})
                     continue
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
@@ -562,7 +579,8 @@ def threads(ws: Path) -> Dict[str, dict]:
                        "party": tags(fm.get("party") or pfm.get("party")),
                        "updated": updated, "status": state,
                        "resume": has_block, "resumed": resumed,
-                       "checkpoint": mark, "touched": max(when) if when else None}
+                       "checkpoint": mark, "touched": max(when) if when else None,
+                       "spoken": as_text(fm.get("spoken")).strip()}
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
@@ -570,7 +588,9 @@ def threads(ws: Path) -> Dict[str, dict]:
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
         parked.sort(key=by_name)
-        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep}
+        finished.sort(key=by_name)
+        out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
+                          "finished": finished, "projects": projects}
     return out
 
 
@@ -1146,21 +1166,30 @@ function bad(d,t){var m=d.querySelector('#mg-msg');m.textContent=t;m.classList.a
 /* a zone still busy with another request (WORK_JS) keeps the dialog open and says so */
 function busy(d,z){var b=act&&window.GarrickBusy&&GarrickBusy(z);if(b)bad(d,z+' is still busy: '+b+' Try again when it is done.');return!!b}
 var CANCEL='<button class="act" type="button" data-cancel>Cancel</button>';
+/* what already has the name being typed, or one heard as it (#140): any project or thread, in any zone and any
+   status, by the test scaffold.py puts a sibling's name to. It warns and never refuses: Make it still makes it. */
+var DUP='<p class="mg-msg mg-dup" id="mg-dup" role="status" hidden></p>';
+function dup(d){var m=d.querySelector('#mg-dup'),n=val(d,'mg-name'),F=window.GarrickFind,hits=F&&n?F.alike(n):[];m.hidden=!hits.length;
+if(!hits.length){m.innerHTML='';return}
+function what(h){return esc([h.k==='p'?'a project':h.p,h.z].concat(h.s==='live'?[]:[h.s]).join(', '))}
+m.innerHTML='Already there: '+(hits.length===1?esc(hits[0].n)+' ('+what(hits[0])+'). <a href="'+esc(hits[0].u)+'">Open it</a>'
+:hits.slice(0,3).map(function(h){return'<a href="'+esc(h.u)+'" title="Open its note">'+esc(h.n)+'</a> ('+what(h)+')'}).join('; ')+(hits.length>3?'; and '+(hits.length-3)+' more':'')+'.')}
+function watch(d){var i=d.querySelector('#mg-name');i.addEventListener('input',function(){dup(d)});dup(d)}
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
 function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say'),
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say')+DUP,
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
 function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>'}
-d.querySelector('#mg-zone').onchange=projects;projects();d.querySelector('#mg-name').focus();
+d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
+var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
 function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];d.querySelector('#mg-pt').innerHTML=p.length?select('mg-party','For',p,''):'<p class="mg-msg">No party belongs to this zone yet: add it to System/context.md first.</p>'}
-d.querySelector('#mg-zone').onchange=parties;parties();d.querySelector('#mg-name').focus();
+d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-project',zone:val(d,'mg-zone'),name:val(d,'mg-name'),party:val(d,'mg-party'),thread:val(d,'mg-thread')};
 if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+' for '+q.party+' in '+q.zone+', first thread '+q.thread,'Copied the phrase. Paste it to your assistant.')}}
@@ -1202,6 +1231,136 @@ setTimeout(function(){bar.remove()},Math.max(0,u.until-Date.now()))}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',offer);else offer();
 })();
 """
+
+# ---- finding a project or a thread by name (#140). Before starting a thread
+# you want to know whether one already exists, and the one most easily made
+# twice is the one the card does not show: parked under another project, in
+# another zone, or finished. The box at the head of the Threads card looks
+# through every zone at once, live, parked and finished, by name and spoken
+# form (find_data), word by word, each word the start of a word of the name,
+# its project's or its zone's, ignoring case and accents. While a query is in
+# it, the matches take the columns' place, live first, then parked, then
+# finished, each with its project and zone and a chip saying parked or done;
+# the columns themselves are only hidden, so clearing the box, or Esc, shows
+# them exactly as they were, folds and order included. A match is a row like
+# the card's: its name opens it as the row's does, its hover card is the
+# row's, with Wake on a parked one, and a finished one's opens its note and
+# changes nothing. `/` puts the cursor in the box from anywhere but a field
+# or the Guide. The query is kept in the window's sessionStorage, so the
+# rebuild after a Park or Wake from a match keeps showing what was found.
+#
+# GarrickFind.alike is the same index put to the test scaffold.py applies to
+# a sibling's name (garrick_lib.sounds_alike, ported here word for word): the
+# New project and New thread dialogs name what is already there as a name is
+# typed, and leave the choice to make another.
+FIND_MAX = 60     # matches drawn at once; the line above them says how many more
+FIND_BOX = ('<div class="tfind" role="search"><input type="search" id="tfind" placeholder="Find a project or thread" '
+            'autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-controls="tfound" '
+            'aria-label="Find a project or thread by name, in every zone, live, parked or finished">'
+            '<kbd aria-hidden="true" title="Press / to search">/</kbd></div>')
+FIND_LIST = ('<div class="tfound" id="tfound" hidden><p class="hint tfound-n" id="tfound-n" role="status"></p>'
+             '<div class="tfound-list" id="tfound-list" role="list" aria-label="Projects and threads found"></div></div>')
+
+FIND_CSS = r"""
+.mg-new{flex-wrap:wrap;align-items:center}
+.tfind{position:relative;flex:1 1 200px;min-width:0;max-width:420px;margin-right:auto}
+.tfind input{width:100%;box-sizing:border-box;font:inherit;font-size:13px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:6px 30px 6px 10px;margin:0}
+.tfind input::placeholder{color:var(--muted)}.tfind input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.tfind kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:inherit;font-size:11px;line-height:16px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;pointer-events:none}
+.tfind input:focus~kbd,.tfind input:not(:placeholder-shown)~kbd{display:none}
+@media (hover:none){.tfind kbd{display:none}}
+.tview.finding .zones,.tview.finding .tmodes,.tview.finding .legend,.tview.finding .efoot,.tview.finding .gsum{display:none!important}
+.tfound-n{margin:0 0 6px}
+.sres{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--grid);border-radius:6px;font-size:13px;transition:background .1s}
+.sres:hover,.sres.on{background:var(--wash)}.sres .t{min-width:0}
+.sres .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sres .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sres .chip{margin:0}.sres[data-s="done"] .t a{color:var(--ink2)}
+dialog.gmanage .mg-dup a{color:var(--accent)}
+"""
+
+FIND_JS = r"""
+(function(){
+var box=document.getElementById('tfind'),v=box&&box.closest('.tview'),wrap=document.getElementById('tfound'),list=document.getElementById('tfound-list'),
+said=document.getElementById('tfound-n'),D={items:[],zones:{}},MAX=%(max)d,RANK={live:0,parked:1,done:2},KEY='garrick-find';
+try{D=JSON.parse(document.getElementById('find-data').textContent)||D}catch(e){}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function rx(u,plain){try{return new RegExp(u,'u')}catch(e){return plain}}
+var SPLIT=rx('[^\\p{L}\\p{N}]+',/[^a-z0-9\u00c0-\u024f]+/),LETTER=rx('\\p{L}',/[a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u024f]/);
+/* a name as the box reads it: lower case, accents gone, & as "and", an apostrophe joining its word */
+function fold(s){s=String(s==null?'':s).replace(/&/g,' and ');if(s.normalize)s=s.normalize('NFD');return s.toLowerCase().replace(/[\u0300-\u036f]/g,'').replace(/['\u2018\u2019`]/g,'')}
+function words(s){return fold(s).split(SPLIT).filter(Boolean)}
+function cmp(a,b){a=fold(a);b=fold(b);return a<b?-1:a>b?1:0}
+(D.items||[]).forEach(function(it){it._own=words([it.n,it.sp].join(' '));it._all=it._own.concat(words([it.k==='p'?'':it.p,it.psp,it.z].join(' ')))});
+/* every query word the start of a word of the name, its spoken form, its project's or its zone's */
+function has(ws,q){for(var i=0;i<ws.length;i++)if(ws[i].lastIndexOf(q,0)===0)return true;return false}
+function every(qs,ws){return qs.every(function(q){return has(ws,q)})}
+function key(z,p,t){return z+'\n'+p+'\n'+t}
+function card(r){try{return JSON.parse(r.dataset.card)}catch(e){return null}}
+/* the card's own rows, read afresh each time: Park and Wake move them (PARK_JS) */
+function rows(){var m={};[].forEach.call(document.querySelectorAll('.tview .zones .thread[data-card]'),function(r){var c=card(r);if(!c)return;
+var k=c.kl==='project'?key(c.z,c.n,''):key(c.z,c.p,c.n);(m[k]=m[k]||[]).push({el:r,c:c})});return m}
+function rowsOf(m,it){return m[it.k==='p'?key(it.z,it.n,''):key(it.z,it.p,it.n)]}
+function state(it,rs){if(!rs||it.s==='done')return it.s;
+if(it.k==='p')return rs[0].c.hp||rs.every(function(x){return!!x.el.closest('details.parked')})?'parked':'live';
+return rs[0].c.s?'parked':'live'}
+function hits(test){var m=rows(),out=[];(D.items||[]).forEach(function(it){var own=test(it);if(own===null)return;var rs=rowsOf(m,it);
+out.push({it:it,rs:rs,s:state(it,rs),own:own?0:1})});
+out.sort(function(a,b){return RANK[a.s]-RANK[b.s]||a.own-b.own||cmp(a.it.n,b.it.n)||cmp(a.it.p||'',b.it.p||'')||cmp(a.it.z,b.it.z)});return out}
+/* null for a query with no word in it: the card as it was */
+function find(q){var qs=words(q);if(!qs.length)return null;return hits(function(it){return every(qs,it._all)?every(qs,it._own):null})}
+function cardText(h){return h.rs?h.rs[0].el.dataset.card:JSON.stringify(h.it.c||{n:h.it.n,kl:h.it.k==='p'?'project':'thread',z:h.it.z,p:h.it.k==='p'?'':h.it.p})}
+function line(h){var it=h.it,c=cardText(h),o=JSON.parse(c);
+var where=(it.k==='p'?'Project · ':it.p&&it.p!==it.n?esc(it.p)+' · ':'')+(D.zones[it.z]||esc(it.z));
+return'<div class="sres" role="listitem" data-s="'+h.s+'" data-card="'+esc(c)+'"><div class="t"><a href="'+esc(o.u||'')+'">'+esc(it.n)+'</a><small>'+where+'</small></div>'
++(h.s==='live'?'':'<span class="chip">'+h.s+'</span>')+'</div>'}
+function R(){return window.ThreadRows||{bind:function(){},close:function(){}}}
+function keep(q){try{if(q)sessionStorage.setItem(KEY,q);else sessionStorage.removeItem(KEY)}catch(e){}}
+function render(){if(!box)return;var q=box.value,hs=find(q);R().close();keep(q);v.classList.toggle('finding',!!hs);wrap.hidden=!hs;
+if(!hs){list.innerHTML='';said.textContent='';return}
+list.innerHTML=hs.slice(0,MAX).map(line).join('');[].forEach.call(list.querySelectorAll('.sres'),function(r){R().bind(r)});
+var n=hs.length,l=hs.filter(function(h){return h.s==='live'}).length;
+said.textContent=n?n+(n===1?' match':' matches')+' in every zone'+(l<n?', '+l+' live':'')+(n>MAX?'; the first '+MAX+' are shown, so type more of the name':''):'Nothing by that name in any zone, live, parked or finished.'}
+/* the test scaffold.py puts a sibling's name to (garrick_lib.sounds_alike): the same once case, accents and
+   punctuation are gone, the same phonetic key, or, both four letters or more, one edit apart */
+var DW=['zero','one','two','three','four','five','six','seven','eight','nine'],
+START=[['kn','n'],['gn','n'],['pn','n'],['wr','r'],['ps','s'],['wh','w'],['x','s']],
+DIGR=[['sch','sk'],['tch','ch'],['dg','j'],['ph','f'],['ck','k'],['qu','kw'],['gh',''],['sh','x'],['ch','x'],['th','0']];
+function nname(s){s=String(s).replace(/&/g,' and ');if(s.normalize)s=s.normalize('NFKD');s=s.replace(/[0-9]/g,function(d){return' '+DW[+d]+' '}).toLowerCase();
+var o='';for(var i=0;i<s.length;i++){var ch=s[i];if(s.charCodeAt(i)<0x250&&LETTER.test(ch))o+=ch}return o}
+function wkey(word){var w=nname(word),i;if(!w)return'';for(i=0;i<START.length;i++)if(w.lastIndexOf(START[i][0],0)===0){w=START[i][1]+w.slice(START[i][0].length);break}
+w=w.split('x').join('ks');DIGR.forEach(function(d){w=w.split(d[0]).join(d[1])});
+var o='';for(i=0;i<w.length;i++){var ch=w[i],nx=w.charAt(i+1);if(ch==='c')ch='eiy'.indexOf(nx)>=0?'s':'k';else if(ch==='q')ch='k';else if(ch==='z')ch='s';o+=ch}
+if(!o)return'';var k=['aeiouy'.indexOf(o[0])>=0?'A':o[0]];for(i=1;i<o.length;i++){ch=o[i];if('aeiouyhw'.indexOf(ch)<0&&ch!==k[k.length-1])k.push(ch)}return k.join('')}
+function pkey(s){return String(s).replace(/&/g,' and ').split(/[\s\-\u2010\u2011]+/).map(wkey).filter(Boolean).join(' ')}
+function dist(a,b){if(a===b)return 0;if(a.length<b.length){var t=a;a=b;b=t}var prev=[],i,j;for(j=0;j<=b.length;j++)prev.push(j);
+for(i=1;i<=a.length;i++){var cur=[i];for(j=1;j<=b.length;j++)cur.push(Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)));prev=cur}return prev[b.length]}
+function alike(a,b){var na=nname(a),nb=nname(b);if(!na||!nb)return false;if(na===nb)return true;var ka=pkey(a),kb=pkey(b);
+if(ka&&(ka===kb||ka.split(' ').join('')===kb.split(' ').join('')))return true;return Math.min(na.length,nb.length)>=4&&dist(na,nb)<=1}
+function plain(h){var c=JSON.parse(cardText(h));return{n:h.it.n,k:h.it.k,p:h.it.k==='p'?'':h.it.p,z:h.it.z,s:h.s,u:c.u||''}}
+window.GarrickFind={find:function(q){var hs=find(q);return hs?hs.map(plain):[]},
+alike:function(name){if(!nname(name))return[];return hits(function(it){return[it.n].concat(it.sp?[it.sp]:[]).some(function(f){return alike(name,f)})?true:null}).map(plain)},
+soundsAlike:alike};
+if(!box||!v||!wrap)return;
+box.addEventListener('input',render);
+box.addEventListener('search',render);
+/* Esc empties the box and puts the card back; with nothing in it, leaves the box. Down and Enter reach the first match. */
+box.addEventListener('keydown',function(e){if(e.key==='Escape'){if(box.value){e.preventDefault();e.stopPropagation();box.value='';render()}else box.blur();return}
+if(e.key!=='ArrowDown'&&e.key!=='Enter')return;var a=list.querySelector('.sres .t>a');if(!a)return;e.preventDefault();if(e.key==='Enter')a.click();else a.focus()});
+list.addEventListener('keydown',function(e){var a=e.target.closest&&e.target.closest('.sres .t>a');if(!a)return;
+var all=[].slice.call(list.querySelectorAll('.sres .t>a')),i=all.indexOf(a);
+if(e.key==='ArrowDown'&&i<all.length-1){e.preventDefault();all[i+1].focus()}else if(e.key==='ArrowUp'){e.preventDefault();(i>0?all[i-1]:box).focus()}
+else if(e.key==='Escape')box.focus()});
+/* "/" from anywhere but a field, a dialog or the Guide, whose pages have their own search */
+document.addEventListener('keydown',function(e){if(e.key!=='/'||e.metaKey||e.ctrlKey||e.altKey||e.defaultPrevented)return;var t=e.target||{};
+if(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||'')||(t.closest&&t.closest('dialog')))return;
+if(document.body.dataset.tab==='guide')return;var c=box.closest('.card'),sec=box.closest('section.tab');if(!c||c.hidden||!sec)return;
+e.preventDefault();if(sec.hidden&&window.StatusTab)StatusTab(sec.id.slice(4));if(!c.open)c.open=true;box.focus();if(box.select)box.select()});
+/* drawn again once Park or Wake has moved a row, so a match says what it now is */
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){var r=prev?prev(q,out):undefined;if(box.value)render();return r};
+var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;render()}
+})();
+""" % {"max": FIND_MAX}
 
 # An action that runs (#77): a request that commits in a zone can take a minute
 # or more, since each commit runs the zone's wall check. While it runs, a toast
@@ -2795,6 +2954,52 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     return {"zones": zones, "acting": acting}
 
 
+def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folders: bool, today: dt.date) -> dict:
+    """What the Threads card's search box looks through (#140): every project
+    and thread in every zone, live, parked and finished, by its name, its
+    project's and its zone's, and the `spoken:` forms of the first two. Names
+    only, never a note's body. A live or parked one has its row on the card
+    already, and the page takes its card from there, so what Park or Wake did
+    since is what it shows. A finished thread, or a project with no row of its
+    own, carries its card here as `c`: the note to open, and nothing that
+    changes it. `zones` is each zone's label as the card heads it."""
+    items = []
+    for zone, data in T.items():
+        P = data.get("projects", {})
+        on_card = {r["project"] for r in data["rows"] + data["parked"]}
+        for project, p in sorted(P.items(), key=lambda kv: kv[0].casefold()):
+            if p["own"]:                        # its own single thread: listed once, as the thread
+                continue
+            it = {"k": "p", "z": zone, "n": project, "s": p["status"]}
+            if p["spoken"]:
+                it["sp"] = p["spoken"]
+            if project not in on_card and p["hub"]:
+                c = {"n": project, "kl": "project", "z": zone, "p": "", "t": p["party"], "d": None, "h": 1,
+                     "s": 1 if p["status"] == "parked" else 0, "u": link(p["hub"])}
+                if p["status"] == "done":
+                    c["fin"] = 1
+                if folders:
+                    c["f"] = str(p["hub"].parent)
+                it["c"] = c
+            items.append(it)
+        for state, rs in (("live", data["rows"]), ("parked", data["parked"]), ("done", data.get("finished", []))):
+            for r in rs:
+                it = {"k": "t", "z": zone, "p": r["project"], "n": r["thread"], "s": state}
+                if r.get("spoken"):
+                    it["sp"] = r["spoken"]
+                spoken = P.get(r["project"], {}).get("spoken")
+                if spoken and r["note"] != r["hub"]:
+                    it["psp"] = spoken
+                if state == "done":
+                    c = {"n": r["thread"], "kl": "thread", "z": zone, "p": r["project"], "t": r["party"],
+                         "d": (today - r["updated"]).days if r["updated"] else None, "s": 0, "fin": 1, "h": 0, "u": link(r["note"])}
+                    if folders:
+                        c["f"] = str(r["note"].parent)
+                    it["c"] = c
+                items.append(it)
+    return {"items": items, "zones": {z: "<span%s>%s</span>" % (zone_attr(z, styles), zone_name(z, styles)) for z in T}}
+
+
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
               desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
     """What the app's menu bar icon lists: per zone, its
@@ -3801,12 +4006,12 @@ function shut(o){return o.dk&&o.live&&host?'<button class="act pflip" type="butt
 /* Park or Wake, beside the name: it acts in the app, and copies the phrase anywhere else;
    with a session open, Close session sits beside it */
 function flip(o){var c=shut(o),f=pflip(o);return c&&f?'<span class="pbtns">'+c+f+'</span>':c||f}
-function pflip(o){if(o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
+function pflip(o){if(o.fin||o.held||o.pend||(o.h&&o.hp==null))return'';if(host&&(o.h?o.pp:o.pa))return park(o);if(!o.w)return'';
 var s=o.h?o.hp:o.s,p=(s?'wake ':'park ')+o.w;
 return'<button class="act pflip" type="button" data-copy="'+esc(p)+'" data-say="'+esc('Copied “'+p+'”. Paste it to your assistant.')+'" title="Copy “'+esc(p)+'”">'+(s?'Wake':'Park')+'</button>'}
 function ago(d){return d===0?'today':d===1?'yesterday':d+' days ago'}
 /* how long since the note moved, as a figure: age is not urgency, so nothing here reads as a fault */
-function state(o){if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
+function state(o){if(o.fin)return'Finished'+(o.d!=null?', updated '+ago(o.d):'');if(o.held)return'Parked with its project';if(o.pend)return'Woken with its project';if(o.s)return'Parked'+(o.d!=null?', updated '+ago(o.d):'');if(o.d==null)return'';
 return'Last touched '+ago(o.d)}
 /* the thread's resume point: the date its Resume here block gives, or that it has none */
 function resume(o){if(o.r==null||o.s)return'';if(!o.r)return'No resume block';return o.rd!=null?'Resume point dated '+ago(o.rd):'Resume point not dated'}
@@ -3817,10 +4022,11 @@ function head(o,row){return'<div class="phead"><h4>'+esc(o.N||o.n)+'</h4>'+flip(
 +(o.t&&o.t.length?'<div style="margin-top:4px">'+o.t.map(function(t){return'<span class="chip" style="margin:0 4px 0 0">'+esc(t)+'</span>'}).join('')+'</div>':'')
 +line(state(o))+line(resume(o))+line(o.live?'<span class="live '+esc(o.live)+'"></span>Session open in cmux, '+esc(o.live):'',true)
 +(window.GarrickManage?GarrickManage(o):'')}
-/* what clicking a thread's name does: its own link, unless Settings picked an app the Mac app can open it in */
-document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a');if(!a||!host)return;
+/* what clicking a thread's name does, on its row or among what the search box found (.sres): its own link,
+   unless Settings picked an app the Mac app can open it in */
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.thread .t>a,.sres .t>a');if(!a||!host)return;
 var d=GarrickPrefs.def();if(!d||d==='note'||chosen().indexOf(d)<0)return;
-var row=a.closest('.thread'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
+var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
 return{esc:esc,acts:acts,head:head}})();
@@ -4656,11 +4862,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
     legend = ('<div class="legend mu"><span><i class="critical"></i>Its next action is overdue, or a <code>#waiting</code> chase date has come</span>'
               '<span><i style="background:var(--base)"></i>Days since the note moved, toward sixty: a figure, not a fault</span></div>')
-    new_bar = ('<div class="mg-new"><button class="act" type="button" data-manage="new-project">New project</button>'
-               '<button class="act" type="button" data-manage="new-thread">New thread</button></div>')
+    # The search box leads the row, New project and New thread follow it, and
+    # what it finds takes the columns' place while a query is in it (#140).
+    new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'
+               '<button class="act" type="button" data-manage="new-thread">New thread</button></div>' % FIND_BOX)
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
-                        % (new_bar, torder_switch(), tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
+                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
 
 
     # ---- checks
@@ -4851,6 +5059,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
              "live": sorted(str(f) for f in folders if session_in(S, f))}
     menu += '<script type="application/json" id="state-data">%s</script>' % script_json(state)
     menu += '<script type="application/json" id="manage-data">%s</script>' % script_json(manage_data(T, workspace_context(ws), acting))
+    menu += '<script type="application/json" id="find-data">%s</script>' % script_json(find_data(T, link, ZS, cmux, now.date()))
     shared = shared_launchers(ws)
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
@@ -4862,14 +5071,15 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
-    # and WORK_JS after both. The Guide's pages come last of all, after every
+    # FIND_JS after it, so its results are drawn again once a row has moved,
+    # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

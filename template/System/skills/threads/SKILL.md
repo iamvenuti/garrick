@@ -10,8 +10,9 @@ description: >
   "close X", "wrap X", "wrap it", "wrap up", "wrap this", "save where I am",
   "close for the day", "I'm done for today", "finish X", "X is done", "close
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
-  parked", "new project X for Acme", "new thread X in Acme", "start a thread
-  on X", "rename X to Y", "delete X", "add a zone called X", or "new zone X".
+  parked", "is there a thread on X", "find X", "new project X for Acme", "new
+  thread X in Acme", "start a thread on X", "rename X to Y", "delete X", "add
+  a zone called X", or "new zone X".
   Also use at the end of any
   session that produced a decision or a deliverable, so the thread can be
   resumed cold.
@@ -233,6 +234,36 @@ Written: every live thread, one line each: short name, zone, `updated` date,
 and the Next action row.
 
 Listing reads frontmatter only. It never opens a Resume here block.
+
+## Find: "is there a thread on X", "find X"
+
+The question to ask before starting something: does it exist already,
+anywhere. Unlike *List*, it covers every zone and every status, finished
+threads included, and it reads names only.
+
+1. **Normalise what was heard** as in *Resolving a name*, step 1, and drop the
+   question around it ("is there a thread on", "do I have anything for").
+2. **Match every name in the workspace:** each project (a folder under
+   `Zones/<Zone>/`, not `Inbox/`) and each thread, with the `spoken:` form in
+   its note. The listing under *Where things are* prints every thread with its
+   status, finished ones too. A name matches when every heard word is the
+   start of a word in the thread's name, its project's or its zone's, or in a
+   spoken form, ignoring case and accents (`freight` finds Freight Terms,
+   `fourth quarter` finds Q4 Planning), or when it sounds like the heard one,
+   the near match of *Resolving a name*. Read frontmatter only, never a
+   note's body.
+3. **Answer live ones first, then parked, then finished**, by short name, each
+   with its project and zone where the short name leaves them out, and its
+   status when it is not live.
+4. **Offer, never act.** A parked match: offer to wake it. A finished one:
+   offer to open it, which reads its `### Outcome`. Nothing is opened, woken
+   or made until the user says so.
+
+Spoken: "Two. Freight terms in Birch, live, and Acme's Freight Terms, parked.
+A third is finished, in House. Want me to wake Acme's?" None: "Nothing called
+freight, in any zone."
+
+Written: one line each: the name, its project, zone and status.
 
 ## Wrap: "close X", "wrap X"
 
@@ -632,6 +663,12 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    names it, or the project already exists.
 2. **A new project needs its first thread.** If none was given, ask: "What's
    the first thread called?" Every piece of work belongs to a thread.
+   **Look for the name first**, as *Find* does: a project or thread with the
+   same name, or one heard as it, in any project, zone or status. If there is
+   one, say so in one line before making anything: "There's already a Freight
+   Terms in Acme, parked. Wake that, or make a new one here?" It is a warning,
+   not a refusal: two projects can each have a Pricing thread, so a new one is
+   made if the user still wants it.
 3. **A new party:** offer to add it to Parties before scaffolding, and ask
    whether a wall applies: "Birch isn't a party yet. Add it to the Work zone,
    and should anyone be walled off from it?" With the answer, re-read

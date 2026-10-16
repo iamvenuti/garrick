@@ -259,7 +259,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(11, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, the zone icons Settings offers, the page's, the dialogs', the running actions', the menu's, the Guide's, the graph's
+        self.assertEqual(13, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the menu's, the Guide's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1240,7 +1240,7 @@ class TestLaunchers(StatusCase):
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)
-        self.assertIn("e.target.closest('.thread .t>a')", status.PANEL_JS)       # a click on a thread follows the default
+        self.assertIn("e.target.closest('.thread .t>a,.sres .t>a')", status.PANEL_JS)   # a click on a thread, or a match for one, follows the default
 
     def test_settings_open_from_the_cog(self):
         html = self.page()

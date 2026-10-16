@@ -69,7 +69,13 @@ zone's repository, as the skills would:
                 Kept in System/garrick-settings.json, committed with the
                 workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
-                when the cmux extra and cmux are there
+                when the cmux extra and cmux are there. Settings ›
+                Notifications: {"notifications": {...}}, checked and kept by
+                System/tools/notifications.py, and with "test": "telegram"
+                (or "mac", "command") a test sent on that channel once the
+                rest is saved; the reply says whether it went. The Telegram
+                bot's token never travels this way: it is kept in the
+                keychain from the terminal
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -177,7 +183,7 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
-          "name", "party", "kind", "to", "confirm", "commit")
+          "name", "party", "kind", "to", "confirm", "commit", "test")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1286,6 +1292,33 @@ def prefs():
     return _PREFS
 
 
+_NOTIFY = {}
+
+
+def notifications_lib(ws: Path):
+    """System/tools/notifications.py: the workspace's own, else the one a
+    step from this extra, else a Garrick clone's template, as prefs.py finds
+    garrick_lib. None when there is none."""
+    key = Path(ws)
+    if key not in _NOTIFY:
+        found = None
+        for src in (key / "System" / "tools" / "notifications.py", Path(__file__).resolve().parent.parent / "tools" / "notifications.py",
+                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "notifications.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_notifications", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "clean", None)) and callable(getattr(mod, "test", None)):
+                found = mod
+                break
+        _NOTIFY[key] = found
+    return _NOTIFY[key]
+
+
 def save_settings(ws: Path, req: dict) -> str:
     """Settings, kept in one file so every viewer of the page agrees, and the
     cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
@@ -1296,9 +1329,15 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page."""
-    if "launchers" not in req and "zones" not in req:
+    if not {"launchers", "zones", "notifications", "test"} & set(req):
         raise Refused("nothing to save")
     new = {}
+    notify = notifications_lib(ws) if {"notifications", "test"} & set(req) else None
+    if ({"notifications", "test"} & set(req)) and notify is None:
+        raise Refused("cannot find System/tools/notifications.py; update Garrick")
+    test = req.get("test")
+    if test is not None and test not in ("mac", "telegram", "command"):
+        raise Refused("no channel to test called %r" % (test,))
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1313,16 +1352,29 @@ def save_settings(ws: Path, req: dict) -> str:
         new = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
     if "zones" in req:
         new["zones"] = zone_styles(ws, req["zones"])
+    if "notifications" in req:
+        zones = [z.name for z in (ws / "Zones").iterdir() if z.is_dir()] if (ws / "Zones").is_dir() else []
+        try:
+            new["notifications"] = notify.clean(req["notifications"], zones)
+        except ValueError as e:
+            raise Refused(str(e))
     keep = prefs()
     keep.migrate(ws)             # a choice an older Garrick left in System/generated/ comes first
     was = keep.read(ws).get("zones")
     before = was if isinstance(was, dict) else {}
-    keep.save(ws, new)
+    if new:
+        keep.save(ws, new)
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
         if changed:
             recolour(ws, changed)
+    if test is not None:
+        name = {"mac": "this Mac", "telegram": "Telegram", "command": "your command"}[test]
+        problem = notify.test(ws, test)
+        if problem:
+            raise Refused("%sthe test did not go: %s %s" % ("Settings saved, but " if new else "", name[:1].upper() + name[1:], problem))
+        return "%sA test went to %s" % ("Settings saved. " if new else "", name)
     return "Settings saved"
 
 

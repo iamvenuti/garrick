@@ -2,7 +2,7 @@
 
 Choose the interface separately from the workspace: [desktop apps](first-steps.md) for a guided start, or [CLI tools](terminal-setup.md) for terminal users. Obsidian and cmux are optional. A provider desktop app is not needed for local CLI work. [Phone access](extras/phone-access.md) differs by provider: Codex's remote voice goes through the ChatGPT desktop app as its host, and Claude Code's Remote Control runs from a terminal session.
 
-Garrick is written for both. No rule or template names either one. The harness-specific pieces are two symlinks per repository, the allow rules the installer offers to write for Claude Code, one warning about `CLAUDE.md` files, described below, and the `setup` skill, which names both because setting one of them up is what it does.
+Garrick is written for both. No rule or template names either one. The harness-specific pieces are two symlinks per repository, the allow rules the installer offers to write for Claude Code, one warning about `CLAUDE.md` files, described below, the `setup` skill, which names both because setting one of them up is what it does, and the hooks `System/tools/notifications.py hooks --install` adds to each one's own settings so that a session can say it needs you or has finished (see [Notifications](extras/status-page.md#settings)). Nothing else depends on those hooks: without them every other notice still goes.
 
 ## The entry point
 

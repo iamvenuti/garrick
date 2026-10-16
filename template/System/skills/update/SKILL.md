@@ -31,7 +31,7 @@ rules and routing live in the local file beside each, `System/rules.local.md`
 and `AGENTS.local.md`, which no update touches. One the user changed gets no
 `.new`; the update's split moves their text out and puts Garrick's back.
 
-`System/tools/release.py` is the one tool here that reaches the network. It
+`System/tools/release.py` is the one tool this skill runs that reaches the network. It
 asks GitHub for the newest release, and `update` downloads that release into
 a temporary folder outside the workspace and runs its update from there. Run
 it only when the user asks for an update or whether one exists. It sends one

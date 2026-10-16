@@ -7,8 +7,9 @@ description: >
   points of the projects already here. Use when the user says "set up
   Garrick", "first run", "get me started", "check my setup", "what do you
   know about my setup", "I've installed Obsidian" (or cmux, or another
-  assistant), "fill in my resume points", "add a rule", or "make that a
-  rule", and when the check reports a thread with no real resume point yet.
+  assistant), "fill in my resume points", "add a rule", "make that a
+  rule", "set up notifications" or "tell me when a session needs me", and
+  when the check reports a thread with no real resume point yet.
 ---
 
 # Setup
@@ -69,6 +70,19 @@ mode* in the `threads` skill describes.
      how, never change the settings for them. Once they have run it, commit
      the two files it wrote, `.claude/settings.json` and
      `System/garrick-settings.json`, in the workspace's own repository.
+   - Only if the assistant is Claude Code or Codex, and
+     `python3 System/tools/notifications.py hooks` does not already say
+     "on" for it: "Do you want a notice when a session needs you, or has
+     finished a long turn?" A yes means running
+     `python3 System/tools/notifications.py hooks --install`, which adds
+     Garrick's hooks to the assistant's own settings in your home folder and
+     keeps every hook already there; `--uninstall` takes them out. For
+     Codex, then say to run `/hooks` in Codex and trust them. Where the
+     notices go, this Mac, Telegram or a command, and when, is the status
+     page's Settings › Notifications: say so, and change nothing there.
+     A Telegram bot's token is the user's to type: say to run
+     `python3 System/tools/notifications.py telegram-token` in a terminal,
+     and never ask for the token, read it back or write it anywhere.
    - Unless `System/garrick-settings.json` already says: "Tell me when a new
      Garrick is out? It asks GitHub once a day and sends nothing about your
      workspace." Ask it once. A yes or a no is written as the `update`
@@ -113,6 +127,15 @@ mode* in the `threads` skill describes.
      section. "Three of your threads have no real resume point yet. Shall we
      fill them in? It takes a minute each."
    - Otherwise: "You're set up. Say 'what's open' to see your work."
+
+## "Set up notifications"
+
+Ask the notification question from step 3 of *Set up Garrick*, alone, and
+act on the answer as it says. Then say where the rest is chosen: the status
+page's Settings › Notifications, in the Mac app or Obsidian. Without the
+status page, notices go to this Mac until `notifications` in
+`System/garrick-settings.json` says otherwise; the status page's docs say
+how it reads.
 
 ## "Add a rule", "make that a rule"
 
@@ -169,13 +192,15 @@ than nothing: it looks like an answer.
 ## Never
 
 - Never install, download, sign in to or configure an app for the user.
-  Say what it would take and leave it.
+  Say what it would take and leave it. The notification hooks are the one
+  exception, and only on the yes the question above asks for.
 - Never write the user's work, parties or anything said in confidence into
   `System/setup.md`.
 - Never edit `System/rules.md` or an `AGENTS.md`: the user's rules and
   routing go in the `.local.md` file beside it.
 - Never change a git setting, a resume point or any other file without the
   yes this skill asks for.
-- Never send anything off the machine. The probe and this skill only look.
+- Never send anything off the machine. The probe and this skill only look,
+  and a test notice is sent from the status page, by the user.
   Switching on the release notice is the user's yes to one request a day
   to GitHub, made later by the status page, never by this skill.

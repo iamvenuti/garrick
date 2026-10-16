@@ -110,7 +110,7 @@ class FakeAssistants(unittest.TestCase):
         for key in ("GARRICK_CAP_CALLS_DAY", "GARRICK_CAP_CALLS_HOUR", "GARRICK_CAP_COST_DAY", "GARRICK_JOB",
                     "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
                     "GARRICK_NOTIFY", "GARRICK_NOTIFY_CMD", "GARRICK_QUIET_EXITS", "GARRICK_ALERT_REPEAT",
-                    "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT"):
+                    "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT", "GARRICK_WORKSPACE"):
             os.environ.pop(key, None)
 
     def tearDown(self):

@@ -203,7 +203,8 @@ DECLARED: Dict[str, Op] = {
     "stack": _op((), (), "none", retry="safe"),
     "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
     # The settings file is in the workspace's own repository, committed with it.
-    "settings": _op(("launchers", "default", "zones"), (), "workspace"),
+    # "test" names one channel to send a test on, once the rest is saved.
+    "settings": _op(("launchers", "default", "zones", "notifications", "test"), (), "workspace"),
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.

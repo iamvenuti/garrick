@@ -90,7 +90,7 @@ function seen() {
   const v = doc.querySelector(".tview"), wrap = doc.querySelectorAll("#tfound")[0];
   const res = doc.querySelectorAll("#tfound-list .sres").map((r) => {
     const chip = r.querySelector(".chip");
-    return { n: r.querySelector(".t>a").textContent, under: r.querySelector("small").textContent, s: r.getAttribute("data-s"),
+    return { n: r.querySelector(".t>a").textContent, under: r.querySelector("small").textContent, s: r.getAttribute("data-st"),
              chip: chip ? chip.textContent : "", card: JSON.parse(r.getAttribute("data-card")), href: r.querySelector(".t>a").getAttribute("href") };
   });
   const dup = doc.querySelectorAll("#mg-dup")[0];

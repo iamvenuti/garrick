@@ -1275,7 +1275,7 @@ FIND_CSS = r"""
 .sres:hover,.sres.on{background:var(--wash)}.sres .t{min-width:0}
 .sres .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sres .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sres .chip{margin:0}.sres[data-s="done"] .t a{color:var(--ink2)}
+.sres .chip{margin:0}.sres[data-st="done"] .t a{color:var(--ink2)}
 dialog.gmanage .mg-dup a{color:var(--accent)}
 """
 
@@ -1312,7 +1312,7 @@ function find(q){var qs=words(q);if(!qs.length)return null;return hits(function(
 function cardText(h){return h.rs?h.rs[0].el.dataset.card:JSON.stringify(h.it.c||{n:h.it.n,kl:h.it.k==='p'?'project':'thread',z:h.it.z,p:h.it.k==='p'?'':h.it.p})}
 function line(h){var it=h.it,c=cardText(h),o=JSON.parse(c);
 var where=(it.k==='p'?'Project · ':it.p&&it.p!==it.n?esc(it.p)+' · ':'')+(D.zones[it.z]||esc(it.z));
-return'<div class="sres" role="listitem" data-s="'+h.s+'" data-card="'+esc(c)+'"><div class="t"><a href="'+esc(o.u||'')+'">'+esc(it.n)+'</a><small>'+where+'</small></div>'
+return'<div class="sres" role="listitem" data-st="'+h.s+'" data-card="'+esc(c)+'"><div class="t"><a href="'+esc(o.u||'')+'">'+esc(it.n)+'</a><small>'+where+'</small></div>'
 +(h.s==='live'?'':'<span class="chip">'+h.s+'</span>')+'</div>'}
 function R(){return window.ThreadRows||{bind:function(){},close:function(){}}}
 function keep(q){try{if(q)sessionStorage.setItem(KEY,q);else sessionStorage.removeItem(KEY)}catch(e){}}

@@ -148,6 +148,111 @@ class TestTodo(ActionCase):
         self.assertEqual(before, (personal / "Todo.md").read_bytes())
 
 
+class TestBatch(ActionCase):
+    """#107: the page sends the ticks made within a few seconds of each other as
+    one request, with `keys`: one lock, one edit, one commit."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
+              "- [ ] [[Pricing]]: Send the revised terms 📅 2026-10-09\n- [ ] Acme Corp: Invoice for September\n"
+              "- [ ] Book the room for Birch & Co\n\n## Done\n")
+        git(self.work, "commit", "-qam", "three lines")
+
+    def keys(self, *texts):
+        return [self.key(t) for t in texts]
+
+    def test_three_ticks_are_one_commit(self):
+        keys = self.keys("Send the revised", "Invoice", "Book the room")
+        self.assertEqual("Saved 3", self.act(verb="todo-done", zone="Work", file="Todo.md", keys=keys))
+        todo = (self.work / "Todo.md").read_text()
+        self.assertEqual(3, len(re.findall(r"^- \[x\] .* ✅ \d{4}-\d\d-\d\d$", todo, re.M)))
+        self.assertEqual(("Work: done, 3 actions", ""), self.last_commit())
+        self.assertEqual(3, int(git(self.work, "rev-list", "--count", "HEAD")))          # start, three lines, the batch
+        ticked = [t["key"] for t in tl.done_on(str(self.work), dt.date.today())]
+        self.assertEqual(sorted(keys), sorted(ticked))                                   # an undo finds them by the same keys
+        self.assertEqual("Saved 2", self.act(verb="todo-undo", zone="Work", file="Todo.md", keys=keys[:2]))
+        self.assertEqual(("Work: reopened, 2 actions", ""), self.last_commit())
+        self.assertIn("- [ ] Acme Corp: Invoice for September\n", (self.work / "Todo.md").read_text())
+
+    def test_a_batch_of_one_says_what_one_tick_says(self):
+        say = self.act(verb="todo-done", zone="Work", file="Todo.md", keys=self.keys("Invoice"))
+        self.assertEqual("Done: Acme Corp: Invoice for September", say)
+        self.assertEqual(("Work: done, Acme Corp: Invoice for September", ""), self.last_commit())
+
+    def test_a_line_that_moved_refuses_the_whole_batch(self):
+        keys = self.keys("Send the revised", "Invoice")
+        write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace("Invoice for", "Invoices for"))
+        git(self.work, "commit", "-qam", "edited in Obsidian")
+        before = (self.work / "Todo.md").read_bytes()
+        with self.assertRaisesRegex(pa.Refused, "changed since the page was built"):
+            self.act(verb="todo-done", zone="Work", file="Todo.md", keys=keys)
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual("edited in Obsidian", self.last_commit()[0])
+
+    def test_a_line_gone_between_the_precheck_and_its_edit_puts_back_the_ones_before_it(self):
+        keys = self.keys("Send the revised", "Invoice")
+        before = (self.work / "Todo.md").read_bytes()
+        real = tl.done
+        def done(zone, rel, k, today=None):
+            if k == keys[1]:
+                raise tl.NotFound
+            return real(zone, rel, k, today)
+        with mock.patch.object(pa, "todo_lines", return_value=mock.Mock(wraps=tl, done=done, NotFound=tl.NotFound)):
+            with self.assertRaisesRegex(pa.Refused, "changed since the page was built"):
+                self.act(verb="todo-done", zone="Work", file="Todo.md", keys=keys)
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual("three lines", self.last_commit()[0])
+
+    def test_what_a_batch_may_carry(self):
+        key = self.key("Invoice")
+        before = (self.work / "Todo.md").read_bytes()
+        for bad in ({"keys": []}, {"keys": key}, {"keys": [key, "x"]}, {"keys": [key], "key": key},
+                    {"keys": [key] * 2 + ["%016x" % i for i in range(pa.KEYS_MAX)]}):
+            with self.assertRaises(pa.Refused, msg=bad):
+                self.act(verb="todo-done", zone="Work", file="Todo.md", **bad)
+        with self.assertRaisesRegex(pa.Refused, "takes no keys field"):          # only a tick or an untick batches
+            self.act(verb="todo-date", zone="Work", file="Todo.md", keys=[key], date="2026-10-12")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual("Done: Acme Corp: Invoice for September",
+                         self.act(verb="todo-done", zone="Work", file="Todo.md", keys=[key, key]))   # the same line twice is once
+
+
+class TestSaid(ActionCase):
+    """#107: what a Todo verb says it did is the line's words, with no Markdown
+    link and no longer than SAID_TEXT; the commit keeps the line whole."""
+
+    SOURCE = "[260917-acme-pricing-call](obsidian://open?vault=Workspace&file=Wikis%2FMeetings%2Fwiki%2Fsources%2F260917)"
+
+    def test_the_link_back_to_a_meeting_is_left_to_the_note(self):
+        write(self.work / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] Send Birch & Co the [draft terms](https://example.com/terms) · %s\n\n"
+              "## This week\n\n## Done\n" % self.SOURCE)
+        git(self.work, "commit", "-qam", "a line from a meeting")
+        key = self.key("Send Birch")
+        for verb, extra in (("todo-done", {}), ("todo-undo", {}), ("todo-date", {"date": "2026-10-07"})):
+            say = self.act(verb=verb, zone="Work", file="Todo.md", key=key, **extra)
+            self.assertNotIn("](", say, verb)
+            self.assertNotIn("obsidian://", say, verb)
+            self.assertNotIn("260917", say, verb)
+            self.assertIn("Send Birch & Co the draft terms", say, verb)
+            self.assertIn("obsidian://", self.last_commit()[0], verb)                   # the commit says it all
+        self.assertEqual("Added to Inbox: Read the brief before the call",
+                         self.act(verb="todo-add", zone="Work", text="Read [the brief](https://example.com/b) before the call",
+                                  target="-", date="-"))
+
+    def test_a_long_line_is_cut_to_sixty(self):
+        text = "Draft the reply to Acme Corp on the revised pallet terms, the volumes and the March start date"
+        write(self.work / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] %s\n\n## Done\n" % text)
+        git(self.work, "commit", "-qam", "a long line")
+        say = self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Draft the reply"))
+        self.assertEqual(60, pa.SAID_TEXT)
+        said = say[len("Done: "):]
+        self.assertEqual(60, len(said))
+        self.assertTrue(said.endswith("…"))
+        self.assertTrue(text.startswith(said[:-1]))
+        self.assertEqual("Work: done, " + text, self.last_commit()[0])
+
+
 class TestRekey(ActionCase):
     """A second click on a row before the page rebuilds carries the key the
     line had when the page was built; the handler follows it to the line."""
@@ -676,6 +781,49 @@ class TestJournal(ActionCase):
             last = self.records()[-1]
             self.assertEqual(("failed", "refused", reply["say"]), (last["state"], last["outcome"], last["say"]), verb)
         self.assertEqual(before, ((self.work / "Todo.md").read_bytes(), self.thread.read_bytes()))     # and nothing changed
+
+    def wall_line(self, path, message):
+        """What the zone's wall check prints when it refuses: check.py's own
+        report_staged(), so the line the handler recognises is the real one."""
+        import check            # fixtures puts the tools folder on sys.path
+        return check.report_staged([check.Finding(check.ERROR, "walls", path, message)])
+
+    def test_a_batch_the_wall_check_refuses_ends_on_the_rules_sentence_alone(self):
+        """#107, with #116's sentence: no refusal wording of its own, and nothing
+        of what the check found, the far side's tag and the note's path."""
+        import test_operations as t
+        wall = t.ops.WALL_REFUSAL
+        line = self.wall_line("Acme Review/Acme Review.md", "names birch, a party across a wall")
+        self.hook("cat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        keys = [self.key("Send the revised"), self.key("Invoice")]
+        before = (self.work / "Todo.md").read_bytes()
+        for request in ({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": keys},
+                        {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": keys[0]}):
+            reply = self.run_script(request)
+            self.assertEqual((False, "failed", "refused"), (reply["ok"], reply["state"], reply["outcome"]), reply)
+            self.assertEqual(wall, reply["say"])
+            self.assertEqual(wall, self.records()[-1]["say"])
+            for leak in ("birch", "Acme Review", "Commit refused", "Not done"):
+                self.assertNotIn(leak, reply["say"])
+            self.assertEqual(before, (self.work / "Todo.md").read_bytes())             # the boxes go back because the note did
+        self.assertEqual("start", self.last_commit()[0])
+        self.hook("echo 'fatal: something else entirely' >&2\nexit 1\n")              # not the wall check: said as before
+        reply = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": keys})
+        self.assertIn("something else entirely", reply["say"])
+        self.assertNotEqual(wall, reply["say"])
+
+    def test_a_batch_is_one_record_that_lists_every_line(self):
+        keys = [self.key("Send the revised"), self.key("Invoice")]
+        reply = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": keys, "op": "a19f3c80"})
+        self.assertEqual(("completed", "saved", "Saved 2"), (reply["state"], reply["outcome"], reply["say"]))
+        records = self.records()
+        self.assertEqual({"a19f3c80"}, {r["op"] for r in records})
+        self.assertEqual(keys, records[0]["request"]["keys"])
+        self.assertEqual("Ticking 2 lines…", records[0]["label"])
+        import test_operations as t
+        listed = t.ops.read(self.jobs)["ops"]
+        self.assertEqual([keys], [r["keys"] for r in listed])                           # what a reload is told is pending
+        self.assertIn('keys=["%s", "%s"]' % tuple(keys), (self.jobs / "page-actions.log").read_text())
 
     def test_a_stale_line_is_refused_in_the_record_too(self):
         key = self.key("Send the revised")

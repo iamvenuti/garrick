@@ -1208,7 +1208,9 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # of its own stays up with a spinner and the time so far, says why after
 # ACTION_WHY seconds, and holds every button that acts on that zone; other
 # zones stay usable. A result that took longer than the toast's ACTION_TOAST
-# stays until dismissed; a quick one goes to the host's toast as before. What
+# shows as a card: one that saved fades ACTION_TOAST after it came, unless the
+# pointer is on it, and a failure stays until dismissed; a quick one goes to
+# the host's toast as before (#107). What
 # runs, and what waits to be seen, is kept in this window's sessionStorage, so
 # the rebuild after a request, or one asked for meanwhile, does not lose it. A
 # request with no reply after ACTION_LOST seconds, past the Obsidian plugin's
@@ -1237,7 +1239,18 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 # asked nothing, and behaves exactly as it did in 0.26.0, with ACTION_LOST as
 # the fallback. The record is still written, and is there to be read as soon as
 # the host is updated.
+# Ticks and unticks are the exception (#107). A Todo line's box stays
+# clickable while its zone is busy: the click strikes the row through at once
+# and is queued, and the queue goes to page_action.py as one request, with
+# "keys", once the zone is free and ACTION_BATCH seconds have passed since the
+# last tick in it, so five quick ticks are one commit and one wall check. A
+# second click on a line still queued takes it back. A batch shows no toast of
+# its own unless it takes longer than ACTION_TOAST; one that saved says "Saved
+# 3" in the small toast, which fades, and one refused stays as a card naming
+# its lines, with their boxes put back. The queue is kept in sessionStorage
+# with the rest, so a rebuild draws a queued tick as clicked.
 ACTION_TOAST = 4
+ACTION_BATCH = 2
 ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
@@ -1264,11 +1277,14 @@ WORK_CSS = r"""
 # Without this script the buttons send as they did before it.
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
-var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={};
+var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
+BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'];
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
-function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS))}catch(e){}}
+try{Q=JSON.parse(sessionStorage.getItem(KEY+'-ticks')||'[]')||[]}catch(e){}
+function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS));
+sessionStorage.setItem(KEY+'-ticks',JSON.stringify(Q))}catch(e){}}
 /* the operation ids this window has already shown the end of, so the record never shows one twice */
 function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
 function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
@@ -1277,26 +1293,50 @@ function zoned(q){return!!q&&ZONED.indexOf(q.verb)>=0&&typeof q.zone==='string'}
 function running(z){return W.filter(function(e){return!e.out&&e.q.zone===z})[0]||null}
 function took(ms){var s=Math.max(0,Math.round(ms/1000));return s<60?s+' s':Math.floor(s/60)+' min'+(s%60?' '+s%60+' s':'')}
 function toast(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(function(){t.style.opacity=0},TOAST*1000)}
-/* every button that acts on a busy zone: a Todo line's tick and date, its + Add, a card's Rename, Delete and New thread here, Park and Wake */
+/* every button that acts on a busy zone: a Todo line's date, its + Add, a card's Rename, Delete and New thread here, Park and Wake.
+   Not a Todo line's box: a tick made while the zone is busy is queued below, never refused (#107) */
 function str(s){return'"'+String(s).replace(/["\\]/g,'\\$&')+'"'}
-function holds(z){var j=JSON.stringify(z),Z=str(z);return['.trow[data-z='+Z+'] button.tick','.trow[data-z='+Z+'] button.tdate','.tadd-open[data-zone='+Z+']',
+function holds(z){var j=JSON.stringify(z),Z=str(z);return['.trow[data-z='+Z+'] button.tdate','.tadd-open[data-zone='+Z+']',
 'button[data-mg^='+str('['+j+',')+']'].concat(['park','wake'].map(function(v){return'button[data-act*='+str('"verb":"'+v+'"')+'][data-act*='+str('"zone":'+j)+']'}))}
 function hold(){var zs=[];W.forEach(function(e){if(!e.out&&zs.indexOf(e.q.zone)<0)zs.push(e.q.zone)});var sel=[].concat.apply([],zs.map(holds)).join(',');
 var st=document.getElementById('work-hold');if(!st){st=document.createElement('style');st.id='work-hold';document.head.appendChild(st)}
 st.textContent=sel?sel+'{opacity:.45;pointer-events:none;cursor:default}':'';
 [].forEach.call(document.querySelectorAll('[data-work-held]'),function(b){b.disabled=false;b.removeAttribute('data-work-held')});
 if(sel)[].forEach.call(document.querySelectorAll(sel),function(b){if(!b.disabled){b.disabled=true;b.setAttribute('data-work-held','')}})}
-function render(){var now=Date.now();if(box){box.innerHTML=W.map(function(e,i){
-if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
-+'</span>'+(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
+/* a Todo line's rows by zone and key, its box set to done or not, and its words as the box's label has them, for a card */
+function rows(z,k){return[].filter.call(document.querySelectorAll('.trow'),function(r){return r.dataset.z===z&&r.dataset.k===k})}
+function paint(z,k,d){rows(z,k).forEach(function(r){r.classList.toggle('done',d);var b=r.querySelector('.tick');
+if(b)b.setAttribute('aria-label',(d?'Reopen':'Mark done')+String(b.getAttribute('aria-label')||'').replace(/^[^:]*/,''))})}
+function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
+return s.length>60?s.slice(0,59)+'…':s}
+/* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
+function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});
+Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
+function shown(e,now){return!!e.out||!e.q.keys||!!e.shown||now-e.t0>=TOAST*1000}
+function render(){var now=Date.now(),html='';if(box){html=W.map(function(e,i){if(!shown(e,now))return'';
+if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'" data-i="'+i+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
++'</span>'+(!e.out.ok&&e.lines&&e.lines.length?'<small>'+esc(e.lines.filter(String).join(' · '))+'</small>':'')
++(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
 +((e.phase===undefined?now-e.t0>=WHY*1000:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
-box.hidden=!W.length;document.body.style.setProperty('--work-h',W.length?box.offsetHeight+8+'px':'0px')}hold()}
-/* each second: the time so far, why after WHY, and a request with no reply after LOST given up */
-function sweep(){var now=Date.now(),changed=false;W.forEach(function(e){if(e.out)return;
+box.innerHTML=html;box.hidden=!html;document.body.style.setProperty('--work-h',html?box.offsetHeight+8+'px':'0px')}hold()}
+/* each second: the time so far, why after WHY, a request with no reply after LOST given up, a batch's own toast once it has taken TOAST,
+   and a card that says saved gone TOAST after it came, unless the pointer is on it */
+function sweep(){var now=Date.now(),changed=false;W.slice().forEach(function(e){
+if(e.out){if(e.fade&&now>=e.fade&&HOV!==e){W.splice(W.indexOf(e),1);changed=true}return}
 if(now-e.t0>LOST*1000){e.out={ok:false,say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
-else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}});if(changed)keep();return changed}
-function tick(){if(sweep())render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
+else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}
+if(e.q.keys&&!e.shown&&now-e.t0>=TOAST*1000){e.shown=1;changed=true}});if(changed)keep();return changed}
+/* the ticks queued in a zone go as one request once the zone is free and BATCH seconds have passed since the last of them:
+   the ones for the same verb and note as the oldest, the rest after it, with whatever was ticked meanwhile */
+function flush(){var now=Date.now(),sent=false;
+Q.map(function(x){return x.q.zone}).filter(function(z,i,a){return a.indexOf(z)===i}).forEach(function(z){var mine=Q.filter(function(x){return x.q.zone===z});
+if(running(z)||mine.some(function(x){return now-x.t<BATCH*1000}))return;
+var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),keys=go.map(function(x){return x.q.key}),n=keys.length;
+Q=Q.filter(function(x){return go.indexOf(x)<0});var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
+W.push({q:q,op:q.op,say:(q.verb==='todo-done'?'Ticking ':'Reopening ')+(n===1?'it…':n+' lines…'),t0:now,lines:keys.map(function(k){return words(z,k)})});sent=true});
+if(sent)keep();return sent}
+function tick(){var sent=flush();if(sweep()||sent)render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
 /* the record: ask for the open set on load, and every POLL seconds while an entry of ours is running; only Python reads the file.
    Never asked of a host that has not said it can answer a request that reads: an older one would toast and rebuild the page for each */
 function poll(first){var now=Date.now();if(!window.GarrickReads||OPS.durable===false)return;
@@ -1307,38 +1347,58 @@ window.GarrickReady=function(){poll(true)};
 function heard(out){if(!out||!out.ok||out.durable===false){OPS.durable=false;if(!OPS.said){OPS.said=1;toast('Actions are not recoverable here: if this page reloads while one is running, look at git status in its zone.')}keep();run();return}
 OPS.durable=true;OPS.verbs=out.verbs||[];OPS.lost=out.lost||'';reconcile(out.ops||[]);keep();render();run()}
 function reconcile(ops){var now=Date.now(),by={};ops.forEach(function(r){by[r.op]=r});
-ops.forEach(function(r){var e=W.filter(function(x){return x.op===r.op})[0],end=r.state==='completed'||r.state==='failed';
+ops.forEach(function(r){var e=W.filter(function(x){return x.op===r.op})[0],end=r.state==='completed'||r.state==='failed',keys=TICKS.indexOf(r.verb)>=0&&r.keys&&r.keys.length?r.keys:null;
 if(!e){if(SEEN.indexOf(r.op)>=0||ZONED.indexOf(r.verb)<0)return;
-e={q:{verb:r.verb,zone:r.zone,op:r.op},op:r.op,say:r.label||'Working…',t0:Math.round(r.at*1000)};W.push(e)}
-if(end){if(!e.out){e.out={ok:r.outcome==='saved',say:r.say||''};e.done=Math.round((r.done||r.at)*1000)}mark(r.op)}
+e={q:{verb:r.verb,zone:r.zone,op:r.op},op:r.op,say:r.label||'Working…',t0:Math.round(r.at*1000)};W.push(e);
+if(keys){e.q.keys=keys;e.lines=keys.map(function(k){return words(r.zone,k)});if(!end)keys.forEach(function(k){paint(r.zone,k,r.verb==='todo-done')})}}
+/* a batch that saved while the page was away: the same small notice as one heard here, and no card */
+if(end&&keys&&r.outcome==='saved'){if(!e.out){W.splice(W.indexOf(e),1);toast(r.say||'Saved')}mark(r.op);return}
+if(end){if(!e.out){e.out={ok:r.outcome==='saved',say:r.say||''};e.done=Math.round((r.done||r.at)*1000);if(e.out.ok)e.fade=now+TOAST*1000;else if(e.q.keys)back(e)}mark(r.op)}
 else if(!e.out)e.phase=r.phase||''});
 W.forEach(function(e){if(e.out||!e.op||by[e.op]||(OPS.verbs||[]).indexOf(e.q.verb)<0||now-e.t0<=UNKNOWN*1000)return;
 e.out={ok:false,say:(OPS.lost||'No record of this action was found. Look at git status in {zone} before trying again.').replace('{zone}',e.q.zone)};e.done=now;mark(e.op)})}
-function run(){var on=W.some(function(e){return!e.out});if(on&&!timer)timer=setInterval(tick,1000);if(!on&&timer){clearInterval(timer);timer=null}}
+function run(){var on=W.some(function(e){return!e.out||e.fade})||Q.length>0;if(on&&!timer)timer=setInterval(tick,1000);if(!on&&timer){clearInterval(timer);timer=null}}
 window.GarrickBusy=function(z){var e=running(z);return e?e.say:''};
 window.GarrickHeld=function(q){var e=zoned(q)&&running(q.zone);if(e)toast(q.zone+' is still busy: '+e.say);return!!e};
-window.GarrickAct=function(q,said){if(!zoned(q))return false;if(GarrickHeld(q))return true;q=Object.assign({},q,{op:q.op||mint()});host.postMessage({act:q});
-W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now()});keep();render();run();return true};
-/* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside */
+window.GarrickAct=function(q,said,lines){if(!zoned(q))return false;if(GarrickHeld(q))return true;q=Object.assign({},q,{op:q.op||mint()});host.postMessage({act:q});
+W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now(),lines:lines||undefined});keep();render();run();return true};
+/* a tick or an untick (#107): queued, never refused for a busy zone, and sent with the ones made within BATCH seconds of it.
+   A second click on a line still queued takes the first back, and nothing is sent for it */
+window.GarrickTick=function(q){if(!q||TICKS.indexOf(q.verb)<0||typeof q.zone!=='string'||typeof q.key!=='string')return false;
+var was=Q.filter(function(x){return x.q.zone===q.zone&&x.q.file===q.file&&x.q.key===q.key})[0];
+if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q.verb,zone:q.zone,file:q.file,key:q.key},t:Date.now()});
+keep();run();return true};
+/* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.
+   A batch of ticks that saved is one small notice however long it took; one refused stays, naming its lines, with their boxes back */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='operations'){heard(out);return}
 var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||running(q.zone));
 if(e&&e.q.verb===q.verb){var now=Date.now();
 if(out&&out.state==='running'&&!out.outcome){   /* an identical request is already under way: this entry becomes that one, and nothing was saved */
-W.splice(W.indexOf(e),1);if(out.op&&!W.some(function(x){return x.op===out.op})&&SEEN.indexOf(out.op)<0)W.push({q:{verb:q.verb,zone:q.zone,op:out.op},op:out.op,say:out.say||'Working…',t0:now});
+W.splice(W.indexOf(e),1);if(out.op&&!W.some(function(x){return x.op===out.op})&&SEEN.indexOf(out.op)<0){var j={q:{verb:q.verb,zone:q.zone,op:out.op},op:out.op,say:out.say||'Working…',t0:now};
+if(e.q.keys){j.q.keys=e.q.keys;j.lines=e.lines}W.push(j)}
 keep();render();run();return}
 /* a success is the record's outcome "saved"; with no record, the reply's ok, as before. A request the record holds already
    comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
-mark(e.op,out&&out.op);if(now-e.t0>TOAST*1000||out&&out.again){e.out={ok:out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),say:out&&out.say||'That did not work.',again:out&&out.again||''};e.done=now;
-var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
+mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
+if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
+else if(now-e.t0>TOAST*1000||again||e.q.keys){e.out={ok:ok,say:out&&out.say||'That did not work.',again:again};e.done=now;
+if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
 if(box)box.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('[data-again]');
 if(a&&a.dataset.again!==undefined){var w=W[+a.dataset.again];if(w&&w.out&&w.out.again){W.splice(W.indexOf(w),1);keep();render();
-GarrickAct(Object.assign({},w.q,{op:'',confirm:w.out.again}),w.say)}return}
+GarrickAct(Object.assign({},w.q,{op:'',confirm:w.out.again}),w.say,w.lines)}return}
 var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
+/* the pointer on a card that says saved holds it; off it, the card has TOAST seconds more */
+if(box){box.addEventListener('mouseover',function(e){var c=e.target.closest&&e.target.closest('[data-i]');HOV=c?W[+c.dataset.i]||null:null});
+box.addEventListener('mouseout',function(e){var to=e.relatedTarget,c=to&&to.closest&&to.closest('[data-i]');if(c&&HOV&&W[+c.dataset.i]===HOV)return;
+if(HOV&&HOV.fade)HOV.fade=Date.now()+TOAST*1000;HOV=null})}
+/* a rebuilt page draws each line as the note has it: a tick still queued, or on its way, is drawn as clicked */
+Q.forEach(function(x){paint(x.q.zone,x.q.key,x.q.verb==='todo-done')});
+W.forEach(function(e){if(!e.out&&e.q.keys)e.q.keys.forEach(function(k){paint(e.q.zone,k,e.q.verb==='todo-done')})});
 sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
-    .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)) \
+    .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@BATCH@", str(ACTION_BATCH)) \
     .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":")))
 
 
@@ -1457,9 +1517,11 @@ function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset
 if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
 function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
-todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending')||held('todo-done',r))return;
-var d=!r.classList.contains('done');r.classList.toggle('done',d);b.setAttribute('aria-label',(d?'Reopen':'Mark done')+b.getAttribute('aria-label').replace(/^[^:]*/,''));
-send(d?'todo-done':'todo-undo',r,null,d?'Ticking it…':'Reopening it…')});
+/* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before */
+todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
+var d=!r.classList.contains('done'),verb=d?'todo-done':'todo-undo';
+if(!(window.GarrickTick&&GarrickTick({verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k}))){if(held(verb,r))return;send(verb,r,null,d?'Ticking it…':'Reopening it…')}
+r.classList.toggle('done',d);b.setAttribute('aria-label',(d?'Reopen':'Mark done')+b.getAttribute('aria-label').replace(/^[^:]*/,''))});
 /* the date menu: the date is worked out at the click, so a page built yesterday still means today */
 var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
 function at(n){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return d}

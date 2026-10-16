@@ -309,6 +309,9 @@ SHAPES = {
     # are the zoned ones, and `op` is what GarrickAct adds to what it sends
     "reconcile: r.verb": {verb: () for verb in ZONED},           # WORK_JS
     "window.GarrickActed: q.verb": {verb: () for verb in ZONED},  # WORK_JS
+    # WORK_JS's queue of ticks (#107): an entry it keeps, and the batch it sends
+    "window.GarrickTick: q.verb": {"todo-done": (), "todo-undo": ()},
+    "flush: one.verb": {"todo-done": (), "todo-undo": ()},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",)}
@@ -316,7 +319,8 @@ PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
-           "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb"},
+           "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
+                       "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
            "JS": {"window.TaddSend: 'todo-add'", "sdShut: 'settings'"}}
@@ -521,6 +525,48 @@ class TestIdentityKey(unittest.TestCase):
             self.assertTrue(ops.valid_op(good), good)
         for bad in ("", "A19F3C80", "a19f3c8", "g" * 8, "0" * 33, None, 12345678, "a19f3c80\n", "../a19f3c80"):
             self.assertFalse(ops.valid_op(bad), bad)
+
+
+class TestBatch(unittest.TestCase):
+    """#107: a tick or untick naming several lines by `keys`, one request."""
+
+    A, B, C = "0123456789abcdef", "fedcba9876543210", "00112233445566ff"
+
+    def batch(self, *keys, verb="todo-done"):
+        return dict(REQUESTS[verb], keys=list(keys), key=None)
+
+    def test_the_lines_of_a_batch_are_one_set_and_a_batch_of_one_is_the_line(self):
+        for verb in ("todo-done", "todo-undo"):
+            ab = ops.identity_key(verb, self.batch(self.A, self.B, verb=verb))
+            self.assertEqual(ab, ops.identity_key(verb, self.batch(self.B, self.A, verb=verb)), verb)     # the order ticked
+            self.assertEqual(ab, ops.identity_key(verb, self.batch(self.A, self.B, self.A, verb=verb)), verb)
+            self.assertNotEqual(ab, ops.identity_key(verb, self.batch(self.A, self.B, self.C, verb=verb)), verb)
+            self.assertEqual(ops.identity_key(verb, REQUESTS[verb]), ops.identity_key(verb, self.batch(self.A, verb=verb)), verb)
+        self.assertNotEqual(ops.identity_key("todo-done", self.batch(self.A, self.B)),
+                            ops.identity_key("todo-undo", self.batch(self.A, self.B, verb="todo-undo")))
+
+    def test_only_a_tick_or_an_untick_takes_keys(self):
+        self.assertIsNone(ops.validate("todo-done", self.batch(self.A)))
+        self.assertIsNone(ops.validate("todo-undo", self.batch(self.A)))
+        for verb in ("todo-date", "todo-add", "park"):
+            self.assertEqual("%s takes no keys field" % verb, ops.validate(verb, dict(REQUESTS[verb], keys=[self.A])), verb)
+
+    def test_a_batch_is_labelled_by_its_count(self):
+        self.assertEqual("Ticking 3 lines…", ops.label("todo-done", self.batch(self.A, self.B, self.C)))
+        self.assertEqual("Already reopening those 2 lines…", ops.label("todo-undo", self.batch(self.A, self.B), already=True))
+        self.assertEqual("Ticking that line…", ops.label("todo-done", self.batch(self.A)))
+        self.assertIn("those Todo lines", ops.say("unknown", "todo-done", self.batch(self.A, self.B)))
+
+    def test_a_wall_refusal_is_the_rules_sentence_and_nothing_else(self):
+        """#116's words, as #107 has a refused batch end on them: say() adds no
+        refusal wording of its own, and the sentence affirms nothing."""
+        wall = ops.WALL_REFUSAL
+        for verb in ("todo-done", "todo-undo"):
+            self.assertEqual(wall, ops.say("refused", verb, self.batch(self.A, self.B, verb=verb), why=wall))
+            self.assertEqual(wall, ops.say("refused", verb, REQUESTS[verb], why=" %s " % wall))
+        self.assertFalse(ops.affirms(wall))
+        self.assertTrue(only_in_the_negative(wall))
+        self.assertEqual("Not done. Commit refused.", ops.say("refused", "todo-done", REQUESTS["todo-done"], why="commit refused"))
 
 
 class TestWording(unittest.TestCase):
@@ -891,6 +937,19 @@ class TestReader(JournalCase):
         self.assertEqual(("running", None), (listed[0]["state"], listed[0]["outcome"]))
         self.assertEqual(("completed", "saved", "awake"), (listed[1]["state"], listed[1]["outcome"], listed[1]["say"]))
         self.assertTrue(all(set(r) == {"op", "verb", "zone", "state", "phase", "at", "done", "outcome", "say", "label"} for r in listed))
+
+    def test_a_tick_lists_its_lines_for_a_reload(self):
+        """#107: one record lists every line of a batch, so a reload knows which
+        rows are pending; a park lists none."""
+        keys = ["0123456789abcdef", "fedcba9876543210"]
+        self.start("todo-done", op="a19f3c80", key=None, keys=keys)
+        self.start("todo-undo", op="b29f3c80")
+        self.start(op="c39f3c80")
+        listed = {r["op"]: r for r in self.j.open_set()}
+        self.assertEqual(keys, listed["a19f3c80"]["keys"])
+        self.assertEqual(["0123456789abcdef"], listed["b29f3c80"]["keys"])
+        self.assertNotIn("keys", listed["c39f3c80"])
+        self.assertEqual("Ticking 2 lines…", listed["a19f3c80"]["label"])
 
     def test_the_reply_says_what_the_page_needs(self):
         self.start(op="a19f3c80")

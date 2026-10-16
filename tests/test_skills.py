@@ -162,6 +162,33 @@ class SkillsTest(unittest.TestCase):
         rules = section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Files")
         self.assertIn("`YYMMDD - <name>.<ext>`", rules)
 
+    def test_a_brief_for_a_project_offers_to_save_it(self):
+        """A brief made for a project ends with one question offering it a home (#117);
+        a yes saves it as step 7 always did and points the thread in focus at it in the
+        same commit; a no writes nothing; the unfiltered record offers nothing."""
+        text = (SKILLS / "meetings" / "SKILL.md").read_text(encoding="utf-8")
+        prep = flat(section(text, '## Prep: "prep me for X", "brief me for X", "prepare a brief for X"'))
+        for needle in ("A brief made for a project ends with one question, the offer to save it: "
+                       "\"Save it in Supplier Review's deliverables?\" A yes runs step 7.",
+                       "A no writes nothing.",
+                       "the unfiltered record of step 2 has no project to hold it, so it offers nothing",
+                       "Then the save offer, which takes the place of \"Want the open actions read out?\", "
+                       "because the saved file holds them.",
+                       "add the file to the Live artifact row of that thread note's Resume here block",
+                       "It goes beside whatever the row already names, never in its place",
+                       "With no thread in focus, no thread note is edited.",
+                       "The thread note whose row was edited goes in the same commit",
+                       'git -C "Zones/<Zone>" add -- "<Project>/Threads/<Thread>/<Thread>.md"',
+                       "Never on your own initiative"):
+            self.assertIn(needle, prep, needle)
+        # Step 7's naming and commit message stay as they were.
+        for kept in ("`Zones/<Zone>/<Project>/Deliverables/YYMMDD - <name>.md`",
+                     'git -C "Zones/<Zone>" commit -m "<Project>: brief for <X>"'):
+            self.assertIn(kept, prep, kept)
+        route = flat(section(text, "## Nothing there yet: from an ordinary request to a saved brief"))
+        self.assertIn("then *Prep*'s one question, the save offer.", route)
+        self.assertIn("Save it in Supplier Review's deliverables?\"", route)
+
     def test_thread_commands_survive_being_heard(self):
         """The docs tell the user to say "wrap it". Waking is "wake X" or "unpark X":
         "pick X up again" sounds like "pick up X", which opens a thread."""

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- A brief made for a project now ends by offering to save it. Saving one already worked, through step 7 of the `meetings` skill's *Prep*, but nothing told anyone it could be done, so the brief, often the one thing a session produced, was read on screen and gone when the session ended, with the thread note's Live artifact row still saying none yet. Now a brief made for a project, by *Prep* or by the short route in *Nothing there yet*, ends with one question: "Save it in Supplier Review's deliverables?". Spoken, the offer takes the place of "Want the open actions read out?", because the saved file holds them. A yes saves it exactly as step 7 always has, as `YYMMDD - <name>.md` under the project's `Deliverables/`, through the wall check and the zone's commit, and the same commit adds the file to the Live artifact row of the thread in focus, beside whatever the row already names; a row that says only none takes the file in its place. With no thread in focus the reply says where the file went and no thread note is edited. A no writes nothing, nothing is ever saved without a yes, and the unfiltered record, which has no project to hold it, offers nothing. [First session](docs/first-session.md) says so. ([#117](https://github.com/iamvenuti/garrick/issues/117))
+
 ## [0.32.0] - 2026-10-16
 
 ### Added

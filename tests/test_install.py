@@ -600,7 +600,7 @@ class SourceFolderInstallTest(unittest.TestCase):
     def test_questions_offer_another_folder(self):
         answers = ["~/Garrick",                       # typed: refused, and asked again
                    "",                                # the default offered instead
-                   "Sam Rivera", "Independent advisor", "", "", "", "", "", "", "", "y"]
+                   "Sam Rivera", "Independent advisor", "", "", "", "", "", "y"]
         r = run([self.installer], self.box.env, cwd=self.source, stdin="\n".join(answers) + "\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("Where should the workspace go? [~/Garrick-workspace]", r.stdout)
@@ -617,8 +617,23 @@ class SourceFolderInstallTest(unittest.TestCase):
             self.untouched()
 
 
+def parse_context(root):
+    """System/context.md as the workspace's own tools read it."""
+    sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
+    from garrick_lib import load_context
+    return load_context(root)
+
+
+def asked(stdout):
+    """The questions an interactive install put, in order: each is the line before a "> " prompt."""
+    lines = stdout.splitlines()
+    return [lines[i - 1] for i in range(1, len(lines)) if lines[i].startswith(">")]
+
+
 class InteractiveTest(unittest.TestCase):
     def test_questions_in_order(self):
+        # #118: the folder, the name, the line, the zones and what each holds, one
+        # parties round, the commands and the go-ahead. No domain, wall, person or alias.
         box = Sandbox()
         try:
             target = box.work / "asked"
@@ -628,75 +643,74 @@ class InteractiveTest(unittest.TestCase):
                 "Independent advisor",            # one line
                 "",                               # zones: Work, Personal
                 "Clients", "",                    # what goes in each
-                "Acme Corp", "Client", "", "",    # party: name, what, zone, tag
-                "gmail.com",                      # webmail is refused, and asked again
-                "acmecorp.example",               # its mail domain
-                "Birch & Co", "Client", "", "",
-                "",                               # no domain for Birch
-                "",                               # no more parties
-                "acme birch", "Competitors", "",  # one wall, then done
-                "Dana Whitlock", "acme", "Procurement", "",  # one person, then done
-                "dana whitlaw", "Dana Whitlock", "",         # one alias, then done
+                "Acme Corp, Birch & Co",          # the parties, in one line
+                "",                               # Acme Corp: the first zone
+                "personal",                       # Birch & Co: another, in any case
                 "",                               # the commands allowed: the default, yes
                 "y",
             ]
             r = run([INSTALL], box.env, stdin="\n".join(answers) + "\n")
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual([
+                "Where should the workspace go? [~/Garrick]",
+                "What is your name?",
+                "In one line: what do you do, and for whom?",
+                "Zones are the separate sides of your life, each kept apart. Type their names separated by commas. "
+                "[Work, Personal]",
+                "What goes in Work, in a few words? (Enter to skip)",
+                "What goes in Personal, in a few words? (Enter to skip)",
+                "Who do you work for or with? Names, separated by commas. Enter to skip.",
+                "Which zone is Acme Corp in? (Work, Personal) [Work]",
+                "Which zone is Birch & Co in? (Work, Personal) [Work]",
+                "May your assistant run Garrick's own tools, and git's status, diff, log, add and commit inside the "
+                "workspace, without asking each time? None of them sends anything off your Mac. (y/n) [y]",
+                "Go ahead? (y/n) [y]",
+            ], asked(r.stdout))
+            self.assertIn(f"Ready to install in {target}: 2 zones, 2 parties.", r.stdout)
+            ctx = parse_context(target)
+            self.assertEqual({t: (p["party"], p["zone"], p["domains"]) for t, p in ctx["parties"].items()},
+                             {"acme": ("Acme Corp", "Work", []), "birch": ("Birch & Co", "Personal", [])})
+            self.assertEqual((ctx["walls"], ctx["people"], ctx["aliases"]), (set(), [], {}))
             text = (target / "System" / "context.md").read_text()
-            self.assertIn("| Acme Corp | Client | Work | `acme` | acmecorp.example |", text)
-            self.assertIn("| Birch & Co | Client | Work | `birch` |  |", text)
-            self.assertIn("personal webmail", r.stdout)
-            self.assertIn("| `acme` | `birch` | Competitors |", text)
-            self.assertIn("| Dana Whitlock | `acme` | Procurement |", text)
+            # What each party is stays for the user, or their assistant, to fill in.
+            self.assertIn("| Acme Corp | <What it is> | Work | `acme` |  |", text)
             self.assertIn("| Personal | <What Personal holds> |", text)
-            # The walls question shows an example, never the user's own two tags as if suggesting a wall.
-            self.assertIn('two clients tagged cedar and dune would be "cedar dune"', r.stdout)
-            self.assertNotIn('"acme birch"', r.stdout)
         finally:
             box.close()
 
-    def test_tags_walls_and_aliases_ask_plainly(self):
+    def test_the_parties_round_takes_tags_from_the_names(self):
         box = Sandbox()
         try:
             target = box.work / "plain"
             answers = [
-                str(target), "Sam Rivera", "Independent advisor", "", "", "",
-                "4Birch", "Client", "",                  # a party whose name starts with a digit
-                "",                                      # no tag is offered, so Enter is refused
+                str(target), "Sam Rivera", "Independent advisor",
+                "Work", "",                              # one zone, so no party is asked its zone
+                "4Birch, Fernway Logistics, Fernway Freight, fernway logistics",
+                "",                                      # 4Birch gives no tag, so one is asked; Enter is refused
                 "4birch",                                # refused: a tag starts with a letter
-                "fourbirch", "",                         # accepted; no domain
-                "Fernway Logistics", "Carrier", "", "", "",
-                "Cobalt Freight", "Carrier", "", "", "",
-                "",                                      # no more parties
-                "fernway cobalt", "", "",                # one wall, then done
-                "",                                      # no people
-                "dana whitlaw", "",                      # an alias with no meaning: skipped, and said so
-                "", "", "y",
+                "fourbirch",                             # accepted
+                "", "y",
             ]
             r = run([INSTALL], box.env, stdin="\n".join(answers) + "\n")
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            text = (target / "System" / "context.md").read_text()
-            # Only a default the question accepts is offered, and the prompt gives the real rule.
-            self.assertIn("A short tag for 4Birch, used in notes: one lowercase word that starts with a letter.\n>",
-                          r.stdout)
+            questions = asked(r.stdout)
+            self.assertNotIn("Which zone", r.stdout)
+            # Only a name that yields no tag has one asked, and the prompt gives the real rule.
+            self.assertEqual(3, questions.count(
+                "A short tag for 4Birch, used in notes: one lowercase word that starts with a letter."), questions)
+            self.assertNotIn("A short tag for Fernway", r.stdout)
             self.assertIn("A tag is one lowercase word that starts with a letter", r.stdout)
-            self.assertIn("| 4Birch | Client | Work | `fourbirch` |  |", text)
-            self.assertIn("A short tag for Fernway Logistics, used in notes: one lowercase word that starts "
-                          "with a letter. [fernway]", r.stdout)
-            # The wall example is plainly an example: other tags than the user's own.
-            self.assertIn('two clients tagged acme and birch would be "acme birch"', r.stdout)
-            self.assertNotIn('"fernway cobalt"', r.stdout)
-            self.assertIn("| `fernway` | `cobalt` |", text)
-            # Aliases can wait: the question says so, and where they go later.
-            self.assertIn("Most people skip this now", r.stdout)
-            self.assertIn("Aliases table in System/context.md", r.stdout)
-            self.assertIn('Skipped "dana whitlaw": an alias needs what it means.', r.stdout)
-            self.assertNotIn("dana whitlaw", text)
+            ctx = parse_context(target)
+            # A name said twice is one party; a second Fernway gets a wider tag.
+            self.assertEqual({t: p["party"] for t, p in ctx["parties"].items()},
+                             {"fourbirch": "4Birch", "fernway": "Fernway Logistics",
+                              "fernway-freight": "Fernway Freight"})
+            self.assertIn(f"Ready to install in {target}: 1 zone, 3 parties.", r.stdout)
         finally:
             box.close()
 
     # Every answer after the folder: a name, a line, the default zones, and nothing else.
-    SHORT = ["Sam Rivera", "Independent advisor", "", "", "", "", "", "", "", "y"]
+    SHORT = ["Sam Rivera", "Independent advisor", "", "", "", "", "", "y"]
 
     def test_the_last_question_offers_the_commands_and_takes_a_no(self):
         box = Sandbox()
@@ -727,7 +741,7 @@ class InteractiveTest(unittest.TestCase):
             self.assertTrue((target / "AGENTS.md").is_file())
             self.assertFalse((box.work / "ws-here").exists())
             # The confirmation shows where it will go, not the words typed.
-            self.assertIn(f"Ready to install in {target}: 2 zones, 0 parties, 0 walls.", r.stdout)
+            self.assertIn(f"Ready to install in {target}: 2 zones, 0 parties.", r.stdout)
         finally:
             box.close()
 

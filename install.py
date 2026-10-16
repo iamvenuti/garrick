@@ -80,8 +80,6 @@ def docs_files(docs=None):
 # naming layer: `garrick_lib.TAG_RE`, `TAG_RULE` and `tag_for`. This file is not
 # shipped into a workspace, so a copy here could not be reached by the workspace's
 # own tools, and `scaffold.py party` offers a tag long after the install.
-# Wall examples the questions can show, never built from the user's own tags.
-EXAMPLE_WALLS = (("acme", "birch"), ("cedar", "dune"))
 # The one way to put your own address on the workspace's repositories when git had
 # none. docs/commands.md gives the same command; a test keeps them alike.
 OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email "you@example.com"; done'
@@ -797,11 +795,6 @@ def home_relative(answer):
     return p if p.is_absolute() else Path.home() / p
 
 
-def example_wall(tags):
-    """A pair of example tags for the walls question that is not the user's own."""
-    return next((pair for pair in EXAMPLE_WALLS if not set(pair) & set(tags)), EXAMPLE_WALLS[-1])
-
-
 def interview(pl, target=None, force=False):
     check_git()  # before the first question, not after the last
     print("Garrick setup. A few questions, one at a time. Press Enter to accept what is in [brackets].\n")
@@ -839,13 +832,15 @@ def interview(pl, target=None, force=False):
         print("\n".join(errors or ["Name at least one zone."]), "\n")
     zones = [{"name": n, "holds": ask(f"What goes in {n}, in a few words? (Enter to skip)")} for n in names]
 
-    print("Now the parties: every organisation or person whose confidences you hold. You can add more later.\n")
+    # One round for parties, which Enter skips. Each name becomes a party with a tag
+    # taken from the name; its zone is asked only when there is more than one.
+    # Domains, walls, people and aliases are not asked: the first session adds
+    # them when something needs them, and a --config file can still carry them.
+    raw = ask("Who do you work for or with? Names, separated by commas. Enter to skip.")
     parties = []
-    while True:
-        pname = ask("Name of a party (Enter when done):")
-        if not pname:
-            break
-        what = ask(f"What is {pname}, in a few words?")
+    for pname in [n.strip() for n in raw.split(",") if n.strip()]:
+        if any(p["name"].lower() == pname.lower() for p in parties):
+            continue
         zone = names[0]
         if len(names) > 1:
             while True:
@@ -856,79 +851,24 @@ def interview(pl, target=None, force=False):
                     break
                 print(f"That is not one of your zones: {', '.join(names)}.\n")
         taken = {p["tag"]: p["name"] for p in parties}
-        guess = pl.tag_for(pname, taken, zone)
-        while True:
-            tag = ask(f"A short tag for {pname}, used in notes: one lowercase word that starts with a letter.",
-                      guess).strip("`")
+        tag = pl.tag_for(pname, taken, zone)
+        while not tag:  # only a name with no letter to start a tag from, such as 4Birch
+            tag = ask(f"A short tag for {pname}, used in notes: one lowercase word that starts with a letter.").strip("`")
             if tag in taken:
                 print(f"{tag} is already the tag for {taken[tag]}. Pick another.\n")
-            elif pl.TAG_RE.match(tag):
-                break
-            else:
+                tag = ""
+            elif not pl.TAG_RE.match(tag):
                 print(f"A tag is {pl.TAG_RULE}, such as acme or acme-uk.\n")
-        taken_domains = {d: p["name"] for p in parties for d in p["domains"]}
-        while True:
-            domains = domain_list(ask(f"Mail domains for {pname}: the part after the @ in their addresses, "
-                                      "separated by commas. Optional; press Enter to skip."))
-            problems = domain_problems(pname, domains, taken_domains, pl)
-            if not problems:
-                break
-            print("\n".join(problems), "\n")
-        parties.append({"name": pname, "what": what, "zone": zone, "tag": tag, "domains": domains})
-
-    tags = [p["tag"] for p in parties]
-    walls = []
-    if len(tags) >= 2:
-        print(f"Walls: pairs of parties whose material must never meet. None is assumed. "
-              f"Your tags: {', '.join(tags)}.\n")
-        a, b = example_wall(tags)
-        while True:
-            pair = ask(f"Two of your tags with a wall between them, separated by a space. For example, "
-                       f"two clients tagged {a} and {b} would be \"{a} {b}\". (Enter when done)")
-            if not pair:
-                break
-            bits = pair.replace(",", " ").split()
-            if len(bits) != 2 or bits[0] == bits[1] or any(b not in tags for b in bits):
-                print(f"Type two different tags from: {', '.join(tags)}.\n")
-                continue
-            walls.append({"between": bits[0], "and": bits[1], "why": ask("Why? (Enter to skip)")})
-
-    people = []
-    while True:
-        person = ask("People you deal with, so names are recognised. A name (Enter to skip):")
-        if not person:
-            break
-        party = ""
-        if tags:
-            while True:
-                party = ask(f"Which party is {person} with? ({', '.join(tags)}, or Enter for none)")
-                if not party or party in tags:
-                    break
-                print(f"Use one of: {', '.join(tags)}.\n")
-        people.append({"name": person, "party": party, "role": ask(f"{person}'s role, in a few words?")})
-
-    print("Aliases: names that dictation writes wrongly, and what they mean. Most people skip this now, "
-          "before they have dictated anything. Your assistant adds one to the Aliases table in "
-          "System/context.md whenever it has to ask what a name meant, and you can add them there yourself.\n")
-    aliases = []
-    while True:
-        heard = ask("A name as dictation wrote it (Enter to skip):")
-        if not heard:
-            break
-        means = ask(f'What does "{heard}" mean?')
-        if means:
-            aliases.append({"heard": heard, "means": means})
-        else:
-            print(f'Skipped "{heard}": an alias needs what it means.\n')
+                tag = ""
+        parties.append({"name": pname, "what": "", "zone": zone, "tag": tag, "domains": []})
 
     allow = ask("May your assistant run Garrick's own tools, and git's %s inside the workspace, without "
                 "asking each time? None of them sends anything off your Mac. (y/n)" % joined(ALLOWED_GIT),
                 "y").lower() in ("y", "yes")
 
     cfg = {"owner": {"name": name, "description": desc}, "zones": zones, "parties": parties,
-           "walls": walls, "people": people, "aliases": aliases, "allow-commands": allow}
-    print(f"Ready to install in {root}: {count(zones, 'zone', 'zones')}, "
-          f"{count(parties, 'party', 'parties')}, {count(walls, 'wall', 'walls')}.")
+           "allow-commands": allow}
+    print(f"Ready to install in {root}: {count(zones, 'zone', 'zones')}, {count(parties, 'party', 'parties')}.")
     if ask("Go ahead? (y/n)", "y").lower() not in ("y", "yes"):
         print("Nothing was written.")
         sys.exit(1)

@@ -507,7 +507,7 @@ def sounds_alike(a: str, b: str) -> bool:
 
 # A party's tag: what `party:` in a hub note and `parties:` on a meeting page
 # carry, and what the Walls table is written in. One rule, here, because the
-# installer asks for a tag at install and `scaffold.py party` offers one later;
+# installer takes a tag from each party's name and `scaffold.py party` offers one later;
 # two copies of it would let a workspace hold a tag its installer refused.
 TAG_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 TAG_RULE = "one lowercase word that starts with a letter, then letters, digits or hyphens"

@@ -90,7 +90,8 @@ class TestTodoTab(StatusCase):
         self.assertNotIn("An old one", tab)
         self.assertRegex(done, r'<div class="trow done[ "]')
         self.assertIn('aria-label="Reopen: Sent the brief"', done)
-        self.assertIn("send(d?'todo-done':'todo-undo',r,null,", status.TODO_JS)
+        self.assertIn("verb=d?'todo-done':'todo-undo';", status.TODO_JS)     # a done row's box sends the undo
+        self.assertIn("GarrickTick({verb:verb,", status.TODO_JS)
 
     def test_filters_sorts_and_zones(self):
         html, tab = self.tab()

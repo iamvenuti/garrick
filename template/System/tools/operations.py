@@ -62,6 +62,16 @@ it says whether the request still means what it did. Nothing here computes a
 fingerprint. The Todo verbs' is the hash of the line's exact text, which
 todo_lines keeps; park's and wake's is the note's own `status:`.
 
+A tick or an untick may name several lines at once, as `keys` in place of
+`key` (#107): the page batches the ticks made within a few seconds of each
+other into one request, one lock, one edit and one commit. Its record is one
+entry that lists every line, so a reload knows which rows are pending, and
+a batch of one is the same request as the line named by `key`.
+
+`WALL_REFUSAL` is the sentence the rule gives for a wall that held something
+back (#116). A tick refused by the zone's wall check ends on it word for
+word: say() adds no refusal wording of its own to it.
+
 `OPS` stays what it has been since 0.26.0: the six verbs that keep a durable
 record, derived from the table. A newer copy of this file found by an older
 status extra must not start recording verbs that extra knows nothing about.
@@ -169,8 +179,10 @@ DECLARED: Dict[str, Op] = {
                 "zone", True, "safe", "status"),
     "wake": _op(("zone", "project", "thread", "file", "confirm"), ("project", "thread", "file"),
                 "zone", True, "safe", "status"),
-    "todo-done": _op(("zone", "file", "key", "confirm"), ("file", "key"), "zone", True, "safe", "line"),
-    "todo-undo": _op(("zone", "file", "key", "confirm"), ("file", "key"), "zone", True, "safe", "line"),
+    # A tick or an untick names its line by `key`, or several by `keys`, a
+    # batch the page sends as one request (#107); never both.
+    "todo-done": _op(("zone", "file", "key", "keys", "confirm"), ("file", "key", "keys"), "zone", True, "safe", "line"),
+    "todo-undo": _op(("zone", "file", "key", "keys", "confirm"), ("file", "key", "keys"), "zone", True, "safe", "line"),
     "todo-date": _op(("zone", "file", "key", "date", "confirm"), ("file", "key", "date"), "zone", True, "safe", "line"),
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
@@ -242,13 +254,34 @@ def _norm(name: str, value):
     return value
 
 
+def lines_of(req: dict) -> List[str]:
+    """The lines a Todo request names, in its order and each once: `keys`,
+    a batch, or the one `key`. Empty for a request that names none."""
+    keys = req.get("keys")
+    named = list(keys) if isinstance(keys, list) else [keys] if keys not in (None, "") else []
+    if req.get("key") not in (None, ""):
+        named.append(req.get("key"))
+    out: List[str] = []
+    for k in named:
+        k = k.strip() if isinstance(k, str) else k
+        if k not in out:
+            out.append(k)
+    return out
+
+
 def identity_key(verb: str, req: dict) -> str:
     """sha256 of the canonical JSON of the verb, the zone and the verb's
     identity fields. Field order, a missing field against a null or empty
-    one, and a client's own `op` or `key`-like extras do not change it."""
+    one, and a client's own `op` or `key`-like extras do not change it.
+    The lines of a batch are one set, in whatever order they were ticked,
+    and a batch of one is the request that names that line by `key`."""
     spec = OPS[verb]
-    body = {"verb": verb, "zone": _norm("zone", req.get("zone")),
-            "fields": {k: _norm(k, req.get(k)) for k in sorted(spec.identity)}}
+    fields = {k: _norm(k, req.get(k)) for k in sorted(spec.identity)}
+    if "keys" in fields:
+        lines = sorted(lines_of(req), key=str)
+        del fields["keys"]
+        fields["key"] = lines[0] if len(lines) == 1 else (lines or None)
+    body = {"verb": verb, "zone": _norm("zone", req.get("zone")), "fields": fields}
     canon = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
@@ -378,6 +411,11 @@ FALLBACK_WHY = {"refused": "A check refused it.", "crashed": "The action stopped
 # The name comes straight after the `no` on purpose: a field spelled `saved`
 # must still read as a refusal, and both guards on that read two words back.
 NO_FIELD = "{verb} takes {names}"
+# The rule's own words for a wall that held something back, in rules.md under
+# "Zones and walls", quoted whole (#116). A tick or untick the zone's wall
+# check refused ends on this and nothing else (#107): no party, no person, no
+# subject, no tag, and no refusal wording of this file's added to it.
+WALL_REFUSAL = "A wall holds some material back from this project, so I have not used it. Nothing was written."
 ONE_FIELD = "no {name} field"
 STALE_WHY = {
     ("line", None): "that line has changed since the page was built; it rebuilds now, try again",
@@ -388,7 +426,15 @@ STALE_WHY = {
 }
 
 
+# A batch of several lines, in place of WORKING and ALREADY's "that line".
+WORKING_LINES = {"todo-done": "Ticking {n} lines…", "todo-undo": "Reopening {n} lines…"}
+ALREADY_LINES = {"todo-done": "Already ticking those {n} lines…", "todo-undo": "Already reopening those {n} lines…"}
+
+
 def label(verb: str, req: dict, already: bool = False) -> str:
+    n = len(lines_of(req)) if verb in WORKING_LINES else 0
+    if n > 1:
+        return (ALREADY_LINES if already else WORKING_LINES)[verb].format(n=n)
     table = ALREADY if already else WORKING
     return table[verb].format(name=name_of(verb, req), zone=req.get("zone") if isinstance(req.get("zone"), str) else "the zone")
 
@@ -431,6 +477,8 @@ def say(outcome: str, verb: str, req: dict, why: str = "", said: str = "") -> st
         raise ValueError("not an outcome: %r" % (outcome,))
     if outcome == "saved":
         return said or "Done."
+    if outcome == "refused" and " ".join(str(why or "").split()) == WALL_REFUSAL:
+        return WALL_REFUSAL
     zone = req.get("zone") if isinstance(req.get("zone"), str) else "the zone"
     return SAYINGS[outcome].format(why=_sentence(why, outcome), what=_what(verb, req), zone=zone)
 
@@ -439,7 +487,7 @@ def _what(verb: str, req: dict) -> str:
     if verb == "todo-add":
         return "the new Todo line"
     if verb.startswith("todo-"):
-        return "the change to that Todo line"
+        return "the change to those Todo lines" if len(lines_of(req)) > 1 else "the change to that Todo line"
     return "the change to " + name_of(verb, req)
 
 
@@ -600,7 +648,11 @@ class Journal:
         out = []
         for rec in latest:
             if rec.get("state") not in ("completed", "failed") or now - (rec.get("done") or rec.get("at") or 0) <= RECENT:
-                out.append({k: rec.get(k) for k in ("op", "verb", "zone", "state", "phase", "at", "done", "outcome", "say", "label")})
+                shown = {k: rec.get(k) for k in ("op", "verb", "zone", "state", "phase", "at", "done", "outcome", "say", "label")}
+                lines = lines_of(rec.get("request") or {}) if rec.get("verb") in ("todo-done", "todo-undo") else []
+                if lines:               # every line of a tick or untick, so a reload knows which rows are pending
+                    shown["keys"] = lines
+                out.append(shown)
         return out
 
     def compact(self, now: float) -> None:

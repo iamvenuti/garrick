@@ -1,7 +1,9 @@
 """An action that runs (#77): the status page shows a request that commits in a
 zone running until its reply comes, holds that zone's buttons meanwhile, and
-keeps a slow reply on screen until it is dismissed. WORK_JS is run in Node
-against a stand-in for the page, and the hosts are read for what they hand it.
+keeps a slow failure on screen until it is dismissed, while a slow success
+fades (#107). Ticks are queued while the zone is busy and go as one batch
+(#107). WORK_JS is run in Node against a stand-in for the page, and the hosts
+are read for what they hand it.
 
     python3 -m unittest discover -s tests
 """
@@ -32,14 +34,25 @@ spec.loader.exec_module(page_action)
 # Just enough of a page for WORK_JS: the two toasts, a head for its style, a
 # clock the test moves, sessionStorage that outlives a reload, and the
 # messages it posts. Each step is [what, at seconds, ...]; each reload runs
-# the script again on the same storage, as a rebuilt page does.
+# the script again on the same storage, as a rebuilt page does. Todo rows, when
+# given, are drawn afresh on each load as the note has them, and a click on
+# one does what TODO_JS does: strikes it through and hands it to GarrickTick.
 HARNESS = textwrap.dedent(r"""
     const vm = require("vm");
-    const [js, steps, reads] = JSON.parse(process.argv[1]);
+    const [js, steps, reads, drawn] = JSON.parse(process.argv[1]);
     const store = {}, posted = [], asked = [], out = [];
     let toasts = 0;
-    let clock = 1000000, ctx, box, toast, style, interval, chained = [];
+    let clock = 1000000, ctx, box, toast, style, interval, chained = [], rows = [];
+    function row(r) {
+      const cls = new Set(r.done ? ["trow", "done"] : ["trow"]);
+      const tick = { label: (r.done ? "Reopen: " : "Mark done: ") + r.text,
+                     getAttribute(k) { return this.label; }, setAttribute(k, v) { this.label = v; } };
+      return { dataset: { z: r.z || "Work", f: r.f || "Todo.md", k: r.k },
+               classList: { contains: (c) => cls.has(c), toggle: (c, on) => { if (on === undefined) on = !cls.has(c); on ? cls.add(c) : cls.delete(c); return on; } },
+               querySelector: (sel) => (sel === ".tick" ? tick : null), tick };
+    }
     function load() {
+      rows = (drawn || []).map(row);
       box = { innerHTML: "", hidden: true, offsetHeight: 40, listeners: {}, addEventListener(k, f) { this.listeners[k] = f; },
               // each running request's time, written back into the markup
               querySelectorAll(sel) {
@@ -55,7 +68,7 @@ HARNESS = textwrap.dedent(r"""
         createElement: () => ({ textContent: "" }),
         head: { appendChild: (el) => { style = el; } },
         body: { style: { setProperty: () => {} } },
-        querySelectorAll: () => [],
+        querySelectorAll: (sel) => (sel === ".trow" ? rows : []),
       };
       ctx = { JSON, String, Math, document, Date: { now: () => clock },
               sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
@@ -82,8 +95,18 @@ HARNESS = textwrap.dedent(r"""
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
       if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
+      if (what === "click") {                // TODO_JS's click on a row's box
+        const el = rows.find((x) => x.dataset.k === a), d = !el.classList.contains("done");
+        r = ctx.window.GarrickTick({ verb: d ? "todo-done" : "todo-undo", zone: el.dataset.z, file: el.dataset.f, key: a });
+        el.classList.toggle("done", d);
+      }
+      const card = (i) => ({ closest: (sel) => (sel === "[data-i]" && i !== null ? { dataset: { i: String(i) } } : null) });
+      if (what === "hover") box.listeners.mouseover({ target: card(a) });
+      if (what === "leave") box.listeners.mouseout({ target: card(a), relatedTarget: null });
       out.push({ r, box: box.hidden ? "" : box.innerHTML, toast: toast.textContent, opacity: toast.style.opacity,
-                 hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice() });
+                 hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice(),
+                 done: Object.fromEntries(rows.map((x) => [x.dataset.k, x.classList.contains("done")])),
+                 labels: Object.fromEntries(rows.map((x) => [x.dataset.k, x.tick.label])) });
     }
     process.stdout.write(JSON.stringify(out));
 """)
@@ -100,7 +123,7 @@ class NodeCase(unittest.TestCase):
         """`reads`: whether the host says it can answer a request that reads, as
         the Mac app does at document start. False for a host from 0.26.0."""
         done = subprocess.run(["node", "-e", HARNESS, json.dumps([status.WORK_JS, [list(s) for s in steps],
-                                                                  kw.get("reads", True)])],
+                                                                  kw.get("reads", True), kw.get("rows", [])])],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
@@ -109,11 +132,11 @@ class NodeCase(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "Node is not installed")
 class TestWorkUnderNode(NodeCase):
 
-    def test_a_slow_new_project_shows_it_is_working_until_its_reply_and_the_reply_stays(self):
+    def test_a_slow_new_project_shows_it_is_working_until_its_reply_and_the_reply_fades(self):
         out = self.run_js(("act", 0, ACME, "Making Acme…"), ("tick", 5), ("tick", 12), ("tick", 75),
                           ("reload", 80), ("reply", 81, ACME_BACK, {"ok": True, "say": "Made Acme, first thread Pricing"}),
-                          ("reload", 83), ("dismiss", 200, 0))
-        sent, five, twelve, late, reloaded, replied, rebuilt, dismissed = out
+                          ("reload", 83), ("tick", 84), ("tick", 85.5))
+        sent, five, twelve, late, reloaded, replied, rebuilt, still, faded = out
         self.assertTrue(sent["r"])
         self.assertEqual(1, sent["posted"])
         self.assertIn("Making Acme…", sent["box"])
@@ -128,13 +151,15 @@ class TestWorkUnderNode(NodeCase):
         self.assertIn(">1 min 20 s<", reloaded["box"])
         self.assertIn("Made Acme, first thread Pricing", replied["box"])     # the reply takes its place
         self.assertIn("Making Acme, 1 min 21 s", replied["box"])
-        self.assertIn('data-wx="0"', replied["box"])                         # and stays until dismissed
+        self.assertIn('data-wx="0"', replied["box"])                         # with its × to close it sooner
         self.assertNotIn("wspin", replied["box"])
         self.assertEqual(0, replied["opacity"])                              # the host's own toast steps aside
-        self.assertFalse(replied["ticking"])
+        self.assertTrue(replied["ticking"])                                  # counting down to its fade
         self.assertEqual(["new-project"], replied["chained"])                # the hooks set before it still run
         self.assertIn("Made Acme, first thread Pricing", rebuilt["box"])     # the rebuild after the reply keeps it
-        self.assertEqual("", dismissed["box"])
+        self.assertIn("Made Acme, first thread Pricing", still["box"])       # three seconds on, still there
+        self.assertEqual("", faded["box"])                                   # ACTION_TOAST after it came, gone by itself
+        self.assertFalse(faded["ticking"])
 
     def test_a_quick_reply_is_the_hosts_toast_as_before(self):
         out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 2, PARK, {"ok": True, "say": "Parked"}))
@@ -157,7 +182,8 @@ class TestWorkUnderNode(NodeCase):
                           ("reply", 40, ACME, {"ok": True, "say": "Made Acme"}), ("busy", 41, "Work"),
                           ("act", 42, PARK, "Parking Birch Entry…"))
         first, again, other, unzoned, work, home, replied, free, after = out
-        for sel in ('.trow[data-z="Work"] button.tick', '.trow[data-z="Work"] button.tdate', '.tadd-open[data-zone="Work"]',
+        self.assertNotIn("button.tick", first["hold"])                        # a Todo box stays clickable (#107)
+        for sel in ('.trow[data-z="Work"] button.tdate', '.tadd-open[data-zone="Work"]',
                     'button[data-mg^="[\\"Work\\","]', 'button[data-act*="\\"verb\\":\\"park\\""][data-act*="\\"zone\\":\\"Work\\""]',
                     'button[data-act*="\\"verb\\":\\"wake\\""][data-act*="\\"zone\\":\\"Work\\""]'):
             self.assertIn(sel, first["hold"])
@@ -166,7 +192,7 @@ class TestWorkUnderNode(NodeCase):
         self.assertEqual(1, again["posted"])                                 # nothing sent
         self.assertEqual("Work is still busy: Making Acme…", again["toast"])
         self.assertEqual(2, other["posted"])                                 # another zone goes ahead
-        self.assertIn('.trow[data-z="Personal"] button.tick', other["hold"])
+        self.assertIn('.trow[data-z="Personal"] button.tdate', other["hold"])
         self.assertFalse(unzoned["r"])                                       # not a zone's: the button sends it as before
         self.assertEqual(2, unzoned["posted"])
         self.assertEqual("Making Acme…", work["r"])
@@ -222,6 +248,133 @@ class TestWorkUnderNode(NodeCase):
         self.assertEqual("undefined", done.stdout, done.stderr)
 
 
+# Five open lines in Work, as the Todo tab draws them, and a sixth already ticked today.
+LINES = [{"k": "%016x" % i, "text": "Line %d for Acme Corp" % i} for i in range(1, 6)] + \
+        [{"k": "%016x" % 6, "text": "Line 6 for Birch & Co", "done": True}]
+K = [line["k"] for line in LINES]
+WALL = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+
+
+def acts(out):
+    return [m["act"] for m in out["sent"]]
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTicksUnderNode(NodeCase):
+    """#107: a tick is struck through on the click, queued while the zone is busy,
+    and sent with the ticks around it as one request with `keys`."""
+
+    def run_rows(self, *steps, **kw):
+        return self.run_js(*steps, rows=LINES, **kw)
+
+    def test_five_ticks_while_a_commit_runs_land_in_two_requests(self):
+        out = self.run_rows(("click", 0, K[0]), ("tick", 1), ("tick", 2.5),                    # the first goes on its own
+                            ("click", 3, K[1]), ("click", 3.5, K[2]), ("click", 4, K[3]), ("click", 4.5, K[4]),
+                            ("tick", 5), ("tick", 8),                                            # its commit is still running
+                            ("reply", 9, {"verb": "todo-done", "zone": "Work", "op": "x"}, None),
+                            ("tick", 10))
+        first, waited, went = out[0], out[1], out[2]
+        self.assertTrue(first["r"])
+        self.assertEqual(0, first["posted"])                                  # struck through, not sent yet
+        self.assertTrue(first["done"][K[0]])
+        self.assertEqual(0, waited["posted"])                                 # within ACTION_BATCH of the click
+        self.assertEqual([{"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]], "op": acts(went)[0]["op"]}],
+                         acts(went))
+        self.assertEqual("", went["box"])                                     # no toast of its own yet
+        self.assertNotIn("button.tick", went["hold"])                         # the boxes stay clickable while it commits
+        self.assertIn("button.tdate", went["hold"])                           # and everything else in the zone is held
+        for o in out[3:7]:
+            self.assertTrue(o["r"])                                           # taken, never refused for a busy zone
+            self.assertEqual(1, o["posted"])
+        self.assertEqual([True] * 5 + [True], [out[6]["done"][k] for k in K])
+        self.assertEqual(1, out[8]["posted"])                                 # busy: the four wait for the first
+        self.assertIn("Ticking it…", out[8]["box"])                           # which, past ACTION_TOAST, shows it is working
+        done = out[10]
+        self.assertEqual(2, done["posted"])                                   # five ticks, two requests
+        self.assertEqual(K[1:5], acts(done)[1]["keys"])
+        self.assertIn("Ticking 4 lines…", self.run_rows(
+            ("click", 0, K[1]), ("click", 0.5, K[2]), ("click", 1, K[3]), ("click", 1.5, K[4]), ("tick", 4), ("tick", 9))[-1]["box"])
+
+    def test_a_batch_that_saved_is_one_small_notice_and_no_card(self):
+        out = self.run_rows(("click", 0, K[0]), ("click", 0.5, K[1]), ("click", 1, K[2]), ("tick", 3.5),
+                            ("reply", 30, {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": K[:3]},
+                             {"ok": True, "say": "Saved 3", "op": "x", "state": "completed", "outcome": "saved"}),
+                            ("tick", 60))
+        sent, replied, later = out[3], out[4], out[5]
+        self.assertEqual(K[:3], acts(sent)[0]["keys"])
+        self.assertEqual("", replied["box"])                                  # however long it took: no card to close
+        self.assertEqual("Saved 3", replied["toast"])
+        self.assertEqual(1, replied["opacity"])                               # the small toast, which fades by itself
+        self.assertEqual("", later["box"])
+        self.assertFalse(later["ticking"])
+        self.assertEqual([True, True, True], [later["done"][k] for k in K[:3]])
+
+    def test_a_refused_batch_stays_names_its_lines_and_puts_their_boxes_back(self):
+        """The wall check refused it: the card is the rule's sentence, word for
+        word, and the lines; nothing of the page's own about why."""
+        refused = {"ok": False, "say": WALL, "op": "x", "state": "failed", "outcome": "refused"}
+        out = self.run_rows(("click", 0, K[0]), ("click", 0.5, K[5]), ("click", 1, K[1]), ("tick", 3.5),
+                            ("click", 4, K[0]),                               # clicked again while its tick commits
+                            ("reply", 6, {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0], K[1]]}, refused),
+                            ("tick", 7), ("tick", 60), ("reload", 61))
+        sent, again, replied, after, later, rebuilt = out[3], out[4], out[5], out[6], out[7], out[8]
+        self.assertEqual([[K[0], K[1]]], [a["keys"] for a in acts(sent)])    # the ticks: one request
+        self.assertNotIn(K[5], acts(sent)[0]["keys"])                         # the untick waits for its own
+        self.assertFalse(again["done"][K[0]])
+        self.assertIn('class="wk bad"', replied["box"])
+        text = re.sub(r"<[^>]+>", "|", replied["box"])
+        self.assertIn("|" + WALL + "|", text)                                 # word for word, with nothing added to it
+        self.assertIn("Line 1 for Acme Corp · Line 2 for Acme Corp", replied["box"])
+        self.assertIn('data-wx="0"', replied["box"])
+        self.assertEqual((False, False), (replied["done"][K[0]], replied["done"][K[1]]))   # their boxes back
+        self.assertEqual("Mark done: Line 2 for Acme Corp", replied["labels"][K[1]])
+        self.assertFalse(replied["done"][K[5]])                               # the untick, still queued, keeps its row
+        self.assertEqual(["todo-undo"], [a["verb"] for a in acts(after)[1:]])   # and goes; the second click on line 1 was dropped
+        self.assertIn(WALL, later["box"])                                     # a failure stays
+        self.assertIn(WALL, rebuilt["box"])
+
+    def test_a_second_click_before_it_went_sends_nothing(self):
+        out = self.run_rows(("click", 0, K[0]), ("click", 1, K[0]), ("tick", 4), ("tick", 8))
+        self.assertEqual(0, out[-1]["posted"])
+        self.assertFalse(out[-1]["done"][K[0]])
+        self.assertFalse(out[-1]["ticking"])
+
+    def test_a_rebuild_draws_a_queued_tick_as_clicked(self):
+        out = self.run_rows(("act", 0, PARK, "Parking Birch Entry…"), ("click", 1, K[2]), ("click", 1.5, K[5]),
+                            ("reload", 2), ("tick", 5))
+        rebuilt = out[3]
+        self.assertTrue(rebuilt["done"][K[2]])                                # drawn from the note: open; from the queue: ticked
+        self.assertFalse(rebuilt["done"][K[5]])
+        self.assertEqual(1, out[4]["posted"])                                 # the park still runs: they wait
+
+    def test_a_reload_finds_a_batch_in_the_record_with_its_lines(self):
+        running = record(OP, verb="todo-done", label="Ticking 2 lines…", keys=[K[0], K[1]], phase="checking")
+        refused = dict(running, state="failed", outcome="refused", done=1009.0, say=WALL)
+        out = self.run_rows(("ops", 3, reply(running)), ("ops", 10, reply(refused)))
+        self.assertEqual((True, True), (out[0]["done"][K[0]], out[0]["done"][K[1]]))
+        self.assertIn("Ticking 2 lines…", out[0]["box"])
+        self.assertIn(WALL, out[1]["box"])
+        self.assertIn("Line 1 for Acme Corp · Line 2 for Acme Corp", out[1]["box"])
+        self.assertEqual((False, False), (out[1]["done"][K[0]], out[1]["done"][K[1]]))
+        saved = dict(running, state="completed", outcome="saved", done=1009.0, say="Saved 2")
+        out = self.run_rows(("ops", 10, reply(saved)))
+        self.assertEqual("", out[0]["box"])
+        self.assertEqual("Saved 2", out[0]["toast"])
+
+    def test_a_success_card_of_any_verb_fades_and_hovering_holds_it(self):
+        parked = {"ok": True, "say": "Birch Entry is parked", "outcome": "saved", "state": "completed"}
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 20, PARK, parked), ("hover", 21, 0),
+                          ("tick", 30), ("leave", 31, 0), ("tick", 34), ("tick", 35.5))
+        replied, hovered, held, left, still, gone = out[1:]
+        self.assertIn('class="wk ok" data-i="0"', replied["box"])
+        self.assertIn("Birch Entry is parked", held["box"])                   # past ACTION_TOAST, held by the pointer
+        self.assertIn("Birch Entry is parked", still["box"])                  # off it, ACTION_TOAST more
+        self.assertEqual("", gone["box"])
+        refused = {"ok": False, "say": "Not done. A check refused it.", "outcome": "refused", "state": "failed"}
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 20, PARK, refused), ("tick", 60))
+        self.assertIn("Not done. A check refused it.", out[-1]["box"])       # a failure stays until it is closed
+
+
 # A record as operations.py reads it back for the page. Seconds, as time.time() gives them.
 def record(op, state="running", at=999.0, **kw):
     base = {"op": op, "verb": "park", "zone": "Work", "state": state, "phase": "", "at": at, "done": None, "outcome": None,
@@ -267,7 +420,7 @@ class TestWorkFromTheRecord(NodeCase):
         self.assertIn(">2 s<", first["box"])                                  # since the record began, not since the page did
         self.assertNotIn("wall check", first["box"])                          # no guess at ten seconds: the phase says
         self.assertIn("Committing: the wall check can take a minute.", second["box"])
-        self.assertIn('.trow[data-z="Work"] button.tick', first["hold"])      # and its zone is held
+        self.assertIn('.trow[data-z="Work"] button.tdate', first["hold"])     # and its zone is held
         self.assertTrue(first["ticking"])
 
     def test_it_asks_again_every_few_seconds_while_something_runs_and_never_otherwise(self):
@@ -415,7 +568,8 @@ class TestWorkOnThePage(StatusCase):
         self.assertIn("if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r})", status.JS)
         self.assertIn("if(!(window.GarrickAct&&GarrickAct(q,s))){host.postMessage({act:q});say(s)}", status.JS)   # + Add
         self.assertIn("if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}", status.TODO_JS)
-        self.assertIn("held('todo-done',r)", status.TODO_JS)
+        self.assertIn("if(!(window.GarrickTick&&GarrickTick({verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k})))"
+                      "{if(held(verb,r))return;send(verb,", status.TODO_JS)          # queued; without WORK_JS, as before
         self.assertIn("else if(!held('todo-date',r))open(r,b)", status.TODO_JS)
         self.assertIn("var busy=window.GarrickBusy&&GarrickBusy(dz);if(busy)", status.TADD_JS)
         self.assertIn("function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;", status.MANAGE_JS)

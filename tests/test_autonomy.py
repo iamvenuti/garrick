@@ -551,13 +551,16 @@ class WallRefusalTest(unittest.TestCase):
     SENTENCE = ("A wall holds some material back from this project, so I have not used it. "
                 "Nothing was written.")
     FIRST = "A wall holds some material back from this project, so I have not used it."
-    # Every route that can meet a wall. The rule gives the words; the four that
+    # Every route that can meet a wall. The rule gives the words; the five that
     # refuse in their own voice quote them, and so does the demo the user watches.
+    # operations.py holds them for the status page: a tick the zone's wall check
+    # refused ends on them in the card that stays on the page (#107).
     ROUTES = (REPO / "template" / "System" / "rules.md",
               SKILLS / "meetings" / "SKILL.md",
               SKILLS / "intake" / "SKILL.md",
               SKILLS / "intake" / "intake.py",
               SKILLS / "threads" / "SKILL.md",
+              REPO / "template" / "System" / "tools" / "operations.py",
               REPO / "examples" / "demo" / "video-script.md")
     # A sentence of the refusal's shape: it opens "A wall" and goes on to hold
     # material or something back or out. Enough to catch a wording written in the
@@ -588,6 +591,14 @@ class WallRefusalTest(unittest.TestCase):
                 return ast.literal_eval(node.value)
         self.fail("intake.py has no WALL_REFUSAL")
 
+    def constant_in(self, path: Path, name: str) -> str:
+        """A module-level string constant, read without importing the file."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == name:
+                return ast.literal_eval(node.value)
+        self.fail("%s has no %s" % (path.name, name))
+
     def said_in(self, path: Path) -> str:
         """What a route says, flattened. A skill or a page as it is written; a tool as
         the strings it holds, since a literal may be wrapped mid-sentence in source."""
@@ -599,10 +610,11 @@ class WallRefusalTest(unittest.TestCase):
 
     def shipped_files(self):
         """Everything the user ends up with or watches: the workspace, the demo, the
-        docs, the deck, the installer. Not `tests/`, which quotes the wording to hold
+        docs, the deck, the installer, and the extras a workspace copies in, the
+        status page among them. Not `tests/`, which quotes the wording to hold
         routes to it, and not `CHANGELOG.md`, which quotes every wording there ever
         was."""
-        for root in ("template", "examples", "docs", "presentation"):
+        for root in ("template", "examples", "docs", "presentation", "extras"):
             yield from sorted(path for path in (REPO / root).rglob("*")
                               if path.is_file() and path.suffix in (".md", ".py", ".html"))
         yield from sorted(REPO.glob("*.py"))
@@ -630,6 +642,18 @@ class WallRefusalTest(unittest.TestCase):
         for path in self.ROUTES:
             self.assertIn(self.SENTENCE, self.said_in(path), str(path.relative_to(REPO)))
         self.assertIn(self.SENTENCE, self.wall_refusal_constant())
+
+    def test_the_status_page_card_for_a_refused_tick_is_the_sentence(self):
+        """#107: a batch of ticks the wall check refused stays on the page as a
+        card. Its words are operations.py's WALL_REFUSAL, which say() hands back
+        whole, so the card says the rule's sentence and nothing of its own."""
+        tools = REPO / "template" / "System" / "tools"
+        self.assertEqual(self.SENTENCE, self.constant_in(tools / "operations.py", "WALL_REFUSAL"))
+        ops = _load(tools / "operations.py", "garrick_operations_walls")
+        for verb in ("todo-done", "todo-undo"):
+            said = ops.say("refused", verb, {"verb": verb, "zone": "Work", "file": "Todo.md", "keys": ["0" * 16, "1" * 16]},
+                           why=ops.WALL_REFUSAL)
+            self.assertEqual(self.SENTENCE, said, verb)
 
     def test_a_route_cannot_arrive_with_a_wording_of_its_own(self):
         """The routes above are not a list a later change may quietly forget. Every

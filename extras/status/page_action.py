@@ -10,8 +10,12 @@ The ask preview (ask.py) runs what it proposes through act(), the same check.
 Each verb changes one thing, and the ones that change a note commit it in the
 zone's repository, as the skills would:
 
-    todo-done   tick a Todo line, with Obsidian Tasks' ✅ date
-    todo-undo   reopen a line ticked from the page
+    todo-done   tick a Todo line, with Obsidian Tasks' ✅ date; "keys" in place
+                of "key" ticks several lines of one note at once, the batch the
+                page sends for the ticks made within a few seconds of each
+                other: one lock, one edit, one commit ("Work: done, 3
+                actions"), and refused as a whole when one line has moved
+    todo-undo   reopen a line ticked from the page, or several by "keys"
     todo-date   set or clear its date: 📅, or ⏳ on a #waiting line; "-" clears
     todo-add    a new line in the zone's Todo.md, from the Todo list's + button:
                 {"zone", "text", "target": "-", "Project" or "Project/Thread",
@@ -66,6 +70,12 @@ zone's repository, as the skills would:
                 workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
                 when the cmux extra and cmux are there
+
+What a Todo verb says it did is the line's text without its Markdown links,
+cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
+not in a toast. A batch that saved says "Saved 3". A tick or untick the zone's
+wall check refused ends on the rule's own sentence, operations.py's
+WALL_REFUSAL, word for word, and says nothing of what the check found.
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
@@ -166,10 +176,19 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "project", "thread", "folder", "key", "date", "target", "job", "launchers", "default", "zones",
+LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
           "name", "party", "kind", "to", "confirm", "commit")
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
+# What a Todo verb says it did: the line's text, no longer than this, and
+# without its Markdown links (#107). The most lines one batch may name.
+SAID_TEXT = 60
+KEYS_MAX = 50
+MDLINK = re.compile(r"!?\[([^\]]*)\]\([^)\s]*\)")
+WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
+# One line of what the zone's wall check prints when it refuses a commit:
+# check.py's report_staged(), as the pre-commit hook runs it.
+WALL_LINE = re.compile(r"^Commit refused: .+\. Take it out and commit again\b")
 REKEY_HOURS = 1
 # Seconds: how long one git command may take, then a commit's whole share
 # (add, commit and its hooks), then how long a request waits for another on
@@ -489,10 +508,11 @@ def committing(zone: Path, rel: str, message: str) -> tuple:
     return 0, ""
 
 
-def commit(zone: Path, note: Path, before: bytes, message: str) -> None:
+def commit(zone: Path, note: Path, before: bytes, message: str, wall: Optional[str] = None) -> None:
     """Commit the one file, or put it back as it was and say why. Put back
     only if it still holds what this request wrote: an edit made meanwhile,
-    in Obsidian say, is left alone."""
+    in Obsidian say, is left alone. With `wall`, the sentence a refusal by
+    the zone's wall check ends on, in place of what the check printed."""
     rel = str(note.relative_to(zone))
     mine = note.read_bytes()
     code, why = committing(zone, rel, message)
@@ -512,16 +532,45 @@ def commit(zone: Path, note: Path, before: bytes, message: str) -> None:
                           "commit it by hand: that commit waits for the check and goes through" % why)
         if not ours:
             raise Refused("not committed: %s. The note was edited meanwhile, so it was left as it is" % why)
+        if wall and WALL_LINE.match(why):
+            raise Refused(wall)
         raise Refused("not committed, so nothing changed: %s" % why)
 
 
+def said_text(text: str) -> str:
+    """A line's text as a reply says it: Markdown links down to their words,
+    a trailing `· ` left by a link that was the source, and no longer than
+    SAID_TEXT characters."""
+    text = WIKILINK.sub(lambda m: m.group(2) or m.group(1).split("#", 1)[0].rsplit("/", 1)[-1], text or "")
+    text = re.sub(r"\s*·\s*" + MDLINK.pattern + r"\s*$", "", text)       # the source link at the end: dropped whole
+    text = MDLINK.sub(lambda m: m.group(1), text)
+    text = re.sub(r"\s+", " ", text).strip().rstrip("·").strip()
+    return text if len(text) <= SAID_TEXT else text[:SAID_TEXT - 1].rstrip() + "…"
+
+
+def task_keys(req: dict) -> list:
+    """The lines a Todo request names: its one `key`, or a tick's or an
+    untick's `keys`, each once, in the order given."""
+    if "keys" in req:
+        keys = req.get("keys")
+        if req["verb"] not in ("todo-done", "todo-undo") or "key" in req or not isinstance(keys, list) \
+                or not 1 <= len(keys) <= KEYS_MAX:
+            raise Refused("not a list of task keys")
+    else:
+        keys = [req.get("key")]
+    if not all(isinstance(k, str) and re.fullmatch(r"[0-9a-f]{16}", k) for k in keys):
+        raise Refused("not a task key")
+    return list(dict.fromkeys(keys))
+
+
 def todo(ws: Path, req: dict) -> str:
+    """A Todo verb with a key, or a batch of ticks or unticks with `keys`: one
+    lock, one edit, one commit. A batch is refused as a whole, since it is one
+    commit: a line that has moved refuses it before anything is written."""
     tl = todo_lines()
     zone = zone_dir(ws, req.get("zone"))
     note = live_note(zone, req.get("file"))
-    key = req.get("key")
-    if not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{16}", key):
-        raise Refused("not a task key")
+    keys = task_keys(req)
     rel = note.relative_to(zone).as_posix()
     when = None
     if req["verb"] == "todo-date":
@@ -532,16 +581,34 @@ def todo(ws: Path, req: dict) -> str:
             raise Refused("not a date: %r" % raw)
     with zone_lock(zone):
         before = note.read_bytes()
-        found = live_key(tl, zone, rel, key, req["verb"])
-        why = stale_why(ws, req["verb"], req, found)
+        found = [live_key(tl, zone, rel, key, req["verb"]) for key in keys]
+        why = stale_why(ws, req["verb"], req, all(found))
         if why:
             raise Refused(why)
+        said, messages = [], []
         try:
-            said, message = todo_edit(tl, zone, rel, found, req["verb"], when)
-        except tl.NotFound:             # the line went between the precheck and the edit
+            for key in found:
+                one, message = todo_edit(tl, zone, rel, key, req["verb"], when)
+                said.append(one)
+                messages.append(message)
+        except tl.NotFound:             # a line went between the precheck and the edit
+            note.write_bytes(before)
             raise Refused(stale_why(ws, req["verb"], req, None) or "that line has changed since the page was built")
-        commit(zone, note, before, message[:200])
-    return said
+        if len(messages) == 1:
+            message = messages[0]
+        else:
+            message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
+        wall = wall_refusal(ws) if req["verb"] in ("todo-done", "todo-undo") else None
+        commit(zone, note, before, message[:200], wall=wall)
+    return said[0] if len(said) == 1 else "Saved %d" % len(said)
+
+
+def wall_refusal(ws: Path) -> Optional[str]:
+    """The rule's sentence for a wall that held something back, as
+    operations.py quotes it; None without that module, or with one older
+    than #107, and the refusal is then worded as it was before."""
+    said = getattr(ops_lib(ws), "WALL_REFUSAL", None)
+    return said if isinstance(said, str) and said else None
 
 
 def live_key(tl, zone: Path, rel: str, key: str, verb: str) -> Optional[str]:
@@ -559,17 +626,18 @@ def live_key(tl, zone: Path, rel: str, key: str, verb: str) -> Optional[str]:
 
 
 def todo_edit(tl, zone: Path, rel: str, key: str, verb: str, when):
-    """One edit to the line with this key: what to say, and the commit message."""
+    """One edit to the line with this key: what to say, and the commit message.
+    What it says is the line's text as said_text() cuts it; the commit keeps it whole."""
     if verb == "todo-done":
         text = tl.done(str(zone), rel, key)
-        return "Done: " + text, "%s: done, %s" % (zone.name, text)
+        return "Done: " + said_text(text), "%s: done, %s" % (zone.name, text)
     if verb == "todo-undo":
         text = tl.undo(str(zone), rel, key)
-        return "Reopened: " + text, "%s: reopened, %s" % (zone.name, text)
+        return "Reopened: " + said_text(text), "%s: reopened, %s" % (zone.name, text)
     text, moved, new = tl.set_date(str(zone), rel, key, when)
     rekeys(zone.name, rel, (key, new))
     what = "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b")) if when else "no date"
-    return "%s: %s%s" % (text, what, ", moved to " + moved if moved else ""), "%s: %s, %s" % (zone.name, what, text)
+    return "%s: %s%s" % (said_text(text), what, ", moved to " + moved if moved else ""), "%s: %s, %s" % (zone.name, what, text)
 
 
 def todo_add(ws: Path, req: dict) -> str:
@@ -609,7 +677,7 @@ def todo_add(ws: Path, req: dict) -> str:
             raise Refused("%s's Todo.md has no Inbox section" % zone.name)
         said = tl.parse(line)["text"]
         commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
-    return "Added to %s: %s" % (section, said)
+    return "Added to %s: %s" % (section, said_text(said))
 
 
 def park(ws: Path, req: dict, today: dt.date) -> str:

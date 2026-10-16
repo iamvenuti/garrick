@@ -341,7 +341,9 @@ added, and the commit hashes.
 
 A briefing built from the pages already in the wiki, meetings and mail
 alike. Read-only by default: it reads, and answers in the conversation. It
-writes a file only when the user asks to save the brief (step 7).
+writes a file only when the user asks to save the brief (step 7). A brief
+made for a project ends by offering that, in one question; a brief with no
+project behind it offers nothing.
 
 1. **Resolve X**, against Parties, People and Aliases in `System/context.md`:
    a party directly, or a person through their party. A project, or "this
@@ -387,9 +389,11 @@ writes a file only when the user asks to save the brief (step 7).
    nothing more**: "A wall holds some material back from this project, so I
    have not used it. Nothing was written." No title, date, party, person,
    subject or count, even if asked in the same breath.
-7. **Save it only when asked** ("save the brief in this project's
-   Deliverables"), never on your own initiative, and never the unfiltered
-   record of step 2, which has no project to hold it.
+7. **Save it only when asked**: on a yes to the offer that ends a brief
+   made for a project (below), or when the user asks unprompted ("save the
+   brief in this project's Deliverables"). Never on your own initiative,
+   and never the unfiltered record of step 2, which has no project to hold
+   it. A no writes nothing.
    - It goes into the project from step 2:
      `Zones/<Zone>/<Project>/Deliverables/YYMMDD - <name>.md`, dated the
      day it was first made, as *Files* in `System/rules.md` says, with a
@@ -400,10 +404,20 @@ writes a file only when the user asks to save the brief (step 7).
      then the briefing. Anything added since (a page filed in the
      meantime, a line the user dictates) goes through step 4 before it
      goes in.
+   - With a thread in focus (step 2), add the file to the Live artifact
+     row of that thread note's Resume here block, as a path relative to
+     the project, the way the `threads` skill's *Wrap* writes the row:
+     `` `Deliverables/YYMMDD - <name>.md`, the brief for <X> ``. It goes
+     beside whatever the row already names, never in its place; a row
+     that says only none, or still holds the template's placeholder,
+     names nothing, and the file takes its place. Nothing else in the note
+     changes. With no thread in focus, no thread note is edited.
    - Commit it in the zone's own repository, so the pre-commit hook runs
-     the wall check on it:
+     the wall check on it. The thread note whose row was edited goes in
+     the same commit; with none edited, leave out the second `add`:
      ```sh
      git -C "Zones/<Zone>" add -- "<Project>/Deliverables/YYMMDD - <name>.md"
+     git -C "Zones/<Zone>" add -- "<Project>/Threads/<Thread>/<Thread>.md"
      git -C "Zones/<Zone>" commit -m "<Project>: brief for <X>"
      ```
      When the hook refuses, take the material out and commit again, and
@@ -412,14 +426,25 @@ writes a file only when the user asks to save the brief (step 7).
    - Saving is not sending. Pushing, sending or sharing the brief needs
      the user's yes, every time.
 
+A brief made for a project ends with one question, the offer to save it:
+"Save it in Supplier Review's deliverables?" A yes runs step 7. A brief
+the request already asked to save has nothing left to offer, and the
+unfiltered record of step 2 has no project to hold it, so it offers
+nothing.
+
 Spoken, three sentences at most: who they are, where things stand, and the
-next thing due or owed. Offer the detail rather than giving it: "Want the
-open actions read out?" When the brief was saved, say where in place of
-the offer: "It's in Supplier Review's deliverables."
+next thing due or owed. Then the save offer, which takes the place of
+"Want the open actions read out?", because the saved file holds them. With
+no project behind the brief, offer the detail rather than giving it: "Want
+the open actions read out?" When the brief was saved, say where in place of
+the offer: "It's in Supplier Review's deliverables, and the Next Call
+thread points at it." With no thread in focus, the first half alone.
 
 Written: the same opening, then the pages drawn on (as links), the open
-actions from `Todo.md`, and any quoted commitments; when saved, the file's
-path and the commit hash.
+actions from `Todo.md`, any quoted commitments, and the save offer as the
+last line; when saved, the file's path, the thread note whose Live artifact
+row now names it (or that no thread was in focus, so no note was edited),
+and the commit hash.
 
 ## Nothing there yet: from an ordinary request to a saved brief
 
@@ -547,14 +572,17 @@ something needs it.
    citation and the one thing due as the Next action. That action is a line
    in the zone's `Todo.md` as well, in the one shape every skill writes:
    `- [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>`. A file in
-   `Deliverables/` is offered rather than written: *Prep* step 7 saves one
-   when the user asks.
+   `Deliverables/` is offered rather than written: step 10 ends on *Prep*'s
+   save offer, and a yes saves it as *Prep* step 7 does, with this thread
+   in focus.
 
-10. **Then say what was set up, in two sentences**, and nothing longer.
-    Spoken: "Acme Corp is a party in Work now, with a Supplier Review
-    project and a Next Call thread. The brief is in the thread note, and
-    the next thing due is the carrier quote on Friday." Written: the same,
-    then the paths and the two commit hashes.
+10. **Then say what was set up, in two sentences**, and nothing longer,
+    then *Prep*'s one question, the save offer. Spoken: "Acme Corp is a
+    party in Work now, with a Supplier Review project and a Next Call
+    thread. The brief is in the thread note, and the next thing due is the
+    carrier quote on Friday. Save it in Supplier Review's deliverables?"
+    Written: the same, then the paths and the two commit hashes, and the
+    save offer as the last line.
 
 What this route never does: resolve two parties of one name by itself,
 guess a wall, create a zone, write a mail domain, a person's row or an

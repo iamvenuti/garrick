@@ -45,7 +45,7 @@ Confirm the source, date and parties when asked. These labels let Garrick apply 
 
 > Prepare a short brief for the supplier call from the conversation I just filed: what was decided, what I owe them, and what to ask next. Show which source you used. Do not send it.
 
-The brief goes into the thread note, which is the one place the next session looks: your words under *The ask*, the brief under *State of play*, and the *Resume here* table filled in, with the filed page linked as its source and the one thing due as the next action. That action is also a line in your zone's `Todo.md`. A separate file in the project's `Deliverables/` is offered rather than written: ask for it if you want one.
+The brief goes into the thread note, which is the one place the next session looks: your words under *The ask*, the brief under *State of play*, and the *Resume here* table filled in, with the filed page linked as its source and the one thing due as the next action. That action is also a line in your zone's `Todo.md`. A separate file in the project's `Deliverables/` is offered rather than written: the brief ends by asking whether to save it there, and a yes saves it and points the thread note at it.
 
 Check the brief against the source. The assistant applies the walls you have declared before drafting, and says that something was held back without saying what. Its commit check catches only certain kinds of leakage; you still review the content before sharing it.
 

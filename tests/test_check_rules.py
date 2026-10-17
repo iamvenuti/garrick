@@ -583,6 +583,68 @@ class TestTodo(CheckCase):
         commit_all(self.work, "today")
         self.assertFinds("todo", "warning", "grew by 24")
 
+    def test_a_line_that_reads_as_a_log_entry(self):
+        """A line names one action. Counted as Obsidian shows it, so a thread's
+        full path and the sources a sweep folded onto it do not count."""
+        long = "- [x] [[Pricing]]: file the drafts: " + "all three filed and linked from the hub, " * 5 + "✅ 2026-03-20"
+        self.todo("- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]: send the memo to Dana Birch "
+                  "(also in [[2026-03-01-acme-call]]) (also in [[2026-03-08-acme-call]]) "
+                  "(also in [[2026-03-15-acme-call]]) 📅 2026-03-20",
+                  "- [ ] [[Pricing]]: " + "x" * 180)
+        self.assertClean("todo")
+        self.todo("- [ ] [[Pricing]]: " + "x" * 195, long)
+        self.assertFinds("todo", "warning", "2 lines are longer than 200 characters")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_tick_keeps_the_line_as_it_was_written(self):
+        """Ticking changes the box and adds the ✅ date. A line the history held
+        open is an action done; one it never held open is a record, and so is
+        one that grew an outcome when it was ticked."""
+        real_repo(self.work)
+        self.todo("- [ ] [[Pricing]]: send the memo 📅 2026-03-20 then call Dana",
+                  "- [ ] [[Pricing]]: file the drafts #waiting ⏳ 2026-03-22",
+                  "- [ ] [[Pricing]]: book the call (also in [[2026-03-01-acme-call]])")
+        commit_all(self.work, "the first list")
+        self.todo("- [ ] [[Pricing]]: book the call (also in [[2026-03-01-acme-call]]) 📅 2026-03-25")
+        commit_all(self.work, "a date for the call")
+        self.todo("- [x] [[Pricing]]: send the memo then call Dana 📅 2026-03-20 ✅ 2026-03-20",   # tidied, then ticked
+                  "- [x] [[Pricing]]: file the drafts #waiting ⏳ 2026-03-22 ✅ 2026-03-21",
+                  "- [X] [[Pricing]]: Book the call 📅 2026-03-25 ✅ 2026-03-21")
+        self.assertClean("todo")
+        self.todo("- [x] [[Pricing]]: file the drafts: all three filed as #12, #13 and #14 ✅ 2026-03-21",
+                  "- [x] [[Launch]]: release 0.4.0 cut, five issues closed ✅ 2026-03-21",
+                  "- [x] Acme Corp: invoice paid ✅ 2026-03-21")
+        hit = self.assertFinds("todo", "warning", "3 ticked lines were never open in the zone's history")
+        self.assertIn("([[Launch]], [[Pricing]])", hit[0].message)
+        commit_all(self.work, "a wrap that wrote records")
+        self.assertFinds("todo", "warning", "3 ticked lines were never open")    # committed, still never open
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_history_is_read_once_per_zone(self):
+        real_repo(self.work)
+        self.todo(*["- [ ] [[Pricing]]: action %d" % i for i in range(5)])
+        commit_all(self.work, "the list")
+        self.todo(*["- [x] [[Pricing]]: action %d ✅ 2026-03-20" % i for i in range(5)])
+        with mock.patch.object(check, "_git_bytes", wraps=check._git_bytes) as reads:
+            self.assertClean("todo")
+        logs = [c for c in reads.call_args_list if "log" in c.args[0]]
+        self.assertEqual(1, len(logs), logs)
+
+    def test_no_history_says_nothing_about_ticks(self):
+        """The fixture's zones have a stand-in .git and no history to read."""
+        self.todo("- [x] [[Pricing]]: release 0.4.0 cut ✅ 2026-03-21")
+        self.assertClean("todo")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_list_never_committed_says_nothing_about_ticks(self):
+        real_repo(self.work)
+        self.todo("- [x] [[Pricing]]: release 0.4.0 cut ✅ 2026-03-21")
+        self.assertClean("todo")                                  # no commit at all
+        write(self.work / "AGENTS.md", "# Work\n")
+        git(self.work, "add", "AGENTS.md")
+        git(self.work, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "x")
+        self.assertClean("todo")                                  # commits, none of them the list
+
 
 class TestLinks(CheckCase):
     def test_clean(self):

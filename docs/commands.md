@@ -261,6 +261,19 @@ A scope is a path from the workspace's top: a zone, a project, a thread, or `Wik
 
 With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other three kinds changes until you are there.
 
+## Correcting a value
+
+When something written down turns out wrong (an address, an account, a name, a share path), say so: "that's wrong, it's acmecorp.example." The `threads` skill runs the correction, which fixes every live copy, not only the one in front of you:
+
+```sh
+python3 System/tools/correct.py --old acme-corp.example --new acmecorp.example            # lists every live copy; changes nothing
+python3 System/tools/correct.py --old acme-corp.example --new acmecorp.example --apply --why "the domain has no hyphen"
+```
+
+It searches your assistant's memory entries (the folder `memory` names in the check settings), `System/context.md`, every hub and thread note, each zone's `Todo.md`, and the pages of both wikis. The listing gives each file and line, and changes nothing; `--json` gives it to another program. With `--apply`, your one yes, it writes the new value in place of the old in each of them, re-reading each file first, and commits once per repository, staging only the files it changed. A memory kept outside the workspace is changed and not committed. A zone's wall check still runs on its commit.
+
+The old value is matched as written, never inside a longer word, and a hit that is right where it is, such as a misheard form in Aliases, is kept with `--leave <path>`. Live files show only the new value, with no "was" trail: git has the old one. A raw record is never edited. One that holds the old value is listed, and each wiki page resting on it gets `superseded:` in its frontmatter and a line at its end saying its record holds a value corrected since, and the right one. Then the Meetings index is rebuilt, and the status page if you have it.
+
 ## The two memories
 
 `Wikis/Meetings/` and `Wikis/Knowledge/` are empty after install. Their schemas (what a page needs, where raw material goes, what must never cross between them) are in each folder's own `AGENTS.md`.

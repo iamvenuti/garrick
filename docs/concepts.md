@@ -92,6 +92,14 @@ The table in `System/context.md` that maps names your dictation gets wrong to wh
 
 Who you are and who you deal with: Me, Zones, Parties, Walls, People and Aliases. It is yours, filled in from your answers at install, and every session reads it.
 
+### Learned entry
+
+Something one session wrote down and later sessions read as fact: an entry in your assistant's own memory, or a row the assistant added to a table in `System/context.md`, such as an alias it had to ask about. Each says where it came from. A memory entry carries `source:` and `created:` in its frontmatter; a row carries a Learned cell, `2026-10-16, user`. The source is `user` (you said it), `file:<path>` (a note in the workspace) or `inbound:<raw path>` (a mail, a transcript or a page). Rows you typed yourself have no Learned cell. What the assistant may write down without asking depends on what acting on it would do: a pointer or an alias goes ahead, a domain or a destination waits for your yes, and something that only a mail or a page said is never kept as a belief until you confirm it. See [Autonomy](../template/System/rules.md#autonomy) in the rules. The check warns about a learned entry with no origin, and one whose only source is inbound, once `memory` in the [check settings](commands.md#check-settings) names your assistant's memory folder.
+
+### Correction
+
+What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on your one yes fixes them all, one commit per repository. Live files then show only the right value; git keeps the old one. A raw record is never edited: the page that rests on it gets `superseded:` in its frontmatter and a line saying so. See [Correcting a value](commands.md#correcting-a-value).
+
 ## The two wikis
 
 ### The Meetings wiki

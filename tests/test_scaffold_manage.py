@@ -90,7 +90,11 @@ class TestParty(ManageCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
                       "in Work.", r.stdout)
-        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |", self.context())
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | %s, user |" % datetime.date.today().isoformat(),
+                      self.context())
+        # The rows typed by hand are left exactly as they were; only the header gains the column.
+        self.assertIn("| Domains | Learned |", self.context())
+        self.assertNotIn("|  |  |\n", self.context())
         # Left for the caller to commit, in the workspace's own repository.
         self.assertIn("System/context.md", self.root_git("status", "--porcelain").stdout)
         self.assertIn("Commit System/context.md on its own", r.stdout)
@@ -277,7 +281,10 @@ class TestRename(ManageCase):
         self.assertIn("Acme, Pricing: renamed Renewal", self.git("log", "-1", "--format=%s").stdout)
         self.assertIn("Renamed from Pricing.", self.git("log", "-1", "--follow", "-p", "--format=", "--",
                                                         "Acme/Threads/Renewal/Renewal.md").stdout)
-        self.assertIn("| pricing | Renewal |", (self.root / "System" / "context.md").read_text())
+        context = (self.root / "System" / "context.md").read_text()
+        # The alias a rename leaves is a learned row, and says it came from the user.
+        self.assertIn("| pricing | Renewal | %s, user |" % datetime.date.today().isoformat(), context)
+        self.assertIn("| Heard | Means | Learned |", context)
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 

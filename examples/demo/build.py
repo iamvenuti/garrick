@@ -110,7 +110,7 @@ PLAN = [
     ("2026-09-04 12:34", "Zones/Work", "New project Birch Entry (birch), first thread Market Sizing", [
         project("Work", "Birch Entry", "birch", "Market Sizing")]),
     ("2026-09-04 12:40", "Zones/Work", "Work: actions from Birch kick-off", [
-        todo("Market sizing memo")]),
+        todo("Market sizing memo", "Sizing assumptions to Iris")]),
     ("2026-09-04 16:10", "Zones/Work", "Acme Review: supplier list received from Owen", [
         ACME + "Sources/Acme supplier list.csv"]),
     ("2026-09-07 08:30", "Wikis", "Knowledge: ingested Freight Rate Outlook, Autumn 2026 (Pellow & Strand Research)", [
@@ -145,12 +145,12 @@ PLAN = [
         ACME + "Sources/Pump line stoppages.csv"]),
     ("2026-09-10 17:00", "Zones/Work", "Birch Entry, Market Sizing: assumptions sent to Iris for Friday", [
         BIRCH + "Deliverables/260910 - Sizing assumptions.md",
-        todo("Sizing assumptions to Iris"), done("Sizing assumptions to Iris")]),
+        done("Sizing assumptions to Iris")]),
     ("2026-09-10 18:30", "Wikis", "Meetings: ingest 260910-kitchen-quote, Kitchen quote", [
         M + "raw/260910-kitchen-quote.txt", M + "wiki/sources/260910-kitchen-quote.md",
         M + "wiki/people/ray-lark.md"]),
     ("2026-09-10 18:34", "Zones/Personal", "Personal: actions from Kitchen quote", [
-        todo("Choose the worktop")]),
+        todo("Choose the worktop", "Compare the two kitchen quotes")]),
     ("2026-09-10 18:40", "Zones/Personal", "House: new thread Roof Repair", [
         thread("Personal", "House", "Roof Repair")]),
     ("2026-09-11 12:10", "Wikis", "Meetings: ingest 260911-birch-sizing-assumptions, Birch sizing assumptions", [
@@ -168,7 +168,7 @@ PLAN = [
         K + "wiki/concepts/wear-and-tear.md", K + "wiki/entities/homewright.md"]),
     ("2026-09-12 10:15", "Zones/Personal", "House, Kitchen: two quotes compared; Lark & Sons ahead", [
         HOUSE + "House.md", HOUSE + "Deliverables/260912 - Kitchen quotes.md",
-        todo("Compare the two kitchen quotes"), done("Compare the two kitchen quotes")]),
+        done("Compare the two kitchen quotes")]),
     ("2026-09-12 10:25", "Zones/Personal", "House, Roof Repair: left with Ray; waiting on his quote", [
         HOUSE + "Threads/Roof Repair/Roof Repair.md", HOUSE + "Threads/Roof Repair/Questions for Ray.md",
         todo("Chase Ray for the roof quote")]),
@@ -201,7 +201,7 @@ PLAN = [
     ("2026-09-17 09:25", "Zones/Work", "Birch Entry: new thread Launch Plan", [
         thread("Work", "Birch Entry", "Launch Plan")]),
     ("2026-09-17 09:30", "Zones/Work", "Birch Entry, Market Sizing: finished; outcome recorded", [
-        BIRCH + "Threads/Market Sizing/Market Sizing.md", BIRCH + "Birch Entry.md"]),
+        BIRCH + "Threads/Market Sizing/Market Sizing.md", BIRCH + "Birch Entry.md", todo("Invoice Birch")]),
     ("2026-09-17 17:05", "Wikis", "Meetings: ingest 260917-acme-weekly-check-in, Acme weekly check-in", [
         M + "raw/260917-acme-weekly-check-in.txt", M + "wiki/sources/260917-acme-weekly-check-in.md"]),
     ("2026-09-18 11:50", "Wikis", "Meetings: ingest 260918-birch-carrier-requirements, Birch carrier requirements", [
@@ -214,7 +214,7 @@ PLAN = [
     ("2026-09-18 17:20", "Zones/Work", "Acme Review, Freight Terms: first draft of the options brief", [
         ACME + "Deliverables/260918 - Freight options brief.md", done("Freight options brief, first draft")]),
     ("2026-09-18 17:40", "Zones/Work", "Work: sizing invoiced to Birch; Acme's September invoice noted", [
-        todo("Invoice Birch", "Invoice Acme"), done("Invoice Birch")]),
+        todo("Invoice Acme"), done("Invoice Birch")]),
     ("2026-09-18 19:05", "Wikis", "Meetings: ingest 260918-kitchen-survey, Kitchen survey", [
         M + "raw/260918-kitchen-survey.txt", M + "wiki/sources/260918-kitchen-survey.md",
         M + "wiki/people/ned-lark.md"]),

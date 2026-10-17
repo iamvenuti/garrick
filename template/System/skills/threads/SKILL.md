@@ -404,6 +404,15 @@ per wrap: the one named, and nothing else.
    other, so anything that counts open actions counts it.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
+   **Tick a line as it was written; the outcome goes in the dated entry, not
+   on the line.** `[ ]` becomes `[x]` and `✅ <YYYY-MM-DD>`, today, goes last,
+   as Obsidian Tasks writes it, and nothing else on the line changes: "file
+   the drafts" stays "file the drafts", and the issue numbers they were filed
+   as go in step 7's entry. **Never add a line for work that is already
+   done.** `Todo.md` holds what is still to do; what this session did is the
+   dated entry's, where it already is. `check.py` warns about a ticked line
+   the zone's history never held open, and about a line longer than 200
+   characters.
    **A deliverable that left the workspace** in this session, copied to a
    shared folder: ask who edits it next. Colleagues who edit it: the shared
    copy counts from now on (`share`); nobody, or colleagues who only read
@@ -440,10 +449,24 @@ per wrap: the one named, and nothing else.
     before anything else in the thread.
     ```
     Create it if missing, leave it if present. No memory, no step.
-12. **Commit in the zone's repository.** Stage by name only what this wrap
-    touched and this thread's own changed files: the thread folder, the hub if
-    edited, `Todo.md` if edited, and any `Deliverables/` or `Sources/` file this
-    session made for the thread. Never `git add -A`.
+12. **Commit in the zone's repository.** First move the lines ticked before
+    today out of the list:
+    ```sh
+    python3 System/skills/todo/todo.py archive --zone <Zone>
+    ```
+    It moves them, whichever thread they name, to `archive/Todo-<YYYY>.md`,
+    where they can be read and pasted back, and leaves the lines ticked today
+    for the status page's *Done today*. The nightly sweep does the same, so in
+    a zone it reaches this usually moves nothing; in one it does not reach, or
+    a workspace without the jobs extra, it is the only thing that does. A
+    project in `System/` archives the zone whose list step 8 wrote to, and
+    commits that list there; with no list touched, there is nothing to
+    archive.
+    Then stage by name only what this wrap touched and this thread's own
+    changed files: the thread folder, the hub if edited, `Todo.md` if edited
+    or archived, `archive/` when the archive moved a line, and any
+    `Deliverables/` or `Sources/` file this session made for the thread.
+    Never `git add -A`.
     ```sh
     git -C "Zones/<Zone>" log -1 --format='%h %an %s'   # did someone commit meanwhile?
     git -C "Zones/<Zone>" add -- "<path>" "<path>"
@@ -571,7 +594,7 @@ Wrap every thread worked on today, then give one summary.
    - `<Project>/<Project>.md`, `<Project>/Deliverables/…`, `<Project>/Sources/…`
      → the project's live thread if it has one; if it has several, ask which,
      once, for all such files together;
-   - `Todo.md` → no thread;
+   - `Todo.md`, `archive/…` → no thread;
    - a path through a folder whose name starts with `_` → not part of the
      work; ignore it.
 
@@ -634,7 +657,9 @@ Closes a thread for good.
    5 does, then remove the block; drop the rest on the user's word.
 7. **Open actions:** if `Todo.md` still has unticked lines that name this
    thread (`Acme, Pricing`), name them and ask whether to tick, keep or drop
-   them. Do not decide for the user.
+   them. Do not decide for the user. Tick a line as it was written, as Wrap
+   step 8 does; the outcome goes in step 3's outcome and step 4's entry, not
+   on the line. Never add a line for work that is already done.
 8. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
 9. **Delete the memory pointer**, if there is one. A pointer that outlives its
@@ -938,11 +963,14 @@ Written form: the spoken answer on top, then the detail each command lists.
 ## What this skill does not do
 
 - **It never touches a thread it was not asked about.** A wrap reads and writes
-  one thread's note, one hub line, the `Todo.md` lines step 7 allows and that
+  one thread's note, one hub line, the `Todo.md` lines step 8 allows and that
   thread's memory pointer. Other threads are not read, judged or refreshed,
-  even when something about them looks stale.
-- **A wrap is not a sweep.** It does not tidy `Todo.md`, audit memories, check
-  other threads, or ingest meetings. "Close for the day" wraps the threads that
+  even when something about them looks stale. The one exception is step 12's
+  archive, which moves every line ticked before today, whichever thread it
+  names: a done line is done, and it is kept in `archive/`.
+- **A wrap is not a sweep.** It does not expire, reorder or tidy `Todo.md`
+  beyond that archive, audit memories, check other threads, or ingest
+  meetings. "Close for the day" wraps the threads that
   changed today and no others.
 - **It never crosses zones** unless the user asks, and then only for that
   request. It never commits two zones together.

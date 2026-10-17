@@ -814,13 +814,13 @@ def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float
             prune(f.parent, now)
         cfg = settings(ws)
         if (state_dir(ws) / "held.json").is_file() and not is_quiet(cfg, dt.datetime.fromtimestamp(now)):
-            dispatch({"flush": True}, ws, env, detach)
+            dispatch({"flush": True}, ws, env, detach, now)
         return
     if name == "Notification":
         why = waiting_for(payload)
         if why:
             dispatch({"event": "needs-you", "title": "Needs you",
-                      "message": "%s: needs you. %s." % (label, why), "zone": zone}, ws, env, detach)
+                      "message": "%s: needs you. %s." % (label, why), "zone": zone}, ws, env, detach, now)
         return
     if name == "Stop":
         if payload.get("stop_hook_active"):
@@ -840,7 +840,7 @@ def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float
         if now - began < after * 60:
             return
         dispatch({"event": "finished", "title": "Finished",
-                  "message": "%s: done, after %s." % (label, took(now - began)), "zone": zone}, ws, env, detach)
+                  "message": "%s: done, after %s." % (label, took(now - began)), "zone": zone}, ws, env, detach, now)
 
 
 def prune(folder: Path, now: float) -> None:
@@ -853,13 +853,16 @@ def prune(folder: Path, now: float) -> None:
         pass
 
 
-def dispatch(notice: dict, ws: Path, env, detach: bool) -> None:
-    """Send from a process of its own, so a slow network never holds the session."""
+def dispatch(notice: dict, ws: Path, env, detach: bool, now: Optional[float] = None) -> None:
+    """Send from a process of its own, so a slow network never holds the session.
+    Sent in this process (`detach` false), quiet hours are judged at `now`, the
+    hook's own time; a process of its own judges them when it sends."""
     if not detach:
+        at = dt.datetime.fromtimestamp(now) if now is not None else None
         if notice.get("flush"):
-            flush(ws, env=env)
+            flush(ws, now=at, env=env)
         else:
-            send(notice["event"], notice["title"], notice["message"], notice.get("zone"), root=ws, env=env)
+            send(notice["event"], notice["title"], notice["message"], notice.get("zone"), root=ws, env=env, now=at)
         return
     try:
         p = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "deliver", "--workspace", str(ws)],

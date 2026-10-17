@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Context Nurture every night at 05:15, before the todo sweep: the mechanical
+  fixes the workspace's checks find (a link broken by a rename, a deliverable
+  without its date prefix, a thread missing from its hub, a status synonym)
+  applied and committed, one commit per repository, of the files it changed
+  and no other. Wall, attribution and judgment findings wait in the day's
+  report for a session. No assistant is called.
+  Copy it to ~/Library/LaunchAgents/ and edit the copy.
+  If your workspace is not ~/Garrick, replace each /Users/&lt;you&gt;/Garrick
+  with its full path. Then replace every other &lt;you&gt; (written that way
+  because this is XML) with your macOS user name; launchd does not expand ~.
+  Load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.nurture.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.nurture`.
+  Where its notices go (failed, recovered) is the status page's
+  Settings › Notifications; GARRICK_NOTIFY or GARRICK_NOTIFY_CMD added to
+  EnvironmentVariables override that for this job alone. See
+  docs/extras/scheduled-jobs.md for the other variables.
+  The digest argument below sends one line, what was fixed and what waits,
+  as the Todo summary notice, to wherever Settings › Notifications sends it;
+  remove it for none. To nurture one zone or wiki only, add a scope argument
+  after it, followed by the path (Zones/Work), and one pair for each other.
+  Whatever job.py cannot write to its own log, such as the error from a path
+  left wrong, goes to nurture.launchd.log in the jobs' log folder.
+  launchd does not create that folder: run the job once by hand first.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.nurture</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>nurture</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/nurture_sweep.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--digest</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/nurture.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/nurture.launchd.log</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+</dict>
+</plist>

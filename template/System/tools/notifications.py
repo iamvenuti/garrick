@@ -7,6 +7,7 @@
     python3 System/tools/notifications.py hook         what an assistant's hook runs, its event on stdin
     python3 System/tools/notifications.py hooks [--install | --uninstall]   Needs you and Finished, for Claude Code and Codex
     python3 System/tools/notifications.py telegram-token [--forget]         keep the bot's token in the keychain
+    python3 System/tools/notifications.py telegram-chat     find the chat that last wrote to the bot, keep it, switch Telegram on
 
 Every sender calls send(): the scheduled jobs (job.py), the todo sweep, the
 cmux desk, and the session hooks. Where a notice goes is set on the status
@@ -29,8 +30,10 @@ System/garrick-settings.json, committed with the workspace:
 - `telegram`, a message from your bot, through the Bot API's sendMessage,
   standard library only. The bot's token is a secret: it lives in the macOS
   keychain (`telegram-token` puts it there, read from the terminal or from
-  standard input, never from an argument), never in the settings file, a
-  log or this page. The chat is one ID, or one per zone.
+  standard input, never from an argument, and so does Settings' Set up…,
+  through the status page's page_action.py), never in the settings file, a
+  log or this page. The chat is one ID, or one per zone. `telegram-chat`
+  finds it: the private chat that last wrote to the bot, through getUpdates.
 - `command`, a command of yours, run as `<command> <title> <message>` with
   GARRICK_NOTIFY_EVENT, GARRICK_NOTIFY_KIND, GARRICK_JOB, GARRICK_EXIT and,
   for a notice about one zone, GARRICK_ZONE and GARRICK_ZONE_DIR set, in that
@@ -49,10 +52,17 @@ happened, never the content of a note or a meeting, since a phone shows it
 on a locked screen. Finished says only that a session is done, in which
 thread and after how long.
 
+**The simple view.** Settings opens on four plain choices: where to send
+(this Mac, Telegram), which of four events to be told about, the minutes a
+long task takes, and quiet hours. simple_choices() reads them out of the
+settings and from_simple() gives the settings they mean; settings are
+"simple" (is_simple) when the two agree, and anything else is custom, kept
+as it is under More options until you ask for the simple choices again.
+
 **An override.** GARRICK_NOTIFY=1 or GARRICK_NOTIFY_CMD in a sender's
 environment, as a job's launchd plist may set them, keep working exactly as
 before for that sender, and these settings do not apply to it: the status
-page names the plists that do this.
+page counts the plists that do this, and names them in a tooltip.
 
 **The hooks.** `hooks --install` adds this file's `hook` to Claude Code's
 UserPromptSubmit, Notification and Stop events (~/.claude/settings.json),
@@ -133,6 +143,7 @@ HELD_MAX = 50
 HELD_HOURS = 24
 TURN_DAYS = 2
 TELEGRAM_API = "https://api.telegram.org/bot%s/sendMessage"
+TELEGRAM_UPDATES = "https://api.telegram.org/bot%s/getUpdates"
 TELEGRAM_TEXT = 3500
 TIMEOUT = 8            # seconds a channel may take: Telegram, cmux, osascript
 COMMAND_TIMEOUT = 60   # what job.py has always given a notifier
@@ -331,6 +342,127 @@ def clean(given, zones: Optional[List[str]] = None) -> dict:
     if out["channels"]["telegram"] and not (chat or any(z.get("chat") for z in out["zones"].values())):
         raise Invalid("Telegram needs a chat ID to send to, or switch it off")
     return out
+
+
+def request_of(cfg: dict) -> dict:
+    """Settings as settings() gives them, in the shape clean() takes: what
+    the page would send for them."""
+    events = {}
+    for name, e in cfg["events"].items():
+        entry = {"to": list(e["to"]), "quiet": e["quiet"]}
+        if name in SESSION_EVENTS:
+            entry["away"] = bool(e.get("away"))
+        if name == "finished":
+            entry["after"] = e["after"]
+        events[name] = entry
+    return {"channels": dict(cfg["channels"]), "telegram": {"chat": cfg["telegram"]["chat"]}, "command": cfg["command"],
+            "events": events, "quiet": dict(cfg["quiet"]), "zones": {z: dict(v) for z, v in cfg["zones"].items()}}
+
+
+def _garrick_lib(ws: Path):
+    """garrick_lib.py, which writes the settings file: the workspace's own, else the one beside this file."""
+    import importlib.util
+    for src in (ws / "System" / "tools" / "garrick_lib.py", HERE / "garrick_lib.py"):
+        if src.is_file():
+            spec = importlib.util.spec_from_file_location("garrick_notifications_lib", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if callable(getattr(mod, "save_preferences", None)):
+                return mod
+    raise OSError("cannot find System/tools/garrick_lib.py, which keeps the settings")
+
+
+def keep(ws: Path, cfg: dict) -> dict:
+    """Save these settings, checked as the page's are, leaving the rest of
+    the settings file as it is. What was saved, in clean()'s shape."""
+    out = clean(request_of(cfg), zones_of(ws))
+    _garrick_lib(ws).save_preferences(ws, {KEY: out})
+    return out
+
+
+# --------------------------------------------------------------------------- the simple view
+# Settings › Notifications opens on four plain choices; everything above is
+# under More options. The simple view is one mapping, defined here once and
+# mirrored by the page's script: simple_choices() reads the choices out of a
+# full set of settings, from_simple() gives the full set they mean.
+#
+#   Send to       the mac and telegram switches. With the cmux extra (`desk`)
+#                 the cmux switch follows this Mac's: a session in cmux gets
+#                 its notice on its own tab.
+#   Tell me when  SIMPLE_EVENTS: on, the event goes to every Send to channel
+#                 switched on; off, to none of them. SIMPLE_FOLLOW go wherever
+#                 Send to does, SIMPLE_OFF nowhere.
+#   Quiet hours   one switch and two times; what each event does in them is
+#                 DEFAULT_EVENTS' choice: Needs you sent, Finished dropped,
+#                 the Desk's replies sent, the rest held till morning.
+#
+# Not in it, so set only under More options: the command channel (off), a
+# choice per event, "only when away" (off), and anything about a zone (no
+# restriction, no chat of its own). A channel switched off keeps what each
+# event said for it, since nothing goes there; when no Send to channel is on,
+# this Mac's column is the one the boxes set.
+SEND_TO = ("mac", "telegram")
+SIMPLE_EVENTS = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
+                 ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"))
+SIMPLE_FOLLOW = ("job-idle", "desk")
+SIMPLE_OFF = ("todo-refreshed",)
+
+
+def _tracked(channels: dict) -> List[str]:
+    """The Send to channels the simple boxes set: those switched on, else this Mac's."""
+    return [c for c in SEND_TO if channels.get(c)] or ["mac"]
+
+
+def simple_choices(cfg: dict) -> dict:
+    """The simple view's choices, as settings() gives the settings:
+    {"send": {"mac", "telegram"}, "tell": {event: on}, "after": minutes,
+    "quiet": {"on", "from", "to"}}. For settings that are custom, the
+    nearest the simple view can show."""
+    tracked = _tracked(cfg["channels"])
+    return {"send": {c: bool(cfg["channels"].get(c)) for c in SEND_TO},
+            "tell": {e: any(c in cfg["events"][e]["to"] for c in tracked) for e, _ in SIMPLE_EVENTS},
+            "after": cfg["events"]["finished"]["after"],
+            "quiet": dict(cfg["quiet"])}
+
+
+def from_simple(choices: dict, cfg: dict, desk: bool = False) -> dict:
+    """The full settings the simple choices mean, starting from `cfg`
+    (settings() shape): what it holds that the simple view does not decide
+    (the Telegram chat, your command, a switched-off channel's column) is
+    kept; what the simple view leaves out is set to its plain value."""
+    out = json.loads(json.dumps(cfg))
+    ch = out["channels"]
+    ch["mac"] = bool(choices["send"].get("mac"))
+    ch["telegram"] = bool(choices["send"].get("telegram")) and bool(out["telegram"]["chat"])
+    if desk:
+        ch["cmux"] = ch["mac"]
+    ch["command"] = False
+    tracked = _tracked(ch)
+    tell = dict((e, bool(choices["tell"].get(e))) for e, _ in SIMPLE_EVENTS)
+    for name, e in out["events"].items():
+        want = tell[name] if name in tell else name in SIMPLE_FOLLOW
+        e["to"] = [c for c in CHANNELS if (want if c in tracked else c in e["to"])]
+        e["quiet"] = DEFAULT_EVENTS[name]["quiet"]
+        e["away"] = False
+        if name == "finished":
+            after = choices.get("after", e["after"])
+            e["after"] = after if isinstance(after, int) and not isinstance(after, bool) and 0 <= after <= AFTER_MAX else e["after"]
+    q = choices.get("quiet") or {}
+    out["quiet"] = {"on": q.get("on", True) is not False,
+                    "from": q["from"] if isinstance(q.get("from"), str) and CLOCK.match(q["from"]) else out["quiet"]["from"],
+                    "to": q["to"] if isinstance(q.get("to"), str) and CLOCK.match(q["to"]) else out["quiet"]["to"]}
+    out["zones"] = {z: ({"to": list(CHANNELS)} if "to" in v else {}) for z, v in out["zones"].items()}
+    return out
+
+
+def is_simple(cfg: dict, desk: bool = False) -> bool:
+    """Whether the simple view says all there is to say about these settings."""
+    return from_simple(simple_choices(cfg), cfg, desk) == cfg
+
+
+def has_desk(ws: Path) -> bool:
+    """Whether the cmux extra is in the workspace, as the status page asks it of the page's own folder."""
+    return (ws / "System" / "cmux" / "cmuxlib.py").is_file()
 
 
 # --------------------------------------------------------------------------- the legacy override
@@ -712,6 +844,69 @@ def telegram(chat: str, text: str, tok: Optional[str] = None) -> str:
     return ""
 
 
+def latest_chat(tok: Optional[str] = None) -> Tuple[str, str]:
+    """The private chat that last wrote to the bot, through getUpdates:
+    (its ID, "") or ("", why not, after "Telegram"). ("", "") when nobody has
+    written to it lately: Telegram keeps a bot's messages for a day."""
+    tok = tok or token()
+    if not tok:
+        return "", "has no bot token in the keychain yet: save the token first"
+    req = urllib.request.Request(TELEGRAM_UPDATES % tok, data=urllib.parse.urlencode({"timeout": "0"}).encode("utf-8"),
+                                 method="POST")
+    try:
+        with _urlopen(req, timeout=TIMEOUT) as r:
+            body = json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8") or "{}")
+        except Exception:
+            body = {}
+        return "", scrub("said no: %s" % (body.get("description") or "HTTP %d" % e.code), tok)
+    except Exception as e:          # no network, a timeout, a certificate: say what, never the URL
+        return "", scrub("could not be reached: %s" % (getattr(e, "reason", None) or type(e).__name__), tok)
+    if not isinstance(body, dict) or body.get("ok") is not True or not isinstance(body.get("result"), list):
+        return "", scrub("said no: %s" % ((body if isinstance(body, dict) else {}).get("description") or "no reason given"), tok)
+    found = ""
+    for u in sorted((u for u in body["result"] if isinstance(u, dict)), key=lambda u: u.get("update_id") or 0):
+        msg = u.get("message") or u.get("edited_message")
+        chat = msg.get("chat") if isinstance(msg, dict) else None
+        if isinstance(chat, dict) and chat.get("type") == "private" and isinstance(chat.get("id"), int) \
+                and not isinstance(chat.get("id"), bool):
+            found = str(chat["id"])
+    return found, ""
+
+
+SET_UP_TEST = "Garrick\nTelegram is set up: the notices you switch on in Settings come here."
+
+
+def set_up_chat(ws: Path, desk: Optional[bool] = None) -> Tuple[bool, str]:
+    """Telegram's step 2 from the page, or `telegram-chat`: find the chat
+    that last wrote to the bot, keep it as the chat, switch Telegram on, and
+    send a test there. Settings that were simple stay simple, with Telegram
+    added to Send to; custom ones only have the channel switched on.
+    (whether the chat was kept, what to say)."""
+    chat, problem = latest_chat()
+    if problem:
+        return False, "Telegram %s." % problem
+    if not chat:
+        return False, "No message found: send your bot any message in Telegram, then press Find my chat again."
+    desk = has_desk(ws) if desk is None else desk
+    cfg = settings(ws)
+    simple = is_simple(cfg, desk)
+    cfg["telegram"]["chat"] = chat
+    if simple:
+        choices = simple_choices(cfg)
+        choices["send"]["telegram"] = True
+        cfg = from_simple(choices, cfg, desk)
+    else:
+        cfg["channels"]["telegram"] = True
+    keep(ws, cfg)
+    problem = telegram(chat, SET_UP_TEST)
+    if problem:
+        return True, "Found your chat and switched Telegram on, but the test did not go: Telegram %s." % problem
+    return True, "Found your chat and switched Telegram on. A test message went to it."
+
+
 # --------------------------------------------------------------------------- a test from the page
 
 def test(ws: Path, channel: str, env=None) -> str:
@@ -971,7 +1166,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     g.add_argument("--uninstall", action="store_true")
     k = sub.add_parser("telegram-token", help="keep the Telegram bot's token in the keychain, typed or piped in")
     k.add_argument("--forget", action="store_true", help="remove it from the keychain")
-    for p in (s, t, h, k, sub.choices["flush"]):
+    c = sub.add_parser("telegram-chat", help="find the chat that last wrote to the bot, keep it and switch Telegram on")
+    for p in (s, t, h, k, c, sub.choices["flush"]):
         p.add_argument("--root", help="the workspace; default the one this file is in, or GARRICK_WORKSPACE")
     a = ap.parse_args(argv)
 
@@ -1040,8 +1236,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (Invalid, OSError) as e:
             print("notifications: %s" % e, file=sys.stderr)
             return 1
-        print("Kept in the keychain as \"%s\". Send a test from Settings › Notifications." % KEYCHAIN_SERVICE)
+        print("Kept in the keychain as \"%s\". Now send your bot any message, then run "
+              "python3 System/tools/notifications.py telegram-chat." % KEYCHAIN_SERVICE)
         return 0
+    if a.cmd == "telegram-chat":
+        try:
+            ok, said = set_up_chat(ws)
+        except (Invalid, OSError) as e:
+            ok, said = False, "notifications: %s" % e
+        print(said, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
     return 64
 
 

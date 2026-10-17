@@ -3509,17 +3509,40 @@ NOTIFY_CMUX_TEST = "python3 System/tools/notifications.py test cmux"
 NOTIFY_QUIET = (("send", "Send"), ("hold", "Hold"), ("drop", "Drop"))
 
 
+def notify_overrides(lib, sched: Optional[Dict[str, dict]]) -> Tuple[str, str]:
+    """The line under the simple view about jobs whose launchd plist sets
+    GARRICK_NOTIFY or GARRICK_NOTIFY_CMD, and its tooltip, which names them
+    and the variable. ("", "") when no plist does."""
+    forced = sorted((name, [k for k in lib.override(j.get("env") or {})]) for name, j in (sched or {}).items()
+                    if lib.override(j.get("env") or {}))
+    if not forced:
+        return "", ""
+    line = ("1 scheduled job sends its notices its own way and skips these settings." if len(forced) == 1 else
+            "%d scheduled jobs send their notices their own way and skip these settings." % len(forced))
+    tip = ("%s. Take it out of the job's launchd plist to use these settings."
+           % "; ".join("%s sets %s in its launchd plist" % (n, " and ".join(vs)) for n, vs in forced))
+    return line, tip
+
+
 def notify_settings(ws: Path, zones: List[str], styles: Dict[str, dict], sched: Optional[Dict[str, dict]] = None,
                     desk: bool = False) -> str:
-    """Settings › Notifications (#110): the channels, each switched on and
-    tested from here; which events go to which, and what each does in quiet
-    hours; and which channels each zone's notices may use, with a Telegram
-    chat of its own. In the app only: what is chosen goes to page_action.py
-    when Settings closes, or when a test is sent, which saves first. `desk`
-    says the cmux extra is here, which brings the cmux channel, the Desk
-    event and "only when away". A job whose plist sets GARRICK_NOTIFY or
-    GARRICK_NOTIFY_CMD is named, since those override what is chosen here.
-    The Telegram token never reaches the page: only whether one was stored."""
+    """Settings › Notifications (#110). It opens on four plain choices, the
+    simple view: where to send (this Mac, Telegram, with Set up… for the
+    bot), which of four events to be told about, and quiet hours. Under More
+    options, closed until opened, is everything else: the channels, each
+    tested from here, with a command of your own; which events go to which,
+    and what each does in quiet hours; and which channels each zone's
+    notices may use, with a Telegram chat of its own. The simple view drives
+    the form under More options (NOTIFY_JS), whose request is what is saved,
+    as notifications.py's from_simple() says; settings it cannot say
+    (notifications.py's is_simple()) are custom, kept as they are until "Use
+    the simple choices". In the app only: what is chosen goes to
+    page_action.py when Settings closes, or when a test is sent or the bot
+    set up, which save first. `desk` says the cmux extra is here, which
+    brings the cmux channel, the Desk event and "only when away". Jobs whose
+    plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD are counted, since those
+    override what is chosen here, and named in the line's tooltip. The
+    Telegram token never reaches the page: only whether one was stored."""
     lib = notify_lib(ws)
     if lib is None:
         return ""
@@ -3533,9 +3556,10 @@ def notify_settings(ws: Path, zones: List[str], styles: Dict[str, dict], sched: 
     def test(key, label):
         return '<button class="act" type="button" data-ntest="%s" title="Saves these settings, then sends a test">Send a test</button>' % key
     stored = lib.token_stored(ws)
+    chat = cfg["telegram"]["chat"]
     rows = row("mac", "This Mac", "A notification in the corner of the screen", test("mac", "This Mac"))
     if desk:
-        rows += row("cmux", "cmux, for a session in it", "Its notification on the session&#39;s own tab, in place of the Mac&#39;s",
+        rows += row("cmux", "cmux", "A session in cmux gets its notice on its own tab, in place of the Mac&#39;s",
                     '<button class="act" type="button" data-copy="%s" data-say="Copied. Run it in a cmux tab: the test lands '
                     'on that tab.">Copy a test</button>' % E(NOTIFY_CMUX_TEST))
     rows += row("telegram", "Telegram", "A message from your own bot, on your phone", test("telegram", "Telegram"))
@@ -3543,7 +3567,7 @@ def notify_settings(ws: Path, zones: List[str], styles: Dict[str, dict], sched: 
              'aria-label="Telegram chat ID" autocomplete="off" spellcheck="false"><span class="hint ntok">%s</span>'
              '<button class="act" type="button" data-copy="%s" data-say="Copied. Run it in a terminal and paste the token '
              'there, where it is not shown.">Copy the token command</button></div>'
-             % (E(cfg["telegram"]["chat"]), "Token kept in this Mac&#39;s keychain since %s" % E(stored) if stored
+             % (E(chat), "Token kept in this Mac&#39;s keychain since %s" % E(stored) if stored
                 else "No token on this Mac yet", E(NOTIFY_TOKEN)))
     rows += row("command", "A command of your own", "Run with the title and the message, as GARRICK_NOTIFY_CMD is",
                 test("command", "Your command"))
@@ -3563,44 +3587,108 @@ def notify_settings(ws: Path, zones: List[str], styles: Dict[str, dict], sched: 
         if key in lib.SESSION_EVENTS and desk:
             extra += ('<label class="naway" title="In cmux, nothing while you are looking at that tab">%s only when away</label>'
                       % box("data-naway", e["away"]))
-        cells = "".join('<td>%s</td>' % box('data-nto="%s"' % c, c in e["to"], "%s to %s" % (label, lib.CHANNEL_LABELS[c]))
+        cells = "".join('<td%s>%s</td>' % ("" if ch.get(c) else ' class="noff"',
+                                           box('data-nto="%s"' % c, c in e["to"], "%s to %s" % (label, lib.CHANNEL_LABELS[c])))
                         for c in lib.CHANNELS)
         events += ('<tr data-nev="%s"><th scope="row">%s<small>%s</small>%s</th>%s<td>%s</td></tr>'
                    % (key, E(label), E(about), extra, cells, quiet(label, e["quiet"])))
     q = cfg["quiet"]
+    # A zone's box for a channel switched off is hidden, not greyed: ticked and
+    # greyed read as broken. Its value stays, for when the channel comes on.
     zrows = ""
     for z in zones:
         zc = cfg["zones"].get(z, {})
         allowed = zc.get("to", list(lib.CHANNELS))
         zrows += ('<div class="nzone" data-zone="%s"><span class="zprev%s">%s</span><span class="nzto">%s</span>'
-                  '<input type="text" data-nzchat value="%s" placeholder="Its own chat" aria-label="%s&#39;s own Telegram chat" '
-                  'autocomplete="off" spellcheck="false"></div>'
+                  '<input type="text" data-nzchat value="%s" placeholder="Telegram chat ID" aria-label="%s&#39;s own Telegram chat" '
+                  'autocomplete="off" spellcheck="false"%s></div>'
                   % (E(z), zone_class(z, styles), zone_name(z, styles), "".join(
-                      '<label>%s %s</label>' % (box('data-nzto="%s"' % c, c in allowed, "%s to %s" % (z, lib.CHANNEL_LABELS[c])),
-                                                 {"mac": "Mac", "telegram": "Telegram", "command": "Command"}[c])
-                      for c in lib.CHANNELS), E(zc.get("chat", "")), E(z)))
-    forced = sorted((name, [k for k in lib.override(j.get("env") or {})]) for name, j in (sched or {}).items()
-                    if lib.override(j.get("env") or {}))
-    note = ""
-    if forced:
-        note = ('<p class="hint nover">In force: %s, set in a launchd plist. Those jobs&#39; notices go where the variable says, '
-                'past these settings; take it out of the plist to use them.</p>'
-                % "; ".join("%s for %s" % (" and ".join(vs), E(n)) for n, vs in forced))
-    return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nchans">%s</div>'
+                      '<label%s>%s %s</label>' % ("" if ch.get(c) else " hidden",
+                                                  box('data-nzto="%s"' % c, c in allowed, "%s to %s" % (z, lib.CHANNEL_LABELS[c])),
+                                                  {"mac": "Mac", "telegram": "Telegram", "command": "Command"}[c])
+                      for c in lib.CHANNELS), E(zc.get("chat", "")), E(z), "" if ch.get("telegram") else " hidden"))
+    more = ('<details class="nmore" id="notify-more"><summary>More options</summary><div class="nchans">%s</div>'
             '<table class="nev"><thead><tr><th scope="col">Event</th><th scope="col">Mac</th><th scope="col">Telegram</th>'
-            '<th scope="col">Command</th><th scope="col">In quiet hours</th></tr></thead><tbody>%s</tbody></table>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Quiet hours<small>What each event does then is '
-            'its last column</small></span></label><span class="nquiet"><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
-            ' to <input type="time" id="n-to" value="%s" aria-label="Quiet until"></span></div>'
-            '%s%s<p class="hint" id="n-said" role="status" hidden></p></section>'
-            % (set_head("Notifications", "notify"), help_text("notify", 'Each event goes to the channels ticked on its row that are '
-               'switched on above, and a zone&#39;s notices only where its row below allows. Needs you and Finished come from hooks in '
-               'Claude Code or Codex: ask your assistant to set up notifications, or run <code>python3 System/tools/notifications.py '
-               'hooks --install</code>. A notice says the zone or thread and what happened, never what a note or a meeting says, since '
-               'a phone shows it on a locked screen. Send a test saves these settings first. Saved in <code>%s</code>; a Telegram '
-               'bot&#39;s token is kept in this Mac&#39;s keychain, never there: copy the token command and run it in a terminal.'
-               % E(prefs().FILE)), rows, events, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]),
-               ('<h4 class="nsub">Zones</h4>%s' % zrows) if zrows else "", note))
+            '<th scope="col">Command</th><th scope="col">In quiet hours</th></tr></thead><tbody>%s</tbody></table>%s</details>'
+            % (rows, events, ('<h4 class="nsub">Zones</h4><p class="hint nzhelp">Send a zone&#39;s notices to a chat of its own, '
+                              'or keep a zone off some channels.</p>%s' % zrows) if zrows else ""))
+    line, tip = notify_overrides(lib, sched)
+    help_html = ('Choose where notices go and which ones you get. A notice names the zone or thread and what happened, never what '
+                 'a note or a meeting says, since a phone shows it on a locked screen. &#8220;A session needs me&#8221; and &#8220;a '
+                 'long task finishes&#8221; need hooks in Claude Code or Codex: ask your assistant to set up notifications. More '
+                 'options sets each event, channel and zone on its own, and adds a command of your own. In quiet hours a long task '
+                 'that finishes is not reported at all, rather than held till morning. Saved in <code>%s</code> when '
+                 'you close Settings; a Telegram bot&#39;s token is kept in this Mac&#39;s keychain, never there.' % E(prefs().FILE))
+    if line:
+        help_html += (' A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own '
+                      'way; take the variable out of the plist to use these settings.')
+    simple = notify_simple(lib, cfg, desk, bool(stored), line, tip) if callable(getattr(lib, "from_simple", None)) else ""
+    if not simple:          # a workspace whose notifications.py predates the simple view: More options is all there is
+        more = more.replace('<details class="nmore" id="notify-more">', '<details class="nmore" id="notify-more" open>', 1)
+        more += ('<div class="launcher-row"><label class="launcher-choice">%s <span>Quiet hours<small>What each event does then '
+                 'is its last column</small></span></label><span class="nquiet"><input type="time" id="n-from" value="%s" '
+                 'aria-label="Quiet from"> to <input type="time" id="n-to" value="%s" aria-label="Quiet until"></span></div>'
+                 % (box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"])))
+        if line:
+            more += '<p class="hint nover" title="%s">%s</p>' % (E(tip), E(line))
+    return ('<section class="setsec apponly" id="notify-settings"%s>%s%s%s%s<p class="hint" id="n-said" role="status" hidden></p>'
+            '</section>'
+            % (notify_data(lib, cfg, desk) if simple else "", set_head("Notifications", "notify"), help_text("notify", help_html),
+               simple, more))
+
+
+def notify_data(lib, cfg: dict, desk: bool) -> str:
+    """What the page's script needs to mirror notifications.py's simple
+    mapping, as the section's attributes: the events the simple view sets,
+    each event's quiet-hours choice there, and whether the settings are
+    custom now, as is_simple() says."""
+    data = {"tell": [e for e, _ in lib.SIMPLE_EVENTS], "follow": list(lib.SIMPLE_FOLLOW), "channels": list(lib.CHANNELS),
+            "send": list(lib.SEND_TO), "quiet": {k: v["quiet"] for k, v in lib.DEFAULT_EVENTS.items()}}
+    return ' data-simple="%s" data-custom="%d"' % (E(json.dumps(data, separators=(",", ":"))), 0 if lib.is_simple(cfg, desk) else 1)
+
+
+def notify_simple(lib, cfg: dict, desk: bool, stored: bool, line: str, tip: str) -> str:
+    """The simple view: Send to, with Telegram's Set up…; Tell me when;
+    quiet hours, with what they do in one sentence; the custom line; and
+    the count of jobs that send their own way."""
+    choices = lib.simple_choices(cfg)
+    chat = cfg["telegram"]["chat"]
+    ready = bool(chat and stored)
+    def box(attr, on, label=""):
+        return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
+    state = ('<span class="ntgok">Set up</span><button type="button" class="nlink" data-ntgopen aria-expanded="false" '
+             'aria-controls="n-tgset">Change</button>' if ready else
+             '<button type="button" class="act" data-ntgopen aria-expanded="false" aria-controls="n-tgset">Set up&#8230;</button>')
+    send = ('<div class="nsrow"><span class="nslab">Send to</span><span class="nsopts"><label>%s This Mac</label>'
+            '<label>%s My phone (Telegram)</label><span class="ntgstate">%s</span></span></div>'
+            % (box('data-ns="mac"', choices["send"]["mac"]), box('data-ns="telegram"', choices["send"]["telegram"]), state))
+    setup = ('<div class="ntgset" id="n-tgset" hidden><ol>'
+             '<li><span>In Telegram, message @BotFather, send /newbot, and paste the token it gives you.</span>'
+             '<span class="nfield"><input type="password" id="n-token" autocomplete="off" spellcheck="false" '
+             'aria-label="The bot&#39;s token" placeholder="123456789:AA&#8230;"><button class="act" type="button" data-ntok>Save'
+             '</button></span>%s</li>'
+             '<li><span>Now send your bot any message, then press Find my chat.</span><span class="nfield">'
+             '<button class="act" type="button" data-nfind%s>Find my chat</button></span></li></ol></div>'
+             % ('<small class="ntgsaved">A token is kept in this Mac&#39;s keychain; save another to replace it.</small>' if stored else "",
+                "" if stored else ' disabled title="Save the token first"'))
+    after = ('<input type="number" id="n-safter" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
+             % (lib.AFTER_MAX, choices["after"]))
+    words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
+    tell = "".join('<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, choices["tell"][e], label if e == "finished" else ""),
+                                              words.get(e, E(label)))
+                   for e, label in lib.SIMPLE_EVENTS)
+    q = choices["quiet"]
+    rule = "At night only &#8220;a session needs me&#8221;%s get%s through; the rest waits until morning." % (
+        (" and the desk", "") if desk else ("", "s"))
+    quiet = ('<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
+             '<span>to</span><input type="time" id="n-to" value="%s" aria-label="Quiet until"></div><p class="hint nsrule">%s</p>'
+             % (box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
+    custom = lib.is_simple(cfg, desk) is False
+    note = ('<p class="ncustom" id="n-custom"%s><span>Your choices are custom, under More options.</span>'
+            '<button class="act" type="button" id="n-usesimple">Use the simple choices</button></p>' % ("" if custom else " hidden"))
+    over = '<p class="hint nover" title="%s">%s</p>' % (E(tip), E(line)) if line else ""
+    return ('<div class="nsimple">%s%s<div class="nsrow"><span class="nslab">Tell me when</span><span class="nsopts nscol">%s'
+            '</span></div>%s%s%s</div>' % (send, setup, tell, quiet, note, over))
 
 
 def script_json(data) -> str:
@@ -4071,7 +4159,33 @@ dialog.settings .sethelp{margin:2px 0 6px}
 dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hiddencards .gacts{margin:4px 0 0}.setfoot .hiddencards{margin:0 0 10px}
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
-/* Settings › Notifications: the channels, then a table of events against them, then the zones */
+/* Settings › Notifications: the simple view, four plain choices; then More options, with the channels, a table of
+   events against them, and the zones */
+#notify-settings [hidden]{display:none!important}
+#notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:13px}
+#notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+#notify-settings .nslab{flex:0 0 92px;font-weight:560;color:var(--ink2)}
+#notify-settings .nsopts{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;flex:1;min-width:0}
+#notify-settings .nsopts.nscol{flex-direction:column;align-items:flex-start;gap:5px}
+#notify-settings .nsimple label{display:inline-flex;align-items:center;gap:6px}
+#notify-settings .nsimple input[type=checkbox],#notify-settings .nmore input[type=checkbox]{accent-color:var(--accent)}
+#notify-settings .nsafter{white-space:nowrap}#notify-settings .nsq{align-items:center;gap:6px}#notify-settings .nsrule{margin:-4px 0 0 24px;font-size:12px}
+#notify-settings .ntgstate{display:inline-flex;align-items:center;gap:8px}#notify-settings .ntgok{color:var(--ink2)}
+#notify-settings .ntgok::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:6px;vertical-align:1px}
+#notify-settings .nlink{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--accent);cursor:pointer;text-decoration:underline}
+#notify-settings .ntgset{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:var(--wash)}
+#notify-settings .ntgset ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:10px;font-size:12.5px}
+#notify-settings .ntgset li{display:flex;flex-direction:column;gap:5px}#notify-settings .ntgset .nfield{margin:0}
+#notify-settings .ntgset small{font-size:11.5px;color:var(--muted)}
+#notify-settings input[type=password]{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px;flex:1;min-width:150px}
+#notify-settings .ncustom{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:7px 10px;border-radius:8px;background:var(--wash);font-size:12.5px}
+#notify-settings .nover{margin:0;font-size:12px;cursor:help}
+#notify-settings details.nmore{margin-top:6px;border-top:1px solid var(--line);padding-top:6px}
+#notify-settings details.nmore>summary{cursor:pointer;font-size:12.5px;font-weight:560;color:var(--ink2);list-style:none;padding:3px 0}
+#notify-settings details.nmore>summary::-webkit-details-marker{display:none}
+#notify-settings details.nmore>summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
+#notify-settings details.nmore[open]>summary::before{transform:rotate(90deg)}
+#notify-settings .nzhelp{margin:0 0 4px;font-size:12px}
 #notify-settings .nch{min-height:30px}#notify-settings .nfield{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 6px 28px}
 #notify-settings input[type=text],#notify-settings input[type=time],#notify-settings input[type=number],#notify-settings select{font:inherit;font-size:12.5px;
 color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px}
@@ -4332,23 +4446,37 @@ window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
 """
 
 
-# Settings › Notifications (#110), in the app: the form read into the shape
-# notifications.py keeps, sent with what else Settings changed when it closes
-# (JS's sdReq), and "Send a test", which saves first and names one channel.
-# The app rebuilds the page after a request, so a test reopens Settings at
-# this section and shows the reply it kept in this window's sessionStorage.
+# Settings › Notifications (#110), in the app: the form under More options
+# read into the shape notifications.py keeps, sent with what else Settings
+# changed when it closes (JS's sdReq), and "Send a test", which saves first
+# and names one channel. The simple view above it drives that form: a change
+# there is written into More options as notifications.py's from_simple()
+# says, mirrored here (simpleOf, fromSimple), so More options always shows
+# what will be saved, and the request is built from More options alone. A
+# form the simple view cannot say is custom (the section's data-custom, from
+# is_simple(), then worked out again here whenever More options changes):
+# the simple view then writes nothing until "Use the simple choices". The
+# minutes and the quiet hours are one setting each, shown once or kept in
+# step, so they always apply. Telegram's Set up… saves the token, or finds
+# the chat, through page_action.py, saving the rest first as a test does:
+# the token goes in that one request and nowhere else, and the field is
+# emptied as it goes. The app rebuilds the page after a request, so these
+# reopen Settings at this section and show the reply they kept in this
+# window's sessionStorage, which never holds the request.
 # Runs after WORK_JS, so it wraps the GarrickActed every other script set.
 NOTIFY_JS = r"""
 (function(){var sec=document.getElementById('notify-settings');if(!sec)return;
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,changed=false,
-CHAT=/^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
+CHAT=/^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/,TOKEN=/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/,S=null,custom=sec.dataset.custom==='1';
+try{S=JSON.parse(sec.dataset.simple||'null')}catch(x){}
 function val(id){var e=document.getElementById(id);return e?e.value.trim():''}
 function on(k){var c=sec.querySelector('[data-nch="'+k+'"]');return!!(c&&c.checked)}
-/* a channel switched off greys its column and its box in each zone's row; ticks there wait for it */
-function paint(){['mac','telegram','command'].forEach(function(k){sec.querySelectorAll('[data-nto="'+k+'"],[data-nzto="'+k+'"]').forEach(function(c){
-var cell=c.closest('td,label');if(cell)cell.classList.toggle('noff',!on(k))})})}
-sec.addEventListener('change',function(){changed=true;paint()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=text],input[type=number],input[type=time]'))changed=true});
+function say(s){if(window.GarrickSay)GarrickSay(s)}
+/* a channel switched off greys its column; in each zone's row its box is hidden, kept for when it comes back on */
+function paint(){['mac','telegram','command'].forEach(function(k){
+sec.querySelectorAll('[data-nto="'+k+'"]').forEach(function(c){var cell=c.closest('td');if(cell)cell.classList.toggle('noff',!on(k))});
+sec.querySelectorAll('[data-nzto="'+k+'"]').forEach(function(c){var l=c.closest('label');if(l)l.hidden=!on(k)})});
+sec.querySelectorAll('[data-nzchat]').forEach(function(t){t.hidden=!on('telegram')})}
 function request(){var ch={};sec.querySelectorAll('[data-nch]').forEach(function(c){ch[c.dataset.nch]=c.checked});
 var ev={};sec.querySelectorAll('tr[data-nev]').forEach(function(r){var e={to:[],quiet:r.querySelector('[data-nq]').value};
 r.querySelectorAll('[data-nto]').forEach(function(c){if(c.checked)e.to.push(c.dataset.nto)});
@@ -4364,20 +4492,69 @@ function problem(){var r=request(),chats=[r.telegram.chat];Object.keys(r.zones).
 for(var i=0;i<chats.length;i++)if(chats[i]&&!CHAT.test(chats[i]))return'A Telegram chat ID is a number, such as 123456789, or -100 and a number for a group.';
 if(r.channels.telegram&&!chats.some(Boolean))return'Telegram needs a chat ID to send to, or switch it off.';
 if(r.channels.command&&!r.command)return'Name the command to run, or switch it off.';return''}
-function ntest(ch){if(!host)return;var bad=problem();if(bad){if(window.GarrickSay)GarrickSay(bad);return}
+/* the simple view, as notifications.py's simple_choices(), from_simple() and is_simple() say */
+function tracked(ch){var t=S.send.filter(function(c){return!!ch[c]});return t.length?t:['mac']}
+function simpleOf(r){var tr=tracked(r.channels),t={};S.tell.forEach(function(e){var x=r.events[e];t[e]=!!x&&tr.some(function(c){return x.to.indexOf(c)>=0})});
+return{send:{mac:!!r.channels.mac,telegram:!!r.channels.telegram},tell:t,after:r.events.finished?r.events.finished.after:2,quiet:r.quiet}}
+function fromSimple(s,r){var o=JSON.parse(JSON.stringify(r)),c=o.channels;c.mac=!!s.send.mac;c.telegram=!!s.send.telegram&&!!o.telegram.chat;
+if('cmux' in c)c.cmux=c.mac;c.command=false;var tr=tracked(c);
+Object.keys(o.events).forEach(function(k){var e=o.events[k],want=S.tell.indexOf(k)>=0?!!s.tell[k]:S.follow.indexOf(k)>=0;
+e.to=S.channels.filter(function(x){return tr.indexOf(x)>=0?want:e.to.indexOf(x)>=0});if(S.quiet[k])e.quiet=S.quiet[k];if('away' in e)e.away=false;
+if('after' in e)e.after=s.after});o.quiet=s.quiet;Object.keys(o.zones).forEach(function(z){o.zones[z]={to:S.channels.slice()}});return o}
+function stable(v){return JSON.stringify(v,function(k,x){if(x&&typeof x==='object'&&!Array.isArray(x)){var o={};Object.keys(x).sort().forEach(function(j){o[j]=x[j]});return o}return x})}
+function isSimple(r){return stable(fromSimple(simpleOf(r),r))===stable(r)}
+function sbox(a){return sec.querySelector('.nsimple [data-'+a+']')}
+function readSimple(){var t={};S.tell.forEach(function(e){var b=sbox('nt="'+e+'"');t[e]=!!(b&&b.checked)});
+var r=request();return{send:{mac:!!(sbox('ns="mac"')||{}).checked,telegram:!!(sbox('ns="telegram"')||{}).checked},tell:t,
+after:Math.max(0,Math.min(240,parseInt(val('n-safter'),10)||0)),quiet:r.quiet}}
+function showSimple(s){['mac','telegram'].forEach(function(k){var b=sbox('ns="'+k+'"');if(b)b.checked=s.send[k]});
+S.tell.forEach(function(e){var b=sbox('nt="'+e+'"');if(b)b.checked=s.tell[e]});var a=document.getElementById('n-safter');if(a)a.value=s.after}
+/* the advanced form set to a full set of settings, as request() reads it back */
+function write(r){sec.querySelectorAll('[data-nch]').forEach(function(c){c.checked=!!r.channels[c.dataset.nch]});
+sec.querySelectorAll('tr[data-nev]').forEach(function(row){var e=r.events[row.dataset.nev];if(!e)return;
+row.querySelectorAll('[data-nto]').forEach(function(c){c.checked=e.to.indexOf(c.dataset.nto)>=0});
+var q=row.querySelector('[data-nq]');if(q)q.value=e.quiet;var a=row.querySelector('[data-naway]');if(a)a.checked=!!e.away;
+var f=row.querySelector('[data-nafter]');if(f&&'after' in e)f.value=e.after});
+sec.querySelectorAll('.nzone').forEach(function(row){var z=r.zones[row.dataset.zone]||{};
+row.querySelectorAll('[data-nzto]').forEach(function(c){c.checked=!z.to||z.to.indexOf(c.dataset.nzto)>=0});
+var t=row.querySelector('[data-nzchat]');if(t)t.value=z.chat||''});paint()}
+function setCustom(c){custom=c;var p=document.getElementById('n-custom');if(p)p.hidden=!c}
+function tgpanel(open){var p=document.getElementById('n-tgset');if(!p)return;p.hidden=!open;
+sec.querySelectorAll('[data-ntgopen]').forEach(function(b){b.setAttribute('aria-expanded',String(open))});if(open){var t=p.querySelector('[data-nfind]:not([disabled])')||document.getElementById('n-token');if(t)t.focus()}}
+/* a change in the simple view goes into More options, unless the settings are custom; the minutes always do */
+function simpleChanged(t){changed=true;
+if(t.matches('[data-ns="telegram"]')&&t.checked&&!val('n-chat')){t.checked=false;tgpanel(true);say('Set up Telegram first: two steps, below.');return}
+var f=sec.querySelector('[data-nafter]');if(t.id==='n-safter'&&f)f.value=Math.max(0,Math.min(240,parseInt(t.value,10)||0));
+if(!custom&&S)write(fromSimple(readSimple(),request()))}
+/* a change in More options: the simple view shows what it now says, and whether it can say all of it */
+function moreChanged(t){changed=true;paint();if(!S)return;var r=request();if(t.matches('[data-nafter]')){var a=document.getElementById('n-safter');if(a)a.value=r.events.finished.after}
+showSimple(simpleOf(r));setCustom(!isSimple(r))}
+sec.addEventListener('change',function(e){var t=e.target;if(t.id==='n-token')return;
+if(t.closest('.nsimple'))simpleChanged(t);else if(t.closest('.nmore'))moreChanged(t);else changed=true;paint()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=text],input[type=number],input[type=time]'))changed=true});
+/* one request to page_action.py: what Settings would save, the notifications as they stand, and `more`, then the reply after the rebuild */
+function nact(more,said){if(!host)return;var bad=problem();if(bad){say(bad);return}
 var q=window.GarrickSettingsReq&&GarrickSettingsReq(true)||{verb:'settings'};
 q.notifications=request();changed=false;
-q.test=ch;try{sessionStorage.setItem('garrick-reopen','notify-settings')}catch(x){}
-host.postMessage({act:q});if(window.GarrickSay)GarrickSay('Saving, then sending a test…')}
-sec.addEventListener('click',function(e){var b=e.target.closest('[data-ntest]');if(b){e.preventDefault();ntest(b.dataset.ntest)}});
-/* the reply to a test, kept across the rebuild it brings, shown under the section */
+for(var k in more)q[k]=more[k];try{sessionStorage.setItem('garrick-reopen','notify-settings');if(!more.test)sessionStorage.setItem('garrick-ntg','1')}catch(x){}
+host.postMessage({act:q});say(said)}
+function ntest(ch){nact({test:ch},'Saving, then sending a test…')}
+sec.addEventListener('click',function(e){var b=e.target.closest('[data-ntest]');if(b){e.preventDefault();ntest(b.dataset.ntest);return}
+if(e.target.closest('[data-ntgopen]')){e.preventDefault();var p=document.getElementById('n-tgset');tgpanel(!!(p&&p.hidden));return}
+if(e.target.closest('[data-ntok]')){e.preventDefault();var t=document.getElementById('n-token'),v=t?t.value.trim():'';if(t)t.value='';
+if(!TOKEN.test(v)){say('That is not a bot token: BotFather gives one such as 123456789:AA…');return}nact({token:v},'Keeping the token in the keychain…');return}
+if(e.target.closest('[data-nfind]')){e.preventDefault();nact({'find-chat':true},'Looking for your chat…');return}
+if(e.target.closest('#n-usesimple')){e.preventDefault();write(fromSimple(readSimple(),request()));setCustom(false);changed=true;say('Using the simple choices. Close Settings to save them.')}});
+/* the reply, kept across the rebuild it brings, shown under the section: only what page_action.py said, never what was sent */
 function said(){var s=null;try{s=JSON.parse(sessionStorage.getItem('garrick-ntest')||'null')}catch(x){}
 var p=document.getElementById('n-said');if(!p||!s)return;p.hidden=false;p.textContent=s.say;p.classList.toggle('bad',!s.ok)}
-var was=window.GarrickActed;window.GarrickActed=function(q,a){if(q&&q.verb==='settings'&&q.test){
+var was=window.GarrickActed;window.GarrickActed=function(q,a){if(q&&q.verb==='settings'&&(q.test||q.token||q['find-chat'])){
+if(q.token)q.token='';      /* the host hands the request back: the token goes no further than this */
 try{sessionStorage.setItem('garrick-ntest',JSON.stringify({ok:!!(a&&a.ok),say:(a&&a.say)||''}))}catch(x){}said()}
 return was?was.apply(this,arguments):undefined};
-var back=null;try{back=sessionStorage.getItem('garrick-reopen');sessionStorage.removeItem('garrick-reopen')}catch(x){}
-if(back&&window.StatusSettings){StatusSettings.open();sec.scrollIntoView({block:'start'});said()}
+var back=null,tg=null;try{back=sessionStorage.getItem('garrick-reopen');sessionStorage.removeItem('garrick-reopen');tg=sessionStorage.getItem('garrick-ntg');sessionStorage.removeItem('garrick-ntg')}catch(x){}
+if(back&&window.StatusSettings){StatusSettings.open();sec.scrollIntoView({block:'start'});said();
+var s=null;try{s=JSON.parse(sessionStorage.getItem('garrick-ntest')||'null')}catch(x){}if(tg&&!(s&&s.ok&&sec.querySelector('.ntgok')))tgpanel(true)}
 else{try{sessionStorage.removeItem('garrick-ntest')}catch(x){}}
 paint();
 window.GarrickNotify={changed:function(){return changed},request:request,problem:problem,saved:function(){changed=false}};

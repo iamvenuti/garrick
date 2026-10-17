@@ -256,7 +256,7 @@ class RoutesTest(unittest.TestCase):
                          triggers(SKILLS / "interview"))
 
     def test_no_new_skill_was_added_for_this(self):
-        self.assertEqual(["intake", "interview", "knowledge", "meetings", "setup", "threads", "todo", "update"],
+        self.assertEqual(["intake", "interview", "knowledge", "meetings", "nurture", "setup", "threads", "todo", "update"],
                          sorted(p.parent.name for p in SKILLS.glob("*/SKILL.md")))
         # The route is reached from a procedure, so it claims no phrase of its own.
         description = MEETINGS.read_text(encoding="utf-8").split("---", 2)[1]

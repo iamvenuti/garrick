@@ -103,6 +103,7 @@ Unless you allowed them when you installed, a first session asks you to approve 
 | `python3 System/tools/wiki_lint.py` | Lists a wiki's pages that nothing links to, and links to pages that are not there. It changes nothing |
 | `python3 System/tools/drift.py` | Compares what a project published with the copy in a shared folder. It changes nothing |
 | `python3 System/tools/next_up.py` | Ranks one thing worth doing while a long turn runs, for "what's next". It changes nothing |
+| `python3 System/tools/nurture.py` | Sorts what the check and the wiki lint find by what a fix needs. It changes nothing unless you say yes to its mechanical fixes, which it commits |
 | `git -C Zones/…` or `git -C Wikis`, then `status`, `diff`, `log`, `add` or `commit` | Looks at, or saves, what changed in a zone's or a wiki's history, on your Mac |
 
 None of these sends anything off your Mac. Read the whole line before you approve it, not only its start. With git, the folder after `-C` says only where the command works; the word after the folder says what it does. A git command with `push`, `pull`, `fetch`, `clone` or `remote` reaches the internet, and one with `reset`, `checkout`, `restore`, `clean`, `rm` or `--force` can throw work away. A first session needs none of them: decline them unless you asked for one. Read anything else before you approve it too, above all a command that reaches the internet or works outside your Garrick folder.

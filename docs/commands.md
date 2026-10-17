@@ -43,8 +43,8 @@ System/
   context.md            who you are and who you deal with, filled in from your answers
   garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, correct.py, probe.py, release.py, and garrick_lib.py, which they share
-  skills/               threads, intake, meetings, knowledge, todo, interview, setup, update
+  tools/                scaffold.py, check.py, correct.py, nurture.py, probe.py, release.py, and garrick_lib.py, which they share
+  skills/               threads, intake, meetings, knowledge, todo, nurture, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
   Knowledge/            published material you study, empty until you feed it
@@ -238,6 +238,29 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 The check reports a settings file that does not read, a key it does not know, a zone it names that does not exist, and a memory folder that is not there.
 
 The walls part also runs before every commit. The installer puts a git hook in each zone that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall. Take the material out and commit again. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
+
+## Nurturing the context
+
+The check reports and changes nothing, so its warnings pile up until nobody reads them, and the ones nobody reads are the ones that matter later: a meeting page with no parties can't be used in any project, and a link broken by a rename cuts a thread off from its history. Say "nurture the context", or name a scope: "nurture Work", "nurture Acme", "nurture the meetings". The `nurture` skill gathers every finding for that scope from the tools that already exist, and works through them with you, sorted by what a fix needs:
+
+| Kind | Examples | What happens |
+|---|---|---|
+| Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`) | Listed, then applied on one yes, one commit per repository |
+| Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome | One line each: a proposed answer and a question. Never a guess across a wall |
+| Wall | a project file that names, links or quotes a party across a wall | The file and the wall, never the material; taken out only on your yes |
+| Judgment | a stale resume point, a drifted copy, an orphan page, two pages that disagree | Reported, with the page to open |
+
+Behind it is one tool, which adds no checks of its own: it runs `check.py --json`, `wiki_lint.py` for both wikis and `drift.py`, and sorts what they find.
+
+```sh
+python3 System/tools/nurture.py --scope "Zones/Work"          # list, change nothing
+python3 System/tools/nurture.py fix --scope "Zones/Work"      # what the mechanical fixes would change
+python3 System/tools/nurture.py fix --scope "Zones/Work" --yes
+```
+
+A scope is a path from the workspace's top: a zone, a project, a thread, or `Wikis/Meetings` or `Wikis/Knowledge`; none means the whole workspace. `--ear` says the list in at most three sentences. `fix --yes` commits in each repository only the files it changed, named one by one, so what another session has not committed stays out of it, and it leaves alone any file that has changes not committed. Each commit goes through the repository's wall check; one it refuses is put back. Every run writes `System/generated/nurture/<YYYY-MM-DD>.md`: what was fixed, what was asked and answered, and what is left. The wikis' *Lint* is unchanged: "lint the meetings" still writes its own report and changes nothing, and nurturing a wiki runs it.
+
+With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other three kinds changes until you are there.
 
 ## Correcting a value
 

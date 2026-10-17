@@ -206,7 +206,8 @@ DECLARED: Dict[str, Op] = {
     # "test" names one channel to send a test on, once the rest is saved;
     # "token" and "find-chat" are Telegram's Set up…. Settings keeps no
     # record (RECORDED), so the token is never written to the journal.
-    "settings": _op(("launchers", "default", "zones", "notifications", "test", "token", "find-chat"), (), "workspace"),
+    "settings": _op(("launchers", "default", "zones", "notifications", "test", "token", "find-chat",
+                         "while-you-wait"), (), "workspace"),
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.

@@ -1828,8 +1828,10 @@ def release_repository(root: PathLike) -> str:
 # is the one place they are read and written, by the page's build, its
 # settings request and the cmux desk, and by the Mac app in Swift, which
 # reads the same file by the same keys. "notifications" is Settings ›
-# Notifications, which System/tools/notifications.py reads and checks.
-PREFERENCES = ("zones", "launchers", "default", "notifications")
+# Notifications, which System/tools/notifications.py reads and checks;
+# "while-you-wait" is Settings › While you wait, which System/tools/next_up.py
+# reads and checks.
+PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

@@ -43,7 +43,7 @@ System/
   context.md            who you are and who you deal with, filled in from your answers
   garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, nurture.py, probe.py, release.py, and garrick_lib.py, which they share
+  tools/                scaffold.py, check.py, correct.py, nurture.py, probe.py, release.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, todo, nurture, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
@@ -165,6 +165,7 @@ Tests the workspace against every rule a machine can check:
 - one of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that differs from what Garrick shipped: your own text belongs in the local file beside it. Also a local file Garrick's does not point to yet, and passages an update's split left to settle (warnings);
 - installer placeholders left unfilled (an error: the install did not finish; files git ignores are skipped, and so is a Garrick checkout kept in a project, cloned or unpacked from a release, whose templates hold them by design);
 - a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);
+- a learned entry that does not say where it came from: a memory entry, in the folder `memory` names in the check settings, with no `source:` or `created:`, or a Learned cell in `System/context.md` that does not read as `YYYY-MM-DD, source`; and one whose only source is inbound, a mail, a transcript or a page, which nobody has confirmed (warnings);
 - a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning); a git repository inside a project that has a remote and no wall check (a warning; `--install-hooks` adds it);
 - a zone or the Wikis repository whose own hooks git skips, because `core.hooksPath` points somewhere else (a warning);
@@ -215,7 +216,8 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "as-shipped": ["System/tools/"],
   "todo-expire-days": {"Work": 14, "Personal": 30},
   "todo-inbox-order": "thread",
-  "todo-chase-days": 0
+  "todo-chase-days": 0,
+  "memory": "~/.claude/projects/-Users-sam-Garrick/memory"
 }
 ```
 
@@ -230,7 +232,9 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `todo-chase-days`: how many days ahead the `todo` skill's sweep sets `⏳`, the day to chase, on a Waiting on line whose source gives none; 7 otherwise. `0` writes none: the line stays untriaged until you date it, and expires after the zone's days if you never do. A number, or one per zone.
 - `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
-The check reports a settings file that does not read, a key it does not know, and a zone it names that does not exist.
+- `memory`: the folder where your assistant keeps a memory of its own, or a list of them: absolute, from your home (`~/`), or from the workspace. Garrick does not guess where a harness keeps it. For Claude Code it is the `memory` folder under `~/.claude/projects/`, in the folder named for the workspace's path with each `/` written `-`. Without it, the check reads no memory, and `correct.py` searches none. Every Markdown file in it is an entry, but for an index the harness keeps beside them (`MEMORY.md`, `index.md` or `README.md`).
+
+The check reports a settings file that does not read, a key it does not know, a zone it names that does not exist, and a memory folder that is not there.
 
 The walls part also runs before every commit. The installer puts a git hook in each zone that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall. Take the material out and commit again. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
 

@@ -86,11 +86,13 @@ One meeting at a time, even when several files are waiting.
    party: "X isn't a party yet. Add it to \<zone\>, and should anyone be
    walled off from it?" Re-read `System/context.md` right before adding the
    row (another session may have added it first), then add the Parties row
-   and any Walls row the answer calls for.
+   and any Walls row the answer calls for, each with a Learned cell,
+   `<today>, user`, as `scaffold.py party` writes one.
 4. **People.** For each person in the transcript other than the owner (`## Me`
    in `System/context.md`), match them against the People table (and
    Aliases) in `System/context.md`. A name not there: ask which party they
-   belong to and add the People row, then either way run
+   belong to and add the People row, with its Learned cell, `<today>,
+   user`, then either way run
    `python3 System/skills/meetings/ingest.py person --name "<Name>" --party <tag>`.
    It creates `wiki/people/<slug>.md` if that person has no page yet, and
    leaves an existing one untouched (a page, once written, is corrected by

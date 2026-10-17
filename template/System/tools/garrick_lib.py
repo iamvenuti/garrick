@@ -14,6 +14,11 @@ functions below keep their signatures:
     sounds_alike(a, b) -> bool
     tag_for(name, taken=(), zone=None) -> str
     load_context(root) -> dict
+    as_sources(value) -> [str] / is_origin(source) -> bool / inbound_only(sources) -> bool
+    origin_problems(frontmatter) -> [str]
+    learned_cell(date, sources) -> str / parse_learned(cell) -> (date, [source]) or None
+    learned_row(lines, rows, cells, learned) -> str
+    memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
     walled(context, tag_a, tag_b) -> bool
     workspace_root(start=None) -> Path
     link_on_the_way(base, path) -> Path or None
@@ -80,6 +85,20 @@ __all__ = [
     "phonetic_key",
     "edit_distance",
     "load_context",
+    "ORIGIN_USER",
+    "ORIGIN_PREFIXES",
+    "LEARNED_COLUMN",
+    "MEMORY_SETTING",
+    "CHECK_SETTINGS",
+    "as_sources",
+    "is_origin",
+    "inbound_only",
+    "origin_problems",
+    "learned_cell",
+    "parse_learned",
+    "learned_row",
+    "memory_folders",
+    "memory_entries",
     "knowledge_schema",
     "walled",
     "workspace_root",
@@ -637,12 +656,18 @@ def load_context(root: PathLike) -> dict:
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
           "me":      [your own addresses, lower case],
+          "learned": [{"table", "row", "cell"}, ...],
         }
+
+    `learned` holds each row's Learned cell, where its table has that column
+    and the cell is not empty: the rows an assistant added, with where each
+    came from. A row typed by hand has none.
 
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {}}
+    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {},
+           "learned": []}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -661,6 +686,13 @@ def load_context(root: PathLike) -> dict:
             "rows": len(rows),
             "missing": [c for c in columns if header is not None and not any(h.startswith(c) for h in header)],
         }
+        column = next((h for h in (header or []) if h.startswith(LEARNED_COLUMN.lower())), None)
+        for row in (rows if column else []):
+            cell = (row.get(column) or "").strip()
+            if cell:
+                first = next(iter(row.values()), "")
+                ctx["learned"].append({"table": name, "row": strip_tag(first) if name == "walls" else first.strip(),
+                                       "cell": cell})
 
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
         if addr.lower() not in ctx["me"]:
@@ -703,6 +735,159 @@ def load_context(root: PathLike) -> dict:
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# Origin: where a learned entry came from
+#
+# What one session learns, a later one reads as fact. So a memory entry the
+# assistant keeps, and a row it adds to a table in System/context.md, say where
+# they came from: an entry with `source:` and `created:` in its frontmatter, a
+# row with a Learned cell, `2026-10-16, user`. A source is `user` (the user
+# said it), `file:<path>` (read from a note in the workspace) or
+# `inbound:<raw path>` (taken from a mail, a transcript or a page). Rows typed
+# by hand carry no Learned cell and stay as they are. Nothing whose only
+# source is inbound stands as a belief until a person confirms it.
+# ---------------------------------------------------------------------------
+
+ORIGIN_USER = "user"
+ORIGIN_PREFIXES = ("file:", "inbound:")
+LEARNED_COLUMN = "Learned"
+_ISO_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SOURCE_SPLIT_RE = re.compile(r"\s*[,;]\s*(?=(?:user\b|file:|inbound:))")
+_LEARNED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*[,;]\s*(.+)$")
+
+
+def as_sources(value) -> List[str]:
+    """The sources a `source:` value or a Learned cell names: a list as it is,
+    and one string split where another source starts, so `inbound:raw/a.eml,
+    user` is two."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else _SOURCE_SPLIT_RE.split(str(value))
+    return [str(s).strip() for s in items if str(s).strip()]
+
+
+def is_origin(source: str) -> bool:
+    """`user`, or `file:` or `inbound:` followed by a path."""
+    s = str(source or "").strip()
+    return s == ORIGIN_USER or any(s.startswith(p) and s[len(p):].strip() for p in ORIGIN_PREFIXES)
+
+
+def inbound_only(sources: Iterable[str]) -> bool:
+    """Every source given came in from outside: nobody has confirmed it."""
+    found = [s for s in (str(x).strip() for x in sources) if s]
+    return bool(found) and all(s.startswith("inbound:") for s in found)
+
+
+def _iso_day(value) -> bool:
+    if not _ISO_DAY_RE.match(str(value or "").strip()):
+        return False
+    try:
+        datetime.date.fromisoformat(str(value).strip())
+    except ValueError:
+        return False
+    return True
+
+
+def origin_problems(fm: dict) -> List[str]:
+    """What a memory entry's frontmatter lacks to say where it came from, one
+    phrase each; empty when `source:` and `created:` are both there and read."""
+    out = []
+    sources = as_sources(fm.get("source"))
+    if not sources:
+        out.append("no `source:`")
+    else:
+        bad = [s for s in sources if not is_origin(s)]
+        if bad:
+            out.append("a source that is not `user`, `file:<path>` or `inbound:<raw path>` (%s)" % ", ".join(bad))
+    created = fm.get("created")
+    if not created:
+        out.append("no `created:`")
+    elif not _iso_day(created):
+        out.append("a `created:` not written YYYY-MM-DD")
+    return out
+
+
+def learned_cell(date: str, sources) -> str:
+    """The Learned cell for a row an assistant adds: `2026-10-16, user`."""
+    return "%s, %s" % (date, ", ".join(as_sources(sources)))
+
+
+def parse_learned(cell: str) -> Optional[Tuple[str, List[str]]]:
+    """(date, sources) from a Learned cell; None for an empty cell, a row typed
+    by hand; ("", []) for one that does not read."""
+    cell = (cell or "").strip().strip("`").strip()
+    if not cell:
+        return None
+    m = _LEARNED_RE.match(cell)
+    if not m or not _iso_day(m.group(1)):
+        return "", []
+    return m.group(1), as_sources(m.group(2))
+
+
+def learned_row(lines: List[str], rows: List[int], cells: List[str], learned: str) -> str:
+    """The row to add to the table whose lines are at `rows` in `lines` (its
+    header first, then the separator), with `learned` in its Learned cell.
+    Adds the column to the header and the separator, in `lines`, when the
+    table has none; every other row is left exactly as it is, since a
+    Markdown table reads a short row as one with empty cells at its end."""
+    header = _split_row(lines[rows[0]])
+    col = next((i for i, c in enumerate(header) if c.lower().startswith(LEARNED_COLUMN.lower())), None)
+    if col is None:
+        col = max(len(header), len(cells))
+        header += [""] * (col - len(header))
+        lines[rows[0]] = "| " + " | ".join(header + [LEARNED_COLUMN]) + " |"
+        sep = _split_row(lines[rows[1]])
+        sep += ["---"] * (col - len(sep))
+        lines[rows[1]] = "|" + "|".join(sep + ["---"]) + "|"
+    cells = (list(cells) + [""] * col)[:col]
+    return table_row(cells + [learned])
+
+
+# Where an assistant keeps a memory of its own is the harness's business, and
+# Garrick does not guess it: `memory` in System/garrick-checks.json names the
+# folder, or a list of them, absolute, from your home (`~/...`) or from the
+# workspace. Without it, nothing reads a memory. An entry is a Markdown file
+# in it; the index a harness keeps beside its entries is not one.
+CHECK_SETTINGS = ("System", "garrick-checks.json")
+MEMORY_SETTING = "memory"
+MEMORY_INDEX = frozenset({"memory.md", "index.md", "readme.md"})
+
+
+def memory_folders(root: PathLike, value=None) -> List[Path]:
+    """The memory folders the workspace names, whether or not they exist.
+    `value` is the setting as already read; None reads it from the file."""
+    if value is None:
+        try:
+            data = json.loads(Path(root).joinpath(*CHECK_SETTINGS).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        value = data.get(MEMORY_SETTING) if isinstance(data, dict) else None
+    values = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    out = []
+    for v in values:
+        if isinstance(v, str) and v.strip():
+            p = Path(os.path.expanduser(v.strip()))
+            out.append(p if p.is_absolute() else Path(root) / p)
+    return out
+
+
+def memory_entries(folders: Iterable[PathLike]) -> List[Path]:
+    """Every memory entry in `folders`: each Markdown file, at any depth, but
+    for the harness's index and anything in a hidden folder."""
+    out: List[Path] = []
+    for folder in folders:
+        folder = Path(folder)
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.rglob("*.md")):
+            parts = path.relative_to(folder).parts
+            if any(p.startswith(".") for p in parts) or path.name.lower() in MEMORY_INDEX or not path.is_file():
+                continue
+            if path not in out:
+                out.append(path)
+    return out
 
 
 # How a Knowledge wiki keeps its raw files and source pages, its index and its

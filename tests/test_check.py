@@ -287,6 +287,76 @@ class TestContext(CheckCase):
         self.assertEqual([], [f for f in self.findings("context") if "People" in f.message])
 
 
+class TestLearnedEntries(CheckCase):
+    """Every learned entry says where it came from (#153): a memory entry in the
+    folder the check settings name, and a row with a Learned cell in context.md."""
+
+    def remember(self, name, text):
+        memory = Path(self._tmp.name).resolve() / "memory"
+        write(memory / name, text)
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"memory": str(memory)}))
+        return memory
+
+    def test_no_setting_reads_no_memory(self):
+        write(Path(self._tmp.name).resolve() / "memory" / "x.md", "No origin at all.\n")
+        self.assertClean("memory")
+
+    def test_an_entry_with_its_origin_passes_and_the_index_is_not_an_entry(self):
+        self.remember("pricing.md", "---\nsource: file:Zones/Work/Acme Review/Threads/Pricing/Pricing.md\n"
+                                    "created: 2026-10-16\n---\nResume from the Pricing note.\n")
+        self.remember("MEMORY.md", "- [Pricing](pricing.md)\n")
+        self.assertClean("memory")
+        self.assertClean("settings")
+
+    def test_an_entry_with_no_origin_is_reported(self):
+        self.remember("domain.md", "---\nname: Acme's domain\n---\nAcme writes from acmecorp.example.\n")
+        hit = self.assertFinds("memory", check.WARNING, "a learned entry with no origin")[0]
+        self.assertIn("no `source:`", hit.message)
+        self.assertIn("no `created:`", hit.message)
+        self.assertTrue(hit.path.endswith("domain.md"), hit.path)
+
+    def test_a_source_or_a_date_that_does_not_read_is_reported(self):
+        self.remember("a.md", "---\nsource: a mail\ncreated: 2026-10-16\n---\nx\n")
+        self.remember("b.md", "---\nsource: user\ncreated: 16 October\n---\nx\n")
+        self.assertFinds("memory", check.WARNING, "is not `user`, `file:<path>` or `inbound:<raw path>`")
+        self.assertFinds("memory", check.WARNING, "not written YYYY-MM-DD")
+
+    def test_an_entry_whose_only_source_is_inbound_is_reported(self):
+        self.remember("reports.md", "---\nsource: inbound:Wikis/Meetings/raw/261014-forecast.eml\n"
+                                    "created: 2026-10-16\n---\nReports go elsewhere.\n")
+        self.assertFinds("memory", check.WARNING, "only source is inbound")
+        self.remember("reports.md", "---\nsource: [inbound:Wikis/Meetings/raw/261014-forecast.eml, user]\n"
+                                    "created: 2026-10-16\n---\nConfirmed.\n")
+        self.assertClean("memory")
+
+    def test_a_memory_folder_that_is_not_there(self):
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"memory": "~/no-such-memory-folder-153"}))
+        self.assertFinds("settings", check.WARNING, "which is not a folder")
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"memory": 3}))
+        self.assertFinds("settings", check.ERROR, "a folder, or a list of folders")
+
+    def context_with(self, cell):
+        ctx = self.root / "System" / "context.md"
+        text = ctx.read_text(encoding="utf-8")
+        text = text.replace("| Heard | Means |\n|---|---|\n", "| Heard | Means | Learned |\n|---|---|---|\n")
+        ctx.write_text(text.rstrip("\n") + "\n| acme corps | Acme Corp | %s |\n" % cell, encoding="utf-8")
+
+    def test_a_learned_row_passes_and_rows_typed_by_hand_say_nothing(self):
+        self.context_with("2026-10-16, user")
+        self.assertClean("memory")
+        self.assertClean("context")
+
+    def test_a_learned_cell_that_does_not_read(self):
+        self.context_with("last week")
+        hit = self.assertFinds("memory", check.WARNING, "does not read as `YYYY-MM-DD, source`")[0]
+        self.assertEqual("System/context.md", hit.path)
+        self.assertIn("Aliases row acme corps", hit.message)
+
+    def test_a_row_learned_only_from_a_mail(self):
+        self.context_with("2026-10-16, inbound:Wikis/Meetings/raw/261014-forecast.eml")
+        self.assertFinds("memory", check.WARNING, "only source is inbound")
+
+
 class TestZones(CheckCase):
     def test_pass(self):
         self.assertClean("zones")

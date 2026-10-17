@@ -64,7 +64,14 @@ from garrick_lib import (  # noqa: E402
     VERSION_STAMP,
     MEDIA_EXTS,
     WALL_HOOK_MARK,
+    as_sources,
     has_wall_hook,
+    inbound_only,
+    is_origin,
+    memory_entries,
+    memory_folders,
+    origin_problems,
+    parse_learned,
     install_wall_hook,
     is_domain,
     is_display_name,
@@ -107,6 +114,7 @@ CHECKS = [
     ("settings", "Check settings"),
     ("placeholders", "Unfinished install"),
     ("context", "Context"),
+    ("memory", "Learned entries"),
     ("zones", "Zones"),
     ("hooks", "Commit hooks"),
     ("skills", "Skills"),
@@ -138,6 +146,7 @@ EAR_GROUP = {
     "settings": "the check settings have {n} problems",
     "placeholders": "{n} files still hold installer placeholders",
     "context": "the context file has {n} problems",
+    "memory": "{n} learned entries do not say where they came from, or came only from outside",
     "zones": "the zone folders have {n} gaps",
     "hooks": "git skips the hooks of {n} repositories",
     "skills": "{n} things need fixing in the skills",
@@ -537,6 +546,7 @@ SETTING_KINDS = {
     "todo-expire-days": (int, dict),     # days an untriaged Todo line waits, or {zone: days}: the todo skill's
     "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
     "todo-chase-days": (int, dict),      # days ahead a swept Waiting on line's ⏳ is set, 0 for none, or {zone: days}
+    "memory": (str, list),   # the folder, or folders, where the assistant keeps a memory of its own
 }
 AS_SHIPPED = ["System/tools/"]
 
@@ -558,8 +568,10 @@ def load_settings(root: Path) -> Tuple[dict, List[str]]:
         kind = SETTING_KINDS.get(key)
         if kind is None:
             problems.append("`%s` is not a setting; the ones there are: %s" % (key, ", ".join(SETTING_KINDS)))
-        elif not isinstance(value, kind) or (kind is list and not all(isinstance(v, str) for v in value)):
+        elif not isinstance(value, kind) or (list in (kind if isinstance(kind, tuple) else (kind,))
+                                              and isinstance(value, list) and not all(isinstance(v, str) for v in value)):
             problems.append("`%s` should be %s" % (key, "a list of names" if kind is list else "an object" if kind is dict
+                                                   else "a folder, or a list of folders" if list in kind
                                                    else "a %s, or an object with one per zone" % ("number" if int in kind else "word")))
         else:
             out[key] = value
@@ -582,6 +594,11 @@ def check_settings(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "settings", r,
                                "`word-budgets` takes `root` and `other`, each a number of words; `%s` is left out" % key,
                                "A word budget in the check settings cannot be read"))
+    for folder in memory_folders(ws.root, ws.settings.get("memory") or []):
+        if not folder.is_dir():
+            out.append(Finding(WARNING, "settings", r,
+                               "`memory` names %s, which is not a folder; no memory entry is checked there" % folder,
+                               "The check settings name a memory folder that is not there"))
     for key in ("retired-skills", "raw-accepted"):
         for name, value in ws.settings.get(key, {}).items():
             if not isinstance(value, str) or not value.strip():
@@ -982,6 +999,46 @@ def check_context(ws: Workspace) -> List[Finding]:
         out.append(Finding(WARNING, "context", ctx_path,
                            "no `## Aliases` table (| Heard | Means |); names that arrive mangled by dictation have nothing to match",
                            "The context file has no aliases table"))
+    return out
+
+
+ORIGIN_FIX = "add `source:` (user, file:<path> or inbound:<raw path>) and `created:` (YYYY-MM-DD) to its frontmatter"
+INBOUND_FIX = ("its only source is inbound, and nothing that came in from outside stands as a belief until a person "
+               "confirms it: ask, then add `user` to its source, or delete it")
+
+
+def check_memory(ws: Workspace) -> List[Finding]:
+    """Every learned entry says where it came from. A memory entry, in the
+    folders `memory` names in the check settings, carries `source:` and
+    `created:`; a row with a Learned cell in System/context.md has one that
+    reads. Either whose only source is inbound is reported too. Without the
+    setting no memory is read: where a harness keeps one is not Garrick's to
+    guess. A row typed by hand has no Learned cell, and nothing is said."""
+    out = []
+    for path in memory_entries(memory_folders(ws.root, ws.settings.get("memory") or [])):
+        fm = parse_frontmatter_text(read_text(path) or "")
+        r = rel(ws, path)
+        problems = origin_problems(fm)
+        if problems:
+            out.append(Finding(WARNING, "memory", r, "a learned entry with no origin: %s; %s" % (
+                "; ".join(problems), ORIGIN_FIX), "A memory entry does not say where it came from"))
+        elif inbound_only(as_sources(fm.get("source"))):
+            out.append(Finding(WARNING, "memory", r, "a learned entry whose %s" % INBOUND_FIX,
+                               "A memory entry came only from a mail, a transcript or a page"))
+    ctx_path = "System/context.md"
+    for entry in ws.context.get("learned", []):
+        read = parse_learned(entry["cell"])
+        where = "the %s row %s" % (entry["table"].capitalize(), entry["row"] or "with no name")
+        if read is None:
+            continue
+        date, sources = read
+        if not date or not sources or not all(is_origin(s) for s in sources):
+            out.append(Finding(WARNING, "memory", ctx_path,
+                               "%s has a Learned cell that does not read as `YYYY-MM-DD, source`: `%s`" % (where, entry["cell"]),
+                               "A learned row in the context file does not say where it came from"))
+        elif inbound_only(sources):
+            out.append(Finding(WARNING, "memory", ctx_path, "%s is learned, and %s" % (where, INBOUND_FIX),
+                               "A row in the context file came only from a mail, a transcript or a page"))
     return out
 
 
@@ -3952,7 +4009,8 @@ def check_updates(ws: Workspace) -> List[Finding]:
 
 
 ALL_CHECKS = [
-    check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_zones, check_hooks,
+    check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
+    check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
     check_raw, check_generated, check_preferences, check_updates,

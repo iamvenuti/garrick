@@ -181,6 +181,29 @@ class TodoTest(unittest.TestCase):
         self.assertEqual({"zone": "Work", "expired": 0, "archived": 1, "tidied": 3}, json.loads(out.getvalue()))
         self.assertIn("The header the list keeps.", self.text())
 
+    def test_the_wrap_archives_a_zone_no_sweep_reaches(self):
+        """The command the threads skill's wrap runs before its commit, as it
+        gives it: a line ticked on an earlier day goes, whatever thread it names,
+        and one ticked today the way the wrap ticks, with its ✅ date, stays."""
+        import io
+        import shlex
+        from contextlib import redirect_stdout
+        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        line = next(l.strip() for l in skill.splitlines() if "todo/todo.py archive" in l)
+        argv = shlex.split(line.replace("<Zone>", "Work"))
+        self.assertEqual(["python3", "System/skills/todo/todo.py"], argv[:2])
+        write(self.zone / "Todo.md", self.text().replace("- [ ] [[Pricing]]: send the sheet",
+                                                         "- [x] [[Pricing]]: send the sheet ✅ 2026-10-12"))
+        with redirect_stdout(io.StringIO()):
+            todo.main(argv[2:] + ["--root", str(self.root), "--today", "2026-10-12"])
+        after = self.text()
+        self.assertIn("- [x] [[Pricing]]: send the sheet ✅ 2026-10-12", after)       # ticked by this wrap
+        self.assertIn("today's ✅ 2026-10-12", after)
+        self.assertNotIn("old one", after)                                            # ticked on an earlier day
+        self.assertIn("old one", (self.zone / "archive" / "Todo-2026.md").read_text())
+        self.assertIn("- [ ] Dana: confirm volumes", after)                           # nothing open moves
+        self.assertIn("- [ ] Theo: the signed letter #waiting", after)
+
 
 class SweepJobTest(unittest.TestCase):
     """extras/jobs/todo_sweep.py with the assistant faked: one call per zone,

@@ -314,6 +314,36 @@ class SkillsTest(unittest.TestCase):
                        "unticked lines that name this thread"):
             self.assertIn(needle, threads, needle)
 
+    def test_the_list_holds_actions_not_records(self):
+        """A wrap or a finish ticks a line as it was written and writes no line
+        for work already done; what came of it is the thread note's. The todo
+        skill says the same, and names the check that holds them to it."""
+        threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        wrap = flat(section(threads, '## Wrap: "close X", "wrap X"'))
+        finish = flat(section(threads, '## Finish: "finish X", "X is done"'))
+        todo = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
+        does_not = flat(section(todo, "## What this skill does not do"))
+        for text in (wrap, finish, does_not):
+            self.assertIn("Never add a line for work that is already done.", text)
+            self.assertRegex(text, r"[Tt]ick a line as it was written")
+            self.assertIn("not on the line", text)
+        self.assertIn("**Tick a line as it was written; the outcome goes in the dated entry, not on the line.**", wrap)
+        self.assertIn("`✅ <YYYY-MM-DD>`, today, goes last", wrap)
+        self.assertIn("It never writes a record.", does_not)
+        for text in (wrap, does_not):
+            self.assertIn("`check.py` warns about a ticked line the zone's history never held open", text)
+
+    def test_a_wrap_archives_before_it_commits(self):
+        """So a zone the nightly sweep never reaches still loses the lines ticked
+        on an earlier day, and the archive goes in the wrap's own commit."""
+        threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        step = section(threads, '## Wrap: "close X", "wrap X"').split("\n12. ", 1)[1].split("\n13. ", 1)[0]
+        command = "python3 System/skills/todo/todo.py archive --zone <Zone>"
+        self.assertIn(command, step)
+        self.assertLess(step.index(command), step.index('git -C "Zones/<Zone>" add'))
+        self.assertIn("`archive/` when the archive moved a line", flat(step))
+        self.assertIn("beyond that archive", flat(section(threads, "## What this skill does not do")))
+
     def test_the_example_line_goes_with_the_first_real_action(self):
         """A new zone's list opens with an example line to show the shape. It is a
         task like any other, so every skill that writes a real action takes it out

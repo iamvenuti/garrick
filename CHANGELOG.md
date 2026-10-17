@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- A wrap writes actions to `Todo.md`, not records. After a run of wraps a zone's list filled up with what had already happened: a ticked line for something the session finished that was never on the list ("release 0.4.0 cut, five issues closed"), a tick with its outcome written onto it ("file the drafts: all three filed as #12, #13 and #14"), the same outcome written a second time in the thread note's dated entry, and ticked lines that stayed for good in any zone the nightly sweep did not reach, so the few open actions were hard to find among them. Now the `threads` skill's *Wrap* step 8 says it in two sentences: tick a line as it was written, the outcome goes in the dated entry, not on the line; never add a line for work that is already done. A tick turns `[ ]` into `[x]` and adds today's `✅` date, as Obsidian Tasks writes it, and changes nothing else. *Finish* and the `todo` skill's *What this skill does not do* say the same. Before its commit, a wrap runs `todo.py archive` for the zone, so a line ticked on an earlier day goes to the zone's `archive/Todo-<YYYY>.md`, whichever thread it names, whether or not the sweep runs there; a line ticked today stays for the status page's *Done today*, and the archive is staged in the wrap's own commit. `check.py` holds the list to it with two warnings: a ticked line the zone's history never held open, which is a record or an outcome written onto the tick, and a line longer than 200 characters as Obsidian shows it, links counted as their text and the sources the sweep folds onto a line left out. The history is read in one `git log` per zone that has ticked lines, matching a line by its words without its box, dates, tags and folded sources, so a line tidied or dated since it was written still counts as the same action; a zone with no history of its list is not asked about its ticks. [Commands](docs/commands.md), [Concepts](docs/concepts.md) and [What is enforced](docs/enforced.md) say so. ([#147](https://github.com/iamvenuti/garrick/issues/147))
+
 ## [0.33.0] - 2026-10-17
 
 ### Added

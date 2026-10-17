@@ -42,9 +42,10 @@ user answers a finding, or says outright, "that's wrong, it's Y", `correct`
 takes the two values and makes one finding of every live copy that
 `correct.py`'s `find_hits` finds, and on `--yes` applies them with its
 `apply`, which commits once per repository: one implementation, shared with
-the `threads` skill. With a scope, a copy in a file across a wall from it is
-a wall finding, said as its file and its wall and left alone, and a copy in a
-file another session has changes in is held, as for any fix. Raw records stay
+the `threads` skill. With a scope, a copy in a file across a wall from it, or
+whose parties cannot be told, is left out and left alone: the run says the
+rule's sentence once and nothing else of it, no file, party or count. A copy
+in a file another session has changes in is held, as for any fix. Raw records stay
 as they are, as `correct.py` keeps them. It is not unattended, and has no
 `apply` for the machine below, which holds a fix that spans two repositories,
 as a correction usually does: so `fix` and `nightly` never apply one, and
@@ -101,6 +102,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import correct  # noqa: E402
+from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
     load_context,
@@ -784,6 +786,9 @@ register(Kind("attribution", "Attribution and category", 30, claim_attribution,
 # `correct.find_hits` finds. On the yes, `correct.apply` writes them and
 # commits once per repository. Nurture adds only what it adds to every kind:
 # a scope's walls, the files another session has changes in, and the report.
+# A copy across a wall from the scope, or whose parties cannot be told, is
+# left out without a trace: the run says the rule's sentence, WALL_REFUSAL,
+# once, and nothing of its file, its party or how many there were.
 # The kind has no `apply` for the registry's machine, which holds a fix whose
 # files span two repositories or none; a correction usually does, since the
 # copies of one value sit in a zone, a wiki and a memory kept outside both. So
@@ -847,25 +852,21 @@ def inside(rel: str, scopes: List[str]) -> bool:
     return any(rel == s or rel.startswith(s.rstrip("/") + "/") for s in scopes)
 
 
-def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item], List[Item], set]:
-    """correct's hits, sorted for this run: those to apply; a wall finding for
-    each one across a wall from the scope, said as its file and its wall; a
-    held finding for each one in a file another session has changes in; and
-    the hits whose lines may not be shown, since nobody can tell whose they are."""
+def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item], bool]:
+    """correct's hits, sorted for this run: those to apply; a held finding for
+    each one in a file another session has changes in; and whether any was
+    left out, across a wall from the scope or with parties nobody can tell.
+    What was left out is not kept, so nothing can say it."""
     ours = set().union(set(), *(parties_at(ctx, s) for s in scopes))
-    go, walls, held, quiet = [], [], [], set()
+    go, held, withheld = [], [], False
     state: Dict[Path, Optional[set]] = {}
     for hit in hits:
         rel = ctx.rel(hit.path)
         if ours and not inside(rel, scopes):
             theirs = hit_parties(ctx, hit)
-            pair = next(((a, b) for a in sorted(ours) for b in sorted(theirs or ()) if walled(ctx.context, a, b)), None)
-            if pair:
-                walls.append(Item("correct", "correction", rel, "", kind="wall", wall="%s and %s" % pair,
-                                  held="a correction stops at a wall; make it from a session on that side"))
+            if theirs is None or any(walled(ctx.context, a, b) for a in ours for b in theirs):
+                withheld = True
                 continue
-            if theirs is None:
-                quiet.add(id(hit))
         files = [hit.path] if hit.kind != "raw" else list(hit.pages)
         why = ""
         for f in files:
@@ -891,7 +892,7 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
                              held=why))
             continue
         go.append(hit)
-    return go, walls, held, quiet
+    return go, held, withheld
 
 
 def correction_item(ctx: Ctx, old: str, new: str, go: list, path: str = "") -> Item:
@@ -941,16 +942,15 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     hits = correct.find_hits(ctx.root, old, new)
     left_out = {(ctx.root / Path(p).expanduser()).resolve() for p in leave or []}
     hits = [h for h in hits if h.path.resolve() not in left_out]
-    go, walls, held, quiet = sort_hits(ctx, hits, scopes)
+    go, held, withheld = sort_hits(ctx, hits, scopes)
     item = correction_item(ctx, old, new, go, path)
-    shown = [dict(h, lines=[] if id(hit) in quiet else h["lines"])
-             for hit, h in zip(go, correct.listing(go, ctx.root))]
-    out = {"old": old, "new": new, "item": item, "hits": shown, "walls": walls, "held": held, "done": None}
+    out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
+           "wall": WALL_REFUSAL if withheld else ""}
     rec = read_record(ctx)
     rec["runs"].append({"at": datetime.datetime.now().strftime("%H:%M"), "scope": scope_key(scopes),
                         "headless": ctx.headless})
     key = scope_key(scopes)
-    leftover = walls + held
+    leftover = list(held)
     if yes and go:
         done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat())
         out["done"] = done
@@ -1452,15 +1452,16 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
     code = EXIT_FAILED if done is not None and done.refused else 0
     if a.json:
         j = {"scope": scope_key(scopes), "old": a.old, "new": a.new, "report": report, "item": item_json(item),
-             "hits": out["hits"], "walls": [item_json(i) for i in out["walls"]],
-             "held": [item_json(i) for i in out["held"]]}
+             "hits": out["hits"], "held": [item_json(i) for i in out["held"]]}
+        if out["wall"]:
+            j["refusal"] = out["wall"]
         if done is not None:
             j.update({"changed": done.changed, "superseded": done.superseded, "commits": done.commits,
                       "uncommitted": done.uncommitted, "refused": done.refused, "rebuilt": done.rebuilt})
         print(json.dumps(j, indent=1, ensure_ascii=False))
         return code
     files = item.fix["files"]
-    back = len(out["walls"]) + len(out["held"])
+    back = len(out["held"])
     if a.ear:
         if done is not None:
             said = "Corrected in %s, %s." % (plural(len(done.changed), "place"), plural(len(done.commits), "commit"))                 if done.changed else "Nothing changed."
@@ -1471,6 +1472,8 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
             said = "Nothing live holds the old value."
         if back:
             said += " %s held back, named in the report." % ("One more is" if back == 1 else "%d more are" % back)
+        if out["wall"]:
+            said += " " + out["wall"]
         print(said)
         return code
     lines = []
@@ -1487,10 +1490,10 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
         lines += ["Not committed: %s (%s)" % u for u in done.uncommitted]
         lines += ["Refused in %s: %s" % r for r in done.refused]
         lines += ["Marked superseded: %s" % p for p in done.superseded]
-    if out["walls"]:
-        lines += ["Walls:"] + ["  %s" % i.line() for i in out["walls"]]
     if out["held"]:
         lines += ["Held:"] + ["  %s: %s" % (i.path, i.held) for i in out["held"]]
+    if out["wall"]:
+        lines.append(out["wall"])
     lines.append("Report: %s" % report)
     print("\n".join(lines))
     return code

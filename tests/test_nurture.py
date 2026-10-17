@@ -397,21 +397,43 @@ class CorrectionTest(Base):
         self.assertNotIn("Market Sizing", git(self.work, "show", "--name-only", "--format=", "HEAD"))
         self.assertNotIn(self.OLD, (self.acme / "Acme Review.md").read_text())
 
-    def test_a_scope_stops_at_its_walls_and_never_says_what_is_behind_one(self):
-        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--scope", "Zones/Work/Acme Review",
-                                  "--yes")
+    def test_a_scope_stops_at_its_walls_and_says_only_the_rules_sentence(self):
+        # A raw record no page rests on: nobody can tell whose it is, so a scope leaves it out too.
+        orphan = self.wikis / "Meetings" / "raw" / "260401-unfiled.txt"
+        orphan.write_text("Someone mentioned acme-corp.example.\n")
+        sentence = nurture.WALL_REFUSAL
+        scope = ["--scope", "Zones/Work/Acme Review"]
+        said = {}
+        for form in ("--ear", "text"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+                nurture.main(["correct", "--root", str(self.root), "--old", self.OLD, "--new", self.NEW, "--today",
+                              "2026-10-17"] + scope + ([form] if form != "text" else []))
+            said[form] = buf.getvalue()
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, *scope)
+        said["json"] = json.dumps(out)
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", *scope)
         self.assertEqual(0, code)
-        self.assertEqual(["Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"],
-                         [w["path"] for w in out["walls"]])
-        self.assertEqual("acme and birch", out["walls"][0]["wall"])
-        self.assertNotIn("Market Sizing", " ".join(h["path"] for h in out["hits"]))
-        self.assertIn(self.OLD, self.birch_note.read_text())                    # left for that side to correct
+        said["json --yes"] = json.dumps(out)
+        self.assertEqual(sentence, out["refusal"])
+        for form, text in said.items():
+            self.assertEqual(1, text.count(sentence), form)
+            rest = text.replace(sentence, "").replace('"wall": ""', "").lower()     # every item's empty field
+            for word in ("market sizing", "birch", "theo", "marsh", "benchmarked", "260401", "unfiled", "wall",
+                         "held back", "more"):
+                self.assertNotIn(word, rest, form)
+        report = (self.root / out["report"]).read_text().lower()
+        for word in ("market sizing", "birch", "theo", "marsh", "benchmarked", "260401", "unfiled", "wall"):
+            self.assertNotIn(word, report)
+        # What is behind the wall, and the record nobody can place, are left exactly as they were.
+        self.assertIn(self.OLD, self.birch_note.read_text())
         self.assertNotIn("Market Sizing", git(self.work, "show", "--name-only", "--format=", "HEAD"))
-        report = (self.root / out["report"]).read_text()
-        for said in (json.dumps(out), report):
-            for word in ("Theo", "Marsh", "benchmarked"):
-                self.assertNotIn(word, said)
-        self.assertIn("Market Sizing.md: the wall between acme and birch", report)
+        self.assertEqual("Someone mentioned acme-corp.example.\n", orphan.read_text())
+        self.assertNotIn(self.OLD, (self.acme / "Acme Review.md").read_text())   # this side's copies went in
+        # With no scope, nothing is held back and no sentence is said.
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)
+        self.assertNotIn("refusal", out)
+        self.assertIn("Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", [h["path"] for h in out["hits"]])
 
     def test_never_with_nobody_watching(self):
         self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)              # listed, so it waits in the record

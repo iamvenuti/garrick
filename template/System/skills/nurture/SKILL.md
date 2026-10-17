@@ -115,11 +115,13 @@ value is found and replaced one way only.
    python3 System/tools/nurture.py correct --old "<X>" --new "<Y>" --scope "<path>" --path "<the finding's file>"
    ```
    The scope is the pass's, none for the workspace. It lists what
-   `correct.py` finds, by file and line, as one finding. With a
-   scope, a copy in a file across a wall from it is a wall finding: say the
-   file and the wall, nothing of the line, and leave it for a session on
-   that side. A copy in a file another session has changes in is held. A raw
-   record is listed and never edited.
+   `correct.py` finds, by file and line, as one finding. With a scope, a
+   copy in a file across a wall from it, or in one whose parties cannot be
+   told, is left out and left alone, and the tool prints the sentence
+   *Zones and walls* in `System/rules.md` gives. Say that sentence, word for
+   word, and nothing else about it: no file, no party, no count, not that a
+   copy exists. A copy in a file another session has changes in is held. A
+   raw record is listed and never edited.
 3. **Ask once**: "Five places have the old domain. Fix them all?" A hit
    that is right where it is, such as a heard form in Aliases, is named and
    kept out with `--leave <path>`.

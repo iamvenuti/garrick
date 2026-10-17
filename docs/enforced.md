@@ -32,6 +32,7 @@ Some of Garrick's protections are code: a script that refuses, whatever the assi
 | Never skipping the wall check with `git commit --no-verify` unless you ask | **Asked** | [Zones and walls](../template/System/rules.md#zones-and-walls) |
 | Never editing anything in a wiki's `raw/` | **Asked**; the check reports a raw record that changed | [Files](../template/System/rules.md#files) |
 | Never printing, writing or committing a secret | **Asked** | [Secrets](../template/System/rules.md#secrets) |
+| Keeping `Todo.md` to actions: a line ticked as it was written, with no outcome added, and no line for work that is already done | **Asked**; the check warns about a ticked line the zone's history never held open, and about a line longer than 200 characters | The `threads` skill's *Wrap* and *Finish*, and the `todo` skill |
 | Rewriting a thread's Resume here block at the end of a session that produced a decision or a deliverable | **Asked**; the check warns about a block still holding the template's prompts | [Threads](../template/System/rules.md#threads) |
 | Writing a [checkpoint](concepts.md#checkpoint) when a file is saved for the thread, a decision is stated, or the next action changes | **Asked.** The tool refuses a badly made one, but nothing makes an assistant write one at all; the check warns about a block left unwrapped for more than a week, or on a finished thread | [Threads](../template/System/rules.md#threads), and the `threads` skill's *Checkpoint* |
 

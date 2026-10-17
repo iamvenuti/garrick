@@ -1984,6 +1984,13 @@ TASKS_DATE_RE = re.compile(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕)\uFE0F? *\d{4}-\
 TODO_TASK_RE = re.compile(r"^- \[[ xX]\] ")
 TODO_EXAMPLE_RE = re.compile(r"<[^<>\n]+>")
 INBOX_GROWTH = 20  # open actions added to a list's Inbox in a week, past which triage is not keeping up
+TODO_LONG = 200  # characters of a line as Obsidian shows it, past which it is a log entry rather than an action
+# A Tasks field wherever it stands on a line, a source the sweep folded onto
+# it, and a link as Obsidian shows it: its alias, or its target.
+TODO_FIELD_ANY_RE = re.compile(r"\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2})")
+TODO_ALSO_RE = re.compile(r"\s*·?\s*\(also in [^)]*\)")
+TODO_WIKILINK_RE = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]")
+TODO_MDLINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 
 def tasks_description(line: str) -> str:
@@ -2006,6 +2013,36 @@ def inbox_count(text: str) -> int:
     return n
 
 
+def todo_action(line: str) -> str:
+    """A task line as the action it names: no box, no dates or priority
+    wherever they stand, no tags at its end, no source the sweep folded onto
+    it, spaces collapsed and case folded. A line ticked as it was written
+    gives what it gave while it was open."""
+    text = TODO_FIELD_ANY_RE.sub("", line.rstrip()[6:])
+    text = TODO_ALSO_RE.sub("", tasks_description(text))
+    return " ".join(text.split()).casefold()
+
+
+def todo_shown(line: str) -> str:
+    """A task line as Obsidian shows it: no box, no fields or tags at its end,
+    no folded sources, each link as its text."""
+    text = TODO_ALSO_RE.sub("", tasks_description(line)[6:])
+    text = TODO_MDLINK_RE.sub(r"\1", TODO_WIKILINK_RE.sub(r"\1", text))
+    return " ".join(text.split())
+
+
+def todo_opened(zone: Path) -> Optional[set]:
+    """Every action the zone's history holds as an open line of its Todo.md,
+    as `todo_action` gives it, read in one git process for the whole history:
+    every line a commit added, and nothing else. None when there is no history
+    of the list to read: no repository, no commit, or a list never committed."""
+    data = _git_bytes(["-c", "log.showRoot=true", "log", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-renames",
+                       "--format=", "--", "Todo.md"], zone)
+    if not data:
+        return None
+    return {todo_action(l[1:]) for l in data.decode("utf-8", "replace").splitlines() if l.startswith("+- [ ] ")}
+
+
 def system_threads(ws: Workspace) -> set:
     """The hub and thread note names, lower-cased, of every project kept in
     System/. Such a project has no Todo.md of its own: its actions live in a
@@ -2024,7 +2061,9 @@ def check_todo(ws: Workspace) -> List[Finding]:
     last, where Obsidian Tasks reads them; the example action a new list is
     started with is gone once a real one has arrived; the Inbox does not grow
     by more than INBOX_GROWTH in a week. In a zone the check settings name
-    under `todo-labels`, every open action opens with its thread's link."""
+    under `todo-labels`, every open action opens with its thread's link.
+    The list holds actions, not records: a ticked line was once open in the
+    zone's history, and no line runs past TODO_LONG characters."""
     out = []
     strict = set(setting_zones(ws, "todo-labels"))
     system = system_threads(ws)
@@ -2071,6 +2110,26 @@ def check_todo(ws: Workspace) -> List[Finding]:
                                "%d open action%s a date with text after it, which Obsidian Tasks does not read; "
                                "put the dates last" % (unread, " has" if unread == 1 else "s have"),
                                "Some actions in %s have a date that is not read" % zone.name))
+        long = sum(1 for l in tasks if not TODO_EXAMPLE_RE.search(l) and len(todo_shown(l)) > TODO_LONG)
+        if long:
+            out.append(Finding(WARNING, "todo", r,
+                               "%d line%s longer than %d characters; a line names one action, and what came of "
+                               "it goes in the thread note's dated entry" % (long, " is" if long == 1 else "s are", TODO_LONG),
+                               "Some lines in the %s list read as log entries" % zone.name))
+        ticked = [l for l in tasks if l[3] in "xX" and not TODO_EXAMPLE_RE.search(l)]
+        opened = todo_opened(zone) if ticked and (zone / ".git").exists() else None
+        if opened is not None:
+            records = [l for l in ticked if todo_action(l) not in opened]
+            if records:
+                threads = sorted({m.group(1).strip() for m in (re.match(r"^- \[[xX]\] \[\[([^\]|#]+)", l)
+                                                                  for l in records) if m})
+                out.append(Finding(WARNING, "todo", r,
+                                   "%d ticked line%s never open in the zone's history%s: a record of work already "
+                                   "done, or an outcome written onto the tick. Both belong in the thread note's dated "
+                                   "entry; take the line out, or put it back as it was written with only its tick and "
+                                   "its ✅ date" % (len(records), " was" if len(records) == 1 else "s were",
+                                                    " (%s)" % ", ".join("[[%s]]" % t for t in threads) if threads else ""),
+                                   "The %s list holds records of work done, not actions" % zone.name))
         if (zone / ".git").exists():
             then = _git(["log", "-1", "--before=7.days", "--format=%H", "--", "Todo.md"], zone)
             old = _git(["show", "%s:Todo.md" % then.strip()], zone) if then and then.strip() else None

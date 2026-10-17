@@ -132,7 +132,7 @@ The skill that empties the inboxes, started by "process the inbox". It files a c
 
 ### `Todo.md`
 
-Each zone's one list of open actions, in Obsidian Tasks style. A line opens with its thread's link and ends with its dates: `📅` when it is due, or `#waiting` and `⏳` for the day to chase something you wait on. A thread note says where the work stands and is not a to-do list; the `todo` skill sweeps actions the records hold into the list's Inbox section and tidies the rest.
+Each zone's one list of open actions, in Obsidian Tasks style. A line opens with its thread's link and ends with its dates: `📅` when it is due, or `#waiting` and `⏳` for the day to chase something you wait on. A thread note says where the work stands and is not a to-do list; the `todo` skill sweeps actions the records hold into the list's Inbox section and tidies the rest. The list holds actions, never records: a line is ticked as it was written, what came of it goes in the thread note's dated entry, and work that was never on the list gets no line. Lines ticked before today move to the zone's `archive/`, at the nightly sweep and at every wrap.
 
 ## Instructions
 

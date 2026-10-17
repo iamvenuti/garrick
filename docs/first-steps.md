@@ -102,6 +102,7 @@ Unless you allowed them when you installed, a first session asks you to approve 
 | `python3 System/tools/probe.py` | Looks at what your Mac has that Garrick can use. It changes nothing |
 | `python3 System/tools/wiki_lint.py` | Lists a wiki's pages that nothing links to, and links to pages that are not there. It changes nothing |
 | `python3 System/tools/drift.py` | Compares what a project published with the copy in a shared folder. It changes nothing |
+| `python3 System/tools/next_up.py` | Ranks one thing worth doing while a long turn runs, for "what's next". It changes nothing |
 | `python3 System/tools/nurture.py` | Sorts what the check and the wiki lint find by what a fix needs. It changes nothing unless you say yes to its mechanical fixes, which it commits |
 | `git -C Zones/…` or `git -C Wikis`, then `status`, `diff`, `log`, `add` or `commit` | Looks at, or saves, what changed in a zone's or a wiki's history, on your Mac |
 

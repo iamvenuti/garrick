@@ -302,13 +302,15 @@ def plain(line: str) -> str:
     return "%s: %s" % (label, text) if label else text
 
 
-def digest(zone: Path, today: datetime.date) -> str:
-    """A short morning summary of a zone's list, plain text, a few lines a section."""
-    lines = read(zone)
+def classify(lines: List[str], today: datetime.date) -> dict:
+    """The open lines a digest names, read once for every reader: "overdue",
+    (days late, line) pairs; "due", due today; "chase", waiting lines whose
+    chase day has come; and the counts "undated" and "no_chase". The example
+    line, `<action>`, counts as none. System/tools/next_up.py ranks from the
+    same reading."""
     where = sections(lines)
     waiting = set(range(*where.get("Waiting on", (0, 0))))
-    inbox = set(range(*where.get("Inbox", (0, 0))))
-    overdue, due, chase, undated, no_chase = [], [], [], 0, 0
+    out = {"overdue": [], "due": [], "chase": [], "undated": 0, "no_chase": 0}
     for i, line in enumerate(lines):
         if not line.startswith("- [ ] ") or "<action>" in line:
             continue
@@ -316,16 +318,27 @@ def digest(zone: Path, today: datetime.date) -> str:
         d, c = DUE.search(line), CHASE_ON.search(line)
         if theirs:
             if c and c.group(1) <= today.isoformat():
-                chase.append(plain(line))
+                out["chase"].append(line)
             elif not c:
-                no_chase += 1
+                out["no_chase"] += 1
         elif d and d.group(1) < today.isoformat():
-            late = (today - datetime.date.fromisoformat(d.group(1))).days
-            overdue.append((-late, "%s (%dd late)" % (plain(line), late)))
+            out["overdue"].append(((today - datetime.date.fromisoformat(d.group(1))).days, line))
         elif d and d.group(1) == today.isoformat():
-            due.append(plain(line))
+            out["due"].append(line)
         elif not d and not c:
-            undated += 1
+            out["undated"] += 1
+    return out
+
+
+def digest(zone: Path, today: datetime.date) -> str:
+    """A short morning summary of a zone's list, plain text, a few lines a section."""
+    lines = read(zone)
+    inbox = set(range(*sections(lines).get("Inbox", (0, 0))))
+    found = classify(lines, today)
+    overdue = [(-late, "%s (%dd late)" % (plain(line), late)) for late, line in found["overdue"]]
+    due = [plain(line) for line in found["due"]]
+    chase = [plain(line) for line in found["chase"]]
+    undated, no_chase = found["undated"], found["no_chase"]
     open_inbox = [i for i in inbox if lines[i].startswith("- [ ] ")]
     expired = 0
     gone = zone / "archive" / ("Todo-expired-%d.md" % today.year)

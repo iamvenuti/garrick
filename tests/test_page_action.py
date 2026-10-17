@@ -576,6 +576,41 @@ class TestSettings(ActionCase):
         self.assertEqual(("note",) + tuple(k for k, _, _, _ in status.LAUNCHERS), pa.LAUNCHERS)
 
 
+class TestWaitSettings(ActionCase):
+    """Settings › While you wait (#111), checked by next_up.py and kept beside the rest."""
+
+    def path(self):
+        return self.root / "System" / "garrick-settings.json"
+
+    def test_saved_checked_and_beside_the_rest(self):
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
+        said = self.act(verb="settings", **{"while-you-wait": {"on": False, "threshold": 90, "same-zone": True,
+                                                                 "sources": ["due", "stack"], "parked-days": 60}})
+        self.assertEqual("Settings saved", said)
+        saved = json.loads(self.path().read_text())
+        self.assertEqual("cmux", saved["default"])                                   # the rest stays
+        self.assertEqual({"on": False, "threshold": 90, "same-zone": True, "sources": ["due", "stack"],
+                          "parked-days": 60, "wrap-days": 14}, saved["while-you-wait"])
+
+    def test_refused_with_the_reason(self):
+        for wait in ({"threshold": 2}, {"sources": ["mail"]}, {"same-zone": "yes"}, {"colour": "Teal"}, "on"):
+            with self.assertRaises(pa.Refused, msg=wait):
+                self.act(verb="settings", **{"while-you-wait": wait})
+        self.assertFalse(self.path().exists())
+
+    def test_a_pick_ticks_through_todo_done(self):
+        shutil.copy2(REPO / "template" / "System" / "tools" / "next_up.py", self.root / "System" / "tools" / "next_up.py")
+        (self.root / "System" / "skills" / "todo").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", self.root / "System" / "skills" / "todo" / "todo.py")
+        spec = importlib.util.spec_from_file_location("garrick_next_up_pa", str(self.root / "System" / "tools" / "next_up.py"))
+        nu = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nu)
+        due = [p for p in nu.next_up(self.root, today=dt.date(2026, 10, 10))["picks"] if p["source"] == "due"]
+        self.assertEqual(due[0]["say"], "Pricing: Send the revised terms (Work, 1 day late)")
+        self.assertIn("Send the revised terms", self.act(**due[0]["tick"]))
+        self.assertIn("- [x] [[Pricing]]: Send the revised terms", (self.work / "Todo.md").read_text())
+
+
 class TestZoneSettings(ActionCase):
     """Settings › Zones (#67): a colour and an icon per zone, beside the launchers."""
 

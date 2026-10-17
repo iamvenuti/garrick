@@ -25,7 +25,7 @@ Above the prompt:
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.
 
-The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick resume`, `/garrick wrap`, `/garrick note`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band.
+The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick resume`, `/garrick wrap`, `/garrick note`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band. `/garrick next`, `open`, `tick` and `later` act on [While you wait](#while-you-wait).
 
 In the assistant's replies, a path in backticks becomes a link, so Cmd-click opens the file in its default app, or a folder in Finder:
 
@@ -34,7 +34,30 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 
-How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and never calls a model. *Resume* and *Wrap* send a prompt in your name, only when you press them. It runs two processes: that `find`, and `open` when you press *Finder* or *Obsidian*.
+How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and never calls a model. *Resume* and *Wrap* send a prompt in your name, only when you press them. It runs these processes: that `find`; `open` when you press *Finder* or *Obsidian*; and, for While you wait, `python3` on `System/tools/next_up.py`, which only reads, and on `System/status/page_action.py` when you open or tick a suggestion.
+
+## While you wait
+
+A long turn, a wrap, an ingest or a build, can run for minutes. Once a turn has run longer than a threshold, 45 seconds unless you change it, one line appears under the step line with one thing worth doing elsewhere in those minutes:
+
+```
+While you wait: Renewal: Reply on the renewal dates (Work, due today) /garrick open next tick later
+```
+
+It comes from `System/tools/next_up.py`, which ranks by six plain rules and asks no model: the top of the interruption stack (with the [status page](../../docs/extras/status-page.md) extra, which keeps it), Todo lines due today or late, a reply or a chase before a line that names a deliverable, chases that have come due, what waits in an Inbox, a parked thread left alone for 30 days ("Park or finish?"), and a live thread not wrapped for 14 ("Wrap?"). A suggestion names a thread and an action in a few words, never quotes a meeting, and never names the thread the session is in. It is drawn from every zone unless *Same zone only* is on.
+
+Four words act on it, typed as `/garrick next`, `/garrick open`, `/garrick tick` and `/garrick later`, which run at once while the turn goes on, or clicked on the line:
+
+- *next* shows the following suggestion. The band reads the list once when the line appears, and again on *next* only when that answer is more than a minute old.
+- *open* opens it elsewhere: the thread's own cmux tab with the [desk](../../docs/extras/cmux.md), else its note in Obsidian when it sits in a vault, else with the Mac's default app. An Inbox opens a tab on "process the inbox" with the desk, or the folder in Finder.
+- *tick* ticks a Todo line through the status page's `page_action.py`, as the page does, committed in its zone. A tick in the zone the turn is working in waits for the turn to end, so the two commits never meet, and the band says so; a session outside any zone holds every tick.
+- *later* puts the line away for this turn.
+
+None of them sends anything to the running session. When the turn ends, the line goes, and a toast says the turn has finished and what any held tick did.
+
+The letter keys of the band's own buttons are not used for these. Whether a band's keys fire while a turn runs is not something the mods API promises, and `n` and `o` are already *Note* and *Obsidian*; `/garrick` is registered to run mid-turn, so the words are the way that works.
+
+Settings › While you wait, on the status page, switches it on or off and sets the threshold, *Same zone only*, which sources count and in what order, and how old a parked or an unwrapped thread must be. They are kept in `System/garrick-settings.json` under `while-you-wait`, which the band reads at the start of each turn. In a session without the band, ask "what's next": the `threads` skill runs the same script, so the answer is the band's first pick.
 
 ## Load it
 

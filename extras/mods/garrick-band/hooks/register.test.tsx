@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { buildIndex, cut, fileHref, label, linkify, lookup, markCells, obsidianUrl, paneMarkdown, parseNote, plain, promptLine, resumePrompt, stepLine, wrapPrompt } from './register'
+import { buildIndex, cut, fileHref, label, linkify, lookup, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, plain, promptLine, resumePrompt, rootOf, stepLine, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -385,5 +385,151 @@ describe('pane', () => {
       'See [the sheet](file:///v/Zones/Work/Acme/Deliverables/x.md) and y.',
     )
     expect(paneMarkdown('| a | [[Acme/Deliverables/x\\|sheet]] |', resolve)).toBe('| a | [sheet](file:///v/Zones/Work/Acme/Deliverables/x.md) |')
+  })
+})
+
+describe('while you wait', () => {
+  const PICKS = [
+    { id: 'due:1', rule: 2, source: 'due', say: 'Renewal: Reply on the renewal dates (Birch, due today)', zone: 'Personal', project: 'Birch', thread: 'Renewal',
+      note: 'Zones/Personal/Birch/Threads/Renewal/Renewal.md', tick: { verb: 'todo-done', zone: 'Personal', file: 'Todo.md', key: 'k1' } },
+    { id: 'due:2', rule: 2, source: 'due', say: 'Pricing: Send the price list (Work, due today)', zone: 'Work', project: 'Acme', thread: 'Pricing',
+      note: 'Zones/Work/Acme/Threads/Pricing/Pricing.md', tick: { verb: 'todo-done', zone: 'Work', file: 'Todo.md', key: 'k2' } },
+    { id: 'inbox:Zones/Work/Inbox', rule: 4, source: 'inbox', say: "2 files in Work's Inbox: say “process the inbox”", zone: 'Work', project: null, thread: null,
+      note: 'Zones/Work/Inbox' },
+  ]
+  const WORKING = { ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } }
+
+  // A thread in Work with next_up.py and page_action.py installed; every
+  // command the band runs is recorded, and next_up.py answers PICKS.
+  async function waiting($: any, on: any, settings: object | null = null) {
+    const clock = mock.clock(on)
+    const ran: { argv: string[]; stdin?: string }[] = []
+    const submitted: string[] = []
+    on('ui.render', ENGINE)
+    on('prompt.submit', async (_$: any, e: any) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    on('process.run', async (_$: any, e: any) => {
+      ran.push({ argv: [...e.argv], stdin: e.init?.stdin })
+      const stdout = String(e.argv[1]).endsWith('next_up.py') ? JSON.stringify({ on: true, picks: PICKS })
+        : String(e.argv[1]).endsWith('page_action.py') ? JSON.stringify({ ok: true, say: 'Done: the line' }) : ''
+      return { value: { exitCode: 0, stdout, stderr: '' } } as any
+    })
+    const cwd = `${ROOT}/Zones/Work/Acme`
+    on('session.root', async () => ({ value: cwd }))
+    on('session.cwd', async () => ({ value: cwd }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({
+      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, `${ROOT}/System/tools/next_up.py`, `${ROOT}/System/status/page_action.py`, '/usr/bin/open'].includes(e.path),
+    }))
+    on('fs.read', async (_$: any, e: any) => ({ value: e.path.endsWith('garrick-settings.json') ? JSON.stringify(settings ?? {}) : NOTE }))
+    on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer' })
+    const start = () => $.turn.start({ text: 'Wrap Acme', turnId: 't1' } as any)
+    const end = () => $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const garrick = async (args: string) => (await $.command.run({ command: 'garrick', args } as any)).text
+    return { clock, ran, submitted, start, end, garrick }
+  }
+
+  test('settings: the defaults, what is saved, and what does not read', () => {
+    expect(waitSettings(null)).toEqual({ on: true, threshold: 45 })
+    expect(waitSettings('{"while-you-wait": {"on": false, "threshold": 90}}')).toEqual({ on: false, threshold: 90 })
+    expect(waitSettings('{"while-you-wait": {"threshold": 2}}')).toEqual({ on: true, threshold: 45 })
+    expect(waitSettings('not json')).toEqual({ on: true, threshold: 45 })
+  })
+
+  test('next_up.py is asked for the session zone, never the thread the session is in', () => {
+    const n = { path: '/v/Zones/Work/Acme/Threads/Pricing/Pricing.md', rel: 'Zones/Work/Acme/Threads/Pricing/Pricing.md', where: '', title: 'Pricing',
+      status: 'active', heading: null, lead: null, resume: null, finder: true, obsidian: false, threads: [] }
+    expect(rootOf(n)).toBe('/v')
+    expect(zoneOf(n.rel)).toBe('Work')
+    expect(nextUpArgv(n)).toEqual(['python3', '/v/System/tools/next_up.py', '--root', '/v', '--zone', 'Work', '--exclude', 'Zones/Work/Acme/Threads/Pricing'])
+    const home = { ...n, path: '/v/System', rel: 'System', title: 'System' }
+    expect(nextUpArgv(home)).toEqual(['python3', '/v/System/tools/next_up.py', '--root', '/v'])
+    expect(pageActionArgv('/v')).toEqual(['python3', '/v/System/status/page_action.py', '--workspace', '/v'])
+  })
+
+  test('one line once a turn has run past the threshold, and gone when it ends', async ($, on) => {
+    const w = await waiting($, on)
+    await w.start()
+    await w.clock.advance(44_000)
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeUndefined()
+    expect(w.ran.filter(r => r.argv[1]!.endsWith('next_up.py'))).toHaveLength(0)
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount(WORKING)
+    expect(await band.find({ text: /Reply on the renewal dates/ })).toBeDefined()
+    for (const key of ['wait-open', 'wait-next', 'wait-tick', 'wait-later']) expect(await band.find({ key })).toBeDefined()
+    expect(w.ran.find(r => r.argv[1]!.endsWith('next_up.py'))!.argv).toContain('--exclude')
+    await w.end()
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeUndefined()
+  })
+
+  test('not while the band is idle, and never when it is switched off', async ($, on) => {
+    const w = await waiting($, on, { 'while-you-wait': { on: false } })
+    await w.start()
+    await w.clock.advance(120_000)
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeUndefined()
+    expect(w.ran.filter(r => r.argv[1]!.endsWith('next_up.py'))).toHaveLength(0)
+  })
+
+  test('the threshold is a setting', async ($, on) => {
+    const w = await waiting($, on, { 'while-you-wait': { threshold: 120 } })
+    await w.start()
+    await w.clock.advance(60_000)
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeUndefined()
+    await w.clock.advance(61_000)
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeDefined()
+  })
+
+  test('/garrick next shows the next one, later puts the line away for the turn', async ($, on) => {
+    const w = await waiting($, on)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('next')).toBe('While you wait: Pricing: Send the price list (Work, due today)')
+    expect(await (await $.ui.mount(WORKING)).find({ text: /Send the price list/ })).toBeDefined()
+    expect(await w.garrick('later')).toBe('Put away for this turn.')
+    expect(await (await $.ui.mount(WORKING)).find({ text: /While you wait/ })).toBeUndefined()
+    expect(w.submitted).toEqual([])                                    // nothing reached the running session
+  })
+
+  test('a tick in another zone goes at once, through page_action.py on stdin', async ($, on) => {
+    const w = await waiting($, on)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('tick')).toBe('Done: the line')
+    const call = w.ran.find(r => r.argv[1]!.endsWith('page_action.py'))!
+    expect(call.argv).toEqual(['python3', `${ROOT}/System/status/page_action.py`, '--workspace', ROOT])
+    expect(JSON.parse(call.stdin!)).toEqual({ verb: 'todo-done', zone: 'Personal', file: 'Todo.md', key: 'k1' })
+    expect(await (await $.ui.mount(WORKING)).find({ text: /Send the price list/ })).toBeDefined()      // the next one
+    expect(w.submitted).toEqual([])
+  })
+
+  test('a tick in the running turn\'s zone waits for the turn to end', async ($, on) => {
+    const w = await waiting($, on)
+    await w.start()
+    await w.clock.advance(46_000)
+    await w.garrick('next')
+    expect(await w.garrick('tick')).toMatch(/^Ticks when the turn ends, since it works in Work/)
+    expect(w.ran.filter(r => r.argv[1]!.endsWith('page_action.py'))).toHaveLength(0)
+    await w.end()
+    const call = w.ran.find(r => r.argv[1]!.endsWith('page_action.py'))!
+    expect(JSON.parse(call.stdin!).key).toBe('k2')
+  })
+
+  test('open never touches the running session', async ($, on) => {
+    const w = await waiting($, on)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('open')).toBe('Opened Renewal.')
+    expect(w.ran.some(r => r.argv[0] === '/usr/bin/open' && r.argv[1] === `${ROOT}/Zones/Personal/Birch/Threads/Renewal/Renewal.md`)).toBe(true)
+    expect(w.submitted).toEqual([])
+  })
+
+  test('with nothing on offer, the commands say so', async ($, on) => {
+    const w = await waiting($, on)
+    expect(await w.garrick('next')).toMatch(/^Nothing is on offer/)
+    expect(await w.garrick('tick')).toBe('Nothing is on offer to tick.')
   })
 })

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Activity, Note, Thread } from '../types'
+import type { Activity, Note, Thread, Wait, WaitPick } from '../types'
 
 // Garrick blue, from docs/assets/garrick-mark.svg.
 const BLUE = 0x3d73e0
@@ -11,6 +11,7 @@ const PANE = 'garrick-resume'
 const note = atom({ plugin: 'garrick-band', key: 'note' } as const, null)
 const isHidden = atom({ plugin: 'garrick-band', key: 'isHidden' } as const, false)
 const activity = atom({ plugin: 'garrick-band', key: 'activity' } as const, null)
+const wait = atom({ plugin: 'garrick-band', key: 'wait' } as const, null)
 
 // The mark, the cabinet, as a 6×3 cell tile: a 6×6 grid of half-block pixels,
 // two to a cell. The spine and the closed compartment are drawn in the
@@ -356,6 +357,181 @@ async function resolver($: any) {
   }
 }
 
+// --- While you wait ---------------------------------------------------------
+// Once a turn has run past the threshold, one line offers something to do
+// elsewhere, from System/tools/next_up.py. Nothing here reaches the running
+// session: opening runs cmux, Obsidian or Finder, and ticking runs
+// page_action.py on stdin, as the status page does. A tick in the zone the turn
+// works in waits for the turn to end, so the two commits never meet. Whether
+// the band's letter keys fire mid-turn is not settled, so the actions are
+// /garrick next, open, tick and later, which run at once mid-turn, and the
+// same words drawn as buttons for a click.
+export const WAIT_DEFAULTS = { on: true, threshold: 45 }
+const WAIT_LIMITS = [10, 600] as const
+const WAIT_FRESH_MS = 60_000
+
+// Settings › While you wait, as System/garrick-settings.json keeps it; what
+// does not read is the default, so a hand-edited file never stops the band.
+export function waitSettings(text: string | null): { on: boolean; threshold: number } {
+  let saved: any = null
+  try {
+    saved = text === null ? null : JSON.parse(text)?.['while-you-wait']
+  } catch {
+    saved = null
+  }
+  const on = typeof saved?.on === 'boolean' ? saved.on : WAIT_DEFAULTS.on
+  const t = saved?.threshold
+  const threshold = Number.isInteger(t) && t >= WAIT_LIMITS[0] && t <= WAIT_LIMITS[1] ? t : WAIT_DEFAULTS.threshold
+
+  return { on, threshold }
+}
+
+// The workspace root a note was found under, and the zone of the session.
+export const rootOf = (n: Note) => (n.rel === '' ? n.path : n.path.slice(0, n.path.length - n.rel.length - 1))
+export const zoneOf = (rel: string) => /^Zones\/([^/]+)\//.exec(rel)?.[1] ?? null
+
+// next_up.py's command: the session's zone, and the folder of the thread or
+// project the session is in, which is never offered.
+export function nextUpArgv(n: Note): string[] {
+  const root = rootOf(n)
+  const zone = zoneOf(n.rel)
+  const own = n.rel.startsWith('Zones/') && n.rel.endsWith(`/${n.title}.md`)
+
+  return ['python3', `${root}/System/tools/next_up.py`, '--root', root, ...(zone ? ['--zone', zone] : []),
+    ...(own ? ['--exclude', parent(n.rel)] : [])]
+}
+
+export const pageActionArgv = (root: string) => ['python3', `${root}/System/status/page_action.py`, '--workspace', root]
+
+// The pick on show, or null.
+export const shownPick = (w: Wait | null): WaitPick | null => (w === null || w.hidden ? null : w.picks[w.index] ?? null)
+
+let running: string | null = null          // the main loop's turn, while it runs
+let timer: { cancel: () => void } | null = null
+let held: { pick: WaitPick; root: string }[] = []     // ticks waiting for the turn to end
+
+async function nextUp($: any): Promise<WaitPick[]> {
+  const n = await read($, note)
+  if (n === null) return []
+  const argv = nextUpArgv(n)
+  if (!(await $.fs.exists(argv[1]!))) return []
+  const { exitCode, stdout } = await $.process.run(argv, { timeoutMs: 20_000 }).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (exitCode !== 0) return []
+  try {
+    const data = JSON.parse(stdout)
+
+    return data.on === false || !Array.isArray(data.picks) ? [] : data.picks
+  } catch {
+    return []
+  }
+}
+
+async function offer($: any, turnId: string) {
+  if (running !== turnId) return
+  const picks = await nextUp($)
+  if (running !== turnId || picks.length === 0) return
+  const at = await $.clock.now()
+  await update($, wait, () => ({ turnId, picks, index: 0, at, hidden: false, shown: [picks[0]!.id] }))
+}
+
+async function waitNext($: any): Promise<string> {
+  const w = await read($, wait)
+  if (w === null || running === null) return 'Nothing is on offer: the line shows once a turn has run a while.'
+  const now = await $.clock.now()
+  let picks = w.picks
+  let index = w.index + 1
+  if (now - w.at > WAIT_FRESH_MS) {
+    picks = (await nextUp($)).filter(p => !w.shown.includes(p.id))
+    index = 0
+  }
+  const pick = picks[index]
+  if (pick === undefined) {
+    await update($, wait, x => (x === null ? null : { ...x, hidden: true }))
+
+    return 'Nothing else is waiting.'
+  }
+  await update($, wait, x => (x === null ? null : { ...x, picks, index, at: picks === w.picks ? x.at : now, hidden: false, shown: [...x.shown, pick.id] }))
+
+  return `While you wait: ${pick.say}`
+}
+
+async function pageAction($: any, root: string, req: object): Promise<{ ok: boolean; say: string }> {
+  const { exitCode, stdout, stderr } = await $.process.run(pageActionArgv(root), { stdin: JSON.stringify(req), timeoutMs: 120_000 })
+    .catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+  try {
+    const reply = JSON.parse(String(stdout).trim().split('\n').pop() ?? '')
+
+    return { ok: reply.ok === true, say: String(reply.say ?? '') }
+  } catch {
+    return { ok: false, say: exitCode === 0 ? 'page_action.py gave no answer' : String(stderr).trim().split('\n').pop() ?? '' }
+  }
+}
+
+// Opens the pick elsewhere: its thread's own cmux tab where the desk is
+// installed, else its note in Obsidian when it sits in a vault, else with the
+// Mac's default app; an Inbox opens a tab at the root on "process the inbox",
+// or the folder in Finder.
+async function waitOpen($: any): Promise<string> {
+  const pick = shownPick(await read($, wait))
+  const n = await read($, note)
+  if (pick === null || n === null || pick.note === null) return 'Nothing is on offer to open.'
+  const root = rootOf(n)
+  const abs = `${root}/${pick.note}`
+  const desk = (await $.fs.exists(`${root}/System/status/page_action.py`)) && (await $.fs.exists(`${root}/System/cmux/desk.py`))
+  if (desk && pick.zone !== null && pick.project !== null) {
+    const reply = await pageAction($, root, { verb: 'open', zone: pick.zone, project: pick.project, ...(pick.thread ? { thread: pick.thread } : {}) })
+    if (reply.ok) return reply.say || `Opened ${pick.thread ?? pick.project} in cmux.`
+  }
+  if (desk && pick.source === 'inbox') {
+    const reply = await pageAction($, root, { verb: 'open', folder: root, prompt: 'process the inbox' })
+    if (reply.ok) return reply.say || 'Opened a tab on "process the inbox".'
+  }
+  const vault = abs.endsWith('.md') && (await openers($, chainOf(abs, root), parent(abs))).obsidian
+  const { exitCode } = await $.process.run(['/usr/bin/open', vault ? obsidianUrl(abs) : abs]).catch(() => ({ exitCode: 1 }))
+
+  return exitCode === 0 ? `Opened ${pick.thread ?? pick.project ?? basename(pick.note)}${vault ? ' in Obsidian' : ''}.` : 'It did not open.'
+}
+
+// The folders from a file's own up to the root, as findNote walks them.
+function chainOf(abs: string, root: string): string[] {
+  const out: string[] = []
+  for (let dir = parent(abs); dir.length >= root.length && dir !== '/'; dir = parent(dir)) out.push(dir)
+
+  return out
+}
+
+async function tick($: any, pick: WaitPick, root: string): Promise<string> {
+  const reply = await pageAction($, root, pick.tick!)
+
+  return reply.ok ? reply.say || 'Ticked.' : `Not ticked: ${reply.say}`
+}
+
+async function waitTick($: any): Promise<string> {
+  const w = await read($, wait)
+  const pick = shownPick(w)
+  const n = await read($, note)
+  if (pick === null || n === null) return 'Nothing is on offer to tick.'
+  if (!pick.tick) return 'Only a Todo line can be ticked.'
+  const root = rootOf(n)
+  if (!(await $.fs.exists(pageActionArgv(root)[1]!))) return 'Ticking needs the status page extra, System/status/page_action.py.'
+  // The rest of the list stays on offer; the ticked line goes from it.
+  await update($, wait, x => (x === null ? null : { ...x, picks: x.picks.filter(p => p.id !== pick.id), index: Math.min(x.index, Math.max(0, x.picks.length - 2)), hidden: x.picks.length <= 1 }))
+  const zone = zoneOf(n.rel)
+  if (running !== null && (zone === null || zone === pick.zone)) {
+    held.push({ pick, root })
+
+    return `Ticks when the turn ends, since it works in ${pick.zone}: ${pick.say}`
+  }
+
+  return tick($, pick, root)
+}
+
+async function waitLater($: any): Promise<string> {
+  await update($, wait, x => (x === null ? null : { ...x, hidden: true }))
+
+  return 'Put away for this turn.'
+}
+
 const STATUS_COLOR: Record<string, string> = { active: 'green', parked: 'yellow', done: 'gray' }
 
 export const register: Register = on => {
@@ -364,13 +540,31 @@ export const register: Register = on => {
     // waiting for the turn to end.
     await $.command.register({
       name: 'garrick',
-      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note',
-      argumentHint: '[hide|resume|wrap|note|finder|obsidian]',
+      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note; while a turn runs, "next", "open", "tick" or "later" for what it suggests',
+      argumentHint: '[hide|resume|wrap|note|finder|obsidian|next|open|tick|later]',
       immediate: true,
     })
     await update($, activity, () => null)
+    await update($, wait, () => null)
     await refresh($)
     await reindex($).catch(() => undefined)
+
+    return next(e)
+  })
+
+  // The main loop's turn: the While you wait line, once it has run past the threshold.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      running = e.turnId
+      timer?.cancel()
+      timer = null
+      await update($, wait, () => null).catch(() => undefined)
+      const n = await read($, note)
+      const text = n === null ? null : ((await $.fs.read(`${rootOf(n)}/System/garrick-settings.json`).catch(() => null)) as string | null)
+      const chosen = waitSettings(text)
+      const turnId = e.turnId
+      if (n !== null && chosen.on) timer = $.clock.after(chosen.threshold * 1000, () => void offer($, turnId).catch(() => undefined))
+    }
 
     return next(e)
   })
@@ -401,6 +595,18 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      timer?.cancel()
+      timer = null
+      running = null
+      const was = shownPick(await read($, wait))
+      await update($, wait, () => null)
+      const due = held
+      held = []
+      const said = [] as string[]
+      for (const t of due) said.push(await tick($, t.pick, t.root).catch(() => 'A tick did not go through.'))
+      if (was !== null || said.length) $.ui.toast(['The turn has finished.', ...said].join(' '))
+    }
     await update($, activity, a => (a === null ? null : { ...a, step: null }))
     await refresh($)
     await reindex($).catch(() => undefined)
@@ -427,6 +633,10 @@ export const register: Register = on => {
     await update($, isHidden, () => false)
     const shown = 'Garrick band shown. If it is folded under [+], ctrl+x ctrl+a opens it.'
     if (arg === '' || arg === 'show') return { text: shown }
+    if (arg === 'next') return { text: await waitNext($) }
+    if (arg === 'open') return { text: await waitOpen($) }
+    if (arg === 'tick') return { text: await waitTick($) }
+    if (arg === 'later') return { text: await waitLater($) }
     const current = await read($, note)
     if (arg === 'finder' || arg === 'obsidian') {
       if (current === null || current.path === '') return { text: 'No project or thread note above this folder.' }
@@ -449,7 +659,7 @@ export const register: Register = on => {
       return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
     }
 
-    return { text: `Unknown argument "${arg}": use hide, resume, wrap, note, finder or obsidian.` }
+    return { text: `Unknown argument "${arg}": use hide, resume, wrap, note, finder, obsidian, next, open, tick or later.` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -457,6 +667,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey || current === null || (await read($, isHidden))) return next(e)
 
     const doing = await read($, activity)
+    const offered = e.props.isWorking ? shownPick(await read($, wait)) : null
     const { Box, Text, Button, ...rest } = $.ui.resolve(e)
     const Raster = (rest as any).Raster
     const mark = Raster ? (
@@ -487,6 +698,21 @@ export const register: Register = on => {
               </Text>
               {e.props.isWorking && doing.step && <Text dimColor> · {doing.step}</Text>}
             </Text>
+          )}
+          {offered !== null && (
+            <Box flexDirection="row" gap={1}>
+              <Box flexShrink={1}>
+                <Text wrap="truncate-end">
+                  <Text color="#3d73e0">While you wait: </Text>
+                  {offered.say}
+                </Text>
+              </Box>
+              <Text dimColor>/garrick</Text>
+              <Button key="wait-open" label="open" plain onPress={() => void waitOpen($).then(t => $.ui.toast(t))} />
+              <Button key="wait-next" label="next" plain dimColor onPress={() => void waitNext($)} />
+              {offered.tick && <Button key="wait-tick" label="tick" plain dimColor onPress={() => void waitTick($).then(t => $.ui.toast(t))} />}
+              <Button key="wait-later" label="later" plain dimColor onPress={() => void waitLater($)} />
+            </Box>
           )}
           <Box flexDirection="row" gap={2}>
             {resumable(current) && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}

@@ -73,9 +73,15 @@ zone's repository, as the skills would:
                 Notifications: {"notifications": {...}}, checked and kept by
                 System/tools/notifications.py, and with "test": "telegram"
                 (or "mac", "command") a test sent on that channel once the
-                rest is saved; the reply says whether it went. The Telegram
-                bot's token never travels this way: it is kept in the
-                keychain from the terminal
+                rest is saved; the reply says whether it went. Telegram's
+                Set up…: "token", the bot's token, kept in the keychain
+                through notifications.py's store_token(), which hands it to
+                `security` on its standard input; and "find-chat": true,
+                the chat that last wrote to the bot found, kept, Telegram
+                switched on and a test sent (set_up_chat()). The token is
+                the one field no reply, log line or record holds: the audit
+                log names only LOGGED, settings keeps no durable record, and
+                a failure is said in words of this file's own
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -183,7 +189,7 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
-          "name", "party", "kind", "to", "confirm", "commit", "test")
+          "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1329,15 +1335,23 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page."""
-    if not {"launchers", "zones", "notifications", "test"} & set(req):
+    notifying = {"notifications", "test", "token", "find-chat"} & set(req)
+    if not ({"launchers", "zones"} | notifying) & set(req):
         raise Refused("nothing to save")
     new = {}
-    notify = notifications_lib(ws) if {"notifications", "test"} & set(req) else None
-    if ({"notifications", "test"} & set(req)) and notify is None:
+    notify = notifications_lib(ws) if notifying else None
+    if notifying and notify is None:
         raise Refused("cannot find System/tools/notifications.py; update Garrick")
     test = req.get("test")
     if test is not None and test not in ("mac", "telegram", "command"):
         raise Refused("no channel to test called %r" % (test,))
+    tok, find = req.get("token"), req.get("find-chat")
+    if tok is not None and not isinstance(tok, str):
+        raise Refused("not a bot token")
+    if find is not None and find is not True:
+        raise Refused("find-chat is true or left out")
+    if find and not callable(getattr(notify, "set_up_chat", None)):
+        raise Refused("this workspace's System/tools/notifications.py cannot find a chat yet; update Garrick")
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1369,6 +1383,16 @@ def save_settings(ws: Path, req: dict) -> str:
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
         if changed:
             recolour(ws, changed)
+    if tok is not None:
+        keep_token(notify, ws, tok, bool(new))
+        if not find and test is None:
+            return "%sToken kept in this Mac's keychain. Now send your bot any message, then press Find my chat" % (
+                "Settings saved. " if new else "")
+    if find:
+        ok, said = notify.set_up_chat(ws, desk=(CMUX_EXTRA / "cmuxlib.py").is_file())
+        if not ok:
+            raise Refused(said.rstrip("."))
+        return said.rstrip(".")
     if test is not None:
         name = {"mac": "this Mac", "telegram": "Telegram", "command": "your command"}[test]
         problem = notify.test(ws, test)
@@ -1376,6 +1400,22 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("%sthe test did not go: %s %s" % ("Settings saved, but " if new else "", name[:1].upper() + name[1:], problem))
         return "%sA test went to %s" % ("Settings saved. " if new else "", name)
     return "Settings saved"
+
+
+def keep_token(notify, ws: Path, tok: str, saved: bool) -> None:
+    """The bot's token into the keychain, or Refused in words that cannot
+    carry it: notifications.py's own for a value that is not a token or a
+    keychain that said no, and only the kind of anything else, whose own
+    message is never read out, since nobody here wrote it."""
+    first = "Settings saved, but " if saved else ""
+    try:
+        notify.store_token(tok, ws)
+    except ValueError as e:                 # notifications.Invalid: its words never quote the value
+        raise Refused(first + str(e).strip())
+    except OSError as e:
+        raise Refused("%sthe token was not kept: %s" % (first, notify.scrub(str(e), tok.strip())))
+    except Exception as e:
+        raise Refused("%sthe token was not kept: %s" % (first, type(e).__name__))
 
 
 def zone_styles(ws: Path, given) -> dict:

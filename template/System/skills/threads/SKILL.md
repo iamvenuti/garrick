@@ -13,7 +13,8 @@ description: >
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
   parked", "is there a thread on X", "find X", "new project X for Acme", "new
   thread X in Acme", "start a thread on X", "rename X to Y", "delete X", "add
-  a zone called X", or "new zone X".
+  a zone called X", "new zone X", "that's wrong, it's Y", or "correct X to
+  Y".
   Also use at the end of any
   session that produced a decision or a deliverable, so the thread can be
   resumed cold.
@@ -98,8 +99,11 @@ dictation, so resolve before acting, and never guess.
 6. **None: say so, and name the nearest live threads.** "No thread called
    roofing. The closest is roof repair, in House."
 7. **Learn it.** When you had to ask what a heard name meant, add the heard form
-   to the Aliases table once the user answers. Re-read `System/context.md`
-   right before editing it.
+   to the Aliases table once the user answers, with a Learned cell saying
+   when and from whom: `| dana whitlaw | Dana Whitlock | 2026-10-16, user |`.
+   Where the table has no Learned column yet, add it to the header and the
+   separator and leave the rows typed by hand as they are. Re-read
+   `System/context.md` right before editing it.
 
 The **short name** is the one to say back: the thread name alone if no other
 thread has it; otherwise "project, thread"; the zone as well only when two
@@ -442,13 +446,20 @@ per wrap: the one named, and nothing else.
     Re-read the hub first; change that one line.
 11. **Memory pointer.** If you, the assistant, keep a memory of your own, keep
     one entry for this thread that says where its resume point is and nothing
-    else: no status, no date, no summary.
+    else: no status, no summary. Its frontmatter says where it came from, as
+    every learned entry's does (*Autonomy* in `System/rules.md`): `source:`
+    is the note it points at, `created:` the day it was made.
     ```
+    ---
+    source: file:Zones/Work/Acme/Threads/Pricing/Pricing.md
+    created: 2026-09-27
+    ---
     Acme, Pricing (Work zone). Resume from
     Zones/Work/Acme/Threads/Pricing/Pricing.md, the Resume here block. Read it
     before anything else in the thread.
     ```
-    Create it if missing, leave it if present. No memory, no step.
+    Create it if missing, leave it if present, and add the two keys to one
+    that has neither. No memory, no step.
 12. **Commit in the zone's repository.** First move the lines ticked before
     today out of the list:
     ```sh
@@ -843,6 +854,59 @@ the zone. A rename is undone the same way.
 
 Written: the script's report, and the commit hash.
 
+## Correct: "that's wrong, it's Y"
+
+A wrong value is seldom in one place. An address, an account, a name or a
+path one session wrote down, the next ones read as fact: in a memory entry,
+in `System/context.md`, a Resume here block, a `Todo.md` line, a meeting
+page. Fixing the copy in front of you leaves the others to be read again
+tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
+"correct X to Y", about something written down:
+
+1. **Settle the two values**: the wrong one as it is written, and the right
+   one as the user gave it. A heard name is resolved first, as under
+   *Resolving a name*. When it is not clear which written value they mean,
+   ask.
+2. **List every live copy**, which changes nothing:
+   ```sh
+   python3 System/tools/correct.py --old "<X>" --new "<Y>"
+   ```
+   It searches the memory entries in the folders `memory` names in
+   `System/garrick-checks.json`, `System/context.md`, every hub and thread
+   note, each zone's `Todo.md` and the pages of both wikis, and lists each
+   file and line. A raw record that holds the old value is listed too, with
+   the pages that rest on it.
+3. **Say what it found, and ask once.** "Five places have the old address:
+   two memory entries, the Acme pricing note, a Todo line and a meeting
+   page. Fix them all?" A hit that is right where it is, such as a heard form
+   in Aliases, which is meant to be misspelt, is named and left out with
+   `--leave <path>`.
+4. **On the yes, apply**, with the reason in a few words when the user gave
+   one:
+   ```sh
+   python3 System/tools/correct.py --old "<X>" --new "<Y>" --apply --why "<why>"
+   ```
+   It writes Y in place of X in every file listed, re-reading each first;
+   marks each page that rests on a raw record holding X with `superseded:`
+   and one line at its end, since the record itself is never edited;
+   rebuilds the Meetings index, and the status page where there is one; and
+   commits once per repository, the files it changed and nothing else. A
+   memory entry outside the workspace is changed and not committed.
+5. **A memory entry whose only source was inbound** now rests on the user's
+   word: add `user` to its `source:`.
+6. **Report** how many files changed and each commit, and anything left
+   uncommitted or refused. Where a zone's check refused its commit, those
+   files stay changed and uncommitted: take the material out as under *The
+   wall check*, and commit again.
+
+Never leave a trail of the old value: no "was X", no "not X". Live files
+say what is true now, and git holds what was.
+
+Spoken: "Fixed in five places, three commits. The meeting page now says its
+record has been corrected."
+
+Written: the files changed, the commits, and anything left over.
+
 ## New zone: "add a zone called X", "new zone X"
 
 A zone is one side of life or work, kept apart from the others. The
@@ -978,7 +1042,8 @@ Written form: the spoken answer on top, then the detail each command lists.
 - **It never pushes, sends or shares.** Everything it does stays on the machine
   and can be undone from git.
 - **It never edits `raw/`**, and never writes status into `System/context.md`
-  or into a memory pointer.
+  or into a memory pointer. A correction that reaches a raw record marks the
+  page resting on it instead.
 - **It changes the layout only through the scaffolding script.** Zones,
   projects and threads come from `scaffold.py`, and nowhere else: never a
   folder made or copied by hand.

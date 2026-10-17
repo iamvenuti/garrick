@@ -29,7 +29,9 @@ first thread. A thread inherits its project's party. `--check` applies every ref
 and makes nothing, so a form can check a name as it is typed.
 
 `party` adds a row to the Parties table in System/context.md and offers the tag
-itself, so nobody has to invent one. It has to run, and its row be committed,
+itself, so nobody has to invent one. The row it adds, and a Walls row, carry a
+Learned cell, `2026-10-16, user`, which says where they came from; the rows
+typed by hand are left as they are. It has to run, and its row be committed,
 before `project`: a project is refused with a tag System/context.md does not
 already carry, and that file is in the workspace's own repository while a project
 is in the zone's, so the two are separate commits. Running it again for a party
@@ -105,6 +107,8 @@ from garrick_lib import (  # noqa: E402
     install_wall_hook,
     is_display_name,
     is_sayable,
+    learned_cell,
+    learned_row,
     load_context,
     parse_frontmatter,
     place_checkpoint,
@@ -455,9 +459,11 @@ def party_zone(root, args, name, required=True):
     raise Refusal("Which zone is %s in? The zones are %s." % (name, ", ".join(zones) or "none yet"))
 
 
-def add_party_row(root, name, what, zone, tag):
+def add_party_row(root, name, what, zone, tag, today=None):
     """The row in context.md's Parties table, written where the installer wrote
-    its own. The commit is the caller's, as a new zone's row is."""
+    its own. The commit is the caller's, as a new zone's row is. With `today`,
+    the row is a learned one, added on the user's word, and its Learned cell
+    says so; the rows typed by hand are left as they are."""
     path = root / "System" / "context.md"
     if not path.is_file():
         raise Refusal("System/context.md is missing, so the party could not be listed there.")
@@ -467,16 +473,18 @@ def add_party_row(root, name, what, zone, tag):
         raise Refusal("System/context.md has no `## Parties` table to add the party to.")
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-    row = table_row([name, what, zone, "`%s`" % tag, ""])
+    cells = [name, what, zone, "`%s`" % tag, ""]
     if len(rows) < 2:
-        lines[end:end] = ["| Party | What it is | Zone | Tag | Domains |", "|---|---|---|---|---|", row, ""]
-    else:
-        lines.insert(rows[-1] + 1, row)
+        lines[end:end] = ["| Party | What it is | Zone | Tag | Domains |", "|---|---|---|---|---|", ""]
+        rows = [end, end + 1]
+    row = learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells)
+    lines.insert(rows[-1] + 1, row)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def add_wall_row(root, tag, other, why):
-    """The row in context.md's Walls table between two tags."""
+def add_wall_row(root, tag, other, why, today=None):
+    """The row in context.md's Walls table between two tags, with a Learned
+    cell, as a party's row has, when `today` is given."""
     path = root / "System" / "context.md"
     lines = path.read_text(encoding="utf-8").splitlines()
     start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## walls"), None)
@@ -485,11 +493,12 @@ def add_wall_row(root, tag, other, why):
                       "The party's row is there; add the wall by hand.")
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-    row = table_row(["`%s`" % tag, "`%s`" % other, why])
+    cells = ["`%s`" % tag, "`%s`" % other, why]
     if len(rows) < 2:
-        lines[end:end] = ["| Between | And | Why |", "|---|---|---|", row, ""]
-    else:
-        lines.insert(rows[-1] + 1, row)
+        lines[end:end] = ["| Between | And | Why |", "|---|---|---|", ""]
+        rows = [end, end + 1]
+    row = learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells)
+    lines.insert(rows[-1] + 1, row)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -539,10 +548,10 @@ def cmd_party(root, args, today):
         where = ", in %s" % zone if zone else ""
         return "%s is not a party yet, and the tag would be `%s`%s." % (name, tag, where)
     what = " ".join((args.what or "").split()) or f"<What {name} is>"
-    add_party_row(root, name, what, zone, tag)
+    add_party_row(root, name, what, zone, tag, today)
     said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}."]
     if other:
-        add_wall_row(root, tag, other, args.why or "<Why their material never meets>")
+        add_wall_row(root, tag, other, args.why or "<Why their material never meets>", today)
         said.append(f"Added a wall between `{tag}` and `{other}`, so neither ever informs the other in writing.")
     elif same:
         said.append("`%s` and `%s` are both %s with no wall between them, which the workspace check warns "
@@ -752,10 +761,11 @@ def dated_entry(text, line, today, append=True):
     return text[:at] + entry + "\n\n" + text[at:]
 
 
-def add_alias(root, heard, means):
+def add_alias(root, heard, means, today=None):
     """The old name as a heard form of the new one, in context.md's Aliases
     table, so "Pricing" still finds "Renewal" for a while. False when the
-    table is missing or already has it."""
+    table is missing or already has it. With `today`, the row's Learned cell
+    says it came from the user, who asked for the rename."""
     path = root / "System" / "context.md"
     if not path.is_file() or heard.lower() in load_context(root).get("aliases", {}):
         return False
@@ -767,7 +777,8 @@ def add_alias(root, heard, means):
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
     if len(rows) < 2:
         return False
-    lines.insert(rows[-1] + 1, table_row([heard.lower(), means]))
+    cells = [heard.lower(), means]
+    lines.insert(rows[-1] + 1, learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
 
@@ -920,7 +931,7 @@ def cmd_rename(root, args, today):
     said += asked
     if others:
         said.append(f"Links written [[{old}]] were left alone: another note in {zone_dir.name} has that name too.")
-    if add_alias(root, old, new):
+    if add_alias(root, old, new, today):
         said.append(f'Added "{old}" as a heard name for {new} in System/context.md; commit it in the workspace root.')
     meetings = root / "Wikis" / "Meetings" / "wiki"
     mentions = sorted(p.relative_to(root).as_posix() for p in meetings.rglob("*.md")

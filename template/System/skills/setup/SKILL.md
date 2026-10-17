@@ -80,9 +80,11 @@ mode* in the `threads` skill describes.
      Codex, then say to run `/hooks` in Codex and trust them. Where the
      notices go, this Mac, Telegram or a command, and when, is the status
      page's Settings › Notifications: say so, and change nothing there.
-     A Telegram bot's token is the user's to type: say to run
-     `python3 System/tools/notifications.py telegram-token` in a terminal,
-     and never ask for the token, read it back or write it anywhere.
+     A Telegram bot's token is the user's to type: say to press *Set up…*
+     beside *My phone (Telegram)* there, or to run
+     `python3 System/tools/notifications.py telegram-token` in a terminal
+     and then `telegram-chat`, and never ask for the token, read it back or
+     write it anywhere.
    - Unless `System/garrick-settings.json` already says: "Tell me when a new
      Garrick is out? It asks GitHub once a day and sends nothing about your
      workspace." Ask it once. A yes or a no is written as the `update`

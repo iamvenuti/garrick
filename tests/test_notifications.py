@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -446,7 +447,7 @@ class TestPageAndSettings(Case):
 
     def section(self):
         html = self.status.build(self.ws, folder=self.base / "jobs")
-        start = html.index('<section class="setsec apponly" id="notify-settings">')
+        start = html.index('<section class="setsec apponly" id="notify-settings"')
         return html[start:html.index("</section>", start)]
 
     def page_request(self, **more):
@@ -497,13 +498,257 @@ class TestPageAndSettings(Case):
         self.assertNotIn("notifications", self.pa.LOGGED)            # the audit log names the channel tested, nothing more
         self.assertIn("test", self.pa.LOGGED)
 
-    def test_a_plist_that_overrides_is_named(self):
+    def test_it_opens_on_the_simple_view_with_the_rest_under_more_options(self):
+        sec = self.section()
+        simple, more = sec.split('<details class="nmore" id="notify-more">', 1)
+        for words in ("Send to", "This Mac", "My phone (Telegram)", "Set up&#8230;", "Tell me when", "a session needs me",
+                      "a long task finishes", "the morning Todo summary is ready", "a scheduled job fails", "Quiet from"):
+            self.assertIn(words, simple)
+        self.assertIn('a long task finishes, <span class="nsafter">after <input type="number" id="n-safter"', simple)
+        self.assertIn('<p class="hint nsrule">At night only &#8220;a session needs me&#8221; and the desk get through; '
+                      'the rest waits until morning.</p>', simple)
+        self.assertIn("a long task that finishes is not reported at all", sec)             # in the "?" help instead
+        self.assertRegex(simple, r'<p class="ncustom" id="n-custom" hidden>')
+        self.assertIn('data-custom="0"', simple)
+        self.assertIn('<summary>More options</summary>', more)
+        for there in ('data-nch="command"', 'data-nch="cmux"', 'id="n-chat"', "Copy the token command", 'tr data-nev="todo-refreshed"',
+                      "data-naway", "Send a zone&#39;s notices to a chat of its own, or keep a zone off some channels."):
+            self.assertIn(there, more)
+            self.assertNotIn(there, simple)
+        self.assertNotIn("<details class=\"nmore\" id=\"notify-more\" open>", sec)          # closed until opened
+        # a zone's box for a channel switched off is hidden, not ticked and greyed; so is its chat
+        self.assertRegex(more, r'<label hidden><input type="checkbox" data-nzto="telegram" checked')
+        self.assertRegex(more, r'<label><input type="checkbox" data-nzto="mac" checked')
+        self.assertRegex(more, r'data-nzchat value=""[^>]* hidden>')
+
+    def test_custom_settings_say_so_and_keep_their_way(self):
+        self.save({"channels": {"command": True}, "command": "/bin/true"})
+        sec = self.section()
+        self.assertIn('data-custom="1"', sec)
+        self.assertIn('<p class="ncustom" id="n-custom"><span>Your choices are custom, under More options.</span>'
+                      '<button class="act" type="button" id="n-usesimple">Use the simple choices</button></p>', sec)
+
+    def test_telegram_set_up_shows_change(self):
+        n.store_token(FAKE_TOKEN, self.ws)
+        self.assertIn('data-nfind>Find my chat', self.section())                     # step 2 open once a token is kept
+        self.save(n.from_simple(dict(n.simple_choices(n.normal({})), send={"mac": True, "telegram": True}),
+                                n.normal({"telegram": {"chat": "4242"}}), True))
+        sec = self.section()
+        self.assertIn('<span class="ntgok">Set up</span><button type="button" class="nlink" data-ntgopen', sec)
+        self.assertIn('<input type="checkbox" data-ns="telegram" checked>', sec)
+        self.assertIn('data-custom="0"', sec)
+
+    def test_set_up_keeps_the_token_out_of_the_reply_the_log_and_the_record(self):
+        jobs = self.base / "jobs"
+        req = {"verb": "settings", "token": " %s\n" % FAKE_TOKEN}
+        with mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(jobs)}):
+            out, logged, why = self.pa.perform(self.ws, req, self.pa.ops_lib(self.ws))
+            self.pa.audit(req, out["ok"], logged or out["say"])
+        self.assertEqual({"ok": True, "say": "Token kept in this Mac's keychain. Now send your bot any message, then press "
+                                             "Find my chat"}, out)
+        (args, kw), = [c for c in self.run_.calls if "-i" in c[0]]
+        self.assertEqual(["security", "-i"], args)
+        self.assertIn(FAKE_TOKEN, kw["input"])                                    # on standard input, never an argument
+        for f in jobs.iterdir():
+            self.assertNotIn(FAKE_TOKEN, f.read_text(), f.name)
+        self.assertIn("settings  ->  ok", (jobs / "page-actions.log").read_text())
+        self.assertNotIn("operations.jsonl", [f.name for f in jobs.iterdir()])
+        self.assertNotIn("token", self.pa.LOGGED)
+        self.assertNotIn("settings", self.pa.ops_lib(self.ws).RECORDED)
+        self.assertNotIn(FAKE_TOKEN, self.status.build(self.ws, folder=jobs))
+        self.assertNotIn(FAKE_TOKEN, (self.ws / "System" / "garrick-settings.json").read_text()
+                         if (self.ws / "System" / "garrick-settings.json").exists() else "")
+
+    def test_a_token_refused_is_never_read_back(self):
+        for bad in ("not:a token at all", 42):
+            with self.assertRaises(self.pa.Refused) as said:
+                self.pa.save_settings(self.ws, {"verb": "settings", "token": bad})
+            self.assertNotIn("not:a token", str(said.exception))
+        self.run_.answers["security"] = lambda a, k: (1, "") if "-i" in a else (0, "")
+        with self.assertRaises(self.pa.Refused) as said:
+            self.pa.save_settings(self.ws, {"verb": "settings", "token": FAKE_TOKEN})
+        self.assertEqual("the token was not kept: the keychain did not keep it", str(said.exception))
+
+    def test_find_my_chat_through_the_page(self):
+        def urlopen(req, timeout=None):
+            if req.full_url.endswith("/getUpdates"):
+                return FakeResponse(json.dumps({"ok": True, "result": [
+                    {"update_id": 1, "message": {"chat": {"id": 3333, "type": "private"}}}]}).encode())
+            return self.urlopen(req, timeout)
+        with mock.patch.object(self.lib, "_urlopen", urlopen):
+            said = self.pa.save_settings(self.ws, {"verb": "settings", "find-chat": True,
+                                                   "notifications": n.request_of(n.normal({}))})
+        self.assertEqual("Found your chat and switched Telegram on. A test message went to it", said)
+        self.assertEqual("3333", n.settings(self.ws)["telegram"]["chat"])
+        self.assertEqual("3333", self.posts[-1][1]["chat_id"])
+        with self.assertRaises(self.pa.Refused):
+            self.pa.save_settings(self.ws, {"verb": "settings", "find-chat": "yes"})
+        ops = _load("garrick_ops_for_set_up", TOOLS / "operations.py")
+        self.assertIsNone(ops.validate("settings", {"verb": "settings", "token": "x", "find-chat": True}))
+
+    def plist(self, name, env):
         import plistlib
-        self.agents.mkdir()
-        body = {"Label": "garrick.todo-sweep", "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "todo-sweep", "--", "true"],
-                "EnvironmentVariables": {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"}}
-        (self.agents / "todo-sweep.plist").write_bytes(plistlib.dumps(body))
-        self.assertIn("In force: GARRICK_NOTIFY_CMD for todo-sweep, set in a launchd plist", self.section())
+        self.agents.mkdir(exist_ok=True)
+        body = {"Label": "garrick." + name, "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", name, "--", "true"],
+                "EnvironmentVariables": env}
+        (self.agents / (name + ".plist")).write_bytes(plistlib.dumps(body))
+
+    def test_the_jobs_that_override_are_counted_and_named_in_the_tooltip(self):
+        self.plist("todo-sweep", {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"})
+        sec = self.section()
+        line = re.search(r'<p class="hint nover" title="([^"]*)">([^<]*)</p>', sec)
+        self.assertEqual("1 scheduled job sends its notices its own way and skips these settings.", line.group(2))
+        self.assertEqual("todo-sweep sets GARRICK_NOTIFY_CMD in its launchd plist. Take it out of the job&#x27;s launchd plist "
+                         "to use these settings.", line.group(1))
+        self.plist("reading-sweep", {"GARRICK_NOTIFY": "1"})
+        self.plist("whats-open", {"GARRICK_NOTIFY": "1", "GARRICK_NOTIFY_CMD": "/bin/true"})
+        line = re.search(r'<p class="hint nover" title="([^"]*)">([^<]*)</p>', self.section())
+        self.assertEqual("3 scheduled jobs send their notices their own way and skip these settings.", line.group(2))
+        self.assertIn("whats-open sets GARRICK_NOTIFY and GARRICK_NOTIFY_CMD", line.group(1))
+        self.assertNotIn("In force", self.section())
+
+
+class TestSimpleView(Case):
+    """The four plain choices Settings opens on, and the full settings they mean."""
+
+    def simple(self, cfg, desk=True):
+        return n.from_simple(n.simple_choices(cfg), cfg, desk) == cfg
+
+    def chosen(self, cfg=None, **change):
+        choices = n.simple_choices(cfg or n.normal({}))
+        for k, v in change.items():
+            (choices["tell"] if k.replace("_", "-") in dict(n.SIMPLE_EVENTS) else choices["send"])[k.replace("_", "-")] = v
+        return choices
+
+    def test_the_defaults_are_simple_with_the_desk_or_without(self):
+        self.assertTrue(self.simple(n.normal({}), desk=True))
+        self.assertTrue(self.simple(n.normal({}), desk=False))
+        self.assertTrue(n.is_simple(n.settings(self.ws)))
+
+    def test_from_simple_of_its_own_choices_gives_the_settings_back_exactly_when_they_are_simple(self):
+        set_up = n.normal({"telegram": {"chat": "4242"}})
+        on_phone = n.from_simple(self.chosen(set_up, telegram=True), set_up, True)
+        simple = [n.normal({}), on_phone, n.from_simple(self.chosen(on_phone, mac=False), on_phone, True),
+                  n.from_simple(self.chosen(finished=False, todo_summary=False), n.normal({}), True),
+                  n.normal({"quiet": {"on": False}}), n.normal({"quiet": {"from": "23:15", "to": "06:00"}}),
+                  n.normal({"events": {"finished": {"after": 10}}}),
+                  n.normal({"zones": {"Work": {"to": ["mac", "telegram", "command"]}, "Personal": {}}}),
+                  n.normal({"command": "/bin/true", "events": {"job-failed": {"to": ["mac"]}}}),    # the command's column, off
+                  n.normal(n.clean(n.request_of(on_phone)))]                                       # as saved and read back
+        custom = [n.normal({"channels": {"command": True}, "command": "/bin/true"}),
+                  n.normal({"zones": {"Personal": {"chat": "777"}}}),
+                  n.normal({"zones": {"Work": {"to": ["mac"]}}}),
+                  n.normal({"events": {"needs-you": {"quiet": "hold"}}}),
+                  n.normal({"events": {"needs-you": {"away": True}}}),
+                  n.normal({"events": {"todo-refreshed": {"to": ["mac"]}}}),
+                  n.normal({"events": {"job-idle": {"to": []}}}),
+                  n.normal({"channels": {"cmux": False}}),
+                  n.normal({"channels": {"telegram": True}, "telegram": {"chat": "4242"}}),      # the summary alone on the phone
+                  n.normal({"channels": {"telegram": True}, "zones": {"Work": {"chat": "777"}}})]
+        for cfg in simple:
+            self.assertTrue(self.simple(cfg), cfg)
+            self.assertTrue(n.is_simple(cfg, True))
+        for cfg in custom:
+            self.assertFalse(self.simple(cfg), cfg)
+            self.assertFalse(n.is_simple(cfg, True))
+        self.assertTrue(self.simple(n.normal({"channels": {"cmux": False}}), desk=False))     # no desk: cmux is not the simple view's
+
+    def test_what_the_simple_choices_mean(self):
+        set_up = n.normal({"telegram": {"chat": "4242"}})
+        cfg = n.from_simple(self.chosen(set_up, telegram=True, finished=False), set_up, True)
+        self.assertEqual({"mac": True, "cmux": True, "telegram": True, "command": False}, cfg["channels"])
+        self.assertEqual(["mac", "telegram"], cfg["events"]["needs-you"]["to"])
+        self.assertEqual([], cfg["events"]["finished"]["to"])
+        self.assertEqual(["mac", "telegram"], cfg["events"]["todo-summary"]["to"])
+        self.assertEqual(["mac", "telegram"], cfg["events"]["job-idle"]["to"])          # follows Send to
+        self.assertEqual(["mac", "telegram"], cfg["events"]["desk"]["to"])
+        self.assertEqual([], cfg["events"]["todo-refreshed"]["to"])                     # stays off
+        self.assertEqual({"needs-you": "send", "finished": "drop", "desk": "send"},
+                         {k: e["quiet"] for k, e in cfg["events"].items() if e["quiet"] != "hold"})
+        off = n.from_simple(self.chosen(cfg, mac=False), cfg, True)
+        self.assertEqual((False, False), (off["channels"]["mac"], off["channels"]["cmux"]))   # cmux follows this Mac
+        self.assertEqual(["mac", "telegram"], off["events"]["needs-you"]["to"])          # this Mac's column kept while it is off
+        no_chat = n.from_simple(self.chosen(telegram=True), n.normal({}), True)
+        self.assertFalse(no_chat["channels"]["telegram"])                                # nowhere to send it
+
+    def test_the_simple_choices_reset_what_they_do_not_say(self):
+        custom = n.normal({"channels": {"command": True}, "command": "/bin/true", "telegram": {"chat": "4242"},
+                           "events": {"needs-you": {"away": True, "quiet": "hold"}},
+                           "zones": {"Work": {"to": ["mac"], "chat": "777"}, "Personal": {}}})
+        cfg = n.from_simple(n.simple_choices(custom), custom, True)
+        self.assertFalse(cfg["channels"]["command"])
+        self.assertEqual("/bin/true", cfg["command"])                                    # kept, for More options
+        self.assertEqual("4242", cfg["telegram"]["chat"])
+        self.assertEqual({"to": ["mac"], "quiet": "send", "away": False}, cfg["events"]["needs-you"])
+        self.assertEqual({"Work": {"to": ["mac", "telegram", "command"]}, "Personal": {}}, cfg["zones"])
+        self.assertTrue(n.is_simple(cfg, True))
+        n.clean(n.request_of(cfg), zones=["Work", "Personal"])                           # what the page would save
+
+
+class TestTelegramSetUp(Case):
+    """Find my chat: getUpdates with the stored token, never the network in a test."""
+
+    def setUp(self):
+        super().setUp()
+        self.updates = {"ok": True, "result": [
+            {"update_id": 7, "message": {"chat": {"id": 1111, "type": "private"}, "text": "hello"}},
+            {"update_id": 9, "message": {"chat": {"id": -100555, "type": "group"}, "text": "in a group"}},
+            {"update_id": 8, "message": {"chat": {"id": 2222, "type": "private"}, "text": "me again"}}]}
+
+    def urlopen(self, req, timeout=None):
+        if req.full_url.endswith("/getUpdates"):
+            self.posts.append((req.full_url, {}))
+            if isinstance(self.updates, Exception):
+                raise self.updates
+            return FakeResponse(json.dumps(self.updates).encode())
+        return super().urlopen(req, timeout)
+
+    def test_the_latest_private_chat_is_kept_telegram_goes_on_and_a_test_goes_there(self):
+        ok, said = n.set_up_chat(self.ws, desk=True)
+        self.assertEqual((True, "Found your chat and switched Telegram on. A test message went to it."), (ok, said))
+        cfg = n.settings(self.ws)
+        self.assertEqual("2222", cfg["telegram"]["chat"])
+        self.assertTrue(cfg["channels"]["telegram"])
+        self.assertEqual(["mac", "telegram"], cfg["events"]["needs-you"]["to"])         # simple before, simple after
+        self.assertTrue(n.is_simple(cfg, True))
+        (getup, _), (send, data) = self.posts
+        self.assertTrue(getup.endswith("/getUpdates") and send.endswith("/sendMessage"))
+        self.assertEqual("2222", data["chat_id"])
+        saved = (self.ws / "System" / "garrick-settings.json").read_text()
+        self.assertNotIn(FAKE_TOKEN, saved)
+
+    def test_custom_settings_only_have_the_channel_switched_on(self):
+        self.save({"channels": {"command": True}, "command": "/bin/true"})
+        self.assertTrue(n.set_up_chat(self.ws, desk=True)[0])
+        cfg = n.settings(self.ws)
+        self.assertEqual({"mac": True, "cmux": True, "telegram": True, "command": True}, cfg["channels"])
+        self.assertEqual(["mac"], cfg["events"]["needs-you"]["to"])
+
+    def test_nothing_found_or_no_token_says_so_and_keeps_nothing(self):
+        self.updates = {"ok": True, "result": [{"update_id": 3, "message": {"chat": {"id": -1, "type": "group"}}}]}
+        self.assertEqual((False, "No message found: send your bot any message in Telegram, then press Find my chat again."),
+                         n.set_up_chat(self.ws, desk=True))
+        self.run_.answers["security"] = (44, "")
+        ok, said = n.set_up_chat(self.ws, desk=True)
+        self.assertFalse(ok)
+        self.assertIn("save the token first", said)
+        self.assertFalse((self.ws / "System" / "garrick-settings.json").exists())
+
+    def test_a_failure_never_carries_the_token(self):
+        self.updates = urllib.error.URLError("no route to https://api.telegram.org/bot%s/getUpdates" % FAKE_TOKEN)
+        ok, said = n.set_up_chat(self.ws, desk=True)
+        self.assertFalse(ok)
+        self.assertIn("Telegram could not be reached", said)
+        self.assertNotIn(FAKE_TOKEN, said)
+
+    def test_the_command_line(self):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(n.sys, "stdout", out), mock.patch.object(n.sys, "stderr", err):
+            self.assertEqual(0, n.main(["telegram-chat", "--root", str(self.ws)]))
+            self.updates = {"ok": True, "result": []}
+            self.assertEqual(1, n.main(["telegram-chat", "--root", str(self.ws)]))
+        self.assertIn("switched Telegram on", out.getvalue())
+        self.assertIn("No message found", err.getvalue())
 
 
 if __name__ == "__main__":

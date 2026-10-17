@@ -127,7 +127,7 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 `job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is the status page's [Settings › Notifications](status-page.md#settings), the one place every notice Garrick sends is set: this Mac, cmux, Telegram or a command of your own, per event, per zone and outside quiet hours. A job's notices are two of its events, *Job failed or recovered* and *Job idle*; the todo sweep's are *Todo refreshed* and *Todo summary*. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited to change where its notices go.
 
-A plist that already sets either of the old variables keeps them working, past those settings, for that job alone, and Settings names the job:
+A plist that already sets either of the old variables keeps them working, past those settings, for that job alone, and Settings counts those jobs, naming each one and its variable when you point at the line:
 
 - `GARRICK_NOTIFY=1` raises a macOS notification.
 - `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message.
@@ -143,7 +143,7 @@ printf '%s  %s: %s (%s, exit %s)\n' "$(date '+%F %T')" "$1" "$2" "$GARRICK_JOB" 
   >> "$HOME/Library/Logs/garrick-jobs/notices.txt"
 ```
 
-In Settings › Notifications, switch on *A command of your own* and give it `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command, or the Telegram channel, sends it.
+In Settings › Notifications, under *More options*, switch on *A command of your own* and give it `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command, or the Telegram channel, sends it.
 
 When a notice goes:
 

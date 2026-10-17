@@ -55,7 +55,7 @@ The cmux extra adds a ninth, `desk`, below.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.
 - `notifications.py` is the one way Garrick tells you something: every notice goes through it, to this Mac, cmux, Telegram or a command of your own, as the status page's Settings › Notifications says. It installs the hooks that let a Claude Code or Codex session say it needs you or has finished. With `release.py`, it is one of the two tools that reach the network, and only to the Telegram chat you switch on.
-- `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki.
+- `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki; `nurture.py` sorts what those find by what a fix needs, and applies the mechanical ones on a yes.
 
 ### The guards
 

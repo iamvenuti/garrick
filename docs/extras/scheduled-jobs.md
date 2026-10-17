@@ -17,6 +17,12 @@ A workspace is several repositories (the root, each zone, the wikis), and the on
 
 For each repository with changes, it stages everything, runs the wall check on what is staged, unstages each file the check refuses, and commits the rest through the repository's own hook. A single walled note never stops a whole zone from being backed up: it stays on disk, uncommitted, and one notice names it, sent again only when the list of held files changes. Then it pushes, never with force, and never after a rebase or a merge: a remote that has moved ahead is left alone, and the run fails so you are told to pull by hand. Offline, it commits and holds every push for the next run. Its exit code is the worst outcome of the run: 0 when everything went, 5 when files were held back, 6 when offline, 1 for a failed commit or push. Set `GARRICK_QUIET_EXITS` to `5 6`, as the plist does, so the two quiet outcomes raise no failure notice; offline for more than three days counts as a failure, so a push that fails for another reason is not quiet forever.
 
+### Nurturing the context each night
+
+`extras/jobs/nurture_sweep.py` runs the [`nurture` skill](../commands.md#nurturing-the-context)'s mechanical kind with nobody watching, and calls no assistant. It runs the workspace's own `System/tools/nurture.py nightly`, which gathers what `check.py` and `wiki_lint.py` find, and what `drift.py` last saved, since a scheduled job cannot read a cloud folder. It applies the fixes that have exactly one right answer: a link broken by a rename with exactly one candidate in the repository's history, a deliverable without its date prefix, a thread missing from its hub's list, a status synonym. Wall, attribution and judgment findings never change overnight: they wait in the day's report, `System/generated/nurture/<YYYY-MM-DD>.md`, for you to say "nurture the context".
+
+Another session may have work not yet committed in the same repository, so the job commits only the files it changed, named one by one, never with `git add .` or `commit -a`, one commit per repository, through the repository's wall check. A file that already has changes not committed is left alone, and its fix waits in the report. A commit the wall check refuses is put back, file by file, and the run exits 1. With `--digest` it sends one line as the *Todo summary* event, the morning digest's: what it fixed first, then what waits, in counts, such as "Fixed 3 overnight (Work 2, Wikis 1): 1 link, 2 status words. Waiting for you: one wall, 2 questions." Nothing fixed and nothing waiting sends nothing. Copied into `System/jobs/` with the rest, it runs through `job.py`, so it has a log, a lock and a watchdog; `launchd/garrick.nurture.plist` runs it at 05:15, before the todo sweep. `--scope Zones/Work` keeps it to one zone or wiki, and can be repeated.
+
 ## An assistant on a schedule
 
 | File in `extras/jobs/` | What it does |
@@ -29,6 +35,7 @@ For each repository with changes, it stages everything, runs the wall check on w
 | `todo_sweep.py`, `launchd/garrick.todo-sweep.plist` | The `todo` skill's sweep each night, one assistant call per zone: actions from the zone's calls and threads into `Todo.md`, then expired, archived, tidied and committed; with `--digest`, a morning summary per zone through the notifier, which runs in the zone's folder with `GARRICK_ZONE` set |
 | `reading_sweep.py`, `launchd/garrick.reading-sweep.plist` | What reached an address kept for reading (the [mail fetcher](ways-in.md)'s `"reading": true`), filed into Knowledge or skipped as too thin, one assistant call per zone; mail from a party's domain waits for you |
 | `backup.py`, `launchd/garrick.backup.plist` | The backup: every repository committed and pushed twice a day, holding back what the walls refuse. No assistant |
+| `nurture_sweep.py`, `launchd/garrick.nurture.plist` | Context Nurture's mechanical fixes each night, committed by name, one commit per repository; what else it finds waits in the day's report. No assistant |
 
 ### Set it up
 
@@ -43,7 +50,7 @@ For each repository with changes, it stages everything, runs the wall check on w
 4. **See what it did**: `python3 System/jobs/agent.py ledger` lists the last 24 hours of calls, by job, with their cost and any tool the assistant was refused.
 5. **Check your own jobs' scripts** once you write some: `python3 System/jobs/job.py check-scripts ~/Library/LaunchAgents/garrick.*.plist` reads each plist, and each script it runs, for a line that runs `claude -p` or `codex exec` itself. It prints the file and line of each, and exits 1 when it finds one. Such a call loads no deny profile, counts against no cap and works with one assistant only. Name scripts instead of plists to check them directly.
 
-The example reads one zone per assistant call, so no single turn ever holds two zones, and writes one brief per zone outside the workspace. A zone with nothing open costs no call. A job otherwise writes outside the zones, or into an inbox. The todo sweep is the one exception, and it keeps to the rule's sense: it appends only under `## Inbox` and `## Waiting on` in a zone's `Todo.md`, where nothing is decided until you triage it, and it commits through the zone's wall check.
+The example reads one zone per assistant call, so no single turn ever holds two zones, and writes one brief per zone outside the workspace. A zone with nothing open costs no call. A job otherwise writes outside the zones, or into an inbox. Two keep to the rule's sense without its letter, and both commit through each repository's wall check. The todo sweep appends only under `## Inbox` and `## Waiting on` in a zone's `Todo.md`, where nothing is decided until you triage it. The nightly nurture, which calls no assistant, applies only the fixes with exactly one right answer, and commits only the files it changed.
 
 ### What an unattended assistant may do
 
@@ -125,7 +132,7 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 ### Being told
 
-`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is the status page's [Settings › Notifications](status-page.md#settings), the one place every notice Garrick sends is set: this Mac, cmux, Telegram or a command of your own, per event, per zone and outside quiet hours. A job's notices are two of its events, *Job failed or recovered* and *Job idle*; the todo sweep's are *Todo refreshed* and *Todo summary*. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited to change where its notices go.
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is the status page's [Settings › Notifications](status-page.md#settings), the one place every notice Garrick sends is set: this Mac, cmux, Telegram or a command of your own, per event, per zone and outside quiet hours. A job's notices are two of its events, *Job failed or recovered* and *Job idle*; the todo sweep's are *Todo refreshed* and *Todo summary*, and the nightly nurture's line goes as *Todo summary* too. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited to change where its notices go.
 
 A plist that already sets either of the old variables keeps them working, past those settings, for that job alone, and Settings names the job:
 

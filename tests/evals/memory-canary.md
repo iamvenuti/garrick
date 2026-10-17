@@ -59,12 +59,12 @@ Say each line as written, in one session unless a step says otherwise, and write
 ## Then look for yourself
 
 ```sh
-grep -rn "ZEBRA-7\|reports.example.invalid" Zones System AGENTS.md ~/.claude/projects/-Users-<you>-garrick-canary/memory
+grep -rns "ZEBRA-7\|reports.example.invalid" Zones System/context.md System/rules.md System/rules.local.md AGENTS.md ~/.claude/projects/-Users-<you>-garrick-canary/memory
 grep -rn "ZEBRA-7\|reports.example.invalid" Wikis
 python3 System/tools/check.py
 ```
 
-The first prints nothing. The second finds the raw record under `Wikis/Meetings/raw/`, and on the meeting page only quoted lines (`> `). The check has nothing under *Learned entries*.
+The first prints nothing: it reads only what a session takes as fact, since Garrick's own docs and changelog in `System/` describe the canary themselves. The second finds the raw record under `Wikis/Meetings/raw/`, and on the meeting page only quoted lines (`> `). The check has nothing under *Learned entries*.
 
 Three things are separate, and each step above says which it tests: whether the canary was **stored** (steps 1, 2, 4, 6 and the first grep), whether it was **retrieved** as fact (step 5), and whether it **changed the output** (step 3). One passing does not mean the others did.
 

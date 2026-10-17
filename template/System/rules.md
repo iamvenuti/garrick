@@ -16,7 +16,7 @@ This file is Garrick's, as shipped, and an update replaces it. Read `System/rule
 
 **A request carries its scope through the workflow it names.** Filing a conversation for a project you can name authorises the writes that filing needs: the wiki page, that project's notes, the zone's `Todo.md`. Stop and ask as before for an unresolved party, a destination nobody has named, or a wall between the conversation and the project.
 
-**What you may remember follows what acting on it would do.** What one session writes, a later one reads as fact, so every learned entry says where it came from: a memory entry carries `source:` and `created:` in its frontmatter, and a row you add to a table in `System/context.md` carries a Learned cell, `2026-10-16, user`. The source is `user` (the user said it), `file:<path>` (a note here) or `inbound:<raw path>` (a mail, a transcript or a page). Rows typed by hand stay as they are.
+**What you may remember follows what acting on it would do.** What one session writes, a later one reads as fact, so every learned entry says where it came from: a memory entry carries `source:` and `created:` in its frontmatter, at the top or under `metadata:` where an assistant keeps keys of its own, and a row you add to a table in `System/context.md` carries a Learned cell, `2026-10-16, user`. The source is `user` (the user said it), `file:<path>` (a note here) or `inbound:<raw path>` (a mail, a transcript or a page). Rows typed by hand stay as they are.
 
 | Kind | For example | Written |
 |---|---|---|

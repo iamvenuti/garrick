@@ -5,6 +5,7 @@ description: >
   zones, by voice or typed. The procedure behind the spoken commands in
   System/rules.md. Use when the user says "open X", "pick up X", "resume X",
   "where was I on X", "where am I", "what's open", "what's open in Work",
+  "what's next", "what should I do while I wait",
   "I'm being interrupted", "hold this", "hold X", "back", "where was I",
   "back to X",
   "close X", "wrap X", "wrap it", "wrap up", "wrap this", "save where I am",
@@ -234,6 +235,45 @@ Written: every live thread, one line each: short name, zone, `updated` date,
 and the Next action row.
 
 Listing reads frontmatter only. It never opens a Resume here block.
+
+## Next: "what's next", "what should I do while I wait"
+
+One thing worth doing elsewhere while a long turn runs, or at any moment
+between two pieces of work. It is the same list the Garrick band shows while a
+turn runs, from the same script, so the answer here is the band's first pick:
+
+```sh
+python3 System/tools/next_up.py --zone <the session's zone> --exclude <the thread note in focus>
+```
+
+Leave out `--zone` when the session is in no zone (the workspace root,
+`System/`, a wiki), and `--exclude` when no thread is in focus. It prints JSON,
+best first, and changes nothing; `--say` prints only the first pick's line.
+
+1. **Read the first pick's `say`**, word for word. It names a thread and an
+   action in a few words and never quotes a meeting: do not add to it from the
+   thread note, the Todo line or a meeting page.
+2. **Offer, never act.** "Want me to open it?" for a thread, "Want me to tick
+   it?" for a Todo line, which carries the request in `tick` for
+   `page_action.py` when the status extra is there. Nothing is opened, ticked
+   or sent into another session until the user says so. A tick in the zone
+   this session is working in waits until the work in hand is done, so the two
+   commits never meet.
+3. **"Next" again** gives the following pick, not a new reading of the list.
+4. **Nothing in the list:** "Nothing is waiting."
+
+The order is six plain rules, each a source Settings › While you wait on the
+status page can switch off or move: the top of the interruption stack (only
+with the status extra, which keeps it), Todo lines due today or late with a
+reply or a chase first, chases that have come due, what waits in an Inbox, a
+parked thread left alone for 30 days ("park or finish?"), and a live thread
+not wrapped for 14 ("wrap?"). It never offers the thread in focus. It covers
+every zone unless *Same zone only* is switched on there.
+
+Spoken: the pick and the offer. "Reply on the renewal dates, in Birch, due
+today. Want me to open it?"
+
+Written: the first pick's line, then the next two, each on its own line.
 
 ## Find: "is there a thread on X", "find X"
 

@@ -75,7 +75,8 @@ zone's repository, as the skills would:
                 (or "mac", "command") a test sent on that channel once the
                 rest is saved; the reply says whether it went. The Telegram
                 bot's token never travels this way: it is kept in the
-                keychain from the terminal
+                keychain from the terminal. Settings › While you wait:
+                {"while-you-wait": {...}}, checked by System/tools/next_up.py
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -1319,6 +1320,32 @@ def notifications_lib(ws: Path):
     return _NOTIFY[key]
 
 
+_NEXT_UP = {}
+
+
+def next_up_lib(ws: Path):
+    """System/tools/next_up.py, which checks Settings › While you wait: found
+    as notifications_lib() finds its module. None when there is none."""
+    key = Path(ws)
+    if key not in _NEXT_UP:
+        found = None
+        for src in (key / "System" / "tools" / "next_up.py", Path(__file__).resolve().parent.parent / "tools" / "next_up.py",
+                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "next_up.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_next_up", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "clean", None)):
+                found = mod
+                break
+        _NEXT_UP[key] = found
+    return _NEXT_UP[key]
+
+
 def save_settings(ws: Path, req: dict) -> str:
     """Settings, kept in one file so every viewer of the page agrees, and the
     cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
@@ -1329,7 +1356,7 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page."""
-    if not {"launchers", "zones", "notifications", "test"} & set(req):
+    if not {"launchers", "zones", "notifications", "test", "while-you-wait"} & set(req):
         raise Refused("nothing to save")
     new = {}
     notify = notifications_lib(ws) if {"notifications", "test"} & set(req) else None
@@ -1356,6 +1383,14 @@ def save_settings(ws: Path, req: dict) -> str:
         zones = [z.name for z in (ws / "Zones").iterdir() if z.is_dir()] if (ws / "Zones").is_dir() else []
         try:
             new["notifications"] = notify.clean(req["notifications"], zones)
+        except ValueError as e:
+            raise Refused(str(e))
+    if "while-you-wait" in req:
+        wait = next_up_lib(ws)
+        if wait is None:
+            raise Refused("cannot find System/tools/next_up.py; update Garrick")
+        try:
+            new[wait.KEY] = wait.clean(req["while-you-wait"])
         except ValueError as e:
             raise Refused(str(e))
     keep = prefs()

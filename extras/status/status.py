@@ -3290,7 +3290,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
             '<div class="setcol">%s</div></div></dialog>'
             % (launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
-               + zone_settings(list(zones), styles or {}) + menu_settings(),
+               + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws),
                notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file())
                + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
@@ -4254,10 +4254,11 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the notifications, each only when it changed,
+/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, each only when it changed,
    or, with `all` (a test of a channel, NOTIFY_JS), a request whatever changed. null when there is nothing. */
-function sdReq(all){var N=window.GarrickNotify,n=!!(N&&N.changed());if(!(lpChanged||zChanged||n||all))return null;
+function sdReq(all){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed());if(!(lpChanged||zChanged||n||w||all))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
+if(w){q['while-you-wait']=W.request();W.saved()}
 lpChanged=zChanged=false;if(n)N.saved();return q}
 window.GarrickSettingsReq=sdReq;
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
@@ -4383,6 +4384,116 @@ paint();
 window.GarrickNotify={changed:function(){return changed},request:request,problem:problem,saved:function(){changed=false}};
 })();
 """
+
+
+# ---- Settings › While you wait (#111) ------------------------------------------
+# One block, kept apart from the rest of Settings: what the Garrick band offers
+# while a long turn runs. System/tools/next_up.py owns the keys, their defaults
+# and their check; this block only draws them and reads the form back. The
+# page sends them with what else Settings changed when it closes (JS's sdReq
+# asks window.GarrickWait), and page_action.py checks them through the same
+# module before they are kept in System/garrick-settings.json.
+_WAIT: Dict[Path, object] = {}
+
+
+def wait_lib(ws: Path):
+    """System/tools/next_up.py, found as notify_lib() finds its module. None
+    when there is none, and then the section is left out."""
+    key = Path(ws)
+    if key not in _WAIT:
+        found = None
+        for src in (key / "System" / "tools" / "next_up.py", Path(__file__).resolve().parent.parent / "tools" / "next_up.py",
+                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "next_up.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_status_next_up", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "settings", None)) and hasattr(mod, "SOURCE_LABELS"):
+                found = mod
+                break
+        _WAIT[key] = found
+    return _WAIT[key]
+
+
+def wait_settings(ws: Path) -> str:
+    """Settings › While you wait: on or off, how long a turn runs before the
+    band offers anything, same zone only, which sources count and in what
+    order, and when a parked or an unwrapped thread is old enough to name.
+    In the app only, as the other sections that save are."""
+    lib = wait_lib(ws)
+    if lib is None:
+        return ""
+    cfg = lib.settings(ws)
+    box = lambda attr, on, label="": '<input type="checkbox" %s%s%s>' % (
+        attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
+    num = lambda key, value, low, high, label: (
+        '<input type="number" data-wnum="%s" min="%d" max="%d" value="%d" aria-label="%s">' % (key, low, high, value, E(label)))
+    order = list(cfg["sources"]) + [s for s in lib.SOURCES if s not in cfg["sources"]]
+    rows = "".join(
+        '<li class="wsrc" data-wsrc="%s"><label>%s %s</label><span class="wmove">'
+        '<button class="act" type="button" data-wup aria-label="Move %s up" title="Earlier">&#8593;</button>'
+        '<button class="act" type="button" data-wdown aria-label="Move %s down" title="Later">&#8595;</button></span></li>'
+        % (s, box("data-won", s in cfg["sources"], lib.SOURCE_LABELS[s]), E(lib.SOURCE_LABELS[s]), E(lib.SOURCE_LABELS[s]),
+           E(lib.SOURCE_LABELS[s])) for s in order)
+    return ('<section class="setsec apponly" id="wait-settings">%s%s'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>Suggest something while a turn runs'
+            '<small>One line in the Garrick band, once a turn has run longer than this</small></span></label>'
+            '<span class="wafter">%s seconds</span></div>'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>Same zone only'
+            '<small>Only what is in the zone the session works in; off, every zone</small></span></label></div>'
+            '<h4 class="nsub">What counts, first to last</h4><ol class="wsrcs">%s</ol>'
+            '<div class="launcher-row"><span class="wdays">A parked thread untouched for %s days, a live one not wrapped for %s days'
+            '</span></div></section>'
+            % (set_head("While you wait", "wait"), help_text("wait", 'While a turn runs longer than the threshold, the Garrick '
+               'band shows one thing worth doing elsewhere: the top of the interruption stack, a Todo line due today or late, a chase '
+               'that has come due, what waits in an Inbox, a parked thread to park or finish, a live one to wrap. It is said in a few '
+               'words, never quotes a meeting and never names the thread the turn is working on. <code>/garrick next</code>, '
+               '<code>open</code>, <code>tick</code> and <code>later</code> act on it, and none of them touches the running session. '
+               'In a session without the band, ask &#8220;what&#39;s next&#8221;: the answer comes from the same list, '
+               '<code>python3 System/tools/next_up.py</code>. Saved in <code>%s</code>.' % E(prefs().FILE)),
+               box('id="w-on"', cfg["on"]), num("threshold", cfg["threshold"], lib.THRESHOLD[0], lib.THRESHOLD[1],
+                                                 "Seconds a turn runs first"),
+               box('id="w-zone"', cfg["same-zone"]), rows,
+               num("parked-days", cfg["parked-days"], lib.DAYS[0], lib.DAYS[1], "Days a parked thread is left alone"),
+               num("wrap-days", cfg["wrap-days"], lib.DAYS[0], lib.DAYS[1], "Days since a live thread was wrapped")))
+
+
+WAIT_CSS = r"""
+/* Settings › While you wait: the switches, then the sources in their order, each with a box and two arrows */
+#wait-settings input[type=number]{font:inherit;font-size:12.5px;width:56px;padding:2px 5px;color:var(--ink);background:var(--surface);
+border:1px solid var(--line);border-radius:7px}
+#wait-settings .wafter,#wait-settings .wdays{font-size:12.5px;color:var(--ink2)}
+.wsrcs{list-style:none;margin:0 0 6px;padding:0}.wsrc{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.wsrc label{flex:1;display:flex;align-items:center;gap:6px}.wsrc input{accent-color:var(--accent)}.wsrc.woff label{opacity:.5}
+.wmove{display:flex;gap:3px}.wmove .act{padding:0 6px;min-width:0;line-height:20px}
+"""
+
+# Read back as next_up.py's clean() takes it. A number out of range is brought
+# into range here, so nothing the form can hold is refused when Settings closes.
+WAIT_JS = r"""
+(function(){var sec=document.getElementById('wait-settings');if(!sec)return;var changed=false,list=sec.querySelector('.wsrcs');
+function paint(){list.querySelectorAll('.wsrc').forEach(function(r,i,all){r.classList.toggle('woff',!r.querySelector('[data-won]').checked);
+r.querySelector('[data-wup]').disabled=i===0;r.querySelector('[data-wdown]').disabled=i===all.length-1})}
+sec.addEventListener('change',function(){changed=true;paint()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number]'))changed=true});
+sec.addEventListener('click',function(e){var b=e.target.closest('[data-wup],[data-wdown]');if(!b)return;e.preventDefault();var r=b.closest('.wsrc');
+if(b.hasAttribute('data-wup')&&r.previousElementSibling)list.insertBefore(r,r.previousElementSibling);
+else if(b.hasAttribute('data-wdown')&&r.nextElementSibling)list.insertBefore(r.nextElementSibling,r);else return;
+changed=true;paint();b.focus();var d=document.getElementById('settings');if(d)d.dispatchEvent(new Event('change'))});
+function n(k){var e=sec.querySelector('[data-wnum="'+k+'"]'),v=parseInt(e.value,10);if(isNaN(v))v=parseInt(e.defaultValue,10);
+return Math.max(+e.min,Math.min(+e.max,v))}
+function request(){var src=[];list.querySelectorAll('.wsrc').forEach(function(r){if(r.querySelector('[data-won]').checked)src.push(r.dataset.wsrc)});
+return{on:document.getElementById('w-on').checked,threshold:n('threshold'),'same-zone':document.getElementById('w-zone').checked,
+sources:src,'parked-days':n('parked-days'),'wrap-days':n('wrap-days')}}
+paint();
+window.GarrickWait={changed:function(){return changed},request:request,saved:function(){changed=false}};
+})();
+"""
+# ---- end of Settings › While you wait ---------------------------------------------
 
 
 # Park and Wake land on the threads list at once, with no wait for the
@@ -5285,11 +5396,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

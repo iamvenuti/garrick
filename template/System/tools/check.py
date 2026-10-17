@@ -70,6 +70,7 @@ from garrick_lib import (  # noqa: E402
     is_origin,
     memory_entries,
     memory_folders,
+    memory_origin,
     origin_problems,
     parse_learned,
     install_wall_hook,
@@ -1016,13 +1017,13 @@ def check_memory(ws: Workspace) -> List[Finding]:
     guess. A row typed by hand has no Learned cell, and nothing is said."""
     out = []
     for path in memory_entries(memory_folders(ws.root, ws.settings.get("memory") or [])):
-        fm = parse_frontmatter_text(read_text(path) or "")
+        origin = memory_origin(read_text(path) or "")
         r = rel(ws, path)
-        problems = origin_problems(fm)
+        problems = origin_problems(origin)
         if problems:
             out.append(Finding(WARNING, "memory", r, "a learned entry with no origin: %s; %s" % (
                 "; ".join(problems), ORIGIN_FIX), "A memory entry does not say where it came from"))
-        elif inbound_only(as_sources(fm.get("source"))):
+        elif inbound_only(as_sources(origin.get("source"))):
             out.append(Finding(WARNING, "memory", r, "a learned entry whose %s" % INBOUND_FIX,
                                "A memory entry came only from a mail, a transcript or a page"))
     ctx_path = "System/context.md"

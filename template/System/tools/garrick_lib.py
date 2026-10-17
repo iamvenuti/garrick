@@ -15,7 +15,7 @@ functions below keep their signatures:
     tag_for(name, taken=(), zone=None) -> str
     load_context(root) -> dict
     as_sources(value) -> [str] / is_origin(source) -> bool / inbound_only(sources) -> bool
-    origin_problems(frontmatter) -> [str]
+    origin_problems(frontmatter) -> [str] / memory_origin(text) -> {source, created}
     learned_cell(date, sources) -> str / parse_learned(cell) -> (date, [source]) or None
     learned_row(lines, rows, cells, learned) -> str
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
@@ -94,6 +94,8 @@ __all__ = [
     "is_origin",
     "inbound_only",
     "origin_problems",
+    "memory_origin",
+    "ORIGIN_KEYS",
     "learned_cell",
     "parse_learned",
     "learned_row",
@@ -806,6 +808,41 @@ def origin_problems(fm: dict) -> List[str]:
         out.append("no `created:`")
     elif not _iso_day(created):
         out.append("a `created:` not written YYYY-MM-DD")
+    return out
+
+
+ORIGIN_KEYS = ("source", "created")
+MEMORY_METADATA = "metadata"
+
+
+def memory_origin(text: str) -> dict:
+    """`source` and `created` from a memory entry's frontmatter, each from the
+    top level or else from a `metadata:` mapping one level down, where an
+    assistant keeps keys of its own. Nothing else in the frontmatter is read."""
+    fm = parse_frontmatter_text(text)
+    out = {k: fm.get(k) for k in ORIGIN_KEYS}
+    if all(out.values()) or MEMORY_METADATA not in fm:
+        return out
+    block: List[str] = []
+    inside = False
+    for line in text.lstrip("﻿").splitlines()[1:]:
+        if line.strip() in ("---", "..."):
+            break
+        if inside:
+            if line.strip() and not line[:1].isspace():
+                break
+            block.append(line)
+        else:
+            m = _KEY_RE.match(line)
+            inside = bool(m) and m.group(1) == MEMORY_METADATA and not _strip_comment(m.group(2))
+    filled = [line for line in block if line.strip()]
+    if not filled:
+        return out
+    indent = min(len(line) - len(line.lstrip()) for line in filled)
+    nested = parse_frontmatter_text("---\n%s\n---\n" % "\n".join(line[indent:] for line in block))
+    for k in ORIGIN_KEYS:
+        if not out[k]:
+            out[k] = nested.get(k)
     return out
 
 

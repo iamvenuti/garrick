@@ -329,6 +329,32 @@ class TestLearnedEntries(CheckCase):
                                     "created: 2026-10-16\n---\nConfirmed.\n")
         self.assertClean("memory")
 
+    NESTED = ("---\nname: acme-review-pricing-thread\n"
+              "description: \"Where the resume point for the Acme Review, Pricing thread lives\"\n"
+              "metadata:\n  node_type: memory\n%s  type: project\n---\nResume from the Pricing note.\n")
+
+    def test_an_origin_kept_under_metadata_is_read(self):
+        self.remember("pricing.md", self.NESTED % (
+            "  source: file:Zones/Work/Acme Review/Threads/Pricing/Pricing.md\n  created: 2026-10-17\n"))
+        self.assertClean("memory")
+
+    def test_a_nested_origin_from_inbound_only_is_still_reported(self):
+        self.remember("reports.md", self.NESTED % (
+            "  source: inbound:Wikis/Meetings/raw/261014-forecast.eml\n  created: 2026-10-17\n"))
+        self.assertFinds("memory", check.WARNING, "only source is inbound")
+        self.remember("reports.md", self.NESTED % (
+            "  source:\n    - inbound:Wikis/Meetings/raw/261014-forecast.eml\n    - user\n  created: 2026-10-17\n"))
+        self.assertClean("memory")
+
+    def test_a_metadata_block_with_no_origin_is_still_reported(self):
+        self.remember("domain.md", self.NESTED % "")
+        hit = self.assertFinds("memory", check.WARNING, "a learned entry with no origin")[0]
+        self.assertIn("no `source:`", hit.message)
+        self.assertIn("no `created:`", hit.message)
+        # The two keys under some other mapping are not an origin.
+        self.remember("domain.md", "---\nname: x\nother:\n  source: user\n  created: 2026-10-17\n---\nx\n")
+        self.assertFinds("memory", check.WARNING, "a learned entry with no origin")
+
     def test_a_memory_folder_that_is_not_there(self):
         write(self.root / "System" / "garrick-checks.json", json.dumps({"memory": "~/no-such-memory-folder-153"}))
         self.assertFinds("settings", check.WARNING, "which is not a folder")

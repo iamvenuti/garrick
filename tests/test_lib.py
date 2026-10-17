@@ -58,6 +58,18 @@ class TestFrontmatter(unittest.TestCase):
             self.assertEqual({"type": "project"}, lib.parse_frontmatter(p))
             self.assertEqual({}, lib.parse_frontmatter(Path(tmp) / "missing.md"))
 
+    def test_memory_origin_top_level_then_metadata(self):
+        top = "---\nsource: user\ncreated: 2026-10-17\n---\n"
+        self.assertEqual({"source": "user", "created": "2026-10-17"}, lib.memory_origin(top))
+        nested = ("---\nname: a\nmetadata:\n    node_type: memory\n    source:\n      - inbound:raw/a.eml\n"
+                  "      - user\n    created: 2026-10-16\ntype: project\n---\nbody\n")
+        self.assertEqual({"source": ["inbound:raw/a.eml", "user"], "created": "2026-10-16"}, lib.memory_origin(nested))
+        mixed = "---\nsource: user\nmetadata:\n  source: inbound:raw/a.eml\n  created: 2026-10-16\n---\n"
+        self.assertEqual({"source": "user", "created": "2026-10-16"}, lib.memory_origin(mixed))
+        self.assertEqual({"source": None, "created": None}, lib.memory_origin("# no frontmatter\n"))
+        # The rest of the frontmatter is parsed as before: nested keys stay out.
+        self.assertNotIn("source", lib.parse_frontmatter_text(nested))
+
 
 class TestPathSafe(unittest.TestCase):
     """What can be stored as a folder: strict, and about storage alone."""

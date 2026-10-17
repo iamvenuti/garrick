@@ -408,7 +408,8 @@ per wrap: the one named, and nothing else.
     one entry for this thread that says where its resume point is and nothing
     else: no status, no summary. Its frontmatter says where it came from, as
     every learned entry's does (*Autonomy* in `System/rules.md`): `source:`
-    is the note it points at, `created:` the day it was made.
+    is the note it points at, `created:` the day it was made. Both may sit
+    under `metadata:` instead, where an assistant keeps keys of its own.
     ```
     ---
     source: file:Zones/Work/Acme/Threads/Pricing/Pricing.md

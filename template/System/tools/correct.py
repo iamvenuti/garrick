@@ -45,8 +45,8 @@ changes nothing. `--leave PATH` keeps one file out, for a hit that is right
 where it is (a heard form in Aliases is meant to be misspelt).
 
 Two callers share it: the `threads` skill, when the user says "that's wrong,
-it's Y" in a session, and the workspace's nurture pass, which corrects as one
-of its kinds. Both import it rather than run it:
+it's Y" in a session, and `nurture.py correct`, the nurture pass's correction
+kind. Nurture imports it rather than run it:
 
     import correct
     hits = correct.find_hits(root, old, new)                       # [Hit], every live copy

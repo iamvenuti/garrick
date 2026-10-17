@@ -902,6 +902,10 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
 Never leave a trail of the old value: no "was X", no "not X". Live files
 say what is true now, and git holds what was.
 
+The `nurture` skill shares this tool: a correction given during a nurture
+pass goes through `nurture.py correct`, which calls `correct.py` and records
+it in the day's report.
+
 Spoken: "Fixed in five places, three commits. The meeting page now says its
 record has been corrected."
 

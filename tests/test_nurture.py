@@ -298,8 +298,170 @@ class RegistryTest(Base):
         doc = nurture.__doc__
         for word in ("register()", "unattended", "claim(ctx, item)", "gather(ctx)", "apply(ctx, item,"):
             self.assertIn(word, doc)
-        self.assertEqual(["wall", "mechanical", "attribution", "judgment"], [k.name for k in nurture.ranked()])
+        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment"],
+                         [k.name for k in nurture.ranked()])
         self.assertEqual(["mechanical"], [k.name for k in nurture.ranked() if k.unattended])
+
+
+class CorrectionTest(Base):
+    """A correction the user gives enters Nurture as one finding, and goes in
+    through correct.py's own find and apply: one implementation, two callers."""
+
+    OLD, NEW = "acme-corp.example", "acmecorp.example"
+
+    def setUp(self):
+        super().setUp()
+        hub = self.acme / "Acme Review.md"
+        hub.write_text(hub.read_text() + "\nMail goes to orders@acme-corp.example.\n")
+        freight = self.acme / "Threads" / "Freight" / "Freight.md"
+        freight.write_text(freight.read_text() + "\nThe portal is portal.acme-corp.example.\n")
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text().replace("## Inbox\n", "## Inbox\n\n- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]"
+                                                 " send the sheet to acme-corp.example\n"))
+        birch = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        birch.write_text(birch.read_text() + "\nTheo Marsh benchmarked acme-corp.example.\n")
+        self.birch_note = birch
+        self.raw = self.wikis / "Meetings" / "raw" / "260310-acme-kickoff.txt"
+        self.raw.write_text("Dana: write to acme-corp.example.\n")
+        self.page = self.wikis / "Meetings" / "wiki" / "sources" / "260310-acme-start.md"
+        self.page.write_text(self.page.read_text() + "\nRecord: [[raw/260310-acme-kickoff]]. Domain acme-corp.example.\n")
+        # Commit all but the other session's two files, which stay as they were.
+        for repo in (self.work, self.wikis):
+            git(repo, "add", "-A", "--", ".", ":!Scratch.md", ":!Birch Entry/Birch Entry.md")
+            git(repo, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "values")
+        self.raw_before = self.raw.read_bytes()
+
+    def find_hits(self):
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.remove, str(TOOLS))
+        import correct
+        return correct.find_hits(self.root, self.OLD, self.NEW)
+
+    def test_it_lists_every_hit_correct_finds_as_one_finding_and_changes_nothing(self):
+        found = {h.path.resolve().relative_to(self.root).as_posix() for h in self.find_hits()}
+        self.assertEqual(6, len(found))                     # five live files and the raw record
+        before = (self.log(self.work), self.log(self.wikis), git(self.work, "status", "--porcelain"))
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)
+        self.assertEqual(0, code)
+        self.assertEqual(found, {h["path"] for h in out["hits"]})
+        self.assertEqual("correction", out["item"]["kind"])
+        self.assertEqual(sorted(found), sorted(out["item"]["where"]))
+        self.assertEqual(["Wikis/Meetings/raw/260310-acme-kickoff.txt"], out["item"]["fix"]["raw"])
+        self.assertTrue(out["item"]["line"].startswith('Correct "acme-corp.example" to "acmecorp.example": 5 files'),
+                        out["item"]["line"])
+        self.assertEqual(before, (self.log(self.work), self.log(self.wikis), git(self.work, "status", "--porcelain")))
+        left = (self.root / out["report"]).read_text().split("## Left", 1)[1]
+        self.assertIn("Corrections, 1", left)
+
+    def test_one_yes_applies_them_in_one_commit_per_repository_of_only_what_it_touched(self):
+        work, wikis = self.log(self.work), self.log(self.wikis)
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", "--why", "no hyphen")
+        self.assertEqual(0, code, out)
+        self.assertEqual(len(work) + 1, len(self.log(self.work)))
+        self.assertEqual(len(wikis) + 1, len(self.log(self.wikis)))
+        self.assertEqual({"Zones/Work", "Wikis"}, {r for r, _ in out["commits"]})
+        self.assertEqual({"Acme Review/Acme Review.md", "Acme Review/Threads/Freight/Freight.md", "Todo.md",
+                          "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         set(git(self.work, "show", "--name-only", "--format=", "HEAD").split("\n")) - {""})
+        self.assertEqual(["Meetings/wiki/sources/260310-acme-start.md"],
+                         git(self.wikis, "show", "--name-only", "--format=", "HEAD").split())
+        self.assertIn('Correct "acme-corp.example" to "acmecorp.example"', git(self.work, "log", "-1", "--format=%B"))
+        for f in (self.acme / "Acme Review.md", self.work / "Todo.md", self.page):
+            self.assertIn(self.NEW, f.read_text())
+            self.assertNotIn(self.OLD, f.read_text())
+        # The raw record is the record: untouched. The page resting on it says so.
+        self.assertEqual(self.raw_before, self.raw.read_bytes())
+        self.assertIn("superseded:", self.page.read_text())
+        # Another session's work stays exactly as it was, uncommitted.
+        status = git(self.work, "status", "--porcelain")
+        self.assertEqual(2, len(status.strip().splitlines()), status)
+        self.assertTrue([l for l in status.splitlines() if l.startswith(" M") and "Birch Entry/Birch Entry.md" in l], status)
+        self.assertIn("?? Scratch.md", status)
+        # The report says what was fixed, and the yes.
+        text = (self.root / out["report"]).read_text()
+        fixed = text.split("## Fixed", 1)[1].split("## Asked and answered", 1)[0]
+        self.assertIn('"acme-corp.example" is now "acmecorp.example" in Zones/Work/Acme Review/Acme Review.md', fixed)
+        self.assertIn(git(self.work, "rev-parse", "--short", "HEAD").strip(), fixed)
+        asked = text.split("## Asked and answered", 1)[1].split("## Left", 1)[0]
+        self.assertIn('Correct "acme-corp.example" to "acmecorp.example" in 5 files? Answer: yes, no hyphen.', asked)
+        self.assertNotIn("Corrections", text.split("## Left", 1)[1])
+
+    def test_a_file_with_changes_not_committed_is_held(self):
+        self.birch_note.write_text(self.birch_note.read_text() + "\nHalf a line.\n")
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes")
+        self.assertEqual(0, code)
+        self.assertEqual(["Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"],
+                         [i["path"] for i in out["held"]])
+        self.assertIn(self.OLD, self.birch_note.read_text())
+        self.assertIn("Half a line.", self.birch_note.read_text())
+        self.assertNotIn("Market Sizing", git(self.work, "show", "--name-only", "--format=", "HEAD"))
+        self.assertNotIn(self.OLD, (self.acme / "Acme Review.md").read_text())
+
+    def test_a_scope_stops_at_its_walls_and_says_only_the_rules_sentence(self):
+        # A raw record no page rests on: nobody can tell whose it is, so a scope leaves it out too.
+        orphan = self.wikis / "Meetings" / "raw" / "260401-unfiled.txt"
+        orphan.write_text("Someone mentioned acme-corp.example.\n")
+        sentence = nurture.WALL_REFUSAL
+        scope = ["--scope", "Zones/Work/Acme Review"]
+        said = {}
+        for form in ("--ear", "text"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+                nurture.main(["correct", "--root", str(self.root), "--old", self.OLD, "--new", self.NEW, "--today",
+                              "2026-10-17"] + scope + ([form] if form != "text" else []))
+            said[form] = buf.getvalue()
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, *scope)
+        said["json"] = json.dumps(out)
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", *scope)
+        self.assertEqual(0, code)
+        said["json --yes"] = json.dumps(out)
+        self.assertEqual(sentence, out["refusal"])
+        for form, text in said.items():
+            self.assertEqual(1, text.count(sentence), form)
+            rest = text.replace(sentence, "").replace('"wall": ""', "").lower()     # every item's empty field
+            for word in ("market sizing", "birch", "theo", "marsh", "benchmarked", "260401", "unfiled", "wall",
+                         "held back", "more"):
+                self.assertNotIn(word, rest, form)
+        report = (self.root / out["report"]).read_text().lower()
+        for word in ("market sizing", "birch", "theo", "marsh", "benchmarked", "260401", "unfiled", "wall"):
+            self.assertNotIn(word, report)
+        # What is behind the wall, and the record nobody can place, are left exactly as they were.
+        self.assertIn(self.OLD, self.birch_note.read_text())
+        self.assertNotIn("Market Sizing", git(self.work, "show", "--name-only", "--format=", "HEAD"))
+        self.assertEqual("Someone mentioned acme-corp.example.\n", orphan.read_text())
+        self.assertNotIn(self.OLD, (self.acme / "Acme Review.md").read_text())   # this side's copies went in
+        # With no scope, nothing is held back and no sentence is said.
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)
+        self.assertNotIn("refusal", out)
+        self.assertIn("Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", [h["path"] for h in out["hits"]])
+
+    def test_never_with_nobody_watching(self):
+        self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)              # listed, so it waits in the record
+        before = self.log(self.work)
+        _, out = self.run_tool("nightly")
+        self.assertTrue(out["fixed"])                                                # the mechanical kind went ahead
+        self.assertNotIn("correction", {i["kind"] for i in out["fixed"]})
+        for sha in set(self.log(self.work)) - set(before):
+            self.assertNotIn("Correct", git(self.work, "log", "-1", "--format=%s", sha))
+        self.assertIn(self.OLD, (self.acme / "Acme Review.md").read_text())
+        self.assertIn(self.OLD, self.page.read_text())
+        self.assertFalse(nurture.KINDS["correction"].unattended)
+        self.assertIsNone(nurture.KINDS["correction"].apply)
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"GARRICK_HEADLESS": "1"}), contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = nurture.main(["correct", "--root", str(self.root), "--old", self.OLD, "--new", self.NEW, "--yes"])
+        self.assertEqual(nurture.EXIT_USAGE, code)
+        self.assertIn("nobody watching", err.getvalue())
+        self.assertIn(self.OLD, (self.acme / "Acme Review.md").read_text())
+        self.assertEqual(self.raw_before, self.raw.read_bytes())
+
+    def test_said_aloud(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            nurture.main(["correct", "--root", str(self.root), "--old", self.OLD, "--new", self.NEW, "--ear",
+                          "--today", "2026-10-17"])
+        self.assertEqual("5 places have the old value. Correct them all?", out.getvalue().strip())
 
 
 class NightlyTest(Base):

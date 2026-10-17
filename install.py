@@ -87,8 +87,8 @@ OWN_ADDRESS = 'for repo in . Wikis Zones/*; do git -C "$repo" config user.email 
 # What the assistant may run without asking, when the last question is answered
 # yes. Garrick's own tools, named one at a time, as the skills run them: never
 # one blanket rule for everything under System/, which would also cover
-# whatever the user puts there later. System/tools/release.py is not here: it
-# is the one tool that reaches the network.
+# whatever the user puts there later. System/tools/release.py and
+# notifications.py are not here: they are the two tools that reach the network.
 ALLOWED_TOOLS = (
     "System/tools/check.py",
     "System/tools/probe.py",

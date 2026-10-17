@@ -39,7 +39,7 @@ Where two say different things, the local file wins over the Garrick file beside
 | `knowledge` | Freezes published material into the Knowledge wiki, and answers from it | "read this", "add this to knowledge", "what does my library say about X" |
 | `todo` | Sweeps actions the records hold into each zone's `Todo.md`, and tidies it | "sweep my actions", "what do I owe people", "what am I waiting on" |
 | `interview` | Asks about your work one question at a time, then proposes parties, walls, projects and threads | "interview me", "help me set up my workspace" |
-| `setup` | Finds out what your Mac has and how you work, and writes it down | "set up Garrick", "check my setup", "add a rule" |
+| `setup` | Finds out what your Mac has and how you work, and writes it down | "set up Garrick", "check my setup", "add a rule", "set up notifications" |
 | `update` | Brings the workspace up to a newer Garrick, and merges what it leaves | "update Garrick", "merge the update", "split my rules" |
 
 The cmux extra adds a ninth, `desk`, below.
@@ -53,7 +53,8 @@ The cmux extra adds a ninth, `desk`, below.
 - `garrick_lib.py` is what the other tools share: reading frontmatter and `context.md`, the naming and tag rules, and writing the wall hook into a repository.
 - `operations.py` declares every action the status page can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
-- `release.py` asks GitHub whether a newer Garrick is out and runs the update from it. It is the one tool that reaches the network.
+- `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.
+- `notifications.py` is the one way Garrick tells you something: every notice goes through it, to this Mac, cmux, Telegram or a command of your own, as the status page's Settings › Notifications says. It installs the hooks that let a Claude Code or Codex session say it needs you or has finished. With `release.py`, it is one of the two tools that reach the network, and only to the Telegram chat you switch on.
 - `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki.
 
 ### The guards

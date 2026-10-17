@@ -3,7 +3,7 @@
 
     python3 job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] -- <command> [args...]
     python3 job.py status [<name>...]      every job's state, as JSON
-    python3 job.py notify <title> <message>  send a line through the notifier
+    python3 job.py notify [--event EVENT] <title> <message>  send a line through the notifier
     python3 job.py check-scripts <file>...   find job scripts that call an assistant directly
 
 The name is letters, digits, hyphens and underscores, and not `agent`. The
@@ -66,11 +66,14 @@ everything a run needs when nobody is watching it:
    128 plus its number, and the reason names the signal. A run stopped
    because this process was asked to stop raises no notice.
 
-Where a notice goes: with GARRICK_NOTIFY=1, a macOS notification; with
-GARRICK_NOTIFY_CMD, a command of yours, run with two more arguments, the
-title and the message, and GARRICK_NOTIFY_KIND (failed, recovered, idle or
-message), GARRICK_JOB and GARRICK_EXIT in its environment. Either, both or
-neither. Nothing here leaves the machine unless that command sends it.
+Where a notice goes is the status page's Settings › Notifications, read by
+System/tools/notifications.py, which every notice goes through: failed and
+recovered are the event "Job failed or recovered", idle is "Job idle". In a
+job's plist, GARRICK_NOTIFY=1 (a macOS notification) and GARRICK_NOTIFY_CMD
+(a command of yours, run with two more arguments, the title and the
+message, and GARRICK_NOTIFY_KIND (failed, recovered, idle or message),
+GARRICK_JOB and GARRICK_EXIT in its environment) still work, and override
+those settings for that job.
 GARRICK_JOB_TIMEOUT, GARRICK_LOGIN_RETRY_AFTER, GARRICK_IDLE_DAYS and
 GARRICK_ALERT_REPEAT set to anything but a number keep their defaults, with a
 line in the log saying so, and so does a GARRICK_JOB_TIMEOUT of zero. A
@@ -114,7 +117,6 @@ import json
 import os
 import plistlib
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -133,7 +135,6 @@ EXIT_LOCKED = 75
 EXIT_TIMEOUT = agent.EXIT_TIMEOUT
 EXIT_START = 127
 SLACK = 600  # two sign-in checks of up to 90 s each, the watchdog's grace, a slow start
-NOTIFY_TIMEOUT = 60
 ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 STOP_GRACE = 5      # launchd follows its SIGTERM with SIGKILL 20 s later
@@ -504,45 +505,60 @@ def watchdog(cmd: List[str], timeout: float, cwd: Path, env: dict, log,
     return code, None
 
 
+_NOTIFY = None
+
+
+def notifications():
+    """System/tools/notifications.py, the one notifier: a step from this
+    folder in a workspace (System/jobs/ beside System/tools/), else in
+    GARRICK_WORKSPACE, else a Garrick clone's template. None when there is none."""
+    global _NOTIFY
+    if _NOTIFY is None:
+        here = Path(__file__).resolve().parent
+        places = [here.parent / "tools"]
+        if os.environ.get("GARRICK_WORKSPACE"):
+            places.append(Path(os.environ["GARRICK_WORKSPACE"]).expanduser() / "System" / "tools")
+        places.append(here.parent.parent / "template" / "System" / "tools")
+        for folder in places:
+            src = folder / "notifications.py"
+            if not src.is_file():
+                continue
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("garrick_notifications", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "send", None)):
+                _NOTIFY = mod
+                break
+        else:
+            _NOTIFY = False
+    return _NOTIFY or None
+
+
 def notify(kind: str, title: str, message: str, log=None, job: str = "", code: Optional[int] = None,
-           zone: Optional[Path] = None) -> bool:
-    """Send a notice to wherever the settings say: a macOS notification with
-    GARRICK_NOTIFY=1, and the command in GARRICK_NOTIFY_CMD, run as
-    `<command> <title> <message>`. A notice about one zone runs the command in
-    that zone's folder, with GARRICK_ZONE and GARRICK_ZONE_DIR set, so it can
-    send each zone somewhere of its own. A notifier that fails costs a line in
-    the log, never the run. True when there was somewhere to send it."""
-    sent = False
-    if os.environ.get("GARRICK_NOTIFY") == "1" and sys.platform == "darwin":
-        script = ['-e', 'on run argv',
-                  '-e', 'display notification (item 1 of argv) with title "Garrick" subtitle (item 2 of argv)',
-                  '-e', 'end run', message, title]
-        subprocess.run(["osascript"] + script, capture_output=True)
-        sent = True
-    command = os.environ.get("GARRICK_NOTIFY_CMD", "").strip()
-    if command:
-        sent = True
-        env = dict(os.environ, GARRICK_NOTIFY_KIND=kind, GARRICK_JOB=job or os.environ.get("GARRICK_JOB", ""),
-                   GARRICK_EXIT="" if code is None else str(code))
-        if zone is not None:
-            env.update(GARRICK_ZONE=zone.name, GARRICK_ZONE_DIR=str(zone))
-        try:
-            proc = subprocess.run(shlex.split(command) + [title, message], env=env, capture_output=True, text=True,
-                                  stdin=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT,
-                                  cwd=str(zone) if zone is not None else None)
-            problem = "exited %d" % proc.returncode if proc.returncode else ""
-            output = (proc.stdout + proc.stderr).strip()
-        except (OSError, ValueError) as exc:
-            problem, output = "could not start: %s" % exc, ""
-        except subprocess.TimeoutExpired:
-            problem, output = "took longer than %ds and was stopped" % NOTIFY_TIMEOUT, ""
-        if problem:
-            line = "job: the notifier %s%s\n" % (problem, (": " + output.splitlines()[-1]) if output else "")
-            if log:
-                log.write(line)
-            else:
-                sys.stderr.write(line)
-    return sent
+           zone: Optional[Path] = None, event: Optional[str] = None) -> bool:
+    """Send a notice through System/tools/notifications.py, which sends it
+    where the status page's Settings › Notifications says: `kind` (failed,
+    recovered, idle, message, digest) names the event unless `event` does.
+    GARRICK_NOTIFY=1 and GARRICK_NOTIFY_CMD, set in a job's plist, still
+    send it as they always have, past those settings. A notice about one zone
+    runs a command in that zone's folder, with GARRICK_ZONE and
+    GARRICK_ZONE_DIR set. A channel that fails costs a line in the log, never
+    the run. True when there was somewhere to send it."""
+    lib = notifications()
+    if lib is None:
+        line = "job: no System/tools/notifications.py beside this extra; the notice was not sent: %s\n" % title
+        (log or sys.stderr).write(line)
+        return False
+    try:
+        return lib.send(event or lib.KINDS.get(kind, "job-failed"), title, message, zone=zone, kind=kind, job=job,
+                        code=code, log=log, prefix="job")
+    except Exception as exc:         # a notice never costs the run
+        (log or sys.stderr).write("job: the notice was not sent: %s: %s\n" % (type(exc).__name__, exc))
+        return False
 
 
 def describe(code: int, seconds: float, timeout: float, cause: Optional[str] = None) -> str:
@@ -857,17 +873,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(status(names=argv[1:]), indent=2, sort_keys=True))
         return 0
     if argv and argv[0] == "notify" and "--" not in argv:
-        if len(argv) != 3:
-            print("usage: job.py notify <title> <message>", file=sys.stderr)
+        rest, event = argv[1:], None
+        if rest[:1] == ["--event"] and len(rest) >= 2:
+            event, rest = rest[1], rest[2:]
+        lib = notifications()
+        if len(rest) != 2 or (event is not None and lib is not None and event not in lib.EVENT_NAMES):
+            print("usage: job.py notify [--event EVENT] <title> <message>%s"
+                  % ("\n  EVENT is one of: %s" % ", ".join(lib.EVENT_NAMES) if lib is not None else ""), file=sys.stderr)
             return agent.EXIT_USAGE
-        if not notify("message", argv[1], argv[2]):
-            print("job.py: no notifier is set (GARRICK_NOTIFY_CMD, or GARRICK_NOTIFY=1 on a Mac); nothing sent",
-                  file=sys.stderr)
+        if not notify("message", rest[0], rest[1], event=event):
+            print("job.py: no notifier is set for this notice (a channel on in Settings › Notifications, or "
+                  "GARRICK_NOTIFY_CMD, or GARRICK_NOTIFY=1 on a Mac); nothing sent", file=sys.stderr)
         return 0
     if "--" not in argv:
         print("usage: job.py <name> [--agent] [--cwd FOLDER] [--timeout SECONDS] [--detach] -- <command> [args...]\n"
               "       job.py status [<name>...]\n"
-              "       job.py notify <title> <message>\n"
+              "       job.py notify [--event EVENT] <title> <message>\n"
               "       job.py check-scripts <script or plist>...", file=sys.stderr)
         return agent.EXIT_USAGE
     split = argv.index("--")

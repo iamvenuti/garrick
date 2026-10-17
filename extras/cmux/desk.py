@@ -456,12 +456,39 @@ def print_table(rows, headers):
         print("  " + "  ".join(str(c).ljust(w[i]) for i, c in enumerate(r)).rstrip())
 
 
+WORKSPACE: Optional[Path] = None      # the workspace main() found, for the notices
+
+
+def notifications_lib(ws: Optional[Path]):
+    """System/tools/notifications.py: the workspace's own, else the one a step
+    from this extra, else a Garrick clone's template. None when there is none."""
+    here = Path(__file__).resolve().parent
+    for src in ([ws / "System" / "tools" / "notifications.py"] if ws else []) + [
+            here.parent / "tools" / "notifications.py", here.parent.parent / "template" / "System" / "tools" / "notifications.py"]:
+        if not src.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_desk_notifications", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception:
+            continue
+        if callable(getattr(mod, "send", None)):
+            return mod
+    return None
+
+
 def notify(message: str) -> None:
-    """A macOS notification: shutdown and start run detached, with nobody watching."""
-    if sys.platform != "darwin":
+    """The "Desk" notice, through System/tools/notifications.py, to wherever
+    Settings › Notifications sends it: shutdown and start run detached, with
+    nobody watching. Best effort: a notice never stops the desk."""
+    lib = notifications_lib(WORKSPACE)
+    if lib is None:
         return
-    subprocess.run(["osascript", "-e", 'on run argv\ndisplay notification (item 1 of argv) with title "Desk"\nend run',
-                    message], capture_output=True)
+    try:
+        lib.send("desk", "Desk", message, root=WORKSPACE)
+    except Exception:
+        pass
 
 
 def say(message: str, log: Optional[Path] = None) -> None:
@@ -1087,9 +1114,11 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    global WORKSPACE
     a = parser().parse_args(argv)
     try:
         ws = find_workspace(a.workspace)
+        WORKSPACE = ws
         a.fn(Desk(ws), a)
     except (DeskError, cx.CmuxError) as e:
         print("desk: %s" % e, file=sys.stderr)

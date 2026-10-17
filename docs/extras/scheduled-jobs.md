@@ -125,12 +125,16 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 ### Being told
 
-`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is up to you, and it can be both:
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is the status page's [Settings › Notifications](status-page.md#settings), the one place every notice Garrick sends is set: this Mac, cmux, Telegram or a command of your own, per event, per zone and outside quiet hours. A job's notices are two of its events, *Job failed or recovered* and *Job idle*; the todo sweep's are *Todo refreshed* and *Todo summary*. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited to change where its notices go.
+
+A plist that already sets either of the old variables keeps them working, past those settings, for that job alone, and Settings names the job:
 
 - `GARRICK_NOTIFY=1` raises a macOS notification.
-- `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message. Its environment also holds `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle`, `message`, or `digest` for the todo sweep's morning summary), `GARRICK_JOB` and `GARRICK_EXIT`. A notice about one zone, such as a digest, runs it in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so it can send each zone somewhere of its own. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
+- `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message.
 
-A notifier for a chat app or a mail relay is a few lines. This one appends to a file instead, which is enough to see the shape:
+The command, whether set here or in Settings, gets `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle`, `message`, `refreshed`, or `digest` for the todo sweep's morning summary), `GARRICK_NOTIFY_EVENT` (the event, such as `job-failed`), `GARRICK_JOB` and `GARRICK_EXIT` in its environment. A notice about one zone, such as a digest, runs it in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so it can send each zone somewhere of its own. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
+
+A notifier for a chat app or a mail relay is a few lines, though Telegram needs none: Settings has it. This one appends to a file instead, which is enough to see the shape:
 
 ```sh
 #!/bin/sh
@@ -139,7 +143,7 @@ printf '%s  %s: %s (%s, exit %s)\n' "$(date '+%F %T')" "$1" "$2" "$GARRICK_JOB" 
   >> "$HOME/Library/Logs/garrick-jobs/notices.txt"
 ```
 
-In the job's plist, set `GARRICK_NOTIFY_CMD` to `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command sends it.
+In Settings › Notifications, switch on *A command of your own* and give it `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command, or the Telegram channel, sends it.
 
 When a notice goes:
 
@@ -149,7 +153,7 @@ When a notice goes:
 - **A quiet exit** never notifies. `GARRICK_QUIET_EXITS` lists the codes, such as `5` or `3, 5`. A quiet exit is still logged, and the heartbeat marks it `quiet`. It counts as a working run: its count feeds the idle alarm, and it ends a failure with a recovery notice.
 - **A skipped run** (75) never notifies.
 
-A job can send a line of its own, such as a morning digest, through the same notifier: `python3 System/jobs/job.py notify "Digest" "Three open, one due today."`. That line is not throttled.
+A job can send a line of its own through the same notifier: `python3 System/jobs/job.py notify "Digest" "Three open, one due today."`. It goes as *Job failed or recovered* does, or as the event `--event` names, such as `--event todo-summary`. That line is not throttled.
 
 ### Other settings
 
@@ -163,8 +167,8 @@ Every setting is an environment variable, set in the job's plist under `Environm
 | `GARRICK_IDLE_DAYS` | 7 | days of nothing before a job is idle, and between idle notices; 0 for no alarm |
 | `GARRICK_ALERT_REPEAT` | 3600 | seconds between notices while the same failure lasts |
 | `GARRICK_QUIET_EXITS` | none | exit codes that never notify, separated by commas or spaces |
-| `GARRICK_NOTIFY` | off | 1 for a macOS notification |
-| `GARRICK_NOTIFY_CMD` | none | a command given the title and the message |
+| `GARRICK_NOTIFY` | off | 1 for a macOS notification, in place of Settings › Notifications for this job |
+| `GARRICK_NOTIFY_CMD` | none | a command given the title and the message, in place of Settings › Notifications for this job |
 | `GARRICK_ENV_FILE` | none | a file of `KEY=value` lines read into the run first |
 | `GARRICK_JOBS_DIR` | `~/Library/Logs/garrick-jobs` | where logs, heartbeats, locks and the ledger go |
 | `GARRICK_WORKSPACE` | your home folder | where the command runs when there is no `--cwd` |

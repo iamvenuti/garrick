@@ -12,12 +12,15 @@ with no assistant; then one commit in the zone, through its wall check, of
 Todo.md and archive/ by name. Nothing else is written. A zone whose call
 fails is left as it was, and its script and commit do not run.
 
-With --digest, each zone's morning summary (`todo.py digest`) then goes
-through the jobs' notifier, GARRICK_NOTIFY_CMD, run in the zone's folder
-with GARRICK_ZONE set, so a notifier can send each zone to a place of its
-own; also when the zone's call failed, opening with a line that says so,
-since a silent morning reads like a clear one. A Waiting on line gets a ⏳
-day `todo-chase-days` ahead when its source gives none (7, or 0 for none).
+Each zone that swept then sends a "Todo refreshed" notice, its counts and
+nothing of its lines, and with --digest its morning summary (`todo.py
+digest`) as the "Todo summary" notice: both through System/tools/
+notifications.py, to wherever Settings › Notifications sends them for that
+zone (a command of yours runs in the zone's folder with GARRICK_ZONE set).
+The summary goes also when the zone's call failed, opening with a line that
+says so, since a silent morning reads like a clear one. A Waiting on line
+gets a ⏳ day `todo-chase-days` ahead when its source gives none (7, or 0
+for none).
 
 Run it through job.py, so it has a log, a lock and a watchdog:
 
@@ -109,7 +112,7 @@ def skill(workspace: Path):
 
 
 def send_digest(workspace: Path, zone: Path, failed: bool) -> None:
-    """The zone's morning summary, through the jobs' notifier."""
+    """The zone's morning summary, the "Todo summary" notice."""
     import job
     script = workspace / "System" / "skills" / "todo" / "todo.py"
     r = subprocess.run([sys.executable, str(script), "digest", "--zone", zone.name, "--root", str(workspace)],
@@ -117,7 +120,13 @@ def send_digest(workspace: Path, zone: Path, failed: bool) -> None:
     text = r.stdout.strip() if r.returncode == 0 else "The digest could not be built: %s" % (r.stderr.strip()[-200:])
     if failed:
         text = "The sweep did not finish this morning; this is the list as it stood.\n\n" + text
-    job.notify("digest", "Todo", text, zone=zone)
+    job.notify("digest", "Todo", text, zone=zone, event="todo-summary")
+
+
+def send_refreshed(zone: Path, said: str) -> None:
+    """The "Todo refreshed" notice: what the sweep did to the zone's list, in counts."""
+    import job
+    job.notify("refreshed", "Todo refreshed", said, zone=zone, event="todo-refreshed")
 
 
 def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int, int, str]:
@@ -164,7 +173,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--zone", action="append", required=True, help="a zone to sweep; repeat for more")
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
-    ap.add_argument("--digest", action="store_true", help="then send each zone's morning summary through the notifier")
+    ap.add_argument("--digest", action="store_true", help="then send each zone's morning summary as the Todo summary notice")
     args = ap.parse_args(argv)
     workspace = Path(args.workspace).expanduser().resolve()
     if not (workspace / "System" / "skills" / "todo" / "todo.py").is_file():
@@ -182,6 +191,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     for zone in zones:
         code, changed, said = sweep_zone(workspace, zone, args.tier, today)
         print(said)
+        if code == 0:
+            send_refreshed(zone, said)
         if args.digest:
             send_digest(workspace, zone, failed=code != 0)
         total += changed

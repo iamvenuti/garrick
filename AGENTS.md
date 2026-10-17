@@ -10,7 +10,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/System/rules.md` | How an assistant behaves in an installed workspace. Garrick's only copy; a workspace's own rules go in `System/rules.local.md`, which the installer starts from `template/System/rules.local.md` and never lists or updates |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
 | `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
-| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `release.py`, the one tool that reaches the network, only when asked or switched on |
+| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; the two tools that reach the network, `release.py`, only when asked or switched on, and `notifications.py`, every notice Garrick sends, to Telegram only when that channel is switched on |
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |

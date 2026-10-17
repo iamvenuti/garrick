@@ -301,7 +301,8 @@ SHAPES = {
     "held: verb": {"todo-done": (), "todo-date": ()},    # TODO_JS: the busy check, not a request
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
-    "sdShut: 'settings'": {"settings": ()},              # JS: Settings closed, zones alone
+    "sdReq: 'settings'": {"settings": ()},               # JS: what Settings closes with, zones and notifications alone
+    "ntest: 'settings'": {"settings": ()},               # NOTIFY_JS: Send a test, the settings with it (#110)
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
     "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
     "park: v": {"park": (), "wake": ()},                 # PANEL_JS park(o): by name, or by file
@@ -323,7 +324,8 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
                        "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
-           "JS": {"window.TaddSend: 'todo-add'", "sdShut: 'settings'"}}
+           "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
+           "NOTIFY_JS": {"ntest: 'settings'"}}
 
 
 class TestWhatThePageSends(unittest.TestCase):

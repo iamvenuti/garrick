@@ -6,6 +6,7 @@ what a fix needs, and the mechanical ones applied on one yes.
     python3 System/tools/nurture.py fix [--scope PATH]... [--yes] [--json]
     python3 System/tools/nurture.py nightly [--scope PATH]... [--json]
     python3 System/tools/nurture.py answered --path PATH --asked "<question>" --answer "<answer>"
+    python3 System/tools/nurture.py correct --old OLD --new NEW [--scope PATH]... [--yes] [--why "..."] [--leave PATH]...
 
 It adds no checks of its own. Its sources are the existing tools, each run
 as it runs for anyone: `check.py --json`, `wiki_lint.py --json` for each
@@ -36,6 +37,19 @@ resolves a spoken name to a path, and asks when it could be two.
   without crossing a wall. The skill asks; this changes none of them.
 - *judgment*: everything else. Reported, with the page to open.
 
+**A fifth kind, the correction**, is never found: a person gives it. When the
+user answers a finding, or says outright, "that's wrong, it's Y", `correct`
+takes the two values and makes one finding of every live copy that
+`correct.py`'s `find_hits` finds, and on `--yes` applies them with its
+`apply`, which commits once per repository: one implementation, shared with
+the `threads` skill. With a scope, a copy in a file across a wall from it is
+a wall finding, said as its file and its wall and left alone, and a copy in a
+file another session has changes in is held, as for any fix. Raw records stay
+as they are, as `correct.py` keeps them. It is not unattended, and has no
+`apply` for the machine below, which holds a fix that spans two repositories,
+as a correction usually does: so `fix` and `nightly` never apply one, and
+under GARRICK_HEADLESS=1 `correct --yes` is refused.
+
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
 changes with nobody watching. It reads drift from `System/generated/
@@ -45,7 +59,8 @@ GARRICK_HEADLESS=1, as the jobs extra sets it, `fix --yes` behaves the same.
 **The report**: every run writes `System/generated/nurture/<YYYY-MM-DD>.md`,
 what was fixed, what was asked and answered, and what is left, rebuilt from
 the day's record beside it, `<YYYY-MM-DD>.json`. `answered` adds a line the
-skill asked and the user answered. Neither file is committed.
+skill asked and the user answered; `correct --yes` adds the copies it fixed,
+each commit, and the yes. Neither file is committed.
 
 **Kinds are a registry.** A kind is a `Kind`, put in KINDS by `register()`:
 its name, its heading, the rank it claims findings at (lower first, the
@@ -85,6 +100,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import correct  # noqa: E402
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
     load_context,
@@ -759,6 +775,212 @@ register(Kind("attribution", "Attribution and category", 30, claim_attribution,
 
 
 # ---------------------------------------------------------------------------
+# The correction kind: correct.py's, called from here
+# ---------------------------------------------------------------------------
+#
+# No check finds a wrong value: a person says the right one. So a correction
+# is never gathered and never claimed. It enters on the `correct` verb, with
+# the two values the user gave, and becomes one finding: every live copy
+# `correct.find_hits` finds. On the yes, `correct.apply` writes them and
+# commits once per repository. Nurture adds only what it adds to every kind:
+# a scope's walls, the files another session has changes in, and the report.
+# The kind has no `apply` for the registry's machine, which holds a fix whose
+# files span two repositories or none; a correction usually does, since the
+# copies of one value sit in a zone, a wiki and a memory kept outside both. So
+# `fix --yes` and `nightly` never apply one.
+
+LINK_HEAD = re.compile(r"\[\[([^\]|#/\n]+)")
+
+
+def tags_of(value) -> set:
+    values = value if isinstance(value, list) else [value] if value else []
+    return {strip_tag(str(v)) for v in values if str(v).strip()}
+
+
+def note_tags(path: Path, *keys: str) -> set:
+    try:
+        fm = parse_frontmatter_text(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return set()
+    out = set()
+    for key in keys:
+        out |= tags_of(fm.get(key))
+    return out
+
+
+def parties_at(ctx: Ctx, rel: str) -> set:
+    """The party tags a path is written for: a project's or thread's, a wiki
+    page's, or, for a zone, every project's in it. Empty when none is said."""
+    parts = rel.split("/")
+    if parts[0] == "Zones" and len(parts) == 2:
+        zone = ctx.root / rel
+        return set().union(*(note_tags(p / (p.name + ".md"), "party") for p in zone.iterdir() if p.is_dir())) \
+            if zone.is_dir() else set()
+    if parts[0] in ("Zones", "System") and len(parts) >= (3 if parts[0] == "Zones" else 2):
+        project = ctx.root.joinpath(*parts[:3 if parts[0] == "Zones" else 2])
+        tags = note_tags(project / (project.name + ".md"), "party")
+        if len(parts) > (4 if parts[0] == "Zones" else 3) and parts[(3 if parts[0] == "Zones" else 2)] == "Threads":
+            thread = project / "Threads" / parts[(4 if parts[0] == "Zones" else 3)]
+            tags |= note_tags(thread / (thread.name + ".md"), "party")
+        return tags
+    if parts[0] == "Wikis" and rel.endswith(".md"):
+        return note_tags(ctx.root / rel, "parties", "party")
+    return set()
+
+
+def hit_parties(ctx: Ctx, hit) -> Optional[set]:
+    """The parties one of correct's hits is written for; None when it cannot
+    be told, as for a raw record no page rests on."""
+    rel = ctx.rel(hit.path)
+    if hit.kind in ("memory", "context"):
+        return set()                      # the user's own, across the workspace
+    if hit.kind == "todo":
+        zone = hit.path.parent
+        return set().union(set(), *(note_tags(zone / name / (name + ".md"), "party")
+                                    for _, text in hit.lines for name in LINK_HEAD.findall(text)))
+    if hit.kind == "raw":
+        return set().union(*(parties_at(ctx, ctx.rel(p)) for p in hit.pages)) if hit.pages else None
+    return parties_at(ctx, rel)
+
+
+def inside(rel: str, scopes: List[str]) -> bool:
+    return any(rel == s or rel.startswith(s.rstrip("/") + "/") for s in scopes)
+
+
+def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item], List[Item], set]:
+    """correct's hits, sorted for this run: those to apply; a wall finding for
+    each one across a wall from the scope, said as its file and its wall; a
+    held finding for each one in a file another session has changes in; and
+    the hits whose lines may not be shown, since nobody can tell whose they are."""
+    ours = set().union(set(), *(parties_at(ctx, s) for s in scopes))
+    go, walls, held, quiet = [], [], [], set()
+    state: Dict[Path, Optional[set]] = {}
+    for hit in hits:
+        rel = ctx.rel(hit.path)
+        if ours and not inside(rel, scopes):
+            theirs = hit_parties(ctx, hit)
+            pair = next(((a, b) for a in sorted(ours) for b in sorted(theirs or ()) if walled(ctx.context, a, b)), None)
+            if pair:
+                walls.append(Item("correct", "correction", rel, "", kind="wall", wall="%s and %s" % pair,
+                                  held="a correction stops at a wall; make it from a session on that side"))
+                continue
+            if theirs is None:
+                quiet.add(id(hit))
+        files = [hit.path] if hit.kind != "raw" else list(hit.pages)
+        why = ""
+        for f in files:
+            repo = hit.repo if f == hit.path else correct.repo_of(f)
+            if repo is None:
+                continue                  # a memory outside any repository: changed, reported not committed
+            if repo not in state:
+                state[repo] = dirty(ctx, repo)
+            try:
+                r = f.resolve().relative_to(repo).as_posix()
+            except ValueError:
+                continue
+            if state[repo] is None:
+                why = "its repository is mid-merge or could not be read"
+            elif r in state[repo] or r not in ctx.tracked(repo):
+                why = "%s has changes not committed, or is not committed at all" % f.name
+            elif busy(ctx, f.parent):
+                why = "a session is mid-turn there"
+            if why:
+                break
+        if why:
+            held.append(Item("correct", "correction", rel, "holds the value being corrected", kind="correction",
+                             held=why))
+            continue
+        go.append(hit)
+    return go, walls, held, quiet
+
+
+def correction_item(ctx: Ctx, old: str, new: str, go: list, path: str = "") -> Item:
+    live = [h for h in go if h.kind != "raw"]
+    pages = sorted({ctx.rel(p) for h in go if h.kind == "raw" for p in h.pages})
+    item = Item("correct", "correction", path or (ctx.rel(live[0].path) if live else ""),
+                "%s to %s" % (old, new), kind="correction")
+    item.where = [ctx.rel(h.path) for h in go]
+    item.touches = [ctx.rel(h.path) for h in live] + pages
+    item.fix = {"op": "correct", "old": old, "new": new, "files": [ctx.rel(h.path) for h in live],
+                "raw": [ctx.rel(h.path) for h in go if h.kind == "raw"], "superseded": pages}
+    return item
+
+
+def say_correction(item: Item) -> str:
+    f = item.fix or {}
+    if f.get("op") != "correct":
+        return "%s: %s%s" % (item.path, item.message, " (held: %s)" % item.held if item.held else "")
+    files = f.get("files", [])
+    line = 'Correct "%s" to "%s": %s' % (f["old"], f["new"], plural(len(files), "file") if files else "no live file")
+    if files:
+        line += " (%s)" % ", ".join(files)
+    if f.get("raw"):
+        them = "them" if len(f["raw"]) > 1 else "it"
+        line += "; %s kept as %s, %s" % (plural(len(f["raw"]), "raw record"), "they are" if them == "them" else "it is",
+                                         "the pages resting on %s marked superseded" % them if f.get("superseded")
+                                         else "no page rests on %s" % them)
+    if item.said:
+        line += "; %s" % item.said
+    return line
+
+
+register(Kind("correction", "Corrections", 25, lambda ctx, item: False,
+              what="every live copy of a wrong value, as one finding, corrected on one yes", say=say_correction))
+
+
+def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, why: str = "",
+                   leave: Optional[List[str]] = None, path: str = "") -> dict:
+    """A correction the user gave, as one finding: listed, and on `yes`
+    applied by correct.py, which commits once per repository. Recorded in the
+    day's report: what it fixed, the yes, and what a wall or another
+    session's changes held back."""
+    if not new or not new.strip():
+        raise ValueError("Say what it should be: --new cannot be empty.")
+    if old == new:
+        raise ValueError("The old value and the new one are the same; nothing to correct.")
+    hits = correct.find_hits(ctx.root, old, new)
+    left_out = {(ctx.root / Path(p).expanduser()).resolve() for p in leave or []}
+    hits = [h for h in hits if h.path.resolve() not in left_out]
+    go, walls, held, quiet = sort_hits(ctx, hits, scopes)
+    item = correction_item(ctx, old, new, go, path)
+    shown = [dict(h, lines=[] if id(hit) in quiet else h["lines"])
+             for hit, h in zip(go, correct.listing(go, ctx.root))]
+    out = {"old": old, "new": new, "item": item, "hits": shown, "walls": walls, "held": held, "done": None}
+    rec = read_record(ctx)
+    rec["runs"].append({"at": datetime.datetime.now().strftime("%H:%M"), "scope": scope_key(scopes),
+                        "headless": ctx.headless})
+    key = scope_key(scopes)
+    leftover = walls + held
+    if yes and go:
+        done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat())
+        out["done"] = done
+        item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
+            if done.commits else "nothing committed"
+        for repo, sha in done.commits:
+            here = [c for c in done.changed if repo == "." or c.startswith(repo + "/")]
+            if repo == ".":
+                here = [c for c in here if not any(c.startswith(r + "/") for r, _ in done.commits if r != ".")]
+            rec["fixed"].append({"line": '"%s" is now "%s" in %s' % (old, new, ", ".join(here)), "path": item.path,
+                                 "commit": sha, "repo": repo_label(ctx, ctx.root / repo)})
+        for p, reason in done.uncommitted:
+            rec["fixed"].append({"line": '"%s" is now "%s" in %s, %s' % (old, new, p, reason), "path": p,
+                                 "commit": "not committed", "repo": "none"})
+        for repo, reason in done.refused:
+            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; the files stay changed, "
+                                 "not committed" % reason, kind="correction"))
+        rec["answered"].append({"path": item.path, "asked": "Correct \"%s\" to \"%s\" in %s?"
+                                % (old, new, plural(len(item.fix["files"]), "file")),
+                                "answer": "yes" + (", %s" % why.strip() if why.strip() else "")})
+    elif go:
+        leftover.insert(0, item)
+    mine = 'Correct "%s" to "%s"' % (old, new)
+    now = [stored(i) for i in leftover]
+    rec["left"][key] = [i for i in rec["left"].get(key, []) if not i.get("line", "").startswith(mine) and i not in now] + now
+    out["report"] = write_report(ctx, rec)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The judgment kind: everything no other kind claims
 # ---------------------------------------------------------------------------
 
@@ -1060,6 +1282,7 @@ def say_text(items: List[Item], scopes: List[str]) -> str:
 
 
 SPOKEN = {"wall": ("one wall", "%d walls"), "mechanical": ("one fix ready", "%d fixes ready"),
+          "correction": ("one correction", "%d corrections"),
           "attribution": ("one question", "%d questions"), "judgment": ("one thing to read", "%d things to read")}
 
 
@@ -1134,16 +1357,20 @@ def item_json(item: Item) -> dict:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Sort the workspace's findings by what a fix needs; apply the mechanical ones on a yes.")
-    ap.add_argument("action", nargs="?", default="list", choices=("list", "fix", "nightly", "answered"))
+    ap.add_argument("action", nargs="?", default="list", choices=("list", "fix", "nightly", "answered", "correct"))
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--scope", action="append", default=[], help="a zone, project, thread or wiki, from the workspace's top")
-    ap.add_argument("--yes", action="store_true", help="fix: apply them; without it, only say what would change")
+    ap.add_argument("--yes", action="store_true", help="fix, correct: apply them; without it, only say what would change")
     fmt = ap.add_mutually_exclusive_group()
     fmt.add_argument("--json", action="store_true")
     fmt.add_argument("--ear", action="store_true", help="at most three short sentences, for reading aloud")
-    ap.add_argument("--path", help="answered: the file the question was about")
+    ap.add_argument("--path", help="answered, correct: the file the question or the finding was about")
     ap.add_argument("--asked", help="answered: the question, as asked")
     ap.add_argument("--answer", help="answered: the user's answer")
+    ap.add_argument("--old", help="correct: the wrong value, as written")
+    ap.add_argument("--new", help="correct: what the user says it is")
+    ap.add_argument("--why", default="", help="correct: why, in a few words, for the commit")
+    ap.add_argument("--leave", action="append", default=[], metavar="PATH", help="correct: a file to leave as it is")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     try:
@@ -1167,6 +1394,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             items[:] = [i for i in items if not (i["path"] == a.path and i["kind"] == "attribution")]
         print(write_report(ctx, rec).relative_to(root).as_posix())
         return 0
+
+    if a.action == "correct":
+        return main_correct(ctx, scopes, a)
 
     items = gather(ctx, scopes)
     done = None
@@ -1201,6 +1431,68 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(text + "\nReport: %s" % report.relative_to(root).as_posix())
     for f in ctx.failed:
         print("nurture: did not run: %s" % f, file=sys.stderr)
+    return code
+
+
+def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
+    if not (a.old and a.new):
+        print("nurture: correct needs --old and --new, the value as written and the one the user gave", file=sys.stderr)
+        return EXIT_USAGE
+    if a.yes and ctx.headless:
+        print("nurture: a correction waits for a person to say the right value; it never runs with nobody watching",
+              file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        out = run_correction(ctx, scopes, a.old, a.new, a.yes, a.why, a.leave, a.path or "")
+    except ValueError as exc:
+        print("nurture: %s" % exc, file=sys.stderr)
+        return EXIT_USAGE
+    item, done, root = out["item"], out["done"], ctx.root
+    report = out["report"].relative_to(root).as_posix()
+    code = EXIT_FAILED if done is not None and done.refused else 0
+    if a.json:
+        j = {"scope": scope_key(scopes), "old": a.old, "new": a.new, "report": report, "item": item_json(item),
+             "hits": out["hits"], "walls": [item_json(i) for i in out["walls"]],
+             "held": [item_json(i) for i in out["held"]]}
+        if done is not None:
+            j.update({"changed": done.changed, "superseded": done.superseded, "commits": done.commits,
+                      "uncommitted": done.uncommitted, "refused": done.refused, "rebuilt": done.rebuilt})
+        print(json.dumps(j, indent=1, ensure_ascii=False))
+        return code
+    files = item.fix["files"]
+    back = len(out["walls"]) + len(out["held"])
+    if a.ear:
+        if done is not None:
+            said = "Corrected in %s, %s." % (plural(len(done.changed), "place"), plural(len(done.commits), "commit"))                 if done.changed else "Nothing changed."
+        elif files:
+            said = "%s the old value. Correct them all?" % ("One place has" if len(files) == 1
+                                                             else "%d places have" % len(files))
+        else:
+            said = "Nothing live holds the old value."
+        if back:
+            said += " %s held back, named in the report." % ("One more is" if back == 1 else "%d more are" % back)
+        print(said)
+        return code
+    lines = []
+    if done is None:
+        for h in out["hits"]:
+            lines.append("%s\t%s" % (h["kind"], h["path"]))
+            lines += ["\t%d: %s" % (l["line"], l["text"][:160]) for l in h["lines"]]
+        lines.append(item.line() if files or item.fix["raw"] else 'Nothing live holds "%s".' % a.old)
+        if files:
+            lines.append("On a yes, run again with --yes: one commit per repository.")
+    else:
+        lines.append(item.line())
+        lines += ["Committed %s in %s" % (sha, repo) for repo, sha in done.commits]
+        lines += ["Not committed: %s (%s)" % u for u in done.uncommitted]
+        lines += ["Refused in %s: %s" % r for r in done.refused]
+        lines += ["Marked superseded: %s" % p for p in done.superseded]
+    if out["walls"]:
+        lines += ["Walls:"] + ["  %s" % i.line() for i in out["walls"]]
+    if out["held"]:
+        lines += ["Held:"] + ["  %s: %s" % (i.path, i.held) for i in out["held"]]
+    lines.append("Report: %s" % report)
+    print("\n".join(lines))
     return code
 
 

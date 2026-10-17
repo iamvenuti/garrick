@@ -6,8 +6,8 @@ description: >
   ask about attribution one line at a time, name each wall without repeating
   it, and report the rest. Use when the user says "nurture the context",
   "nurture Work", "nurture Acme", "nurture the meetings", "nurture the
-  library", or "what needs nurturing". The jobs extra can apply the
-  mechanical kind nightly.
+  library", or "what needs nurturing", and when, during one, the user corrects a
+  value written down. The jobs extra can apply the mechanical kind nightly.
 ---
 
 # Context Nurture
@@ -26,14 +26,16 @@ own: a new kind of problem gets a check in `check.py` first.
 |---|---|
 | The tool behind this skill | `System/tools/nurture.py` |
 | What it reads | `check.py --json`, `wiki_lint.py --json` for each wiki, `drift.py --json` |
+| A correction | `System/tools/correct.py`, the `threads` skill's own, which `nurture.py correct` calls |
 | Each day's report | `System/generated/nurture/<YYYY-MM-DD>.md`, never committed |
 | Parties, Walls, People, Aliases | `System/context.md` |
 
-## The four kinds
+## The kinds
 
 | Kind | Examples | What this skill does |
 |---|---|---|
 | Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`) | Lists them, and applies them all on one yes, one commit per repository |
+| Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
@@ -72,7 +74,9 @@ in the report with its reason, as judgment.
    file alone, remove the material, and commit it in its repository through
    the hook. Never move it anywhere else, and never decide alone.
 5. **Attribution**, one at a time. Each finding carries its question, and a
-   proposal when the context file settles one. Add your own from the page's
+   proposal when the context file settles one. An answer that says a value
+   written down is wrong is a correction: see *A correction* below. Add your
+   own from the page's
    addresses, the People table and the page's text, as the `intake` skill
    reads them; when the evidence points to both sides of a wall, propose
    nothing and ask. Ask in one line: "260310 Kick-off: Work, Acme?" On an
@@ -81,7 +85,8 @@ in the report with its reason, as judgment.
    python3 System/tools/nurture.py answered --path "<file>" --asked "<question>" --answer "<answer>"
    ```
    "Skip" leaves it in the report. Never guess.
-6. **Judgment.** Name each with the page to open, and change nothing.
+6. **Judgment.** Name each with the page to open, and change nothing,
+   unless the user answers one with the right value: that is a correction.
 7. **The report.** The tool wrote `System/generated/nurture/<date>.md`:
    what was fixed, what was asked and answered, and what is left. Say where
    it is.
@@ -93,14 +98,49 @@ notes, between Acme and Birch: take it out?"
 Written: the spoken answer on top, then the tool's list by kind, and the
 commit hashes.
 
+## A correction: "that's wrong, it's Y"
+
+No check finds a wrong value; the user says the right one. It comes in two
+ways: as the answer to an attribution or judgment finding ("that's wrong,
+the domain is acmecorp.example"), or said outright during a pass ("Acme's
+domain is acmecorp.example, not acme-corp.example"). It is one finding, and
+it goes through the same tool the `threads` skill uses for *Correct*, so a
+value is found and replaced one way only.
+
+1. **Settle the two values**, as the `threads` skill's *Correct* does: the wrong one as it is
+   written, the right one as the user gave it. When it is not clear which
+   written value they mean, ask.
+2. **List every live copy**, which changes nothing:
+   ```sh
+   python3 System/tools/nurture.py correct --old "<X>" --new "<Y>" --scope "<path>" --path "<the finding's file>"
+   ```
+   The scope is the pass's, none for the workspace. It lists what
+   `correct.py` finds, by file and line, as one finding. With a
+   scope, a copy in a file across a wall from it is a wall finding: say the
+   file and the wall, nothing of the line, and leave it for a session on
+   that side. A copy in a file another session has changes in is held. A raw
+   record is listed and never edited.
+3. **Ask once**: "Five places have the old domain. Fix them all?" A hit
+   that is right where it is, such as a heard form in Aliases, is named and
+   kept out with `--leave <path>`.
+4. **On the yes**, the same line with `--yes`, and `--why "<why>"` when the
+   user gave a reason. `correct.py` writes each copy, marks the pages
+   resting on a raw record as superseded, and commits once per repository,
+   only the files it changed. The day's report records the copies fixed,
+   each commit, and the yes. Relay the commits, and anything held or
+   refused, as *Correct* does.
+
+A correction never runs overnight: it needs a person to say the right value,
+and `correct --yes` is refused with nobody watching.
+
 ## Overnight
 
 The jobs extra's nightly run, `nurture_sweep.py`, applies the mechanical
 kind with nobody watching, and nothing else: attribution, wall and judgment
-findings never change headless. It commits only the files it changed, by
-name, never `-a` or `git add .`, and leaves alone any file another session
-has changes in, since another session may have uncommitted work in the same
-repository. Its line in the morning digest says what was fixed first, then
+findings, and corrections, never change headless. It commits only the files
+it changed, by name, never `-a` or `git add .`, and leaves alone any file
+another session has changes in, since another session may have uncommitted
+work in the same repository. Its line in the morning digest says what was fixed first, then
 what waits. When the user asks what changed overnight, read the day's report.
 
 ## Listening mode

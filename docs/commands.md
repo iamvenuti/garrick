@@ -246,6 +246,7 @@ The check reports and changes nothing, so its warnings pile up until nobody read
 |---|---|---|
 | Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`) | Listed, then applied on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome | One line each: a proposed answer and a question. Never a guess across a wall |
+| Correction | a value written down wrong, which you correct as you go: "that's wrong, it's acmecorp.example" | Every live copy listed as one finding, then corrected on one yes, one commit per repository |
 | Wall | a project file that names, links or quotes a party across a wall | The file and the wall, never the material; taken out only on your yes |
 | Judgment | a stale resume point, a drifted copy, an orphan page, two pages that disagree | Reported, with the page to open |
 
@@ -255,15 +256,18 @@ Behind it is one tool, which adds no checks of its own: it runs `check.py --json
 python3 System/tools/nurture.py --scope "Zones/Work"          # list, change nothing
 python3 System/tools/nurture.py fix --scope "Zones/Work"      # what the mechanical fixes would change
 python3 System/tools/nurture.py fix --scope "Zones/Work" --yes
+python3 System/tools/nurture.py correct --scope "Zones/Work" --old acme-corp.example --new acmecorp.example   # add --yes on your yes
 ```
 
 A scope is a path from the workspace's top: a zone, a project, a thread, or `Wikis/Meetings` or `Wikis/Knowledge`; none means the whole workspace. `--ear` says the list in at most three sentences. `fix --yes` commits in each repository only the files it changed, named one by one, so what another session has not committed stays out of it, and it leaves alone any file that has changes not committed. Each commit goes through the repository's wall check; one it refuses is put back. Every run writes `System/generated/nurture/<YYYY-MM-DD>.md`: what was fixed, what was asked and answered, and what is left. The wikis' *Lint* is unchanged: "lint the meetings" still writes its own report and changes nothing, and nurturing a wiki runs it.
 
-With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other three kinds changes until you are there.
+A correction is the one kind no check finds: you give it, answering a finding or saying it outright during a pass. `nurture.py correct` hands it to the same tool as [Correcting a value](#correcting-a-value), so it finds and fixes every copy the same way, and records the copies, the commits and your yes in the day's report. With a scope, a copy in a file across a wall from it is named as its file and its wall and left for a session on that side, and a copy in a file another session has changes in is held.
+
+With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other kinds changes until you are there, and a correction never runs at night.
 
 ## Correcting a value
 
-When something written down turns out wrong (an address, an account, a name, a share path), say so: "that's wrong, it's acmecorp.example." The `threads` skill runs the correction, which fixes every live copy, not only the one in front of you:
+When something written down turns out wrong (an address, an account, a name, a share path), say so: "that's wrong, it's acmecorp.example." The `threads` skill runs the correction, which fixes every live copy, not only the one in front of you. During a nurture pass, the `nurture` skill runs the same tool as one of its kinds:
 
 ```sh
 python3 System/tools/correct.py --old acme-corp.example --new acmecorp.example            # lists every live copy; changes nothing

@@ -1758,8 +1758,8 @@ def commit_new(zone: Path, folder: Path, message: str) -> None:
 # the folder of the work it blocks, `Needs you/<YYMMDD> - <slug>.md`,
 # committed with the zone. `status: open`, `answered` or `later`; each option
 # is a line `- [<label>] <the next action it leads to>`. Answering sets the
-# work's Next action to that option's action, adds a dated entry ("Answered:
-# <label>."), writes the file's new status, and commits the two in one commit.
+# work's Next action to that option's action, ends its Where it stands with
+# "Answered on <date>: <label>.", adds a dated entry ("Answered: <label>."), writes the file's new status, and commits the two in one commit.
 # "Not now" puts it off to a later day, `later: <date>`, and the home shows it
 # again that day.
 NEEDS = "Needs you"
@@ -1886,9 +1886,31 @@ def answered_note(text: str, step: str, label: str, today: dt.date, name: str) -
         lines += ["| | |", "|---|---|"]
         rows = [len(lines) - 2, len(lines) - 1]
     set_row(lines, rows, "Next action", step, after=None)
+    said_answered(lines, today, label)
     body = body[:span[0]] + "\n".join(lines) + body[span[1]:]
     body = dated_entry(body, today, "Answered: %s." % label.rstrip("."))
     return text[:m.end()] + body
+
+
+ANSWERED_SENTENCE = re.compile(r" ?Answered on \d{1,2} [A-Z][a-z]+ \d{4}: (?:(?!\. ).)+\.$")
+
+
+def said_answered(lines: list, today: dt.date, label: str) -> None:
+    """The block's Where it stands, which said the work waits in Needs you,
+    now saying it was answered: one sentence at the end of its paragraph, in
+    place of the one an earlier answer added there. Nothing else the user
+    wrote is touched. With no such paragraph, the sentence is one."""
+    said = "Answered on %d %s %d: %s." % (today.day, MONTHS[today.month - 1], today.year, label.rstrip("."))
+    first = next((i for i, x in enumerate(lines) if x.strip()), None)
+    if first is None or lines[first].lstrip().startswith("|"):
+        at = 0 if first is None else first
+        lines[at:at] = ["", said, ""] if at == 0 else [said, ""]
+        return
+    last = first
+    while last + 1 < len(lines) and lines[last + 1].strip() and not lines[last + 1].lstrip().startswith("|"):
+        last += 1
+    kept = ANSWERED_SENTENCE.sub("", lines[last].rstrip())
+    lines[last] = (kept + " " + said) if kept.strip() else said
 
 
 def put_off(ws: Path, req: dict, today: dt.date) -> str:

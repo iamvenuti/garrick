@@ -399,6 +399,7 @@ class TestAnswering(GitCase):
         text = self.note.read_text(encoding="utf-8")
         self.assertIn("| Next action | Send Dana the price sheet at a 500-pallet floor |", text)
         self.assertIn("**%s.** Answered: 500 pallets.\n" % spoken(0), text)
+        self.assertIn("**Where it stands, %s.** In hand. Answered on %s: 500 pallets.\n" % (spoken(-1), spoken(0)), text)
         self.assertIn("updated: %s" % TODAY.isoformat(), text)
         fm = status.frontmatter(self.q)
         self.assertEqual(("answered", "500 pallets", TODAY.isoformat()), (fm["status"], fm["answer"], fm["answered"]))
@@ -431,6 +432,17 @@ class TestAnswering(GitCase):
                 pa.act(self.root, req, today=TODAY)
         self.assertIn("Send Dana the price sheet at a 500-pallet floor", self.note.read_text(encoding="utf-8"))
         self.assertIn("Edited meanwhile.", self.q.read_text(encoding="utf-8"))   # neither put back
+
+    def test_a_second_question_answered_replaces_the_first_answers_sentence(self):
+        pa.act(self.root, {"verb": "answer", "zone": "Work", "file": self.FILE, "label": "500 pallets"}, today=TODAY)
+        other = self.FILE.replace("volume-floor", "delivery")
+        write(self.work / other, question().replace("volume floor", "delivery week"))
+        later = TODAY + dt.timedelta(days=1)
+        pa.act(self.root, {"verb": "answer", "zone": "Work", "file": other, "label": "400 pallets"}, today=later)
+        text = self.note.read_text(encoding="utf-8")
+        where = next(l for l in text.splitlines() if l.startswith("**Where it stands"))
+        self.assertEqual("**Where it stands, %s.** In hand. Answered on %d %s %d: 400 pallets."
+                         % (spoken(-1), later.day, later.strftime("%B"), later.year), where)
 
     def test_a_second_answer_and_an_unknown_one_are_refused(self):
         with self.assertRaises(pa.Refused):

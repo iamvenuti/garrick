@@ -69,7 +69,7 @@ In the call on Tuesday Dana said 400 pallets and you said 500. The price sheet w
 
 The bold line is the question. The lines under it say why it matters. Each option is `- [<label>] <the next action it leads to>`, and the home shows one button per option, plus *Not now*.
 
-- **An answer** sets the work's *Next action* to what that option leads to, adds a dated entry, *Answered: 500 pallets.*, writes `status: answered`, `answer:` and `answered:` into the question, and commits the note and the question together in the zone, through its wall check.
+- **An answer** sets the work's *Next action* to what that option leads to, ends its *Where it stands* with one sentence, *Answered on 17 October 2026: 500 pallets.*, leaving the rest of what you wrote there as it is, adds a dated entry, *Answered: 500 pallets.*, writes `status: answered`, `answer:` and `answered:` into the question, and commits the note and the question together in the zone, through its wall check.
 - **Not now** writes `status: later` and `later:` with tomorrow's date, and commits it. The question leaves the home, which counts it as *1 put off*, and comes back on that day.
 - **A question with no options** is answered in words, in Claude: its button is *Answer in Claude*, which is Continue.
 

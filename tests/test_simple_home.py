@@ -282,12 +282,44 @@ class TestYourWork(HomeCase):
     def test_the_example_is_marked_and_can_be_put_away(self):
         ex = self.root / "Zones" / "Example"
         (ex / ".git").mkdir(parents=True)
+        write(ex / ".example.json", json.dumps({"name": "Quillfield Furniture", "zone": "Example", "drive": "Quillfield Shared"}))
         write(ex / "Spring Catalogue" / "Spring Catalogue.md",
               thread("Spring Catalogue", "Spring Catalogue", updated=1).replace("type: thread", "type: project"))
         html = self.page()
         self.assertIn('Spring Catalogue</button><span class="sh-tag">Example</span>', html)
         self.assertIn("Everything marked Example is made up", html)
         self.assertIn(htmllib.escape(json.dumps({"verb": "example", "do": "archive"})), html)
+
+    def test_a_zone_called_example_without_the_manifest_is_the_users_own(self):
+        ex = self.root / "Zones" / "Example"
+        (ex / ".git").mkdir(parents=True)
+        write(ex / "Spring Catalogue" / "Spring Catalogue.md",
+              thread("Spring Catalogue", "Spring Catalogue", updated=1).replace("type: thread", "type: project"))
+        write(ex / ".example.json", json.dumps({"zone": "Elsewhere"}))       # one that names another zone counts for nothing
+        html = self.page()
+        self.assertIn("Spring Catalogue</button>", html)
+        self.assertNotIn('Spring Catalogue</button><span class="sh-tag">Example</span>', html)
+        self.assertNotIn("Everything marked Example is made up", html)
+        self.assertNotIn("Remove the example", html)
+
+    def test_the_page_and_example_py_agree_on_where_the_example_is(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        for name in ("example.py", "garrick_lib.py"):
+            shutil.copy2(REPO / "template" / "System" / "tools" / name, tools / name)
+        ex = self.root / "Zones" / "Example"
+        ex.mkdir(parents=True)
+
+        def said():
+            r = subprocess.run([sys.executable, str(tools / "example.py"), "--root", str(self.root), "--json", "status"],
+                               capture_output=True, text=True)
+            return json.loads(r.stdout)["state"], status.example_state(self.root)
+
+        self.assertEqual(("none", None), said())
+        write(ex / ".example.json", json.dumps({"name": "Quillfield Furniture", "zone": "Example"}))
+        self.assertEqual(("here", "present"), said())
+        write(ex / ".example.json", json.dumps({"name": "Quillfield Furniture", "zone": "Other"}))
+        self.assertEqual(("none", None), said())
 
     def test_an_archived_example_can_be_brought_back(self):
         write(self.root / "System" / "tools" / "example.py",

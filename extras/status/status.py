@@ -3999,7 +3999,10 @@ var x=document.getElementById('thought-close');if(x)x.onclick=function(){drop();
 # switches either way.
 
 HOMES = ("simple", "full")
-EXAMPLE_ZONE = "Example"
+# The example's manifest in its zone, as garrick_lib.EXAMPLE_MANIFEST names it:
+# a zone is the example only with one that names it, as System/tools/example.py
+# reads it (present()), never by its name alone.
+EXAMPLE_MANIFEST = ".example.json"
 VISIBLE_WORK = 5
 QUESTIONS = "Needs you"
 NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
@@ -4165,6 +4168,23 @@ def work_name_for(r: dict) -> str:
     return r["project"] if len(threads) <= 1 else "%s, %s" % (r["project"], r["thread"])
 
 
+def example_zone(ws: Path) -> Optional[str]:
+    """The zone the worked example is in, or None: the first zone whose
+    .example.json names it, read as System/tools/example.py's present() does."""
+    zones = ws / "Zones"
+    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
+        manifest = zone / EXAMPLE_MANIFEST
+        if not (zone.is_dir() and manifest.is_file()):
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("zone") == zone.name:
+            return zone.name
+    return None
+
+
 def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
     """Every live piece of work, most recent first, as the home shows it.
     Read from what Garrick keeps already: the thread note's Resume here block
@@ -4178,6 +4198,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
             ctx = lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
         except Exception:
             ctx = {}
+    example = example_zone(ws)
     out = []
     for zone, data in T.items():
         zdir = data["folder"]
@@ -4199,7 +4220,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                                     hashlib.sha1(("%s/%s" % (zone, r["rel"])).encode("utf-8")).hexdigest()[:6]),
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": "%s/%s" % (zone, r["rel"]),
-                "example": zone == EXAMPLE_ZONE, "next": without_owner(nxt), "waiting": waiting_on(rows.get("Waiting on", "")),
+                "example": zone == example, "next": without_owner(nxt), "waiting": waiting_on(rows.get("Waiting on", "")),
                 "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
                 "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
                 "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,
@@ -4212,10 +4233,11 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
 
 
 def example_state(ws: Path) -> Optional[str]:
-    """"present" while the Example zone is there; "archived" when
-    System/tools/example.py (#174) says it is put away; None otherwise, and
-    always where there is no such tool and no such zone."""
-    if (ws / "Zones" / EXAMPLE_ZONE).is_dir():
+    """"present" while the example's zone is there with its manifest;
+    "archived" when System/tools/example.py (#174) says it is put away; None
+    otherwise, and always where there is no such tool and no such zone. A zone
+    of the user's that happens to be called Example is not the example."""
+    if example_zone(ws):
         return "present"
     tool = ws / "System" / "tools" / "example.py"
     if not tool.is_file():

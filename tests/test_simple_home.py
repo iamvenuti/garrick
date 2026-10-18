@@ -572,7 +572,7 @@ class TestContinue(HandOffCase):
         self.assertEqual("Opened Acme Review in Claude. It already knows where it stands", said)
         prime, desk = self.calls()
         folder = str((self.work / "Acme Review").resolve())          # a project that is one thread opens as the project
-        self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json",
+        self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json", "--name", "Acme Review",
                           "--append-system-prompt", handoff.CONTINUE_BRIEF,
                           "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(folder, str(Path(prime["cwd"]).resolve()))
@@ -588,6 +588,7 @@ class TestContinue(HandOffCase):
         self.go("Birch Entry/Threads/Interviews/Interviews.md")
         prime = self.calls()[0]
         self.assertEqual("Where am I on Birch Entry, Interviews?", prime["args"][1])
+        self.assertEqual("Birch Entry, Interviews", prime["args"][prime["args"].index("--name") + 1])
         self.assertEqual(str((self.work / "Birch Entry" / "Threads" / "Interviews").resolve()), str(Path(prime["cwd"]).resolve()))
 
     def test_it_commits_the_record_first(self):
@@ -799,10 +800,28 @@ class TestAskSomething(HandOffCase):
         self.assertNotIn("answer", out)
         prime, desk = self.calls()
         self.assertEqual(["-p", "What do I owe people this week?", "--output-format", "json",
+                          "--name", "What do I owe people this week?",
                           "--append-system-prompt", handoff.ASK_BRIEF,
                           "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(str(self.root.resolve()), str(Path(prime["cwd"]).resolve()))
         self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
+
+    def test_a_long_question_names_the_session_by_its_first_words(self):
+        pa.act(self.root, {"verb": "ask-desktop", "prompt": "Please tell me where every piece of work stands and what is late"})
+        args = self.calls()[0]["args"]
+        self.assertEqual("Please tell me where every piece of work", args[args.index("--name") + 1])
+        self.assertEqual("--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit", args[-1])
+
+    def test_a_name_is_never_read_as_a_flag(self):
+        self.assertEqual("resume x", handoff.session_name("-- --resume x"))
+        self.assertEqual("", handoff.session_name("---"))
+        self.assertEqual("multi line", handoff.session_name(" multi\n line "))
+        self.assertEqual("a" * 40, handoff.session_name("a" * 60))
+        handoff.prime(self.cli, self.root, "Where am I?", name="--resume x")
+        args = self.calls()[0]["args"]
+        self.assertEqual(["--name", "resume x", "--append-system-prompt"], args[4:7])
+        handoff.prime(self.cli, self.root, "Where am I?", name="- -")
+        self.assertNotIn("--name", self.calls()[1]["args"])
 
     def test_a_field_no_verb_declares_is_refused(self):
         out, _, _ = pa.perform(self.root, {"verb": "ask-desktop", "prompt": "x", "folder": "/tmp"})

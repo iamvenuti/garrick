@@ -17,7 +17,10 @@ session is started first and handed over:
    answers, and its JSON carries `session_id` (prime()). The answer is the
    first thing the user sees, so `--append-system-prompt` asks for it in
    plain words (CONTINUE_BRIEF, ASK_BRIEF): no table, path or command, and
-   no word about the tools a read-only look lacks;
+   no word about the tools a read-only look lacks. `--name` names the session
+   after the work (the name the home shows) or, for Ask something, after the
+   first words of the question (session_name()). The CLI shows that name in
+   its own places; whether the desktop app shows it too is not known yet;
 2. `claude --desktop --resume <that id>` in the same folder (open_desktop()).
    `--desktop` refuses to run without a terminal, so it runs under a
    pseudo-terminal of its own; and it refuses `--settings` and
@@ -88,6 +91,10 @@ CONTINUE_BRIEF = ("This first answer is shown to someone who is not technical, b
                   "deadline if one is near. " + PLAIN + " A checkpoint not yet confirmed may be mentioned in one plain "
                   "sentence, as not yet saved.")
 ASK_BRIEF = "This answer is shown to someone who is not technical. Answer in plain words. " + PLAIN
+# A session's name, from Ask something's question: its first words, cut on a
+# word boundary. The CLI shows it in the prompt box, the /resume picker and
+# the terminal title; whether the desktop app's sidebar shows it is not known.
+NAME_MAX = 40
 # A session continued again within this many hours is resumed as it is; an
 # older one is primed afresh, so Claude reads where the work stands now.
 FRESH_HOURS = 12
@@ -350,14 +357,28 @@ def stop_group(pid: int, waited=None) -> None:
             waited()
 
 
+def session_name(words: str, most: int = NAME_MAX) -> str:
+    """A short name for a session, from the user's words: one line, at most
+    `most` characters, cut on a word boundary, never starting with "-", so
+    `--name` cannot read it as a flag. Empty when nothing is left."""
+    name = " ".join(str(words or "").split()).lstrip("- ")
+    if len(name) <= most:
+        return name
+    cut = name[:most + 1].rsplit(" ", 1)[0] if " " in name[:most + 1] else name[:most]
+    return cut[:most].rstrip(" ,;:-")
+
+
 def prime(claude: Path, folder: Path, prompt: str, timeout: Optional[float] = None,
-          env: Optional[dict] = None, brief: str = CONTINUE_BRIEF) -> Tuple[str, str]:
+          env: Optional[dict] = None, brief: str = CONTINUE_BRIEF, name: Optional[str] = None) -> Tuple[str, str]:
     """The headless call that answers first: (its session id, its answer).
-    `brief` is how the answer is to read, appended to Claude's system prompt.
+    `brief` is how the answer is to read, appended to Claude's system prompt;
+    `name` is the session's display name, given whole and never as a flag.
     HandOffError in plain words when it did not answer. It runs in a process
     group of its own, so what it started is stopped with it at the time."""
     timeout = PRIME_TIMEOUT if timeout is None else timeout
-    argv = [str(claude), "-p", prompt, "--output-format", "json"] + (["--append-system-prompt", brief] if brief else [])
+    name = " ".join(str(name or "").split()).lstrip("- ")
+    argv = ([str(claude), "-p", prompt, "--output-format", "json"] + (["--name", name] if name else []) +
+            (["--append-system-prompt", brief] if brief else []))
     try:
         p = subprocess.Popen(argv + [READ_ONLY], cwd=str(folder),
                              env=child_env(claude, env), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

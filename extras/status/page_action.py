@@ -2012,8 +2012,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     H = handoff()
     zone, note, parts, _ = resume_note(ws, req)
     name = work_name(zone, parts)
-    if H.managed_off(managed_places()):
-        H.mark_local_off(ws, "managed")
+    if H.managed_off(managed_places()):          # not kept: the page reads the setting at every build
         raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
     claude = H.find_claude()
     if claude is None:
@@ -2063,17 +2062,15 @@ def ask_desktop(ws: Path, req: dict) -> dict:
         sid, said = H.prime(claude, ws, prompt)
     except H.HandOffError as e:
         raise Refused(str(e))
-    off = H.managed_off(managed_places())
-    if not off:
+    if not H.managed_off(managed_places()):      # a managed setting is read at every build, never kept
         try:
             H.open_desktop(claude, ws, sid)
             H.clear_local_off(ws)
             return {"say": "Opened Claude on your question. Its answer is waiting there"}
         except H.LocalOff:
-            off = True
+            H.mark_local_off(ws, "refused")
         except H.HandOffError as e:
             return {"say": "%s Claude's answer is below." % str(e).rstrip("."), "answer": said[:4000]}
-    H.mark_local_off(ws, "managed" if H.managed_off(managed_places()) else "refused")
     return {"say": "Claude answered here, since it can't open work on this Mac", "answer": said[:4000]}
 
 

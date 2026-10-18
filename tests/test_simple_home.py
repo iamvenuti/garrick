@@ -676,6 +676,8 @@ class TestLocalSessionsOff(HandOffCase):
         html = self.page(managed=[managed])
         self.assertIn('data-local="managed"', html)
         self.assertIn('id="sh-off"', html)
+        self.assertIsNone(handoff.local_off(self.root))               # not kept: once IT turns it back on, it is gone
+        self.assertNotIn('id="sh-off"', self.page(managed=[self.root.parent / "none.plist"]))
 
     def test_managed_off_reads_a_plist_and_claude_codes_managed_settings(self):
         off = self.root.parent / "off.json"
@@ -699,6 +701,7 @@ class TestLocalSessionsOff(HandOffCase):
             out = pa.act(self.root, {"verb": "ask-desktop", "prompt": "What do I owe people this week?"})
         self.assertEqual("It stands at the draft. Next: What do I owe people this week?", out["answer"])
         self.assertEqual(["-p"], [c["args"][0] for c in self.calls()])        # asked, and nothing opened
+        self.assertIsNone(handoff.local_off(self.root))
 
 
 class TestAskSomething(HandOffCase):

@@ -37,7 +37,8 @@ project that is one thread), and kept with the files of the work's folder as
 they stood when it was continued, which is what the work's page compares
 with to say what is new, changed or missing. `local_off` is set when the
 desktop app refused because local sessions are switched off, and cleared by
-the next hand-off that opens.
+the next hand-off that opens. A managed setting is never kept: it is read
+again at every build, so the home stops saying so once IT turns it back on.
 
 **When local sessions are switched off.** An organisation can turn off the
 desktop app's on-device sessions with a managed setting,
@@ -258,8 +259,8 @@ def local_off(ws: Path, places: Optional[Iterable[Path]] = None) -> Optional[str
     places from main(), and a test passes its own."""
     if places is not None and managed_off(places):
         return "managed"
-    off = load(ws).get("local_off")
-    return "refused" if isinstance(off, dict) else None
+    off = load(ws).get("local_off")             # only a refusal is kept; a managed one from before is not believed
+    return "refused" if isinstance(off, dict) and off.get("why") != "managed" else None
 
 
 # --------------------------------------------------------------------------- the CLI

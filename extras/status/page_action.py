@@ -2061,7 +2061,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     kept = H.session_for(ws, key)
     resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
     try:
-        sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name)[0]
+        sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF)[0]
         try:
             H.open_desktop(claude, folder, sid)
         except (H.LocalOff, H.TimedOut):
@@ -2070,7 +2070,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             if not resume:
                 raise
             resume = False                      # the kept session would not open: ask afresh, once
-            sid = H.prime(claude, folder, "Where am I on %s?" % name)[0]
+            sid = H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF)[0]
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")
@@ -2096,7 +2096,7 @@ def ask_desktop(ws: Path, req: dict) -> dict:
     if claude is None:
         raise Refused(H.NO_CLI)
     try:
-        sid, said = H.prime(claude, ws, prompt)
+        sid, said = H.prime(claude, ws, prompt, brief=H.ASK_BRIEF)
     except H.HandOffError as e:
         raise Refused(str(e))
     if not H.managed_off(managed_places()):      # a managed setting is read at every build, never kept

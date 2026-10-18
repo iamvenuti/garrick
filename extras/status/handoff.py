@@ -14,7 +14,10 @@ session is started first and handed over:
 
 1. `claude -p "<the question>" --output-format json`, headless and read-only
    (READ_ONLY), in the work's folder: it reads the workspace's AGENTS.md and
-   answers, and its JSON carries `session_id` (prime());
+   answers, and its JSON carries `session_id` (prime()). The answer is the
+   first thing the user sees, so `--append-system-prompt` asks for it in
+   plain words (CONTINUE_BRIEF, ASK_BRIEF): no table, path or command, and
+   no word about the tools a read-only look lacks;
 2. `claude --desktop --resume <that id>` in the same folder (open_desktop()).
    `--desktop` refuses to run without a terminal, so it runs under a
    pseudo-terminal of its own; and it refuses `--settings` and
@@ -72,6 +75,19 @@ RECORD = ("System", "generated", "desktop-sessions.json")
 # written in it. The desktop session it hands over keeps the workspace's own
 # permissions. Given as one `=` value, so the list cannot take in what follows.
 READ_ONLY = "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"
+# How the first answer is to read, given with `--append-system-prompt`, which
+# takes exactly one value. It is the first thing someone who is not technical
+# sees, so not the threads skill's written form: no Resume here table, no
+# paths, and nothing about a check the read-only call could not run. Continue's
+# is two or three sentences; Ask something's answers the user's own words, at
+# whatever length they need.
+PLAIN = ("No table, no file paths or links, no commands. This is a read-only look, so do not mention tools you lack "
+         "or checks you could not run.")
+CONTINUE_BRIEF = ("This first answer is shown to someone who is not technical, before they have typed anything. Answer in "
+                  "two or three plain sentences: where the work stands and the next step, with who it waits on and a "
+                  "deadline if one is near. " + PLAIN + " A checkpoint not yet confirmed may be mentioned in one plain "
+                  "sentence, as not yet saved.")
+ASK_BRIEF = "This answer is shown to someone who is not technical. Answer in plain words. " + PLAIN
 # A session continued again within this many hours is resumed as it is; an
 # older one is primed afresh, so Claude reads where the work stands now.
 FRESH_HOURS = 12
@@ -335,13 +351,15 @@ def stop_group(pid: int, waited=None) -> None:
 
 
 def prime(claude: Path, folder: Path, prompt: str, timeout: Optional[float] = None,
-          env: Optional[dict] = None) -> Tuple[str, str]:
+          env: Optional[dict] = None, brief: str = CONTINUE_BRIEF) -> Tuple[str, str]:
     """The headless call that answers first: (its session id, its answer).
+    `brief` is how the answer is to read, appended to Claude's system prompt.
     HandOffError in plain words when it did not answer. It runs in a process
     group of its own, so what it started is stopped with it at the time."""
     timeout = PRIME_TIMEOUT if timeout is None else timeout
+    argv = [str(claude), "-p", prompt, "--output-format", "json"] + (["--append-system-prompt", brief] if brief else [])
     try:
-        p = subprocess.Popen([str(claude), "-p", prompt, "--output-format", "json", READ_ONLY], cwd=str(folder),
+        p = subprocess.Popen(argv + [READ_ONLY], cwd=str(folder),
                              env=child_env(claude, env), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
     except OSError as e:

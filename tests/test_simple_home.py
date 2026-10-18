@@ -573,6 +573,7 @@ class TestContinue(HandOffCase):
         prime, desk = self.calls()
         folder = str((self.work / "Acme Review").resolve())          # a project that is one thread opens as the project
         self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json",
+                          "--append-system-prompt", handoff.CONTINUE_BRIEF,
                           "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(folder, str(Path(prime["cwd"]).resolve()))
         self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
@@ -798,6 +799,7 @@ class TestAskSomething(HandOffCase):
         self.assertNotIn("answer", out)
         prime, desk = self.calls()
         self.assertEqual(["-p", "What do I owe people this week?", "--output-format", "json",
+                          "--append-system-prompt", handoff.ASK_BRIEF,
                           "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(str(self.root.resolve()), str(Path(prime["cwd"]).resolve()))
         self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
@@ -889,6 +891,16 @@ class TestTheScript(unittest.TestCase):
     def test_the_words_for_local_sessions_off_are_the_sketchs(self):
         self.assertEqual("Claude can't open work on this Mac.", handoff.LOCAL_OFF_TITLE)
         self.assertIn("Your company has turned off Claude's local sessions.", handoff.LOCAL_OFF)
+
+    def test_the_first_answer_is_asked_for_in_plain_words(self):
+        for brief in (handoff.CONTINUE_BRIEF, handoff.ASK_BRIEF):
+            for said in ("not technical", "No table, no file paths or links, no commands.",
+                         "do not mention tools you lack or checks you could not run"):
+                self.assertIn(said, brief)
+            self.assertFalse(brief.startswith("-"))                    # one value, never taken for a flag
+        self.assertIn("two or three plain sentences", handoff.CONTINUE_BRIEF)
+        self.assertIn("not yet saved", handoff.CONTINUE_BRIEF)
+        self.assertNotIn("sentences", handoff.ASK_BRIEF)                # the user's own question, at its own length
 
     def test_a_refusal_is_read_from_what_the_cli_says(self):
         for said in ("Local sessions are disabled by your organization", "disableDesktopLocalSessions is set",

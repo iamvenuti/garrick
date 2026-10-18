@@ -57,6 +57,14 @@ def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, text=True).stdout.strip()
 
 
+
+def recorded_settings(target):
+    """System/garrick-settings.json of an installed workspace, {} without one."""
+    try:
+        return json.loads((Path(target) / "System" / "garrick-settings.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+
 class Sandbox:
     """A temporary HOME and git identity for one test class."""
 
@@ -727,7 +735,7 @@ class InteractiveTest(unittest.TestCase):
             self.assertLess(r.stdout.index(asked[0]), r.stdout.index("Go ahead?"))
             target = box.home / "ws-asked"
             self.assertFalse((target / ".claude" / "settings.json").exists())
-            self.assertFalse((target / "System" / "garrick-settings.json").exists())
+            self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
             self.assertIn("No command is allowed in advance", r.stdout)
         finally:
             box.close()
@@ -798,11 +806,21 @@ class AllowlistTest(unittest.TestCase):
         self.addCleanup(self.box.close)
         self.declined = self.box.config("declined", **{"allow-commands": False})
 
+    def test_a_new_workspace_opens_on_the_simple_home(self):
+        """#175: the status page opens a workspace made now on the simple
+        home, and the choice is committed with the rest of System/. Saying
+        no to the commands changes nothing about it."""
+        for name, config in (("allowed", None), ("declined", self.declined)):
+            target, r = self.box.install(name, **({"config": config} if config else {}))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual("simple", recorded_settings(target).get("home"), name)
+            self.assertEqual("", git(target, "status", "--porcelain"), name)
+
     def test_a_config_that_declines_writes_nothing_about_permissions(self):
         target, r = self.box.install("declined", config=self.declined)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse((target / ".claude" / "settings.json").exists())
-        self.assertFalse((target / "System" / "garrick-settings.json").exists())
+        self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
         self.assertIn("No command is allowed in advance", r.stdout)
         self.assertEqual("", git(target, "status", "--porcelain"))
 
@@ -835,7 +853,7 @@ class AllowlistTest(unittest.TestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("not JSON Garrick can add to", r.stderr)
         self.assertEqual("{ not json", settings.read_text())
-        self.assertFalse((target / "System" / "garrick-settings.json").exists())
+        self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
 
     def test_it_refuses_a_folder_that_is_not_a_workspace(self):
         r = run([INSTALL, "--allowlist", self.box.work], self.box.env)

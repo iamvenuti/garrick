@@ -729,6 +729,14 @@ def install(cfg, target, force=False, quiet=False):
         for rel, text in files.items():
             w.write(root / rel, text)
 
+    # The status page opens a workspace made now on the simple home (#175). One
+    # installed before it has no "home" and keeps the page it had; Settings ›
+    # Home switches either way. The file is the workspace's own, never fingerprinted.
+    recorded = "/".join(pl.SETTINGS)
+    ours = read_json_file(root / recorded, recorded)
+    ours.setdefault("home", "simple")
+    w.write(root / recorded, json.dumps(ours, indent=2) + "\n")
+
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an
     # update can tell a file still as installed from one the user has changed.
     stamp = source_version()

@@ -2,7 +2,7 @@
 
 The [status page](status-page.md) can open on a simpler page: your work, a box to ask something, and the questions Garrick is waiting on you for. It is for someone who does not want to think in zones, projects and threads, or work in a terminal. Everything else the status page has is still there, under *More*.
 
-A workspace installed with this Garrick opens on the simple home. One installed earlier keeps the page it had. *Settings › Home* switches between the two, *Simple* and *Full*, for every viewer of the page: the choice is `"home": "simple"` or `"full"` in `System/garrick-settings.json`, committed with the rest of your settings.
+A workspace installed with this Garrick opens on the simple home. One installed earlier keeps the page it had. *Settings › Home* switches between the two, *Simple* and *Full*, for every viewer of the page: the choice is `"home": "simple"` or `"full"` in `System/garrick-settings.json`, committed with the rest of your settings. On the simple home each zone's `Todo.md` starts empty, without the example line a list on the full home opens with to show its shape; a zone added later follows the setting the workspace has then.
 
 ## What it shows
 

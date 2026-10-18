@@ -99,10 +99,24 @@ class Case(unittest.TestCase):
 class TestWhatGarrickShips(Case):
     def test_shipped_is_exactly_what_the_installer_wrote(self):
         files = self.stamp()["files"]
-        new = update.shipped(update.zones_of(self.root, self.stamp()))
+        new = update.shipped(update.zones_of(self.root, self.stamp()), simple=True)    # a new workspace's home
         self.assertEqual(sorted(files), sorted(new))
         for path, (data, _) in new.items():
             self.assertEqual(files[path], sha(data), path)
+
+    def test_a_zones_list_follows_the_home(self):
+        """On the simple home a zone's list starts without the template's example
+        line, so an update leaves one as it was written; on the full home the
+        same list is Garrick's to give its example back, as the template has it."""
+        todo = "Zones/Work/Todo.md"
+        template = (REPO / "template" / "System" / "templates" / "zone" / "Todo.md").read_text()
+        self.assertNotIn("<Thread>", (self.root / todo).read_text())
+        self.assertNotIn(todo, [x for kind in update.KINDS for x in self.plan()["actions"][kind]])
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps(dict(json.loads(settings.read_text()), home="full")) + "\n")
+        self.commit(self.root, "full home")
+        self.assertEqual(template.replace("{{ZONE}}", "Work").encode(), update.shipped(["Work"])[todo][0])
+        self.assertEqual(["Zones/Personal/Todo.md", todo], self.plan()["actions"]["replace"])
 
     def test_a_fresh_install_is_up_to_date_and_apply_changes_nothing(self):
         p = self.plan()

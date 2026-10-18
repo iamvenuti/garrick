@@ -173,7 +173,7 @@ step 7, and another session may have changes of its own in any repository.
    the party or person when no thread fits, and a date only when one was
    given.
    **The example line goes with the first real action.** A list nobody has
-   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   written to yet may hold one, in `<angle brackets>`, to show the shape; delete
    it in the same edit that writes the first real line. It is a task like any
    other, so anything that counts open actions counts it. In a workspace just
    set up, this step is usually the edit that takes it out.

@@ -1075,6 +1075,64 @@ class ZoneTest(unittest.TestCase):
         self.assertEqual((self.root / "System" / "context.md").read_text(), context)
 
 
+class ZoneTodoTest(unittest.TestCase):
+    """A zone's list starts with the zone template's example line, there to show
+    the shape, on the full home only. On the simple home nobody reads the list
+    as a file, and an assistant asked what is owed would report the sample."""
+
+    EXAMPLE = "- [ ] [[<Thread>]]: <action>"
+    NOTE = "The line below is an example"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.box = Sandbox()
+        cls.root, r = cls.box.install("ws")
+        assert r.returncode == 0, r.stderr
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.box.close()
+
+    def zone(self, name, home):
+        settings = self.root / "System" / "garrick-settings.json"
+        kept = settings.read_text()
+        data = json.loads(kept)
+        data.pop("home", None)
+        data.update({"home": home} if home else {})
+        settings.write_text(json.dumps(data, indent=2) + "\n")
+        try:
+            r = run([self.root / "System" / "tools" / "scaffold.py", "zone", name, "--holds", "Anything"],
+                    self.box.env, cwd=self.root)
+        finally:
+            settings.write_text(kept)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return (self.root / "Zones" / name / "Todo.md").read_text()
+
+    def test_an_install_on_the_simple_home_starts_each_list_without_it(self):
+        self.assertEqual("simple", recorded_settings(self.root)["home"])
+        for zone in ("Work", "Personal"):
+            text = (self.root / "Zones" / zone / "Todo.md").read_text()
+            self.assertNotIn(self.EXAMPLE, text, zone)
+            self.assertNotIn(self.NOTE, text, zone)
+            self.assertNotIn("<", text, zone)
+            self.assertIn("One line per action, Obsidian Tasks style.", text)
+            self.assertIn("\n\n## Inbox\n\n## Done\n", text)
+            self.assertNotIn("\n\n\n", text)
+        # The template keeps it, for a zone added to a workspace on the full home.
+        template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
+        self.assertIn(self.EXAMPLE, template)
+        self.assertIn(self.NOTE, template)
+
+    def test_a_zone_added_later_follows_the_home(self):
+        self.assertNotIn(self.EXAMPLE, self.zone("Garden", "simple"))
+        for name, home in (("Studio", "full"), ("Travel", None)):    # no "home": a workspace from before #175
+            text = self.zone(name, home)
+            self.assertIn(self.EXAMPLE, text, name)
+            self.assertIn(self.NOTE, text, name)
+            template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
+            self.assertEqual(template.replace("{{ZONE}}", name), text)
+
+
 class ZoneIdentityTest(unittest.TestCase):
     def test_a_new_zone_commits_as_the_workspace_does(self):
         box = Sandbox()

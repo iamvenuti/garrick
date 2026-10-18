@@ -143,6 +143,9 @@ __all__ = [
     "WALL_HOOK_NESTED",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
+    "ZONE_TODO",
+    "zone_todo",
+    "simple_home",
     "INSTRUCTION_FILES",
     "LOCAL_RULES",
     "LOCAL_HEADER",
@@ -1535,6 +1538,24 @@ def hooks_path(repo: PathLike) -> str:
 # Every zone starts as a copy of this folder, with the zone's name filled in:
 # the installer's zones and the ones scaffold.py adds later alike.
 ZONE_TEMPLATE = ("System", "templates", "zone")
+# A zone's Todo.md opens with an example line, `<angle bracket>` placeholders
+# and all, under a sentence that says so: the shape, for someone who reads the
+# list as a file. A workspace on the simple home is for someone who never does,
+# and an assistant asked what is owed would tell them the list holds only a
+# sample, so its zones start without the two (zone_todo()).
+ZONE_TODO = "Todo.md"
+_TODO_EXAMPLE_NOTE = re.compile(r"^The line below is an example\b[^\n]*\n", re.M)
+_TODO_EXAMPLE_LINE = re.compile(r"^- \[ \] [^\n]*<[^<>\n]+>[^\n]*\n?", re.M)
+
+
+def zone_todo(text: str, simple: bool) -> str:
+    """A zone's Todo.md as the zone template has it, filled in: with its example
+    line and the sentence about it, or without both for a workspace on the
+    simple home."""
+    if not simple:
+        return text
+    text = _TODO_EXAMPLE_LINE.sub("", _TODO_EXAMPLE_NOTE.sub("", text))
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 # The worked example (examples/example-work/ in Garrick's source): a zone of its
 # own, with a shared drive beside it in the workspace's top folder that its
@@ -1844,6 +1865,12 @@ def read_settings(root: PathLike) -> dict:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def simple_home(root: PathLike) -> bool:
+    """Whether the workspace opens on the simple home, `"home": "simple"` in
+    the settings file. One without the key keeps the full page it had."""
+    return read_settings(root).get("home") == "simple"
 
 
 def release_notice_on(root: PathLike) -> bool:

@@ -116,6 +116,10 @@ REFUSED_GIT = ("push", "pull", "fetch", "clone", "remote",
 CLAUDE_SETTINGS = ".claude/settings.json"
 # A path a command line can carry without quotes, so both spellings are worth a rule.
 PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._-]+$")
+# The page a workspace made now opens on (#175), "simple" or "full": written as
+# its "home" setting, and on the simple home its zones' lists start without the
+# zone template's example line.
+NEW_HOME = "simple"
 
 
 class InstallError(Exception):
@@ -696,10 +700,15 @@ def install(cfg, target, force=False, quiet=False):
     w.copy_tree(TEMPLATE / "Wikis", root / "Wikis")
 
     # One folder per zone, from the template that System/tools/scaffold.py uses for a zone added later.
+    # A workspace that will open on the simple home (below) starts each list without its example line.
+    simple = NEW_HOME == "simple"
     for z in cfg["zones"]:
         zdir = root / "Zones" / z["name"]
         w.mkdir(zdir)
         w.copy_tree(TEMPLATE.joinpath(*pl.ZONE_TEMPLATE), zdir, fill={"ZONE": z["name"]})
+        if simple:
+            todo = zdir / pl.ZONE_TODO
+            w.write(todo, pl.zone_todo(todo.read_text(encoding="utf-8"), True))
 
     # Skill discovery. Claude Code reads .claude/skills and Codex reads .agents/skills
     # from the session's folder up to its git repository root. Zones and Wikis are
@@ -734,7 +743,7 @@ def install(cfg, target, force=False, quiet=False):
     # Home switches either way. The file is the workspace's own, never fingerprinted.
     recorded = "/".join(pl.SETTINGS)
     ours = read_json_file(root / recorded, recorded)
-    ours.setdefault("home", "simple")
+    ours.setdefault("home", NEW_HOME)
     w.write(root / recorded, json.dumps(ours, indent=2) + "\n")
 
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an

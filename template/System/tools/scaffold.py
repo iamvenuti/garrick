@@ -99,6 +99,7 @@ from garrick_lib import (  # noqa: E402
     TAG_RE,
     TAG_RULE,
     ZONE_TEMPLATE,
+    ZONE_TODO,
     GitError,
     checkpoint_item_line,
     git,
@@ -118,6 +119,7 @@ from garrick_lib import (  # noqa: E402
     resume_hash,
     said_time,
     same_action,
+    simple_home,
     skill_links,
     spoken_clash,
     spoken_of,
@@ -126,6 +128,7 @@ from garrick_lib import (  # noqa: E402
     tag_for,
     workspace_root,
     write_if_unchanged,
+    zone_todo,
 )
 
 IGNORED = {".DS_Store", "__pycache__"}
@@ -367,6 +370,9 @@ def cmd_zone(root, args, today):
         raise Refusal(f"{target.relative_to(root)} already exists.") from None
     try:
         fill_into(template, target, {"ZONE": name})
+        if simple_home(root):           # as the installer's zones: no example line on the simple home
+            todo = target / ZONE_TODO
+            todo.write_text(zone_todo(todo.read_text(encoding="utf-8"), True), encoding="utf-8")
         for link, points_to in skill_links(root, target):
             link.parent.mkdir(parents=True, exist_ok=True)
             os.symlink(points_to, link)

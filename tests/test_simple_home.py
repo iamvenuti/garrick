@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -546,6 +547,68 @@ class TestContinue(HandOffCase):
             with self.assertRaisesRegex(pa.Refused, "Claude did not answer, so nothing was opened: Invalid API key"):
                 self.go()
         self.assertEqual(1, len(self.calls()))
+
+
+class TestStoppedAtTheTime(unittest.TestCase):
+    """A hand-off that runs past its time is stopped, with everything it
+    started: a stand-in that never stops writing, and one that leaves a child
+    of its own behind."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name).resolve()
+        self.left = self.base / "grandchild.pid"
+
+    def script(self, body):
+        path = write(self.base / "stand-in", "#!%s\n%s" % (sys.executable, textwrap.dedent(body)))
+        path.chmod(0o755)
+        return path
+
+    def leaves_a_child(self, then):
+        return self.script("""\
+            import signal, subprocess, sys, time
+            # deaf to the hang-up a closed terminal sends, as a daemon is
+            child = subprocess.Popen(["sleep", "60"], preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
+            open(%r, "w").write(str(child.pid))
+            %s
+            """ % (str(self.left), then))
+
+    def assertGone(self, pid):
+        for _ in range(60):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(pid, 9)
+        self.fail("process %d was left running" % pid)
+
+    def test_a_child_that_keeps_writing_is_stopped_at_the_time(self):
+        cli = self.script("""\
+            import sys, time
+            while True:
+                sys.stdout.write("|/-\\\\"[int(time.time() * 10) % 4] + "\\r"); sys.stdout.flush(); time.sleep(0.1)
+            """)
+        started = time.time()
+        code, said = handoff.in_terminal([str(cli)], self.base, dict(os.environ), timeout=1)
+        self.assertIsNone(code)
+        self.assertLess(time.time() - started, 5)
+        self.assertTrue(said.strip())                                  # it was heard writing all along
+
+    def test_what_the_terminal_child_started_is_stopped_with_it(self):
+        cli = self.leaves_a_child("time.sleep(60)")
+        code, _ = handoff.in_terminal([str(cli)], self.base, dict(os.environ), timeout=1)
+        self.assertIsNone(code)
+        self.assertGone(int(self.left.read_text()))
+
+    def test_a_prime_past_its_time_is_stopped_with_what_it_started(self):
+        cli = self.leaves_a_child("time.sleep(60)")
+        started = time.time()
+        with self.assertRaisesRegex(handoff.HandOffError, "took longer than 1 second to answer"):
+            handoff.prime(cli, self.base, "Where am I?", timeout=1)
+        self.assertLess(time.time() - started, 10)
+        self.assertGone(int(self.left.read_text()))
 
 
 class TestLocalSessionsOff(HandOffCase):

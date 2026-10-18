@@ -294,21 +294,47 @@ def first_line(text: str) -> str:
     return lines[-1][:240] if lines else ""
 
 
-def prime(claude: Path, folder: Path, prompt: str, timeout: float = PRIME_TIMEOUT,
+def stop_group(pid: int, waited=None) -> None:
+    """Stop the process group `pid` leads, which is everything it started:
+    politely first, then for good, so nothing it left behind lives on with no
+    parent. `waited`, when given, is called after each signal to let the
+    leader go and be reaped."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except OSError:                       # the group is gone already
+            pass
+        if waited is not None:
+            waited()
+
+
+def prime(claude: Path, folder: Path, prompt: str, timeout: Optional[float] = None,
           env: Optional[dict] = None) -> Tuple[str, str]:
     """The headless call that answers first: (its session id, its answer).
-    HandOffError in plain words when it did not answer."""
+    HandOffError in plain words when it did not answer. It runs in a process
+    group of its own, so what it started is stopped with it at the time."""
+    timeout = PRIME_TIMEOUT if timeout is None else timeout
     try:
-        r = subprocess.run([str(claude), "-p", prompt, "--output-format", "json"], cwd=str(folder),
-                           env=child_env(claude, env), stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                           timeout=timeout, start_new_session=True)
-    except subprocess.TimeoutExpired:
-        raise HandOffError("Claude took longer than %d minutes to answer, so nothing was opened. Try again in a moment."
-                           % round(timeout / 60))
+        p = subprocess.Popen([str(claude), "-p", prompt, "--output-format", "json"], cwd=str(folder),
+                             env=child_env(claude, env), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
     except OSError as e:
         raise HandOffError("Claude Code's command-line tool did not start: %s" % (e.strerror or e))
+    try:
+        stdout, stderr = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        def gone(grace=3.0):
+            try:
+                p.communicate(timeout=grace)
+                return True
+            except subprocess.TimeoutExpired:
+                return False
+        stop_group(p.pid, gone)
+        raise HandOffError("Claude took longer than %s to answer, so nothing was opened. Try again in a moment."
+                           % ("%d minutes" % round(timeout / 60) if timeout >= 120 else
+                              "%d second%s" % (round(timeout), "" if round(timeout) == 1 else "s")))
     data = None
-    for chunk in (r.stdout or "").strip().splitlines()[::-1] or [""]:
+    for chunk in (stdout or "").strip().splitlines()[::-1] or [""]:
         try:
             data = json.loads(chunk)
             break
@@ -316,11 +342,11 @@ def prime(claude: Path, folder: Path, prompt: str, timeout: float = PRIME_TIMEOU
             continue
     if data is None:
         try:
-            data = json.loads(r.stdout or "")
+            data = json.loads(stdout or "")
         except ValueError:
             data = None
     if not isinstance(data, dict) or not isinstance(data.get("session_id"), str):
-        said = first_line(r.stderr) or first_line(r.stdout) or "it gave no answer"
+        said = first_line(stderr) or first_line(stdout) or "it gave no answer"
         raise HandOffError("Claude did not answer, so nothing was opened: %s" % said)
     if data.get("is_error"):
         raise HandOffError("Claude did not answer, so nothing was opened: %s" % (first_line(str(data.get("result") or "")) or
@@ -328,10 +354,19 @@ def prime(claude: Path, folder: Path, prompt: str, timeout: float = PRIME_TIMEOU
     return data["session_id"], str(data.get("result") or "")
 
 
-def in_terminal(argv: List[str], cwd: Path, env: dict, timeout: float = DESKTOP_TIMEOUT) -> Tuple[Optional[int], str]:
+def exit_code(status: int) -> int:
+    return os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status >> 8
+
+
+def in_terminal(argv: List[str], cwd: Path, env: dict, timeout: Optional[float] = None) -> Tuple[Optional[int], str]:
     """Run `argv` with a pseudo-terminal as its terminal: (its exit code, or
-    None when it was stopped at `timeout`, and what it wrote, without colour)."""
+    None when it was stopped at `timeout`, and what it wrote, without colour).
+    The deadline is read on every pass, so a child that never stops writing,
+    a spinner, is stopped at the time too; and it is stopped with everything
+    it started, since the terminal makes it the leader of a session and a
+    process group of its own."""
     import pty
+    timeout = DESKTOP_TIMEOUT if timeout is None else timeout
     pid, fd = pty.fork()
     if pid == 0:                                    # the child: the terminal is its own
         try:
@@ -339,60 +374,66 @@ def in_terminal(argv: List[str], cwd: Path, env: dict, timeout: float = DESKTOP_
             os.execve(argv[0], argv, env)
         finally:
             os._exit(127)
-    out, code = b"", None
+    out, code, open_ = b"", None, True
     deadline = time.time() + timeout
+
+    def reaped() -> bool:
+        nonlocal pid, code
+        try:
+            done, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            done, status = pid, 0
+        if done:
+            code, pid = exit_code(status), 0
+        return not pid
+
+    def stopped() -> Tuple[None, str]:
+        def gone() -> bool:
+            for _ in range(10):
+                if reaped():
+                    return True
+                time.sleep(0.05)
+            return False
+        stop_group(pid, gone)
+        if pid:
+            try:
+                os.waitpid(pid, 0)
+            except OSError:
+                pass
+        return None, ANSI.sub("", out.decode("utf-8", "replace"))
+
     try:
         while True:
-            ready, _, _ = select.select([fd], [], [], 0.2)
-            if ready:
-                try:
-                    chunk = os.read(fd, 4096)
-                except OSError:                     # EIO: the child has closed its end
-                    chunk = b""
-                if not chunk:
-                    break
-                out += chunk
-                continue
-            done, status = os.waitpid(pid, os.WNOHANG)
-            if done:
-                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status >> 8
-                pid = 0
-                break
             if time.time() > deadline:
-                for sig in (signal.SIGTERM, signal.SIGKILL):
+                return stopped()
+            if open_:
+                ready, _, _ = select.select([fd], [], [], 0.2)
+                if ready:
                     try:
-                        os.kill(pid, sig)
-                    except OSError:
-                        pass
-                    time.sleep(0.3)
-                    if os.waitpid(pid, os.WNOHANG)[0]:
-                        break
-                return None, ANSI.sub("", out.decode("utf-8", "replace"))
+                        chunk = os.read(fd, 4096)
+                    except OSError:                 # EIO: the child has closed its end
+                        chunk = b""
+                    if chunk:
+                        out += chunk
+                        continue
+                    open_ = False                   # its end closed: wait for it to exit, as long as the time allows
+            else:
+                time.sleep(0.1)
+            if reaped():
+                break
     finally:
         try:
             os.close(fd)
         except OSError:
             pass
-    while pid:                                      # its end closed: wait for it to exit, as long as the time allows
-        done, status = os.waitpid(pid, os.WNOHANG)
-        if done:
-            code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status >> 8
-            break
-        if time.time() > deadline:
-            try:
-                os.kill(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
-            except OSError:
-                pass
-            return None, ANSI.sub("", out.decode("utf-8", "replace"))
-        time.sleep(0.1)
     return code, ANSI.sub("", out.decode("utf-8", "replace"))
 
 
-def open_desktop(claude: Path, folder: Path, sid: str, timeout: float = DESKTOP_TIMEOUT,
+def open_desktop(claude: Path, folder: Path, sid: str, timeout: Optional[float] = None,
                  env: Optional[dict] = None) -> str:
     """`claude --desktop --resume <sid>` in `folder`, under a pseudo-terminal.
     What it said, or LocalOff / HandOffError."""
+    timeout = DESKTOP_TIMEOUT if timeout is None else timeout
     code, said = in_terminal([str(claude), "--desktop", "--resume", sid], folder, child_env(claude, env), timeout)
     if refused_locally(said):
         raise LocalOff(LOCAL_OFF_TITLE + " " + LOCAL_OFF)

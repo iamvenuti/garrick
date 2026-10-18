@@ -181,17 +181,20 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
-         "interrupt", "back", "stack", "unstack")
+         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
+# Settings › Home: which the page opens on. Its words are status.py's HOMES too.
+HOMES = ("simple", "full")
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
-          "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat")       # never "token"
+          "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
+          "do")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1362,11 +1365,16 @@ def save_settings(ws: Path, req: dict) -> str:
     here knows where the file is. A request carries the launchers, the zones
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
-    page. A way it does not list is on, as on the page."""
+    page. A way it does not list is on, as on the page. Settings › Home:
+    {"home": "simple"} or "full", which the page opens on (#175)."""
     notifying = {"notifications", "test", "token", "find-chat"} & set(req)
-    if not ({"launchers", "zones", "while-you-wait"} | notifying) & set(req):
+    if not ({"launchers", "zones", "while-you-wait", "home"} | notifying) & set(req):
         raise Refused("nothing to save")
     new = {}
+    if "home" in req:
+        if req["home"] not in HOMES:
+            raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
+        new["home"] = req["home"]
     notify = notifications_lib(ws) if notifying else None
     if notifying and notify is None:
         raise Refused("cannot find System/tools/notifications.py; update Garrick")
@@ -1413,7 +1421,12 @@ def save_settings(ws: Path, req: dict) -> str:
     was = keep.read(ws).get("zones")
     before = was if isinstance(was, dict) else {}
     if new:
-        keep.save(ws, new)
+        try:
+            keep.save(ws, new)
+        except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
+            raise Refused("%s; update Garrick to keep it" % e)
+    if "home" in new and set(new) == {"home"} and not notifying:
+        return "Garrick now opens on %s" % ("the simple home" if new["home"] == "simple" else "the full page")
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
@@ -1723,6 +1736,354 @@ def commit_new(zone: Path, folder: Path, message: str) -> None:
         raise Refused("made, but not committed: %s. The files are there; commit them when it is fixed" % why)
 
 
+# ---- the simple home (#175): Needs you, Continue, Ask something, the example ----
+# Needs you is a record, not a view: one file per question Garrick asked, in
+# the folder of the work it blocks, `Needs you/<YYMMDD> - <slug>.md`,
+# committed with the zone. `status: open`, `answered` or `later`; each option
+# is a line `- [<label>] <the next action it leads to>`. Answering sets the
+# work's Next action to that option's action, adds a dated entry ("Answered:
+# <label>."), writes the file's new status, and commits the two in one commit.
+# "Not now" puts it off to a later day, `later: <date>`, and the home shows it
+# again that day.
+NEEDS = "Needs you"
+OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
+LABEL_MAX = 120
+_HANDOFF = None
+
+
+def handoff():
+    """handoff.py, beside this file: Continue's and Ask something's way into Claude's desktop app."""
+    global _HANDOFF
+    if _HANDOFF is None:
+        spec = importlib.util.spec_from_file_location("garrick_handoff", str(HERE / "handoff.py"))
+        _HANDOFF = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_HANDOFF)
+    return _HANDOFF
+
+
+def options(text: str) -> list:
+    """A question's options, in its order: [(label, the action it leads to)]."""
+    body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
+    return [(m.group(1).strip(), m.group(2).strip()) for m in (OPTION.match(l) for l in body.splitlines()) if m]
+
+
+def set_front(text: str, values: dict, drop=()) -> str:
+    """The note with these frontmatter keys set, in place where each is, at
+    the end where it is not, and the keys in `drop` taken out."""
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        raise Refused("the note has no frontmatter")
+    fm = m.group(1)
+    for key in drop:
+        fm = re.sub(r"(?m)^%s:.*(?:\n|\Z)" % re.escape(key), "", fm)
+    for key, value in values.items():
+        line = "%s: %s" % (key, value)
+        if re.search(r"(?m)^%s:" % re.escape(key), fm):
+            fm = re.sub(r"(?m)^%s:.*$" % re.escape(key), lambda _: line, fm, count=1)
+        else:
+            fm = fm.rstrip("\n") + "\n" + line
+    return "---\n%s\n---\n%s" % (fm.strip("\n"), text[m.end():])
+
+
+def quoted(value: str) -> str:
+    """A frontmatter value that reads back as written, whatever its words."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def question(ws: Path, req: dict) -> tuple:
+    """(zone, the question's file, the note of the work it blocks, its parts
+    from the zone, the work's name). The file must sit in a `Needs you` folder
+    beside a thread note, or beside the hub of a project that is one thread."""
+    zone = zone_dir(ws, req.get("zone"))
+    q = live_note(zone, req.get("file"))
+    if q.parent.name != NEEDS:
+        raise Refused("that is not a question Garrick asked")
+    work = q.parent.parent
+    note = work / (work.name + ".md")
+    if not note.is_file():
+        raise Refused("the work this question is for is not there any more")
+    parts = note.relative_to(zone).parts
+    if not ((len(parts) == 4 and parts[1] == "Threads") or len(parts) == 2):
+        raise Refused("that question is not in a piece of work's folder")
+    return zone, q, note, parts, work_name(zone, parts)
+
+
+def work_name(zone: Path, parts: tuple) -> str:
+    """A piece of work as the home names it: the project's name for a project
+    that is one thread, "Project, Thread" where it has more than one."""
+    if len(parts) == 2:
+        return parts[0]
+    threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
+    return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
+
+
+def open_question(q: Path) -> str:
+    text = q.read_text(encoding="utf-8")
+    state = front(q).get("status", "open")
+    if state == "answered":
+        raise Refused("that question is already answered")
+    if state not in ("open", "later"):
+        raise Refused("that question is %s, not open" % state)
+    return text
+
+
+def answer_question(ws: Path, req: dict, today: dt.date) -> str:
+    """Answer a Needs you question by one of its options: the work's Next
+    action becomes what the option leads to, a dated entry says so, the
+    question says it was answered, and the two are committed in one commit."""
+    zone, q, note, parts, name = question(ws, req)
+    label = answer(req, "label", most=LABEL_MAX)
+    with zone_lock(zone):
+        text = open_question(q)
+        chosen = next(((l, a) for l, a in options(text) if l.casefold() == label.casefold()), None)
+        if chosen is None:
+            raise Refused("that question has no answer called %r" % label)
+        q_before, n_before = q.read_bytes(), note.read_bytes()
+        written = answered_note(n_before.decode("utf-8"), chosen[1], chosen[0], today, name)
+        note.write_text(written, encoding="utf-8")
+        q.write_text(set_front(text, {"status": "answered", "answer": quoted(chosen[0]), "answered": today.isoformat()},
+                               drop=("later",)), encoding="utf-8")
+        commit_all(zone, [(note, n_before), (q, q_before)], ("%s: answered %s" % (name, chosen[0]))[:200],
+                   wall=wall_refusal(ws))
+    return "Noted: %s. Next for %s: %s" % (chosen[0], name, said_text(chosen[1]))
+
+
+def answered_note(text: str, step: str, label: str, today: dt.date, name: str) -> str:
+    """The work's note with its Next action set to `step`, `updated:` moved
+    and a dated entry, newest first, as a wrap writes one."""
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        raise Refused("%s has no frontmatter" % name)
+    status = re.search(r"(?m)^status:\s*(\S+)", m.group(1))
+    if status and status.group(1).lower() == "done":
+        raise Refused("%s is finished" % name)
+    text = set_front(text, {"updated": today.isoformat()})
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    body = text[m.end():]
+    span = resume_block(body)
+    if not span:
+        raise Refused("%s has no Resume here block to write the answer in" % name)
+    lines = body[span[0]:span[1]].split("\n")
+    rows = [i for i, x in enumerate(lines) if x.lstrip().startswith("|")]
+    if not rows:
+        lines += ["| | |", "|---|---|"]
+        rows = [len(lines) - 2, len(lines) - 1]
+    set_row(lines, rows, "Next action", step, after=None)
+    body = body[:span[0]] + "\n".join(lines) + body[span[1]:]
+    body = dated_entry(body, today, "Answered: %s." % label.rstrip("."))
+    return text[:m.end()] + body
+
+
+def put_off(ws: Path, req: dict, today: dt.date) -> str:
+    """"Not now": the question set aside to a later day, tomorrow unless
+    `until` names one, and back on the home that day."""
+    zone, q, _, _, name = question(ws, req)
+    until = req.get("until")
+    if until in (None, ""):
+        day = today + dt.timedelta(days=1)
+    else:
+        try:
+            day = dt.date.fromisoformat(until) if isinstance(until, str) else None
+        except ValueError:
+            day = None
+        if day is None or day <= today:
+            raise Refused("not a later day: %r" % (until,))
+    with zone_lock(zone):
+        text = open_question(q)
+        before = q.read_bytes()
+        q.write_text(set_front(text, {"status": "later", "later": day.isoformat()}), encoding="utf-8")
+        commit(zone, q, before, ("%s: question put off to %s" % (name, day.isoformat()))[:200], wall=wall_refusal(ws))
+    when = "tomorrow" if day == today + dt.timedelta(days=1) else "%s %d %s" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+    return "Put off until %s. It will be back then" % when
+
+
+def commit_all(zone: Path, notes: list, message: str, wall: Optional[str] = None) -> None:
+    """commit() for several files in one commit: each put back, when the
+    commit is refused, if it still holds what this request wrote."""
+    rels = [str(n.relative_to(zone)) for n, _ in notes]
+    mine = [n.read_bytes() for n, _ in notes]
+    deadline = time.time() + COMMIT_TIMEOUT
+    code, why = git(zone, "add", "--", *rels)
+    if code == 0:
+        note_event("phase", "checking")
+        code, why = git(zone, "commit", "-q", "-m", message, "--", *rels, timeout=deadline - time.time())
+        if code is None:
+            why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
+    if code == 0:
+        return
+    why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
+    ours = True
+    for (n, before), wrote in zip(notes, mine):
+        try:
+            if n.read_bytes() == wrote:
+                n.write_bytes(before)
+            else:
+                ours = False
+        except OSError:
+            ours = False
+    git(zone, "reset", "-q", "--", *rels, timeout=10)
+    if not ours:
+        raise Refused("not committed: %s. A note was edited meanwhile, so it was left as it is" % why)
+    if wall and WALL_LINE.match(why):
+        raise Refused(wall)
+    raise Refused("not committed, so nothing changed: %s" % why)
+
+
+def managed_places() -> Optional[list]:
+    """Where the managed setting that switches local sessions off is looked
+    for: GARRICK_MANAGED_PLACES, separated as PATH is, for a test or a Mac
+    that keeps it elsewhere; otherwise handoff.py's places on this Mac."""
+    given = os.environ.get("GARRICK_MANAGED_PLACES")
+    return [Path(p) for p in given.split(os.pathsep) if p] if given is not None else None
+
+
+def work_folder(zone: Path, parts: tuple) -> Path:
+    """Where Claude opens a piece of work: Garrick's own record of it, the
+    folder named after it, since that name is what Claude's sidebar shows.
+    A project that is one thread opens in the project's folder."""
+    project = zone / parts[0]
+    if len(parts) == 2:
+        return project
+    return project if work_name(zone, parts) == parts[0] else project / "Threads" / parts[2]
+
+
+def files_folder(ws: Path, zone: Path, parts: tuple) -> tuple:
+    """(the folder a work's files are in, whether it is the project's own):
+    the hub's `folder:`, from the workspace, absolute or from `~/`; or the
+    project's folder."""
+    hub = zone / parts[0] / (parts[0] + ".md")
+    given = hub_value(hub, "folder") if hub.is_file() else ""
+    found = handoff().resolve_folder(ws, given) if given else None
+    return (found, False) if found is not None else (zone / parts[0], True)
+
+
+def hub_value(note: Path, key: str) -> str:
+    try:
+        text = note.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.match(r"\A---\n(.*?)\n---", text, re.S)
+    found = re.search(r"(?m)^%s:[ \t]*(.*?)[ \t]*$" % re.escape(key), m.group(1)) if m else None
+    return found.group(1).strip().strip("\"'") if found else ""
+
+
+def commit_record(zone: Path, folder: Path, name: str) -> str:
+    """Garrick's own record of the work committed before Claude opens on it,
+    so the desktop app's Changes panel has nothing of Garrick's to offer.
+    "" when that went through or there was nothing to commit; otherwise why
+    not, for the reply. Nothing is put back: the files are the user's."""
+    rel = folder.relative_to(zone).as_posix()
+    code, said = git(zone, "status", "--porcelain", "--", rel)
+    if code != 0 or not said.strip():
+        return ""
+    deadline = time.time() + COMMIT_TIMEOUT
+    code, why = git(zone, "add", "-A", "--", rel)
+    if code == 0:
+        code, why = git(zone, "commit", "-q", "-m", ("%s: saved before opening in Claude" % name)[:200], "--", rel,
+                        timeout=deadline - time.time())
+    if code == 0:
+        return ""
+    git(zone, "reset", "-q", "--", rel, timeout=10)
+    return why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+
+
+def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str:
+    """Continue: Claude's desktop app opened on a piece of work, already
+    oriented. The record committed, a headless call asked where the work
+    stands, its session handed to the desktop app; a session continued
+    within FRESH_HOURS is resumed as it was, without asking again."""
+    H = handoff()
+    zone, note, parts, _ = resume_note(ws, req)
+    name = work_name(zone, parts)
+    if H.managed_off(managed_places()):
+        H.mark_local_off(ws, "managed")
+        raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
+    claude = H.find_claude()
+    if claude is None:
+        raise Refused(H.NO_CLI)
+    folder = work_folder(zone, parts)
+    with zone_lock(zone):
+        unsaved = commit_record(zone, folder, name)
+    key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
+    kept = H.session_for(ws, key)
+    resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
+    try:
+        sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name)[0]
+        try:
+            H.open_desktop(claude, folder, sid)
+        except H.LocalOff:
+            raise
+        except H.HandOffError:
+            if not resume:
+                raise
+            resume = False                      # the kept session would not open: ask afresh, once
+            sid = H.prime(claude, folder, "Where am I on %s?" % name)[0]
+            H.open_desktop(claude, folder, sid)
+    except H.LocalOff as e:
+        H.mark_local_off(ws, "refused")
+        raise Refused(str(e))
+    except H.HandOffError as e:
+        raise Refused(str(e))
+    files, own = files_folder(ws, zone, parts)
+    H.keep_session(ws, key, sid, folder, H.walk(files, project=own), primed=not resume, now=now)
+    said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
+
+
+def ask_desktop(ws: Path, req: dict) -> dict:
+    """Ask something: the user's words asked in the workspace's own folder,
+    so Claude reads every piece of work, then that session opened in the
+    desktop app. Where the desktop app cannot open it, Claude's answer comes
+    back to the page instead, in "answer"."""
+    H = handoff()
+    prompt = answer(req, "prompt", most=PROMPT_MAX).lstrip("- ")
+    if not prompt:
+        raise Refused("no prompt given")
+    claude = H.find_claude()
+    if claude is None:
+        raise Refused(H.NO_CLI)
+    try:
+        sid, said = H.prime(claude, ws, prompt)
+    except H.HandOffError as e:
+        raise Refused(str(e))
+    off = H.managed_off(managed_places())
+    if not off:
+        try:
+            H.open_desktop(claude, ws, sid)
+            H.clear_local_off(ws)
+            return {"say": "Opened Claude on your question. Its answer is waiting there"}
+        except H.LocalOff:
+            off = True
+        except H.HandOffError as e:
+            return {"say": "%s Claude's answer is below." % str(e).rstrip("."), "answer": said[:4000]}
+    H.mark_local_off(ws, "managed" if H.managed_off(managed_places()) else "refused")
+    return {"say": "Claude answered here, since it can't open work on this Mac", "answer": said[:4000]}
+
+
+def example(ws: Path, req: dict) -> str:
+    """The example's Remove and Bring back: System/tools/example.py's
+    `archive` and `restore` (#174), which move the Example zone, its shared
+    drive and its rows of System/context.md into one recoverable place and
+    back. What it says is the reply."""
+    do = req.get("do")
+    if do not in ("archive", "restore"):
+        raise Refused("not something to do with the example: %r" % (do,))
+    tool = ws / "System" / "tools" / "example.py"
+    if not tool.is_file():
+        raise Refused("System/tools/example.py is missing; update Garrick")
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--root", str(ws), do], capture_output=True, text=True,
+                           timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL, cwd=str(ws))
+    except subprocess.TimeoutExpired:
+        raise Refused("example.py was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT + GIT_TIMEOUT))
+    said = (r.stdout if r.returncode == 0 else (r.stderr or r.stdout)).strip().splitlines()
+    if r.returncode != 0:
+        raise Refused(said[-1] if said else "example.py refused")
+    return said[-1].rstrip(".") if said else ("The example is archived. Nothing of yours was touched" if do == "archive"
+                                              else "The example is back")
+# ---- end of the simple home ------------------------------------------------------
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or, for back
     and stack, a reply whose "say" comes with what the caller reads back."""
@@ -1749,6 +2110,16 @@ def act(ws: Path, req, today=None, now=None):
         return unstack(ws, req)
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
+    if req["verb"] == "answer":
+        return answer_question(ws, req, today or dt.date.today())
+    if req["verb"] == "later":
+        return put_off(ws, req, today or dt.date.today())
+    if req["verb"] == "continue":
+        return continue_work(ws, req, now)
+    if req["verb"] == "ask-desktop":
+        return ask_desktop(ws, req)
+    if req["verb"] == "example":
+        return example(ws, req)
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)

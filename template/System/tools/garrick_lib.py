@@ -1867,8 +1867,10 @@ def release_repository(root: PathLike) -> str:
 # reads the same file by the same keys. "notifications" is Settings ›
 # Notifications, which System/tools/notifications.py reads and checks;
 # "while-you-wait" is Settings › While you wait, which System/tools/next_up.py
-# reads and checks.
-PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait")
+# reads and checks; "home" is Settings › Home, "simple" or "full", what the
+# status page opens on: the installer writes "simple" for a new workspace,
+# and a workspace without it keeps the page it had.
+PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

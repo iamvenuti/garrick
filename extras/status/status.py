@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import html
 import importlib.util
 import json
@@ -432,29 +433,90 @@ def resume_point(note: Path) -> Tuple[bool, Optional[dt.date]]:
     """Whether a thread note has its `### Resume here` block, as the threads
     skill writes it, and the date the block gives itself: the first date on
     its "Where it stands" line, or anywhere in the block before its table.
-    Nothing else of the block is read, and nothing of it reaches the page."""
+    The full page reads nothing else of the block, and nothing of it reaches
+    that page; the simple home reads the rest through resume_read()."""
+    found = resume_read(note)
+    return found["block"], found["date"]
+
+
+RESUME_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$")
+ENTRY_LINE = re.compile(r"^\*\*(?:[A-Z][a-z]+ \d\d:\d\d, )?(\d{1,2} [A-Za-z]{3,9}\.? \d{4})\.\*\*\s*(.*\S)\s*$")
+PLACEHOLDER = re.compile(r"^<[^>]*>$")
+
+
+def said_date(text: str) -> Optional[dt.date]:
+    """The first date in `text`, ISO or spoken ("3 October 2026")."""
+    iso = re.search(r"\b(\d{4}-\d\d-\d\d)\b", text)
+    if iso and as_date(iso.group(1)):
+        return as_date(iso.group(1))
+    for day, month, year in SPOKEN_DATE.findall(text):
+        number = MONTH.get(month.lower()) or next((n for m, n in MONTH.items() if m[:3] == month.lower()[:3]), None)
+        try:
+            if number:
+                return dt.date(int(year), number, int(day))
+        except ValueError:
+            continue
+    return None
+
+
+def filled(text: Optional[str]) -> str:
+    """A note's words as written, or "" where they are still the template's `<placeholder>`."""
+    text = (text or "").strip()
+    return "" if not text or PLACEHOLDER.match(text) else text
+
+
+def resume_read(note: Path) -> dict:
+    """A thread note's resume point, read once: `block`, whether it has a
+    `### Resume here` block, and `date`, the date the block gives itself (see
+    resume_point()). For the simple home, also `where`, its Where it stands
+    line; `rows`, its table by row name (Next action, Waiting on, …), each
+    as written and "" where it is still the template's placeholder; `entry`,
+    the newest dated entry below it, (its date, its words); and `about`, the
+    note's opening sentence under its title."""
+    out = {"block": False, "date": None, "where": "", "rows": {}, "entry": None, "about": ""}
     try:
         lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return False, None
+        return out
+    title = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
+    if title is not None:
+        para = []
+        for l in lines[title + 1:]:
+            if l.startswith("#") or (para and not l.strip()):
+                break
+            if l.strip():
+                para.append(l.strip())
+        out["about"] = filled(" ".join(para))
     for i, line in enumerate(lines):
         if not RESUME.match(line):
             continue
+        out["block"] = True
+        lead: List[str] = []
         for text in lines[i + 1:i + 12]:
             if text.startswith(("#", "|", "---")):
                 break
-            iso = re.search(r"\b(\d{4}-\d\d-\d\d)\b", text)
-            if iso and as_date(iso.group(1)):
-                return True, as_date(iso.group(1))
-            for day, month, year in SPOKEN_DATE.findall(text):
-                number = MONTH.get(month.lower()) or next((n for m, n in MONTH.items() if m[:3] == month.lower()[:3]), None)
-                try:
-                    if number:
-                        return True, dt.date(int(year), number, int(day))
-                except ValueError:
-                    continue
-        return True, None
-    return False, None
+            if text.strip():
+                lead.append(text.strip())
+            if out["date"] is None:
+                out["date"] = said_date(text)
+        out["where"] = filled(re.sub(r"^\*\*Where it stands,?[^*]*\*\*\s*", "", " ".join(lead)).replace("**", ""))
+        end = len(lines)
+        for j in range(i + 1, len(lines)):
+            if lines[j].startswith("#") or lines[j].strip() == "---":
+                end = j
+                break
+            m = RESUME_ROW.match(lines[j])
+            if m and m.group(1) and not set(m.group(1)) <= set("-: "):
+                out["rows"][m.group(1)] = filled(m.group(2).replace("\\|", "|"))
+        for l in lines[end:end + 40]:
+            m = ENTRY_LINE.match(l.strip())
+            if m:
+                out["entry"] = (said_date(m.group(1)), filled(m.group(2)))
+                break
+            if l.startswith("## "):
+                break
+        break
+    return out
 
 
 # The checkpoint beside a resume point: `### Checkpoint` under Resume here,
@@ -570,7 +632,8 @@ def threads(ws: Path) -> Dict[str, dict]:
                     continue
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
-                has_block, resumed = resume_point(note)
+                read = resume_read(note)
+                has_block, resumed = read["block"], read["date"]
                 mark = checkpoint_mark(note, ws)
                 updated = as_date(fm.get("updated"))
                 when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
@@ -580,7 +643,7 @@ def threads(ws: Path) -> Dict[str, dict]:
                        "updated": updated, "status": state,
                        "resume": has_block, "resumed": resumed,
                        "checkpoint": mark, "touched": max(when) if when else None,
-                       "spoken": as_text(fm.get("spoken")).strip()}
+                       "spoken": as_text(fm.get("spoken")).strip(), "read": read}
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
@@ -3270,7 +3333,8 @@ VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
-             styles: Optional[Dict[str, dict]] = None, graph: bool = False, sched: Optional[Dict[str, dict]] = None) -> str:
+             styles: Optional[Dict[str, dict]] = None, graph: bool = False, sched: Optional[Dict[str, dict]] = None,
+             layout: str = "full") -> str:
     """The Settings dialog: which apps to open projects in, whether Explore
     follows the zone in view (with the graph), each zone's colour and icon,
     where notices go (`sched`, the jobs' plists, for the ones that override
@@ -3289,7 +3353,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
             '<div class="setcol">%s</div></div></dialog>'
-            % (launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
+            % (home_settings(layout) + launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
                + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws),
                notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file())
                + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
@@ -3903,6 +3967,503 @@ if(c)c.onclick=function(){var say=window.GarrickSay||function(){},done=function(
 if(!window.GarrickCopy){say('Select the text and copy it by hand.');return}
 var p=GarrickCopy(t);if(p&&p.then)p.then(done,function(){say('Could not copy. Select the text and copy it by hand.')});else done()};
 var x=document.getElementById('thought-close');if(x)x.onclick=function(){drop();box.hidden=true}})();
+"""
+
+
+# --------------------------------------------------------------------------- the simple home (#175)
+#
+# For someone who does not think in zones, projects and threads: three things
+# on one page, and everything else under More. **Your work**, the pieces of
+# work, most recent first, each with its next action, when it last moved and
+# what is owed to other people, with Continue where the next step is the
+# user's and "Waiting on <who>" where it is not; **Ask something**, one box
+# that opens Claude on the whole workspace; and **Needs you**, the questions
+# Garrick asked and is waiting on, each answered in one click. A piece of
+# work's name opens its page. "Work" is the only unit shown: a project that is
+# one thread is one piece of work, and a project with several shows one per
+# live thread, as "Project, Thread".
+#
+# Unlike the full page, the simple home shows some of a note's words: the
+# Resume here block's Where it stands, Next action and Waiting on, the newest
+# dated entry, and the note's opening sentence, since a piece of work is
+# nothing without them. The page stays in System/generated/, never committed
+# and outside the wall check, as it always was. A new workspace opens on it
+# ("home": "simple" in System/garrick-settings.json, which install.py writes);
+# a workspace without that key keeps the page it had, and Settings › Home
+# switches either way.
+
+HOMES = ("simple", "full")
+EXAMPLE_ZONE = "Example"
+VISIBLE_WORK = 5
+QUESTIONS = "Needs you"
+NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
+OPTION_LINE = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+(\S.*?)\s*$")
+FILES_SHOWN = 12
+_HO = None
+
+
+def handoff_mod():
+    """handoff.py, beside this file: the record Continue keeps, and whether
+    the desktop app can open work on this Mac."""
+    global _HO
+    if _HO is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_handoff", str(Path(__file__).with_name("handoff.py")))
+        _HO = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_HO)
+    return _HO
+
+
+def home_layout(ws: Path) -> str:
+    """"simple" where System/garrick-settings.json says `"home": "simple"`,
+    otherwise "full": a workspace that never chose keeps the page it had."""
+    try:
+        data = json.loads(ws.joinpath("System", "garrick-settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "full"
+    return "simple" if isinstance(data, dict) and data.get("home") == "simple" else "full"
+
+
+def waiting_on(text: str) -> Optional[str]:
+    """Who a piece of work waits on, from its Waiting on row: None where the
+    row says nobody, is empty, or is still the template's placeholder."""
+    said = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", filled(text)).strip().rstrip(".")
+    if said.casefold() in NOBODY or re.match(r"(?i)^(nobody|no one|none)\b", said):
+        return None
+    return said
+
+
+def ago(day: Optional[dt.date], today: dt.date) -> str:
+    """When something last moved, as said aloud: Today, Yesterday, 3 days ago, Last week."""
+    if day is None:
+        return "No date"
+    n = (today - day).days
+    if n <= 0:
+        return "Today"
+    if n == 1:
+        return "Yesterday"
+    if n < 7:
+        return "%d days ago" % n
+    if n < 14:
+        return "Last week"
+    if n < 60:
+        return "%d weeks ago" % (n // 7)
+    return "On %d %s %d" % (day.day, MONTH_NAMES[day.month - 1], day.year)
+
+
+def due_said(day: dt.date, today: dt.date) -> str:
+    """A due date the way a person says it: today, tomorrow, Thursday, 14 November."""
+    n = (day - today).days
+    if n == 0:
+        return "today"
+    if n == 1:
+        return "tomorrow"
+    if 1 < n < 7:
+        return day.strftime("%A")
+    return "%d %s" % (day.day, MONTH_NAMES[day.month - 1])
+
+
+def owed_said(owed: List[dict], today: dt.date) -> str:
+    """What a piece of work owes other people, from its Todo.md lines: "2 owed,
+    1 due Thursday", "1 owed, due Friday", "3 owed, 1 overdue". Each unticked
+    line is one owed; a 📅 date makes it due."""
+    if not owed:
+        return ""
+    late = [a for a in owed if a["when"] and a["when"] < today]
+    due = sorted(a["when"] for a in owed if a["when"] and a["when"] >= today)
+    said = "%d owed" % len(owed)
+    if late:
+        return said + (", overdue" if len(owed) == 1 else ", %d overdue" % len(late))
+    if due:
+        first = [d for d in due if d == due[0]]
+        return said + (", due %s" % due_said(due[0], today) if len(owed) == 1
+                       else ", %d due %s" % (len(first), due_said(due[0], today)))
+    return said
+
+
+def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
+    """The Needs you questions in a piece of work's folder, oldest first: the
+    open ones, and the ones put off whose day has come, each with `shown`;
+    one put off to a later day is listed with `shown` False, for the count.
+    Answered ones are left out."""
+    out = []
+    box = folder / QUESTIONS
+    if not box.is_dir():
+        return out
+    for f in sorted(box.glob("*.md")):
+        if f.name.startswith((".", "_")):
+            continue
+        fm = frontmatter(f)
+        state = as_text(fm.get("status")).strip().lower() or "open"
+        if state not in ("open", "later"):
+            continue
+        later = as_date(fm.get("later"))
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
+        ask, context, opts = "", [], []
+        for line in body.splitlines():
+            m = OPTION_LINE.match(line)
+            if m:
+                opts.append((m.group(1).strip(), m.group(2).strip()))
+            elif not ask and re.match(r"^\s*\*\*.+\*\*\s*$", line):
+                ask = line.strip().strip("*").strip()
+            elif ask and line.strip() and not opts and not line.startswith("#"):
+                context.append(line.strip())
+        if not ask:
+            continue
+        out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "context": " ".join(context),
+                    "options": opts, "asked": as_date(fm.get("asked")), "later": later,
+                    "shown": state == "open" or (later is not None and later <= today)})
+    return out
+
+
+def party_names(ctx: dict, tags_: List[str]) -> List[str]:
+    """Who is involved, from System/context.md: each party by its name, then
+    the people listed for it, with their role."""
+    out = []
+    parties = ctx.get("parties") or {}
+    for t in tags_:
+        p = parties.get(t.lower())
+        name = (p or {}).get("party") or ""
+        people = ["%s (%s)" % (x["name"], x["role"]) if x.get("role") else x["name"]
+                  for x in ctx.get("people") or [] if (x.get("party") or "").lower() == t.lower() and x.get("name")]
+        if name and t.lower() != "personal":
+            out.append(name + (": " + ", ".join(people) if people else ""))
+        elif people:
+            out.append(", ".join(people))
+    return out
+
+
+def work_name_for(r: dict) -> str:
+    """The name the home gives a thread: its project's where the project is
+    one thread, "Project, Thread" where it has more. page_action.py's
+    work_name() counts the same thread notes."""
+    if r["note"] == r["hub"]:
+        return r["project"]
+    project = r["note"].parents[2]
+    threads = [t for t in (project / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
+    return r["project"] if len(threads) <= 1 else "%s, %s" % (r["project"], r["thread"])
+
+
+def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
+    """Every live piece of work, most recent first, as the home shows it.
+    Read from what Garrick keeps already: the thread note's Resume here block
+    (Next action, Waiting on), its `updated:` date and an unwrapped
+    checkpoint's (`touched`), the zone's Todo.md lines that open with its
+    link (thread_actions(), run first), and its Needs you questions."""
+    ctx = workspace_context(ws)
+    if not ctx:
+        lib = prefs().lib(ws)
+        try:
+            ctx = lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
+        except Exception:
+            ctx = {}
+    out = []
+    for zone, data in T.items():
+        zdir = data["folder"]
+        for r in data["rows"]:
+            read = r.get("read") or {}
+            rows = read.get("rows") or {}
+            hub_fm = frontmatter(r["hub"], ws) if r["hub"] else {}
+            folder_said = as_text(hub_fm.get("folder")).strip()
+            files = handoff_mod().resolve_folder(ws, folder_said) if folder_said else None
+            nxt = filled(rows.get("Next action"))
+            if not nxt and r.get("next"):
+                nxt = r["next"]["text"]
+            owed = [a for a in r.get("actions") or [] if a["file"] == "Todo.md" and not a["waiting"]]
+            about = read.get("about") or ""
+            if not about and r["hub"] and r["hub"] != r["note"]:
+                about = resume_read(r["hub"])["about"]
+            out.append({
+                "id": "pw-%s-%s" % (re.sub(r"[^a-z0-9]+", "-", work_name_for(r).lower()).strip("-")[:40],
+                                    hashlib.sha1(("%s/%s" % (zone, r["rel"])).encode("utf-8")).hexdigest()[:6]),
+                "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
+                "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": "%s/%s" % (zone, r["rel"]),
+                "example": zone == EXAMPLE_ZONE, "next": nxt, "waiting": waiting_on(rows.get("Waiting on", "")),
+                "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
+                "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
+                "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,
+                "files_dir": files or (r["hub"] or r["note"]).parent,
+                "own_files": files is None, "questions": questions_in(r["note"].parent, zdir, today),
+            })
+    out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))
+    return out
+
+
+def example_state(ws: Path) -> Optional[str]:
+    """"present" while the Example zone is there; "archived" when
+    System/tools/example.py (#174) says it is put away; None otherwise, and
+    always where there is no such tool and no such zone."""
+    if (ws / "Zones" / EXAMPLE_ZONE).is_dir():
+        return "present"
+    tool = ws / "System" / "tools" / "example.py"
+    if not tool.is_file():
+        return None
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--root", str(ws), "status"], capture_output=True, text=True,
+                           timeout=15, stdin=subprocess.DEVNULL, cwd=str(ws))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return "archived" if r.returncode == 0 and re.search(r"\barchived\b", r.stdout, re.I) else None
+
+
+def act_button(req: str, label: str, say: str, cls: str = "act", extra: str = "") -> str:
+    """A button that asks page_action.py for `req`, a request already in JSON."""
+    return '<button class="%s" type="button" data-act="%s" data-say="%s"%s>%s</button>' % (cls, E(req), E(say), extra, E(label))
+
+
+def continue_button(w: dict, label: str = "Continue", primary: bool = True) -> str:
+    return act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), label,
+                      "Opening %s in Claude…" % w["name"], "act go%s" % (" primary" if primary else ""),
+                      ' data-busy="Opening…" data-phrase="%s"' % E("Where am I on %s?" % w["name"]))
+
+
+def work_row(w: dict, today: dt.date) -> str:
+    """One piece of work: its name, which opens its page; its next action; when
+    it last moved and what it owes; Continue, or who it waits on."""
+    shown = [q for q in w["questions"] if q["shown"]]
+    nxt = md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
+    if shown:
+        nxt += ' <span class="muted">· waits on your answer above</span>'
+    owed = owed_said(w["owed"], today)
+    meta = E(ago(w["moved"], today)) + (' · <span class="sh-owed">%s</span>' % E(owed) if owed else "")
+    side = ('<span class="sh-wait go">Waiting on %s</span>' % E(w["waiting"]) if w["waiting"] else continue_button(w))
+    return ('<div class="sh-row" data-w="%s"><div class="sh-name"><button type="button" class="sh-link" data-w-open="%s">%s</button>%s</div>'
+            '<div class="sh-next">%s</div><div class="sh-meta">%s</div>%s</div>'
+            % (E(w["id"]), E(w["id"]), E(w["name"]), '<span class="sh-tag">Example</span>' if w["example"] else "",
+               nxt, meta, side))
+
+
+def question_card(q: dict, w: dict) -> str:
+    """A question Garrick asked: what it asks, why, one button per answer, and Not now."""
+    ask = q["ask"] if w["name"].casefold().split(",")[0] in q["ask"].casefold() else "%s: %s" % (w["name"], q["ask"])
+    buttons = "".join(act_button(json.dumps({"verb": "answer", "zone": q["zone"], "file": q["file"], "label": label}),
+                                 label, "Noting: %s…" % label, "act sh-opt", ' title="%s"' % E("Then: " + action))
+                      for label, action in q["options"])
+    if not q["options"]:
+        buttons = continue_button(w, "Answer in Claude", primary=False)
+    later = act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                       "Putting it off until tomorrow…", "act sh-later")
+    return ('<div class="sh-q" data-q="%s"><b>%s</b>%s<div class="sh-opts">%s%s</div></div>'
+            % (E(q["file"]), md_inline(ask), '<p>%s</p>' % md_inline(q["context"]) if q["context"] else "", buttons, later))
+
+
+def home_section(W: List[dict], today: dt.date, example: Optional[str], local: Optional[str]) -> str:
+    """The home: Ask something, Needs you, the note when local sessions are
+    off, Your work, and the example's foot."""
+    shown = [(q, w) for w in W for q in w["questions"] if q["shown"]]
+    shown.sort(key=lambda qw: (qw[0]["asked"] or dt.date.min, qw[0]["file"]))
+    put_off = sum(1 for w in W for q in w["questions"] if not q["shown"])
+    count = ("%d question%s" % (len(shown), "" if len(shown) == 1 else "s")) if shown else \
+        ("%d put off" % put_off if put_off else "")
+    needs = ("".join(question_card(q, w) for q, w in shown) if shown
+             else '<div class="sh-empty">Nothing needs you.</div>')
+    off = ('<div class="sh-card sh-warn" id="sh-off" role="status"><b>%s</b><p>%s</p></div>'
+           % (E(handoff_mod().LOCAL_OFF_TITLE), E(handoff_mod().LOCAL_OFF))) if local else ""
+    rows = [work_row(w, today) for w in W]
+    if rows:
+        rest = W[VISIBLE_WORK:]
+        more = ""
+        if rest:
+            names = ", ".join(w["name"] for w in rest[:3]) + (", …" if len(rest) > 3 else "")
+            more = ('<details class="sh-more" id="sh-more"><summary>%d more: %s</summary>%s</details>'
+                    % (len(rest), E(names), "".join(rows[VISIBLE_WORK:])))
+        listing = '<div class="sh-card sh-list" id="sh-list">%s%s</div>' % ("".join(rows[:VISIBLE_WORK]), more)
+    else:
+        listing = ('<div class="sh-card sh-start" id="sh-start"><div class="sh-big">Start with your own work</div>'
+                   '<p>Say what you are working on in Ask something above, in your own words, and Claude sets it up as '
+                   'a piece of work here. There is nothing to learn first.</p></div>')
+    foot = ""
+    if example == "present":
+        foot = ('<div class="sh-foot"><span>Everything marked Example is made up, to show how Garrick works.</span>%s</div>'
+                % act_button(json.dumps({"verb": "example", "do": "archive"}), "Remove the example",
+                             "Putting the example away…", "sh-link",
+                             ' data-confirm="Click again to remove the example"'))
+    elif example == "archived":
+        foot = ('<div class="sh-foot"><span>The example is archived. Nothing of yours was touched.</span>%s</div>'
+                % act_button(json.dumps({"verb": "example", "do": "restore"}), "Bring the example back",
+                             "Bringing the example back…", "sh-link"))
+    return ('<form class="sh-ask" id="sh-ask" autocomplete="off"><input id="sh-askbox" name="q" placeholder="Ask something, or start new work" '
+            'aria-label="Ask something"><button class="act primary" type="submit">Ask</button></form>'
+            '<div class="sh-answer" id="sh-answer" role="status" hidden></div>'
+            '<h2 class="sh-h">Needs you <small>%s</small></h2><div class="sh-card" id="sh-needs">%s</div>%s'
+            '<h2 class="sh-h">Your work <small>most recent first</small></h2>%s%s'
+            % (E(count), needs, off, listing, foot))
+
+
+def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]:
+    """A piece of work's files, (the summary for its heading, the list): what
+    is new, changed or missing since it was last continued, from the files
+    Continue kept; before its first Continue, what changed since the work last
+    moved."""
+    H = handoff_mod()
+    now = H.walk(w["files_dir"], project=w["own_files"])
+    since = None
+    if kept and isinstance(kept.get("files"), dict):
+        diff = H.compare(kept["files"], now)
+        since = as_date(str(kept.get("seen") or "")[:10])
+        said_since = "since you last continued it" + (" %s" % ago(since, today).lower() if since else "")
+    else:
+        moved = w["moved"]
+        cut = time.mktime(moved.timetuple()) + 86400 if moved else None
+        diff = {"new": sorted(p for p, (m, _) in now.items() if cut and m >= cut), "changed": [], "missing": []}
+        said_since = "since it last moved" if moved else ""
+    marks = {p: "new" for p in diff["new"]}
+    marks.update({p: "changed" for p in diff["changed"]})
+    ordered = sorted(now, key=lambda p: (p not in marks, -now[p][0], p.casefold()))
+    items = "".join('<li>%s%s</li>' % (E(p), ' <span class="sh-tag">%s</span>' % marks[p] if p in marks else "")
+                    for p in ordered[:FILES_SHOWN])
+    items += "".join('<li class="sh-gone">%s <span class="sh-tag">missing</span></li>' % E(p) for p in diff["missing"][:FILES_SHOWN])
+    if len(ordered) > FILES_SHOWN:
+        items += '<li class="muted">%d more</li>' % (len(ordered) - FILES_SHOWN)
+    parts = ["%d %s" % (len(diff[k]), k) for k in ("new", "changed", "missing") if diff[k]]
+    head = ("%s %s" % (", ".join(parts), said_since)).strip() if parts else ("nothing new " + said_since).strip() if said_since else ""
+    body = '<ul class="sh-files">%s</ul>' % items if items else '<p class="muted">No files yet.</p>'
+    return head, body
+
+
+def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
+    """A piece of work's own page: what it is, who is involved, what happened
+    last, what is open, the next step, Continue, and its files."""
+    dl = []
+    if w["about"]:
+        dl.append(("What it is", md_inline(w["about"])))
+    if w["who"]:
+        dl.append(("Who's involved", E("; ".join(w["who"]))))
+    entry = w["entry"]
+    if entry and entry[1]:
+        dl.append(("What happened last", ("%s: " % E(ago(entry[0], today)) if entry[0] else "") + md_inline(entry[1])))
+    elif w["where"]:
+        dl.append(("What happened last", md_inline(w["where"])))
+    opened = []
+    shown = [q for q in w["questions"] if q["shown"]]
+    if shown:
+        opened.append("A question for you, on the home: %s" % E(shown[0]["ask"]))
+    for a in w["owed"]:
+        opened.append('<span class="sh-owed">Owed%s:</span> %s' % (" by %s" % E(due_said(a["when"], today)) if a["when"] else "",
+                                                                    md_inline(a["text"])))
+    if w["waiting"]:
+        opened.append("Waiting on %s" % E(w["waiting"]) + (", %s" % md_inline(w["deadline"]) if w["deadline"] else ""))
+    if opened:
+        dl.append(("Open", "<br>".join(opened)))
+    dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
+    head, files = work_files(w, kept, today)
+    where = ("Folder: %s" % E(w["folder_said"])) if w["files"] is not None else "Kept with the work in Garrick"
+    if w["folder_said"] and w["files"] is None:
+        where = "Folder: %s, which is not there now" % E(w["folder_said"])
+    return ('<article class="sh-work" id="%s" hidden><button type="button" class="sh-link sh-back" data-home>‹ Home</button>'
+            '<h1>%s%s</h1><div class="sh-sub">%s%s</div><div class="sh-card sh-ws"><dl>%s</dl><div class="sh-acts">%s</div></div>'
+            '<h2 class="sh-h">Files <small>%s</small></h2><div class="sh-card sh-ws">%s</div></article>'
+            % (E(w["id"]), E(w["name"]), '<span class="sh-tag">Example</span>' if w["example"] else "", where,
+               " · %s" % E(head) if head else "", "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), v) for k, v in dl),
+               continue_button(w, "Continue in Claude", primary=not w["waiting"]), E(head), files))
+
+
+def home_settings(layout: str) -> str:
+    """Settings › Home: which page Garrick opens on."""
+    def choice(value, label, small):
+        return ('<div class="launcher-row"><label class="launcher-choice"><input type="radio" name="garrick-home" value="%s"%s> '
+                '<span>%s<small>%s</small></span></label></div>' % (value, " checked" if layout == value else "", label, small))
+    return ('<section class="setsec apponly" id="home-settings">%s%s%s%s</section>'
+            % (set_head("Home", "home"), help_text("home", 'What Garrick opens on. <b>Simple</b> shows your work, Ask '
+               'something and the questions waiting on you, with everything else under More. <b>Full</b> opens on the '
+               'Overview, Todo and Status tabs. Kept in <code>System/garrick-settings.json</code> as <code>"home"</code>.'),
+               choice("simple", "Simple", "Your work, Ask something and Needs you; the rest under More"),
+               choice("full", "Full", "The Overview, Todo, Status and Guide tabs")))
+
+
+SIMPLE_CSS = r"""
+body.simple[data-tab=home] .bar .tabs,body.simple[data-tab=work] .bar .tabs{display:none}body.simple .bar .bacts{margin-left:auto}
+body.simple[data-tab=home] #rebuild,body.simple[data-tab=work] #rebuild,body.simple[data-tab=home] .bar .seg.theme,body.simple[data-tab=work] .bar .seg.theme{display:none}
+.sh-dot,.sh-morebtn{display:inline-flex;align-items:center;gap:6px;border:0;background:none;color:var(--ink2);font:inherit;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:7px;white-space:nowrap}
+.sh-dot:hover,.sh-morebtn:hover{color:var(--ink);background:var(--wash)}.sh-morebtn{color:var(--accent)}
+body.simple:not([data-tab=home]):not([data-tab=work]) .sh-morebtn{display:none}
+#tab-home,#tab-work{max-width:880px;margin:0 auto}
+.sh-ask{display:flex;gap:8px;background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--shadow)}
+.sh-ask input{flex:1;border:0;background:none;font:inherit;font-size:15px;color:var(--ink);outline:none;min-width:0}
+.sh-ask .act,.sh-acts .act,.sh-row .act{font-size:13px;padding:7px 12px;border-radius:8px}
+.sh-answer{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:var(--surface);border:1px solid var(--line);white-space:pre-wrap;color:var(--ink2);position:relative}
+.sh-answer b{display:block;color:var(--ink);margin-bottom:4px;white-space:normal}.sh-answer .wx{position:absolute;top:6px;right:8px;border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer}
+h2.sh-h{font-family:var(--display);font-weight:400;font-size:19px;margin:26px 0 10px;display:flex;align-items:baseline;gap:10px}
+h2.sh-h small{font-family:system-ui,-apple-system,sans-serif;font-size:12px;color:var(--muted)}
+.sh-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.sh-q{padding:14px 16px;border-left:3px solid var(--warning);border-top:1px solid var(--line)}.sh-q:first-child{border-top:0;border-radius:12px 12px 0 0}
+.sh-q:only-child{border-radius:12px}.sh-q p{margin:4px 0 10px;color:var(--ink2)}.sh-opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.sh-opts .act{font-size:13px;padding:6px 12px;border-radius:8px}
+.sh-empty{padding:14px 16px;color:var(--muted)}
+.sh-warn{padding:14px 16px;border-left:3px solid var(--warning);margin-top:12px}.sh-warn p{margin:4px 0 0;color:var(--ink2)}
+.sh-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;padding:12px 16px;border-top:1px solid var(--line);align-items:center}
+.sh-list>.sh-row:first-child{border-top:0}.sh-row>.go{grid-row:1/span 3;grid-column:2}
+.sh-name{font-weight:600;min-width:0}.sh-next{color:var(--ink2);grid-column:1;min-width:0;overflow-wrap:anywhere}.sh-meta{grid-column:1;font-size:12px;color:var(--muted)}
+.sh-link{color:var(--accent);cursor:pointer;background:none;border:0;font:inherit;padding:0;text-align:left}.sh-link:hover{text-decoration:underline;text-underline-offset:2px}
+.sh-name .sh-link{color:var(--ink);font-weight:600}.sh-name .sh-link:hover{color:var(--accent)}
+.sh-tag{display:inline-block;font-size:11px;font-weight:600;color:var(--accent);background:var(--wash);border-radius:4px;padding:0 6px;margin-left:6px;vertical-align:1px}
+.sh-owed{color:color-mix(in srgb,var(--warning) 62%,var(--ink));font-weight:600}
+.sh-wait{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:5px 10px;white-space:nowrap}
+details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-size:13px;color:var(--accent)}details.sh-more[open]>summary{color:var(--muted)}
+.sh-foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:22px;font-size:13px;color:var(--muted)}
+.sh-start{padding:26px 20px;text-align:center}.sh-start p{color:var(--ink2);max-width:440px;margin:6px auto 0}.sh-big{font-family:var(--display);font-size:20px}
+.sh-work h1{font-family:var(--display);font-weight:400;font-size:26px;margin:10px 0 2px}.sh-sub{color:var(--muted);font-size:13px;margin-bottom:14px;overflow-wrap:anywhere}
+.sh-ws{padding:14px 16px}.sh-ws dl{margin:0}.sh-ws dt{font-size:12px;color:var(--muted);margin-top:10px}.sh-ws dt:first-child{margin-top:0}.sh-ws dd{margin:2px 0 0;overflow-wrap:anywhere}
+.sh-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.sh-files{margin:0;padding:0;list-style:none;font-size:13px;color:var(--ink2)}.sh-files li{padding:3px 0;overflow-wrap:anywhere}.sh-gone{text-decoration:line-through;color:var(--muted)}
+.act.go[disabled]{opacity:.6;cursor:progress}
+@media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}
+#tab-home,#tab-work{max-width:none}main{padding:16px 16px 80px}body.simple .sh-dot .sh-dw{display:none}}
+"""
+
+# The simple home's script: which view shows (home, a piece of work's page,
+# or a tab under More), kept in this window's sessionStorage so the rebuild
+# after an action comes back to it, and on Home for a new window; Ask
+# something, and Claude's answer when it comes back to the page; Continue
+# shown busy while Claude is primed; Settings › Home. A browser cannot act:
+# there Continue and Ask copy what to say to Claude instead.
+SIMPLE_JS = r"""
+(function(){var body=document.body;if(!body.classList.contains('simple'))return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,VIEW='garrick-simple-view',ANS='garrick-simple-answer';
+function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);if(v===null)sessionStorage.removeItem(k);else sessionStorage.setItem(k,v)}catch(e){return null}}
+function say(s){if(window.GarrickSay)GarrickSay(s)}
+var tab=window.StatusTab;
+function view(v,keep){var arts=document.querySelectorAll('article.sh-work'),id=v.indexOf('work:')===0?v.slice(5):'',a=id&&document.getElementById(id);
+if(id&&!a)v='home';
+if(a){arts.forEach(function(x){x.hidden=x!==a});tab('work')}else if(v.indexOf('tab:')===0)tab(v.slice(4));else tab('home');
+ss(VIEW,v);if(!keep)window.scrollTo(0,0)}
+window.StatusTab=function(n){if(n!=='work')ss(VIEW,n==='home'?'home':'tab:'+n);return tab(n)};
+document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
+var w=t.closest('[data-w-open]');if(w){e.preventDefault();view('work:'+w.dataset.wOpen);return}
+if(t.closest('[data-home]')){e.preventDefault();view('home');return}
+var m=t.closest('[data-more]');if(m){e.preventDefault();view('tab:'+m.dataset.more);return}
+var tb=t.closest('.tabs [data-tab]');if(tb&&tb.dataset.tab==='home'){view('home');return}
+var g=t.closest('button.go[data-act]');if(!g)return;
+if(!host){e.stopPropagation();var p=g.dataset.phrase||'';if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it into Claude.')});return}
+if(body.dataset.local==='managed'){e.stopPropagation();say('Claude can\'t open work on this Mac. See the note on the home.');return}
+setTimeout(function(){g.disabled=true;g.textContent=g.dataset.busy||'Opening…'},0)},true);
+/* Ask something: in the app, Claude opens on the words; in a browser they are copied for you */
+function askReq(v){return{verb:'ask-desktop',prompt:v}}
+var form=document.getElementById('sh-ask'),box=document.getElementById('sh-askbox');
+if(form)form.addEventListener('submit',function(e){e.preventDefault();var v=(box.value||'').trim();if(!v){box.focus();return}
+if(!host){if(window.GarrickCopy)GarrickCopy(v).then(function(){say('Copied. Paste it into Claude.')});return}
+var b=form.querySelector('button');b.disabled=true;b.textContent='Asking…';ss(ANS,JSON.stringify({q:v,a:''}));
+host.postMessage({act:askReq(v)});say('Opening Claude on “'+v.slice(0,60)+'”…')});
+function answer(){var d=null;try{d=JSON.parse(ss(ANS)||'null')}catch(e){}var el=document.getElementById('sh-answer');if(!el)return;
+if(!d||!d.a){el.hidden=true;return}el.hidden=false;el.textContent='';var h=document.createElement('b');h.textContent=d.q;el.appendChild(h);
+el.appendChild(document.createTextNode(d.a));var x=document.createElement('button');x.className='wx';x.type='button';x.textContent='×';
+x.setAttribute('aria-label','Dismiss');x.onclick=function(){ss(ANS,null);el.hidden=true};el.appendChild(x)}
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='ask-desktop'){var d={q:q.prompt,a:out&&out.answer||''};
+if(d.a)ss(ANS,JSON.stringify(d));else ss(ANS,null);answer();var b=form&&form.querySelector('button');if(b){b.disabled=false;b.textContent='Ask'}
+if(out&&out.ok&&box)box.value=''}
+if(q&&q.verb==='continue')[].forEach.call(document.querySelectorAll('button.go[disabled]'),function(b){b.disabled=false;b.textContent=b.dataset.label||'Continue'});
+if(prev)return prev(q,out)};
+[].forEach.call(document.querySelectorAll('button.go[data-act]'),function(b){b.dataset.label=b.textContent});
+answer();var v=ss(VIEW);view(v||'home',true)})();
+/* Settings › Home, on either page: saved for every viewer at once, then the page rebuilds on the choice */
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+function homeReq(v){return{verb:'settings',home:v}}
+[].forEach.call(document.querySelectorAll('input[name="garrick-home"]'),function(r){r.onchange=function(){if(!host||!r.checked)return;
+try{sessionStorage.removeItem('garrick-simple-view')}catch(e){}host.postMessage({act:homeReq(r.value)});
+if(window.GarrickSay)GarrickSay(r.value==='simple'?'Garrick opens on the simple home now.':'Garrick opens on the full page now.')}})})();
 """
 
 
@@ -5072,12 +5633,16 @@ document.addEventListener('click',function(e){if(!on()||!(e.target&&e.target.clo
 def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
           show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
-          also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None) -> str:
+          also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
+          managed: Optional[List[Path]] = None) -> str:
     """The page. `vaults` and `launchers` say what this machine has (main()
     asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
     given. `also` and `moved` reach effort.py: folders the workspace used to
-    live in, and folders renamed or moved since, old path to new."""
+    live in, and folders renamed or moved since, old path to new. `managed`
+    names the files where a managed setting may switch Claude's local
+    sessions off (main() passes this Mac's); without it only the record
+    Continue keeps is read, as a test needs."""
     now = now or dt.datetime.now()
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
@@ -5152,6 +5717,17 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     thread_actions(T, lists, C, ws)
     urgent = {(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"])
               for z in T.values() for r in z["rows"] if r.get("urgent")}
+    # The simple home (#175), where Settings › Home chose it: the pieces of
+    # work, the questions waiting on the user, what Continue kept, and
+    # whether Claude's desktop app can open work on this Mac.
+    layout = home_layout(ws)
+    simple = layout == "simple"
+    if simple:
+        HW = works(ws, T, now.date())
+        kept = handoff_mod().load(ws).get("sessions")
+        kept = kept if isinstance(kept, dict) else {}
+        local = handoff_mod().local_off(ws, managed)
+        example = example_state(ws)
 
     # ---- the top row, pinned while the page scrolls: the name and when it was
     # built, the tabs, and the page's controls. There is no sidebar: the tabs
@@ -5164,7 +5740,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                  '<button class="act stop" type="button" data-act="%s" data-expect="none:" data-confirm="Click again to shut down" '
                  'data-say="Shutting down: each session wraps, then cmux quits…">Shut down</button></span>'
                  % (E(json.dumps({"verb": "startup"})), E(json.dumps({"verb": "shutdown"})))) if DK else ""
-    controls = ('<div class="bacts"><button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
+    simple_bar = ""
+    if simple:
+        simple_bar = ('<button class="sh-dot" type="button" data-more="status" title="%s">'
+                      '<span class="dot %s"></span><span class="sh-dw">%s</span></button><button class="sh-morebtn" type="button" data-more="overview" '
+                      'title="Threads, Todo, Status and the Guide">More</button>'
+                      % ((E("; ".join(t for _, t, _ in attn)) if attn else "Nothing failing, waiting or broken"), worst,
+                         "All well" if not attn else "%d thing%s to look at" % (len(attn), "" if len(attn) == 1 else "s")))
+    controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
                 'which Garrick this is, release notes, the view, hidden cards, and how to report a bug">%s</button>%s%s</div>'
@@ -5537,7 +6120,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                          % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
-    tabs = ('<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="overview">Overview</button>%s'
+    tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
+            + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
             '<button type="button" role="tab" data-tab="status">Status%s</button>'
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
@@ -5562,8 +6146,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if shared is not None:
         menu += '<script type="application/json" id="launch-settings">%s</script>' % script_json(shared)
     guide_body, guide_pages = guide_tab(ws)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s</main>%s'
-            % (overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
+    home_tabs = ""
+    if simple:
+        home_tabs = (section("home", False, home_section(HW, now.date(), example, local))
+                     + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)))
+        overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s</main>%s'
+            % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -5573,11 +6162,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
+            '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + guide_mod().GUIDE_CSS + zone_css(), now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + guide_mod().GUIDE_CSS + zone_css(),
+                (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
+                now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 
@@ -5649,6 +6240,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
     tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
                          vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
+                         managed=handoff_mod().managed_places(),
                          launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
     os.replace(tmp, out)
     release_ask(ws)

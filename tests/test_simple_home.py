@@ -113,6 +113,11 @@ In the call Dana said 400 pallets and you said 500. The price sheet waits on thi
 """
 
 
+def sid(n: int) -> str:
+    """The session id the stand-in CLI gives on its nth call, shaped as the CLI's are."""
+    return "%08d-0000-4000-8000-000000000000" % n
+
+
 def question(status_="open", extra=""):
     return QUESTION.format(asked=day(-2), status=status_, extra=extra)
 
@@ -461,7 +466,7 @@ if "-p" in args:
     if os.environ.get("MOCK_PRIME_FAIL"):
         sys.stderr.write("Invalid API key · Please run /login\n"); sys.exit(1)
     prompt = args[args.index("-p") + 1]
-    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": "sess-%d" % len(open(log).read().splitlines()),
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": "%08d-0000-4000-8000-000000000000" % len(open(log).read().splitlines()),
                       "result": "It stands at the draft. Next: " + prompt}))
     sys.exit(0)
 sys.exit(2)
@@ -498,11 +503,11 @@ class TestContinue(HandOffCase):
         folder = str((self.work / "Acme Review").resolve())          # a project that is one thread opens as the project
         self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json"], prime["args"])
         self.assertEqual(folder, str(Path(prime["cwd"]).resolve()))
-        self.assertEqual(["--desktop", "--resume", "sess-1"], desk["args"])
+        self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
         self.assertTrue(desk["tty"])                                  # --desktop refuses without one
         self.assertEqual(folder, str(Path(desk["cwd"]).resolve()))
         kept = handoff.session_for(self.root, "Work/Acme Review/Threads/Pricing/Pricing.md")
-        self.assertEqual("sess-1", kept["id"])
+        self.assertEqual(sid(1), kept["id"])
         self.assertIn("Deliverables/260301 - Pricing memo.md", kept["files"])
         self.assertNotIn("Threads/Pricing/Pricing.md", kept["files"])     # Garrick's own record is not the work's files
 
@@ -524,9 +529,22 @@ class TestContinue(HandOffCase):
         self.go(now=now)
         self.go(now=now + dt.timedelta(hours=1))
         self.assertEqual([["-p"], ["--desktop"], ["--desktop"]], [c["args"][:1] for c in self.calls()])
-        self.assertEqual("sess-1", self.calls()[-1]["args"][-1])
+        self.assertEqual(sid(1), self.calls()[-1]["args"][-1])
         self.go(now=now + dt.timedelta(hours=handoff.FRESH_HOURS + 1))
         self.assertEqual(["-p"], self.calls()[3]["args"][:1])
+
+    def test_a_kept_id_that_is_not_a_session_id_is_primed_afresh(self):
+        now = dt.datetime.now()
+        self.go(now=now)
+        record = handoff.load(self.root)
+        record["sessions"]["Work/Acme Review/Threads/Pricing/Pricing.md"]["id"] = "--dangerously-skip-permissions"
+        handoff.save(self.root, record)
+        self.go(now=now + dt.timedelta(hours=1))
+        self.assertEqual([["-p"], ["--desktop"], ["-p"], ["--desktop"]], [c["args"][:1] for c in self.calls()])
+        self.assertEqual(sid(3), self.calls()[-1]["args"][-1])
+        with self.assertRaises(handoff.HandOffError):
+            handoff.open_desktop(self.cli, self.root, "-x")
+        self.assertEqual(4, len(self.calls()))                        # refused before the CLI was run
 
     def test_the_real_binary_is_found_past_a_wrapper(self):
         bin_ = self.root.parent / "path"
@@ -671,7 +689,7 @@ class TestAskSomething(HandOffCase):
         prime, desk = self.calls()
         self.assertEqual(["-p", "What do I owe people this week?", "--output-format", "json"], prime["args"])
         self.assertEqual(str(self.root.resolve()), str(Path(prime["cwd"]).resolve()))
-        self.assertEqual(["--desktop", "--resume", "sess-1"], desk["args"])
+        self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
 
     def test_a_field_no_verb_declares_is_refused(self):
         out, _, _ = pa.perform(self.root, {"verb": "ask-desktop", "prompt": "x", "folder": "/tmp"})

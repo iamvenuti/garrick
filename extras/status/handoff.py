@@ -90,6 +90,9 @@ CLAUDE_PLACES = ("~/.local/bin/claude", "~/.claude/local/claude", "/opt/homebrew
 # plain words around it.
 REFUSED_LOCAL = re.compile(r"disableDesktopLocalSessions|local sessions?\b[^.\n]*\b(?:disabled|turned off|not allowed|"
                            r"switched off|unavailable|blocked)|(?:disabled|turned off)[^.\n]*\blocal sessions?", re.I)
+# A session id as the CLI gives one. A kept id that is not this shape is not
+# handed to `--resume`: the work is primed afresh instead.
+SESSION_ID = re.compile(r"\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r")
 
 # What the home says when the desktop app cannot open work here, word for
@@ -139,10 +142,18 @@ def save(ws: Path, data: dict) -> None:
             os.unlink(tmp)
 
 
+def session_id(sid) -> bool:
+    """Whether `sid` is shaped as the CLI's session ids are, a UUID."""
+    return isinstance(sid, str) and bool(SESSION_ID.match(sid))
+
+
 def session_for(ws: Path, key: str) -> Optional[dict]:
+    """The work's kept session, None when there is none or its id is not a
+    session id: the record is a file anyone can edit, and the id goes on a
+    command line."""
     s = load(ws).get("sessions")
     entry = s.get(key) if isinstance(s, dict) else None
-    return entry if isinstance(entry, dict) and isinstance(entry.get("id"), str) else None
+    return entry if isinstance(entry, dict) and session_id(entry.get("id")) else None
 
 
 def keep_session(ws: Path, key: str, sid: str, folder: Path, files: Dict[str, list], primed: bool,
@@ -437,6 +448,8 @@ def open_desktop(claude: Path, folder: Path, sid: str, timeout: Optional[float] 
                  env: Optional[dict] = None) -> str:
     """`claude --desktop --resume <sid>` in `folder`, under a pseudo-terminal.
     What it said, or LocalOff / HandOffError."""
+    if not session_id(sid):
+        raise HandOffError("Claude gave a session Garrick does not recognise, so nothing was opened. Press Continue again.")
     timeout = DESKTOP_TIMEOUT if timeout is None else timeout
     code, said = in_terminal([str(claude), "--desktop", "--resume", sid], folder, child_env(claude, env), timeout)
     if refused_locally(said):

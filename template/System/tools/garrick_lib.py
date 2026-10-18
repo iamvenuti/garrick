@@ -33,6 +33,7 @@ functions below keep their signatures:
     write_if_unchanged(note, text, expect) -> bool
     same_action(line) -> str
     install_wall_hook(zone) -> Path
+    work_folder(root, value) -> Path or None
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
     skill_links(root, repo) -> [(link, target)]
@@ -1535,6 +1536,28 @@ def hooks_path(repo: PathLike) -> str:
 # the installer's zones and the ones scaffold.py adds later alike.
 ZONE_TEMPLATE = ("System", "templates", "zone")
 
+# The worked example (examples/example-work/ in Garrick's source): a zone of its
+# own, with a shared drive beside it in the workspace's top folder that its
+# hubs point into. System/tools/example.py archives both into ARCHIVE, a
+# folder of the top folder that no repository commits, and brings them back.
+EXAMPLE_DRIVE = "Ashgrove Shared"
+EXAMPLE_MANIFEST = ".example.json"
+ARCHIVE = ".archive"
+
+
+def work_folder(root: PathLike, value) -> Optional[Path]:
+    """Where a hub's `folder:` says the project's files are: a path from the
+    workspace's top folder, an absolute one, or one starting `~/`. None for a
+    key that is absent or empty. Whether the folder is there is the caller's
+    question: the check warns, and a page offers nothing to open."""
+    if value is None or isinstance(value, (list, dict)):
+        return None
+    text = str(value).strip().strip('"').strip("'").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser() if text.startswith("~") else Path(text)
+    return path if path.is_absolute() else Path(root) / path
+
 # Claude Code looks for skills in .claude/skills and Codex in .agents/skills,
 # from the session's folder up to its git repository's root.
 SKILL_FOLDERS = (".claude", ".agents")
@@ -1667,7 +1690,11 @@ def garrick_ignores(zones) -> Dict[str, str]:
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
     shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
               "Inbox/*\n!Inbox/.gitkeep\n")
-    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared + common,
+    example = ("# The example's shared drive, read and never written, and what System/tools/example.py\n"
+               "# put away when the example was removed. Neither is ever committed.\n"
+               "/%s/\n/%s/\n" % (EXAMPLE_DRIVE, ARCHIVE))
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared
+                         + example + common,
            "Wikis/.gitignore": common + transcripts}
     for zone in zones:
         out["Zones/%s/.gitignore" % zone] = common + inbox

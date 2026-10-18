@@ -102,6 +102,7 @@ from garrick_lib import (  # noqa: E402
     strip_recipients,
     strip_tag,
     walled,
+    work_folder,
     workspace_root,
 )
 
@@ -1421,6 +1422,19 @@ def check_projects(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "projects", r,
                                    "the finished thread %s is not listed under `## Finished`" % thread.name,
                                    "The %s hub note does not list the finished thread %s" % (project.name, thread.name)))
+        # Where the project's files are, when they are not in the project: a
+        # folder left in place, such as a shared drive. Read, never written.
+        if "folder" in fm:
+            where = work_folder(ws.root, fm.get("folder"))
+            if where is None:
+                out.append(Finding(WARNING, "projects", r,
+                                   "`folder` is empty; name the folder the project's files are in, or take the key out",
+                                   "The %s hub note names no folder for its files" % project.name))
+            elif not where.is_dir():
+                out.append(Finding(WARNING, "projects", r,
+                                   "`folder` is %s, which is %s" % (str(fm.get("folder")).strip(),
+                                                                    "a file, not a folder" if where.exists() else "not there"),
+                                   "The %s hub note points at a folder that is not there" % project.name))
         layout = fm.get("layout")
         if layout is not None and layout not in LAYOUTS:
             out.append(Finding(WARNING, "projects", r, "`layout` is %r; the one there is: %s" % (layout, ", ".join(LAYOUTS)),

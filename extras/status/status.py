@@ -4191,7 +4191,8 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
                 "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
                 "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,
-                "files_dir": files or (r["hub"] or r["note"]).parent,
+                "files_dir": files or (r["hub"].parent if r["hub"] else
+                                       r["note"].parents[2] if r["note"].parent.parent.name == "Threads" else r["note"].parent),
                 "own_files": files is None, "questions": questions_in(r["note"].parent, zdir, today),
             })
     out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))

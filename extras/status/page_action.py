@@ -2028,8 +2028,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name)[0]
         try:
             H.open_desktop(claude, folder, sid)
-        except H.LocalOff:
-            raise
+        except (H.LocalOff, H.TimedOut):
+            raise                               # a timeout may well have opened it: never a second window
         except H.HandOffError:
             if not resume:
                 raise

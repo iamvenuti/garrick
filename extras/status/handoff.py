@@ -118,6 +118,11 @@ class LocalOff(HandOffError):
     """The desktop app will not take a local session on this Mac."""
 
 
+class TimedOut(HandOffError):
+    """`claude --desktop` did not finish in time: the app may well have
+    opened, so nothing is tried again."""
+
+
 # --------------------------------------------------------------------------- the record
 
 def record_path(ws: Path) -> Path:
@@ -460,7 +465,7 @@ def open_desktop(claude: Path, folder: Path, sid: str, timeout: Optional[float] 
     if refused_locally(said):
         raise LocalOff(LOCAL_OFF_TITLE + " " + LOCAL_OFF)
     if code is None:
-        raise HandOffError("Claude's desktop app did not say it had opened within %d seconds. If it did not open, "
+        raise TimedOut("Claude's desktop app did not say it had opened within %d seconds. If it did not open, "
                            "press Continue again." % round(timeout))
     if code != 0:
         raise HandOffError("Claude's desktop app did not open: %s" % (first_line(said) or "exit %d" % code))

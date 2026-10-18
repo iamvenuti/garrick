@@ -461,7 +461,10 @@ if "--desktop" in args:
     if "--settings" in args or "--mcp-config" in args:
         print("Error: --desktop does not take --settings"); sys.exit(1)
     said = os.environ.get("MOCK_DESKTOP_SAY", "Opening in Claude desktop")
-    print(said); sys.exit(int(os.environ.get("MOCK_DESKTOP_EXIT", "0")))
+    print(said); sys.stdout.flush()
+    if os.environ.get("MOCK_DESKTOP_HANG"):
+        import time; time.sleep(60)
+    sys.exit(int(os.environ.get("MOCK_DESKTOP_EXIT", "0")))
 if "-p" in args:
     if os.environ.get("MOCK_PRIME_FAIL"):
         sys.stderr.write("Invalid API key · Please run /login\n"); sys.exit(1)
@@ -533,6 +536,22 @@ class TestContinue(HandOffCase):
         self.assertEqual(sid(1), self.calls()[-1]["args"][-1])
         self.go(now=now + dt.timedelta(hours=handoff.FRESH_HOURS + 1))
         self.assertEqual(["-p"], self.calls()[3]["args"][:1])
+
+    def test_a_resumed_session_that_will_not_open_is_asked_afresh_once(self):
+        now = dt.datetime.now()
+        self.go(now=now)
+        with mock.patch.dict(os.environ, {"MOCK_DESKTOP_EXIT": "1"}):
+            with self.assertRaisesRegex(pa.Refused, "desktop app did not open"):
+                self.go(now=now + dt.timedelta(hours=1))
+        self.assertEqual([["-p"], ["--desktop"], ["--desktop"], ["-p"], ["--desktop"]], [c["args"][:1] for c in self.calls()])
+
+    def test_a_resumed_session_that_times_out_is_not_opened_twice(self):
+        now = dt.datetime.now()
+        self.go(now=now)
+        with mock.patch.dict(os.environ, {"MOCK_DESKTOP_HANG": "1"}), mock.patch.object(handoff, "DESKTOP_TIMEOUT", 1):
+            with self.assertRaisesRegex(pa.Refused, "did not say it had opened within 1 seconds"):
+                self.go(now=now + dt.timedelta(hours=1))
+        self.assertEqual([["-p"], ["--desktop"], ["--desktop"]], [c["args"][:1] for c in self.calls()])
 
     def test_a_kept_id_that_is_not_a_session_id_is_primed_afresh(self):
         now = dt.datetime.now()

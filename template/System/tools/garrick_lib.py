@@ -1540,7 +1540,7 @@ ZONE_TEMPLATE = ("System", "templates", "zone")
 # own, with a shared drive beside it in the workspace's top folder that its
 # hubs point into. System/tools/example.py archives both into ARCHIVE, a
 # folder of the top folder that no repository commits, and brings them back.
-EXAMPLE_DRIVE = "Ashgrove Shared"
+EXAMPLE_DRIVE = "Quillfield Shared"
 EXAMPLE_MANIFEST = ".example.json"
 ARCHIVE = ".archive"
 

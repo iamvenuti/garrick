@@ -2,7 +2,7 @@
 title: Stand
 type: thread
 project: "[[Spring trade show]]"
-party: ashgrove
+party: quillfield
 status: active
 created: {spring_start}
 updated: {spring}
@@ -10,11 +10,11 @@ updated: {spring}
 
 # Stand
 
-Ashgrove's stand at the Northfield Office Show, {show_dates}, from the booking to the graphics.
+Quillfield's stand at the Northfield Office Show, {show_dates}, from the booking to the graphics.
 
 ## The ask
 
-Robin's own: a bigger stand than last year's, with room for the Arc chair.
+Robin's own: a bigger stand than last year's, with room for the Kestle chair.
 
 ## State of play
 
@@ -24,10 +24,10 @@ Robin's own: a bigger stand than last year's, with room for the Arc chair.
 
 | | |
 |---|---|
-| Live artifact | `Ashgrove Shared/Marketing/Spring trade show/Booking confirmation.pdf`, the organisers' confirmation |
+| Live artifact | `Quillfield Shared/Marketing/Spring trade show/Booking confirmation.pdf`, the organisers' confirmation |
 | Rebuild with | Last year's stand photos, beside the confirmation in the drive |
 | Next action | Brief Ines on the stand graphics once the exhibitor pack arrives; Robin's |
-| Keep in mind | Last year's stand was too small for a chair display; this one has room for the Arc chair |
+| Keep in mind | Last year's stand was too small for a chair display; this one has room for the Kestle chair |
 | Waiting on | Nobody |
 | Deadline | Not given; the exhibitor pack comes in {pack_month} |
 

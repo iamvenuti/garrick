@@ -892,7 +892,7 @@ EXAMPLE_BUILD = REPO / "examples" / "example-work" / "build.py"
 
 
 def add_example(root):
-    """--example: Robin Hale's work at Ashgrove Furniture, added to the
+    """--example: Robin Hale's work at Quillfield Furniture, added to the
     workspace just installed, as examples/example-work/build.py --add does."""
     if not EXAMPLE_BUILD.is_file():
         raise InstallError(f"{EXAMPLE_BUILD} is missing, so the example could not be added.")
@@ -921,7 +921,7 @@ def main(argv=None):
     ap.add_argument("--allowlist", metavar="WORKSPACE",
                     help="allow Garrick's own commands in a workspace already installed, and change nothing else")
     ap.add_argument("--example", action="store_true",
-                    help="add the worked example, Robin Hale's work at Ashgrove Furniture, as a zone of its own "
+                    help="add the worked example, Robin Hale's work at Quillfield Furniture, as a zone of its own "
                          "that System/tools/example.py removes again")
     args = ap.parse_args(argv)
     try:

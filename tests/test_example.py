@@ -3,7 +3,7 @@ that puts it away, System/tools/example.py.
 
     python3 -m unittest discover -s tests
 
-Builds Robin Hale's work at Ashgrove Furniture twice: as a new workspace of its
+Builds Robin Hale's work at Quillfield Furniture twice: as a new workspace of its
 own, and added by `install.py --example` to a workspace with parties of its
 own (Acme Corp and Birch & Co, as in examples/acme.json). Its dates are
 relative to the day it is built, so these tests build it on a day they choose
@@ -41,15 +41,15 @@ from garrick_lib import load_context, parse_frontmatter, work_folder  # noqa: E4
 ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 ENV.pop("GIT_DIR", None)
 TODAY = datetime.date(2026, 10, 20)          # a Tuesday
-DRIVE = "Ashgrove Shared"
+DRIVE = "Quillfield Shared"
 WORK = {  # project: (thread, folder in the drive)
-    "Arc chair launch": ("Launch campaign", "Marketing/Arc chair launch"),
-    "Larchmont delivery problem": ("Replacement desks", "Customer service/Larchmont delivery problem"),
-    "Westbrook University tender": ("Pitch", "Sales/Westbrook University tender"),
+    "Kestle chair launch": ("Launch campaign", "Marketing/Kestle chair launch"),
+    "Brannock delivery problem": ("Replacement desks", "Customer service/Brannock delivery problem"),
+    "Ellisford University tender": ("Pitch", "Sales/Ellisford University tender"),
     "Dealer price list 2027": ("New prices", "Finance/Dealer price list"),
     "Spring trade show": ("Stand", "Marketing/Spring trade show"),
 }
-MOST_RECENT_FIRST = ["Arc chair launch", "Larchmont delivery problem", "Westbrook University tender",
+MOST_RECENT_FIRST = ["Kestle chair launch", "Brannock delivery problem", "Ellisford University tender",
                      "Dealer price list 2027", "Spring trade show"]
 
 
@@ -132,18 +132,18 @@ class StandaloneExampleTest(unittest.TestCase):
         self.assertEqual(sorted(WORK), projects)
         for project, (thread, folder) in WORK.items():
             hub = parse_frontmatter(self.zone / project / (project + ".md"))
-            self.assertEqual(("project", "Example", "ashgrove", "active"),
+            self.assertEqual(("project", "Example", "quillfield", "active"),
                              (hub["type"], hub["zone"], hub["party"], hub["status"]), project)
             threads = [t.name for t in (self.zone / project / "Threads").iterdir() if t.is_dir()]
             self.assertEqual([thread], threads, project)
             self.assertEqual("%s/%s" % (DRIVE, folder), hub["folder"], project)
             self.assertTrue(work_folder(self.root, hub["folder"]).is_dir(), project)
 
-    def test_most_recent_first_arc_chair_on_top_and_the_trade_show_quiet(self):
+    def test_most_recent_first_kestle_chair_on_top_and_the_trade_show_quiet(self):
         updated = {p: parse_frontmatter(self.thread_note(p))["updated"] for p in WORK}
         order = sorted(WORK, key=lambda p: updated[p], reverse=True)
         self.assertEqual(MOST_RECENT_FIRST, order)
-        self.assertEqual(self.d["last"].isoformat(), updated["Arc chair launch"])
+        self.assertEqual(self.d["last"].isoformat(), updated["Kestle chair launch"])
         quiet = TODAY - datetime.date.fromisoformat(updated["Spring trade show"])
         self.assertGreaterEqual(quiet.days, 21)
         for p in WORK:
@@ -157,13 +157,13 @@ class StandaloneExampleTest(unittest.TestCase):
         waiting = {p for p, r in rows.items() if r["Waiting on"].lower() != "nobody"}
         self.assertEqual({"Dealer price list 2027"}, waiting)
         self.assertIn("Nadia", rows["Dealer price list 2027"]["Waiting on"])
-        arc = rows["Arc chair launch"]
+        arc = rows["Kestle chair launch"]
         self.assertIn("launch email", arc["Next action"].lower())
         self.assertIn("pricing", arc["Next action"].lower())
         self.assertIn("Launch email draft.txt", arc["Live artifact"])
 
     def test_the_launch_email_stops_before_pricing(self):
-        email = (self.root / DRIVE / "Marketing" / "Arc chair launch" / "Launch email draft.txt").read_text()
+        email = (self.root / DRIVE / "Marketing" / "Kestle chair launch" / "Launch email draft.txt").read_text()
         before, after = email.split("PRICING", 1)
         self.assertIn("THE CHAIR", before)
         self.assertIn("[to write", after)
@@ -173,7 +173,7 @@ class StandaloneExampleTest(unittest.TestCase):
         found = sorted(self.zone.rglob("Needs you/*.md"))
         self.assertEqual(1, len(found), found)
         q = found[0]
-        self.assertEqual(self.zone / "Larchmont delivery problem" / "Threads" / "Replacement desks" / "Needs you",
+        self.assertEqual(self.zone / "Brannock delivery problem" / "Threads" / "Replacement desks" / "Needs you",
                          q.parent)
         self.assertRegex(q.name, r"^\d{6} - [a-z0-9-]+\.md$")
         self.assertEqual(self.d["call"].strftime("%y%m%d"), q.name[:6])
@@ -186,12 +186,12 @@ class StandaloneExampleTest(unittest.TestCase):
         labels = [label for label, _ in options]
         self.assertTrue(labels[0].startswith("The ") and labels[1].startswith("End of"), labels)
         # Answering sets the Next action to the option's words, so each one changes it.
-        current = resume_rows(self.thread_note("Larchmont delivery problem"))["Next action"]
+        current = resume_rows(self.thread_note("Brannock delivery problem"))["Next action"]
         for _, action in options:
             self.assertTrue(action.startswith("Send Carla the schedule for "), action)
             self.assertNotEqual(current, action)
         # Both dates were said in the call, which is in the drive.
-        transcript = self.root / DRIVE / WORK["Larchmont delivery problem"][1] / (
+        transcript = self.root / DRIVE / WORK["Brannock delivery problem"][1] / (
             "Call with Carla Mendes %s.txt" % self.d["call"].isoformat())
         said = transcript.read_text(encoding="utf-8")
         tom = re.search(r"Send Carla the schedule for (.+)$", options[0][1]).group(1)
@@ -235,7 +235,7 @@ class StandaloneExampleTest(unittest.TestCase):
         self.assertTrue(18 <= len(files) <= 26, len(files))
         for folder in ("Misc", "Old - do not use", "Marketing/Brand assets"):
             self.assertTrue((drive / folder).is_dir(), folder)
-        one = drive / "Marketing" / "Arc chair launch" / "Dealer one-pager Final_v3.docx"
+        one = drive / "Marketing" / "Kestle chair launch" / "Dealer one-pager Final_v3.docx"
         two = one.with_name("Dealer one-pager Final_v3 (1).docx")
         self.assertEqual(one.read_bytes(), two.read_bytes())
         self.assertTrue(one.read_bytes().startswith(b"PK"))
@@ -244,7 +244,7 @@ class StandaloneExampleTest(unittest.TestCase):
         self.assertTrue(next(drive.rglob("*.png")).read_bytes().startswith(b"\x89PNG"))
         transcripts = [p.name for p in files if p.suffix == ".txt" and ("Call with" in p.name or "prep" in p.name)]
         self.assertEqual(["Call with Carla Mendes %s.txt" % self.d["call"].isoformat(),
-                          "Westbrook pitch prep %s.txt" % self.d["prep"].isoformat()], sorted(transcripts))
+                          "Ellisford pitch prep %s.txt" % self.d["prep"].isoformat()], sorted(transcripts))
         self.assertEqual(0, run(["git", "-C", self.root, "check-ignore", "-q", DRIVE + "/"]).returncode)
         # Nothing in the wikis: the transcripts stay in the drive, as a download leaves them.
         self.assertEqual([], [p for p in (self.root / "Wikis" / "Meetings" / "wiki").rglob("*.md")
@@ -256,17 +256,17 @@ class StandaloneExampleTest(unittest.TestCase):
     def test_the_context_rows_are_marked_for_the_example_zone(self):
         ctx = load_context(self.root)
         self.assertIn("Example", ctx["zones"])
-        self.assertEqual("Example", ctx["parties"]["ashgrove"]["zone"])
+        self.assertEqual("Example", ctx["parties"]["quillfield"]["zone"])
         people = (self.root / "System" / "context.md").read_text(encoding="utf-8").split("## People", 1)[1]
         for name in ("Robin Hale", "Ines Calder", "Leo Brandt", "Nadia Fenn", "Tom Ashby", "Carla Mendes"):
-            self.assertIn("| %s | `ashgrove` |" % name, people)
+            self.assertIn("| %s | `quillfield` |" % name, people)
 
     def test_a_folder_that_is_not_there_is_warned_about(self):
         hub = self.zone / "Spring trade show" / "Spring trade show.md"
         text = hub.read_text(encoding="utf-8")
         self.addCleanup(hub.write_text, text, encoding="utf-8")
-        for value, warned in (("Ashgrove Shared/Marketing/Gone", True), (str(self.root / DRIVE), False),
-                              ("Ashgrove Shared/Misc/notes.txt", True), ("", True)):
+        for value, warned in (("Quillfield Shared/Marketing/Gone", True), (str(self.root / DRIVE), False),
+                              ("Quillfield Shared/Misc/notes.txt", True), ("", True)):
             hub.write_text(re.sub(r"(?m)^folder: .*$", "folder: " + value, text), encoding="utf-8")
             _, report = check(self.root)
             hits = [f for f in report["findings"] if f["check"] == "projects" and "`folder`" in f["message"]]
@@ -372,7 +372,7 @@ class AddedToAWorkspaceTest(unittest.TestCase):
         res, report = check(self.root)
         self.assertEqual((report["errors"], report["warnings"]), (0, 0), res.stdout)
         ctx = load_context(self.root)
-        self.assertEqual({"acme", "birch", "ashgrove"}, set(ctx["parties"]))
+        self.assertEqual({"acme", "birch", "quillfield"}, set(ctx["parties"]))
         self.assertIn('Bash(git -C "Zones/Example" commit:*)',
                       json.loads((self.root / ".claude" / "settings.json").read_text())["permissions"]["allow"])
         self.assertEqual("", git(self.root, "status", "--porcelain"))
@@ -388,7 +388,7 @@ class AddedToAWorkspaceTest(unittest.TestCase):
         self.assertFalse((self.root / "Zones" / "Example").exists())
         self.assertFalse((self.root / DRIVE).exists())
         context = (self.root / "System" / "context.md").read_text(encoding="utf-8")
-        for gone in ("ashgrove", "Ashgrove", "Robin Hale", "Carla Mendes", "| Example |"):
+        for gone in ("quillfield", "Quillfield", "Robin Hale", "Carla Mendes", "| Example |"):
             self.assertNotIn(gone, context)
         stamp = json.loads((self.root / "System" / "garrick-version.json").read_text())
         self.assertEqual([], [k for k in stamp["files"] if k.startswith("Zones/Example/")])

@@ -2,16 +2,16 @@
 title: Spring trade show
 type: project
 zone: Example
-party: ashgrove
+party: quillfield
 status: active
-folder: Ashgrove Shared/Marketing/Spring trade show
+folder: Quillfield Shared/Marketing/Spring trade show
 created: {spring_start}
 updated: {spring}
 ---
 
 # Spring trade show
 
-Ashgrove's stand at the Northfield Office Show, {show_dates}: the booking, the stand and its graphics. Which products go on the stand is decided nearer the time.
+Quillfield's stand at the Northfield Office Show, {show_dates}: the booking, the stand and its graphics. Which products go on the stand is decided nearer the time.
 
 ## Threads
 
@@ -23,7 +23,7 @@ None yet.
 
 ## Contents
 
-The files are in the shared drive, in `Ashgrove Shared/Marketing/Spring trade show/`, and stay there: Garrick reads them and never writes to them. What is made here goes in `Deliverables/`.
+The files are in the shared drive, in `Quillfield Shared/Marketing/Spring trade show/`, and stay there: Garrick reads them and never writes to them. What is made here goes in `Deliverables/`.
 
 | Folder | Holds |
 |---|---|

@@ -2,16 +2,16 @@
 title: Dealer price list {next_year}
 type: project
 zone: Example
-party: ashgrove
+party: quillfield
 status: active
-folder: Ashgrove Shared/Finance/Dealer price list
+folder: Quillfield Shared/Finance/Dealer price list
 created: {dealer_start}
 updated: {dealer}
 ---
 
 # Dealer price list {next_year}
 
-Next year's list prices and dealer margins, with the Arc chair on the list for the first time. Nadia Fenn owns the margins and signs them off; Robin drafts the list.
+Next year's list prices and dealer margins, with the Kestle chair on the list for the first time. Nadia Fenn owns the margins and signs them off; Robin drafts the list.
 
 ## Threads
 
@@ -23,7 +23,7 @@ None yet.
 
 ## Contents
 
-The files are in the shared drive, in `Ashgrove Shared/Finance/Dealer price list/`, and stay there: Garrick reads them and never writes to them. What is made here goes in `Deliverables/`.
+The files are in the shared drive, in `Quillfield Shared/Finance/Dealer price list/`, and stay there: Garrick reads them and never writes to them. What is made here goes in `Deliverables/`.
 
 | Folder | Holds |
 |---|---|

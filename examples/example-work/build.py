@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build the worked example: Robin Hale's ordinary work at Ashgrove Furniture.
+"""Build the worked example: Robin Hale's ordinary work at Quillfield Furniture.
 
     python3 examples/example-work/build.py --target DIR     a new workspace with the example in it
     python3 examples/example-work/build.py --add WORKSPACE  the example, added to a workspace you have
 
 Either way the example is a zone of its own, Example, with its own repository:
 five pieces of work, each a project with one thread, a to-do list, and one
-question waiting in Needs you. Its files sit in a shared drive, `Ashgrove
+question waiting in Needs you. Its files sit in a shared drive, `Quillfield
 Shared/`, in the workspace's top folder: outside every zone and wiki, never
 committed, and read, never written. Its party and people go into
 System/context.md, marked for the Example zone. `System/tools/example.py
@@ -53,8 +53,8 @@ INSTALL = REPO / "install.py"
 ZONE = "Example"
 MANIFEST = ".example.json"   # garrick_lib.EXAMPLE_MANIFEST, which System/tools/example.py reads
 # Files a download leaves twice: the second is the same bytes under the name a browser gives it.
-DUPLICATES = {"Marketing/Arc chair launch/Dealer one-pager Final_v3.docx":
-              "Marketing/Arc chair launch/Dealer one-pager Final_v3 (1).docx"}
+DUPLICATES = {"Marketing/Kestle chair launch/Dealer one-pager Final_v3.docx":
+              "Marketing/Kestle chair launch/Dealer one-pager Final_v3 (1).docx"}
 
 
 class BuildError(Exception):
@@ -269,20 +269,20 @@ def png(label):
 
 # When each file in the drive was last saved: the first prefix that matches wins.
 SAVED = (
-    ("Marketing/Arc chair launch/Launch email draft.txt", "last", 17, 35),
-    ("Marketing/Arc chair launch/Arc chair launch brief", "arc_start", 11, 20),
-    ("Marketing/Arc chair launch/Dealer one-pager Final_v3 (1)", "onepager", 16, 40),
-    ("Marketing/Arc chair launch/Dealer one-pager", "onepager", 15, 55),
-    ("Marketing/Arc chair launch/Photo selects/", "photos", 14, 10),
+    ("Marketing/Kestle chair launch/Launch email draft.txt", "last", 17, 35),
+    ("Marketing/Kestle chair launch/Kestle chair launch brief", "arc_start", 11, 20),
+    ("Marketing/Kestle chair launch/Dealer one-pager Final_v3 (1)", "onepager", 16, 40),
+    ("Marketing/Kestle chair launch/Dealer one-pager", "onepager", 15, 55),
+    ("Marketing/Kestle chair launch/Photo selects/", "photos", 14, 10),
     ("Marketing/Spring trade show/Booking confirmation", "spring", 14, 30),
     ("Marketing/Spring trade show/", "long_ago", 12, 0),
     ("Marketing/Brand assets/", "older", 10, 0),
-    ("Sales/Westbrook University tender/Tender documents", "west_start", 10, 15),
-    ("Sales/Westbrook University tender/University case study", "long_ago", 9, 30),
-    ("Sales/Westbrook University tender/", "prep", 15, 20),
-    ("Customer service/Larchmont delivery problem/Original order", "order", 9, 45),
-    ("Customer service/Larchmont delivery problem/Call with", "call", 16, 30),
-    ("Customer service/Larchmont delivery problem/", "larch_start", 11, 0),
+    ("Sales/Ellisford University tender/Tender documents", "west_start", 10, 15),
+    ("Sales/Ellisford University tender/University case study", "long_ago", 9, 30),
+    ("Sales/Ellisford University tender/", "prep", 15, 20),
+    ("Customer service/Brannock delivery problem/Original order", "order", 9, 45),
+    ("Customer service/Brannock delivery problem/Call with", "call", 16, 30),
+    ("Customer service/Brannock delivery problem/", "larch_start", 11, 0),
     ("Finance/Dealer price list/Dealer price list {year}", "list_start", 10, 0),
     ("Finance/Dealer price list/Dealer price list {next_year} draft", "dealer", 16, 20),
     ("Finance/Dealer price list/", "dealer_start", 10, 40),
@@ -297,9 +297,9 @@ def lay_drive(drive, values, d):
     file dated the day it was last saved. Returns the paths written."""
     saved = [(fill(prefix, values, "SAVED"), key, h, m) for prefix, key, h, m in SAVED]
     written = []
-    sources = sorted(p for p in (DRIVE / "Ashgrove Shared").rglob("*") if p.is_file() and p.name != ".DS_Store")
+    sources = sorted(p for p in (DRIVE / "Quillfield Shared").rglob("*") if p.is_file() and p.name != ".DS_Store")
     for src in sources:
-        rel = fill(src.relative_to(DRIVE / "Ashgrove Shared").as_posix(), values, "a drive path")
+        rel = fill(src.relative_to(DRIVE / "Quillfield Shared").as_posix(), values, "a drive path")
         text = fill(src.read_text(encoding="utf-8"), values, rel)
         hit = next(((key, h, m) for prefix, key, h, m in saved if rel.startswith(prefix)), ("zone_start", 9, 0))
         when = d[hit[0]]
@@ -343,27 +343,27 @@ def ticked(*keys):
 # stand at the end; to-do lines are added and ticked as content/'s Todo.md has them.
 PLAN = (
     ("spring_start", "10:00", project("Spring trade show", "Stand", "Book the stand"),
-     "New project Spring trade show (ashgrove), first thread Stand"),
-    ("arc_start", "09:30", project("Arc chair launch", "Launch campaign", "Dealer one-pager"),
-     "New project Arc chair launch (ashgrove), first thread Launch campaign"),
+     "New project Spring trade show (quillfield), first thread Stand"),
+    ("arc_start", "09:30", project("Kestle chair launch", "Launch campaign", "Dealer one-pager"),
+     "New project Kestle chair launch (quillfield), first thread Launch campaign"),
     ("dealer_start", "11:00", project("Dealer price list {next_year}", "New prices", "Draft {next_year} list"),
-     "New project Dealer price list {next_year} (ashgrove), first thread New prices"),
+     "New project Dealer price list {next_year} (quillfield), first thread New prices"),
     ("spring", "15:00", wrap("Spring trade show", done=["Book the stand"]),
      "Spring trade show, Stand: stand booked; nothing more until the exhibitor pack"),
     ("onepager", "16:00", ticked("Dealer one-pager"),
-     "Arc chair launch, Launch campaign: dealer one-pager to Leo"),
-    ("west_start", "10:30", project("Westbrook University tender", "Pitch"),
-     "New project Westbrook University tender (ashgrove), first thread Pitch"),
+     "Kestle chair launch, Launch campaign: dealer one-pager to Leo"),
+    ("west_start", "10:30", project("Ellisford University tender", "Pitch"),
+     "New project Ellisford University tender (quillfield), first thread Pitch"),
     ("dealer", "16:30", wrap("Dealer price list {next_year}", done=["Draft {next_year} list"]),
      "Dealer price list {next_year}, New prices: draft list to Nadia; waiting on her margins"),
-    ("prep", "15:30", wrap("Westbrook University tender", todo=["Pitch deck to Leo"]),
-     "Westbrook University tender, Pitch: prep with Leo; the sustainability page is Robin's"),
-    ("larch_start", "11:30", project("Larchmont delivery problem", "Replacement desks"),
-     "New project Larchmont delivery problem (ashgrove), first thread Replacement desks"),
-    ("call", "16:45", wrap("Larchmont delivery problem", todo=["Replacement schedule", "Damage photos"]),
-     "Larchmont delivery problem, Replacement desks: call with Carla; which date was promised is in Needs you"),
-    ("last", "17:40", wrap("Arc chair launch", todo=["Launch email draft"]),
-     "Arc chair launch, Launch campaign: launch email half written; stops before pricing"),
+    ("prep", "15:30", wrap("Ellisford University tender", todo=["Pitch deck to Leo"]),
+     "Ellisford University tender, Pitch: prep with Leo; the sustainability page is Robin's"),
+    ("larch_start", "11:30", project("Brannock delivery problem", "Replacement desks"),
+     "New project Brannock delivery problem (quillfield), first thread Replacement desks"),
+    ("call", "16:45", wrap("Brannock delivery problem", todo=["Replacement schedule", "Damage photos"]),
+     "Brannock delivery problem, Replacement desks: call with Carla; which date was promised is in Needs you"),
+    ("last", "17:40", wrap("Kestle chair launch", todo=["Launch email draft"]),
+     "Kestle chair launch, Launch campaign: launch email half written; stops before pricing"),
 )
 
 
@@ -592,7 +592,7 @@ def add(root, today=None, quiet=False):
 
     said = ["The example is in %s: Robin Hale's work at %s, in the %s zone, with its files in %s/."
             % (root, data["name"], data["zone"], data["drive"]),
-            "  Five pieces of work, Arc chair launch on top; one question in Needs you.",
+            "  Five pieces of work, Kestle chair launch on top; one question in Needs you.",
             "  To remove it: python3 System/tools/example.py archive. To bring it back: restore."]
     changed = [r for r in root_files if git_quiet(root, "status", "--porcelain", "--", r).stdout.strip()]
     if (root / ".git").exists() and changed:
@@ -619,7 +619,7 @@ def build(target, today=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Build the worked example: Robin Hale's work at Ashgrove Furniture.")
+    ap = argparse.ArgumentParser(description="Build the worked example: Robin Hale's work at Quillfield Furniture.")
     where = ap.add_mutually_exclusive_group(required=True)
     where.add_argument("--target", help="an empty or new folder: a new workspace with the example in it")
     where.add_argument("--add", metavar="WORKSPACE", help="a workspace you have: the example added to it")

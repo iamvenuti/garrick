@@ -1,20 +1,20 @@
 # The example
 
-A worked example to try Garrick on before your own work is in it: a week in the work of Robin Hale, product marketing manager at Ashgrove Furniture, an invented maker of office furniture. One employer, five pieces of work across marketing, sales and customers, two call transcripts, and one question Garrick is waiting on you to answer. You stand in for Robin. When you are done, it comes out in one step, and nothing of yours goes with it.
+A worked example to try Garrick on before your own work is in it: a week in the work of Robin Hale, product marketing manager at Quillfield Furniture, an invented maker of office furniture. One employer, five pieces of work across marketing, sales and customers, two call transcripts, and one question Garrick is waiting on you to answer. You stand in for Robin. When you are done, it comes out in one step, and nothing of yours goes with it.
 
 ## What is in it
 
 | Piece of work | Where it stands |
 |---|---|
-| Arc chair launch | The launch email was half written yesterday and stops before its pricing section. Due to Leo and Ines on Friday |
-| Larchmont delivery problem | Forty desks arrived damaged. In the call with the customer, two different replacement dates were said, so Garrick asks you which one was promised |
-| Westbrook University tender | The sustainability page of the pitch deck is yours to write |
+| Kestle chair launch | The launch email was half written yesterday and stops before its pricing section. Due to Leo and Ines on Friday |
+| Brannock delivery problem | Forty desks arrived damaged. In the call with the customer, two different replacement dates were said, so Garrick asks you which one was promised |
+| Ellisford University tender | The sustainability page of the pitch deck is yours to write |
 | Dealer price list | Waiting on Nadia in finance to sign off the margins |
 | Spring trade show | Booked, and quiet for three weeks |
 
-Things to try: continue the launch email, answer the Larchmont question, or ask "what do I owe people this week?".
+Things to try: continue the launch email, answer the Brannock question, or ask "what do I owe people this week?".
 
-Robin's files are in a shared drive, `Ashgrove Shared/`, in the workspace's top folder, a little messy, as shared drives are. Garrick reads them where they are and never writes to them: each piece of work points at its folder there. What you make in the example goes into the example's own record instead.
+Robin's files are in a shared drive, `Quillfield Shared/`, in the workspace's top folder, a little messy, as shared drives are. Garrick reads them where they are and never writes to them: each piece of work points at its folder there. What you make in the example goes into the example's own record instead.
 
 The dates move with the day you add it, so "yesterday" is always true.
 

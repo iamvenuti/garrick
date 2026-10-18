@@ -6,18 +6,18 @@ The advisor demo in [`../demo/`](../demo/README.md) is the other one: two client
 
 ## The world
 
-**Ashgrove Furniture** (`ashgrove`, `ashgrove.example`) makes office furniture and sells it to businesses, universities and hotels, mostly through dealers. **Robin Hale** is its product marketing manager, and the person whose work this is: you stand in for Robin.
+**Quillfield Furniture** (`quillfield`, `quillfield.example`) makes office furniture and sells it to businesses, universities and hotels, mostly through dealers. **Robin Hale** is its product marketing manager, and the person whose work this is: you stand in for Robin.
 
 | Person | Role |
 |---|---|
 | Robin Hale | Product marketing manager |
-| Ines Calder | Designer of the Arc chair; brand and product photography |
+| Ines Calder | Designer of the Kestle chair; brand and product photography |
 | Leo Brandt | Sales lead for education |
 | Nadia Fenn | Finance; owns pricing and dealer margins |
 | Tom Ashby | Customer service and deliveries |
-| Carla Mendes | Facilities manager at Larchmont Hotels, a customer |
+| Carla Mendes | Facilities manager at Brannock Hotels, a customer |
 
-One employer, one confidence: every piece of work carries `ashgrove`, and there is no wall. Larchmont Hotels and Westbrook University are customers, not parties.
+One employer, one confidence: every piece of work carries `quillfield`, and there is no wall. Brannock Hotels and Ellisford University are customers, not parties.
 
 ## The five pieces of work
 
@@ -25,17 +25,17 @@ Each is a project with one thread, most recent first.
 
 | Piece of work | Thread | Where it stands |
 |---|---|---|
-| Arc chair launch | Launch campaign | The launch email was half written yesterday and stops before its pricing section. One owed: the draft to Leo and Ines, due Friday |
-| Larchmont delivery problem | Replacement desks | Forty damaged desks. In the call with Carla, Tom said one date and Robin another, so the one question in Needs you asks which was promised |
-| Westbrook University tender | Pitch | After the prep call with Leo, the sustainability page of the deck is Robin's to write |
+| Kestle chair launch | Launch campaign | The launch email was half written yesterday and stops before its pricing section. One owed: the draft to Leo and Ines, due Friday |
+| Brannock delivery problem | Replacement desks | Forty damaged desks. In the call with Carla, Tom said one date and Robin another, so the one question in Needs you asks which was promised |
+| Ellisford University tender | Pitch | After the prep call with Leo, the sustainability page of the deck is Robin's to write |
 | Dealer price list (next year's) | New prices | Waiting on Nadia to sign off the margins; the launch email's pricing waits on it too |
 | Spring trade show | Stand | Booked, and quiet for three weeks |
 
-The question is a file in the Larchmont thread, `Threads/Replacement desks/Needs you/<YYMMDD> - larchmont-date.md`, with two answers, each the next action it leads to. The to-do list holds four owed lines, three of them dated this week.
+The question is a file in the Brannock thread, `Threads/Replacement desks/Needs you/<YYMMDD> - brannock-date.md`, with two answers, each the next action it leads to. The to-do list holds four owed lines, three of them dated this week.
 
 ## Where its files are
 
-Robin's files are in a shared drive, `Ashgrove Shared/`, in the workspace's top folder: outside every zone and wiki, read and never written, and never committed (the workspace's `.gitignore` keeps it out). Each project's hub points at its folder there with `folder:`. The drive is messier than the work: `Misc`, `Old - do not use`, a `Brand assets` folder that belongs to no piece of work, and `Dealer one-pager Final_v3.docx` beside `Final_v3 (1).docx`. The two transcripts are in it too, as a download leaves them, and the Meetings and Knowledge wikis stay empty.
+Robin's files are in a shared drive, `Quillfield Shared/`, in the workspace's top folder: outside every zone and wiki, read and never written, and never committed (the workspace's `.gitignore` keeps it out). Each project's hub points at its folder there with `folder:`. The drive is messier than the work: `Misc`, `Old - do not use`, a `Brand assets` folder that belongs to no piece of work, and `Dealer one-pager Final_v3.docx` beside `Final_v3 (1).docx`. The two transcripts are in it too, as a download leaves them, and the Meetings and Knowledge wikis stay empty.
 
 It sits inside the workspace rather than beside it so that a session opened there reads it without asking for a folder outside, and so the example comes and goes as one.
 
@@ -72,7 +72,7 @@ When it is built, `python3 System/tools/check.py` inside the workspace reports n
 | `example.json` | The zone, the drive, the party and the people |
 | `config.json` | The installer's answers for a workspace of Robin's own, for `--target` |
 | `content/Zones/Example/` | The zone's notes as they stand at the end, with `{name}` for each date |
-| `drive/Ashgrove Shared/` | The drive's files. A `.docx.txt`, `.pdf.txt` or `.png.txt` is made into that kind of file |
+| `drive/Quillfield Shared/` | The drive's files. A `.docx.txt`, `.pdf.txt` or `.png.txt` is made into that kind of file |
 | `build.py` | Lays the drive down, makes the zone with the workspace's own scaffold script, and replays the month in `PLAN` |
 
 To change the story, edit the files and the `PLAN` list at the top of `build.py`. A `{name}` the build does not fill stops it with an error; `fields()` in `build.py` lists the names. Then run `python3 -m unittest discover -s tests -p test_example.py`.

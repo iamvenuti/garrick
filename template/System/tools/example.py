@@ -267,7 +267,7 @@ def commit(root: Path, rels: List[str], was_clean: Dict[str, bool], message: str
     if not all(was_clean.get(r) for r in changed):
         return ("%s had changes of yours not yet committed, so this change is left beside them: commit them "
                 "together in the workspace's own repository." % " and ".join(changed))
-    res = git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message, "--", *changed)
+    res = git(root, "commit", "-q", "-m", message, "--", *changed)
     if res.returncode != 0:
         return "The change to %s is made but could not be committed: %s" % (
             " and ".join(changed), " ".join((res.stderr or res.stdout).split()))

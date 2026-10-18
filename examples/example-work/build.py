@@ -534,7 +534,7 @@ def add(root, today=None, quiet=False):
                 "parties": [data["party"]["tag"]], "added": today.isoformat()}
     (zone_dir / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     run(["git", "add", MANIFEST], zone_dir, first, "staging the manifest")
-    run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m",
+    run(["git", "commit", "-q", "-m",
          "Example: %s, a worked example to try Garrick on" % data["name"]], zone_dir, stamp(d["zone_start"], "09:05"),
         "committing the manifest")
     add_rows(root, data)
@@ -568,7 +568,7 @@ def add(root, today=None, quiet=False):
                 todo.tick(fill(k, values, "PLAN"))
         (zone_dir / "Todo.md").write_text(todo.render(), encoding="utf-8")
         run(["git", "add", "-A"], zone_dir, when, "staging %r" % message)
-        run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", fill(message, values, "PLAN")],
+        run(["git", "commit", "-q", "-m", fill(message, values, "PLAN")],
             zone_dir, when, "committing %r" % message)
 
     # Every file content/ holds is now in place, exactly, and the zone is clean.
@@ -597,7 +597,7 @@ def add(root, today=None, quiet=False):
     changed = [r for r in root_files if git_quiet(root, "status", "--porcelain", "--", r).stdout.strip()]
     if (root / ".git").exists() and changed:
         if all(was_clean[r] for r in changed):
-            r = git_quiet(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m",
+            r = git_quiet(root, "commit", "-q", "-m",
                           "Example: %s added, in the %s zone" % (data["name"], data["zone"]), "--", *changed)
             if r.returncode != 0:
                 said.append("  %s changed but could not be committed: %s" % (" and ".join(changed), r.stderr.strip()))

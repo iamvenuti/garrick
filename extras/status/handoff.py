@@ -12,9 +12,9 @@ The one documented way in from another app is the Claude Code CLI's
 and with `--resume <session id>` on that session. It takes no prompt, so a
 session is started first and handed over:
 
-1. `claude -p "<the question>" --output-format json`, headless, in the work's
-   folder: it reads the workspace's AGENTS.md and answers, and its JSON
-   carries `session_id` (prime());
+1. `claude -p "<the question>" --output-format json`, headless and read-only
+   (READ_ONLY), in the work's folder: it reads the workspace's AGENTS.md and
+   answers, and its JSON carries `session_id` (prime());
 2. `claude --desktop --resume <that id>` in the same folder (open_desktop()).
    `--desktop` refuses to run without a terminal, so it runs under a
    pseudo-terminal of its own; and it refuses `--settings` and
@@ -66,6 +66,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 RECORD = ("System", "generated", "desktop-sessions.json")
+# The priming call runs headless, before the user sees anything, so it may
+# only read: whatever the workspace allows, no command runs and no file is
+# written in it. The desktop session it hands over keeps the workspace's own
+# permissions. Given as one `=` value, so the list cannot take in what follows.
+READ_ONLY = "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"
 # A session continued again within this many hours is resumed as it is; an
 # older one is primed afresh, so Claude reads where the work stands now.
 FRESH_HOURS = 12
@@ -330,7 +335,7 @@ def prime(claude: Path, folder: Path, prompt: str, timeout: Optional[float] = No
     group of its own, so what it started is stopped with it at the time."""
     timeout = PRIME_TIMEOUT if timeout is None else timeout
     try:
-        p = subprocess.Popen([str(claude), "-p", prompt, "--output-format", "json"], cwd=str(folder),
+        p = subprocess.Popen([str(claude), "-p", prompt, "--output-format", "json", READ_ONLY], cwd=str(folder),
                              env=child_env(claude, env), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
     except OSError as e:

@@ -501,7 +501,8 @@ class TestContinue(HandOffCase):
         self.assertEqual("Opened Acme Review in Claude. It already knows where it stands", said)
         prime, desk = self.calls()
         folder = str((self.work / "Acme Review").resolve())          # a project that is one thread opens as the project
-        self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json"], prime["args"])
+        self.assertEqual(["-p", "Where am I on Acme Review?", "--output-format", "json",
+                          "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(folder, str(Path(prime["cwd"]).resolve()))
         self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
         self.assertTrue(desk["tty"])                                  # --desktop refuses without one
@@ -687,7 +688,8 @@ class TestAskSomething(HandOffCase):
         self.assertEqual("Opened Claude on your question. Its answer is waiting there", out["say"])
         self.assertNotIn("answer", out)
         prime, desk = self.calls()
-        self.assertEqual(["-p", "What do I owe people this week?", "--output-format", "json"], prime["args"])
+        self.assertEqual(["-p", "What do I owe people this week?", "--output-format", "json",
+                          "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"], prime["args"])
         self.assertEqual(str(self.root.resolve()), str(Path(prime["cwd"]).resolve()))
         self.assertEqual(["--desktop", "--resume", sid(1)], desk["args"])
 

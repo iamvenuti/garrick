@@ -647,6 +647,13 @@ class TestLocalSessionsOff(HandOffCase):
         self.assertTrue(handoff.managed_off([on, off]))
         self.assertFalse(handoff.managed_off([on, self.root.parent / "missing.plist"]))
 
+    def test_the_users_managed_place_is_found_without_user_set(self):
+        import pwd
+        env = {k: v for k, v in os.environ.items() if k != "USER"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            places = handoff.managed_places(["/Managed/{user}/x.plist"])
+        self.assertEqual([Path("/Managed/%s/x.plist" % pwd.getpwuid(os.getuid()).pw_name)], places)
+
     def test_ask_something_still_answers_on_the_page(self):
         managed = self.root.parent / "managed.json"
         managed.write_text(json.dumps({"disableDesktopLocalSessions": True}))

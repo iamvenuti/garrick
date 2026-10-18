@@ -55,6 +55,7 @@ import datetime as dt
 import json
 import os
 import plistlib
+import pwd
 import re
 import select
 import signal
@@ -197,7 +198,10 @@ def fresh(entry: Optional[dict], now: Optional[dt.datetime] = None) -> bool:
 # --------------------------------------------------------------------------- local sessions switched off
 
 def managed_places(places: Optional[Iterable[str]] = None) -> List[Path]:
-    user = os.environ.get("USER") or ""
+    try:
+        user = pwd.getpwuid(os.getuid()).pw_name    # a Mac app may start with no $USER
+    except (KeyError, OSError):
+        user = os.environ.get("USER") or ""
     return [Path(p.replace("{user}", user)) for p in (places if places is not None else MANAGED_PLACES)]
 
 

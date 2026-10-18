@@ -1,0 +1,15 @@
+{
+  "name": "Ashgrove Furniture",
+  "zone": "Example",
+  "holds": "A worked example to try Garrick on: Robin Hale's work at Ashgrove Furniture. Remove it when you are done",
+  "drive": "Ashgrove Shared",
+  "party": {"name": "Ashgrove Furniture", "what": "Example. Office furniture maker; Robin Hale's employer", "tag": "ashgrove", "domains": ["ashgrove.example"]},
+  "people": [
+    {"name": "Robin Hale", "role": "Product marketing manager; the example's work is Robin's"},
+    {"name": "Ines Calder", "role": "Designer of the Arc chair; brand and product photography"},
+    {"name": "Leo Brandt", "role": "Sales lead for education"},
+    {"name": "Nadia Fenn", "role": "Finance; owns pricing and dealer margins"},
+    {"name": "Tom Ashby", "role": "Customer service and deliveries"},
+    {"name": "Carla Mendes", "role": "Facilities manager at Larchmont Hotels, a customer"}
+  ]
+}

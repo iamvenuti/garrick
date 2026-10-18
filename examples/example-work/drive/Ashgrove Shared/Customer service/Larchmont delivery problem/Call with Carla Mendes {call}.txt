@@ -1,0 +1,20 @@
+Call with Carla Mendes
+{call_long}
+Carla Mendes (Larchmont Hotels), Tom Ashby, Robin Hale
+
+Robin Hale: Carla, thank you for making time. Tom's here with me.
+Carla Mendes: Thank you both. I'll be straightforward. Forty desks, all damaged, and I have a conference at Riverside on {conference_dm}. Two hundred people, and the business centre needs those desks.
+Tom Ashby: We're sorry, Carla. It was the carrier: the pallets were stacked against our instructions. We'll make the claim against them, that's on us, not you.
+Carla Mendes: I don't mind whose fault it is. I mind when the new desks arrive.
+Tom Ashby: I spoke to the factory this morning. They can turn the desks round by {tom_nth}.
+Carla Mendes: By {tom_nth}. Delivered, or made?
+Tom Ashby: Made, and on the truck.
+Carla Mendes: And Harbour? Harbour can wait a little, but not long.
+Robin Hale: Both hotels together, one delivery, so the carrier doesn't touch them twice. Let's not promise a day we can't keep. {robin_said_cap} at the latest, both hotels.
+Carla Mendes: I need it in writing. Dates, which hotel gets what, and who I call if it slips.
+Robin Hale: You'll have it in writing by {schedule_due_day}.
+Carla Mendes: Good. And you'll want my photos for the claim?
+Tom Ashby: Please. I'll need them for the carrier.
+Carla Mendes: I sent them to Robin yesterday.
+Robin Hale: I have them. I'll pass them to Tom.
+Carla Mendes: Thank you. I'll wait for the letter.

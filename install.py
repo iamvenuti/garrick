@@ -17,6 +17,7 @@ if sys.version_info < (3, 9):
              % sys.version_info[:2])
 
 import argparse
+import importlib.util
 import json
 import os
 import posixpath
@@ -877,6 +878,25 @@ def interview(pl, target=None, force=False):
     return cfg, root
 
 
+# --------------------------------------------------------------------------- the example
+
+EXAMPLE_BUILD = REPO / "examples" / "example-work" / "build.py"
+
+
+def add_example(root):
+    """--example: Robin Hale's work at Ashgrove Furniture, added to the
+    workspace just installed, as examples/example-work/build.py --add does."""
+    if not EXAMPLE_BUILD.is_file():
+        raise InstallError(f"{EXAMPLE_BUILD} is missing, so the example could not be added.")
+    spec = importlib.util.spec_from_file_location("garrick_example_build", EXAMPLE_BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        module.add(root)
+    except module.BuildError as exc:
+        raise InstallError(f"The workspace is installed, but the example could not be added: {exc}") from None
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -892,6 +912,9 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="allow a folder that already has other files in it")
     ap.add_argument("--allowlist", metavar="WORKSPACE",
                     help="allow Garrick's own commands in a workspace already installed, and change nothing else")
+    ap.add_argument("--example", action="store_true",
+                    help="add the worked example, Robin Hale's work at Ashgrove Furniture, as a zone of its own "
+                         "that System/tools/example.py removes again")
     args = ap.parse_args(argv)
     try:
         if args.allowlist:
@@ -904,7 +927,9 @@ def main(argv=None):
             target = args.target or cfg.get("target") or DEFAULT_TARGET
         else:
             cfg, target = interview(lib(), args.target, args.force)
-        install(cfg, Path(target).expanduser(), force=args.force)
+        root = install(cfg, Path(target).expanduser(), force=args.force)
+        if args.example:
+            add_example(root)
     except InstallError as exc:
         print(exc, file=sys.stderr)
         return 1

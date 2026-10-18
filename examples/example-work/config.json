@@ -1,0 +1,13 @@
+{
+  "owner": {
+    "name": "Robin Hale",
+    "description": "Product marketing manager at Ashgrove Furniture, a maker of office furniture; work across marketing, sales and customers."
+  },
+  "zones": [
+    {"name": "Work", "holds": "Your own work, once you start it"}
+  ],
+  "parties": [],
+  "walls": [],
+  "people": [],
+  "aliases": []
+}

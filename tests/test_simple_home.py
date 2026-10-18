@@ -408,6 +408,30 @@ class TestAnswering(GitCase):
         self.assertEqual({self.FILE, "Acme Review/Threads/Pricing/Pricing.md"}, set(filter(None, changed[1:])))
         self.assertIn("Nothing needs you.", self.page())          # and the home moves on
 
+    def test_a_refused_commit_puts_back_both_files_or_neither(self):
+        real = pa.git
+
+        def refused(edit):
+            def git(zone, *args, **kw):
+                if args[:1] == ("commit",):
+                    if edit:
+                        self.q.write_text(self.q.read_text() + "\nEdited meanwhile.\n")
+                    return 1, "the pre-commit hook said no"
+                return real(zone, *args, **kw)
+            return git
+
+        before = self.note.read_text(encoding="utf-8"), self.q.read_text(encoding="utf-8")
+        req = {"verb": "answer", "zone": "Work", "file": self.FILE, "label": "500 pallets"}
+        with mock.patch.object(pa, "git", refused(False)):
+            with self.assertRaisesRegex(pa.Refused, "nothing changed: the pre-commit hook said no"):
+                pa.act(self.root, req, today=TODAY)
+        self.assertEqual(before, (self.note.read_text(encoding="utf-8"), self.q.read_text(encoding="utf-8")))
+        with mock.patch.object(pa, "git", refused(True)):
+            with self.assertRaisesRegex(pa.Refused, "edited meanwhile"):
+                pa.act(self.root, req, today=TODAY)
+        self.assertIn("Send Dana the price sheet at a 500-pallet floor", self.note.read_text(encoding="utf-8"))
+        self.assertIn("Edited meanwhile.", self.q.read_text(encoding="utf-8"))   # neither put back
+
     def test_a_second_answer_and_an_unknown_one_are_refused(self):
         with self.assertRaises(pa.Refused):
             pa.act(self.root, {"verb": "answer", "zone": "Work", "file": self.FILE, "label": "450 pallets"}, today=TODAY)

@@ -1915,8 +1915,9 @@ def put_off(ws: Path, req: dict, today: dt.date) -> str:
 
 
 def commit_all(zone: Path, notes: list, message: str, wall: Optional[str] = None) -> None:
-    """commit() for several files in one commit: each put back, when the
-    commit is refused, if it still holds what this request wrote."""
+    """commit() for several files in one commit. When the commit is refused,
+    all are put back if every one still holds what this request wrote, and
+    none if any was edited meanwhile, so they never disagree."""
     rels = [str(n.relative_to(zone)) for n, _ in notes]
     mine = [n.read_bytes() for n, _ in notes]
     deadline = time.time() + COMMIT_TIMEOUT
@@ -1929,15 +1930,13 @@ def commit_all(zone: Path, notes: list, message: str, wall: Optional[str] = None
     if code == 0:
         return
     why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
-    ours = True
-    for (n, before), wrote in zip(notes, mine):
-        try:
-            if n.read_bytes() == wrote:
-                n.write_bytes(before)
-            else:
-                ours = False
-        except OSError:
-            ours = False
+    try:
+        ours = all(n.read_bytes() == wrote for (n, _), wrote in zip(notes, mine))
+    except OSError:
+        ours = False
+    if ours:                                    # all put back, or none: never one answered and the other open
+        for n, before in notes:
+            n.write_bytes(before)
     git(zone, "reset", "-q", "--", *rels, timeout=10)
     if not ours:
         raise Refused("not committed: %s. A note was edited meanwhile, so it was left as it is" % why)

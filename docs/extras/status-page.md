@@ -2,6 +2,8 @@
 
 One page that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser, or in a small [Mac app](#a-mac-app) of its own. It needs no server, no account and no network, and it works whether or not you use Obsidian or cmux: each time it is built, it checks which of them this machine has and offers only what will work.
 
+A newly installed workspace opens on the [simple home](simple-home.md) instead: your work, a box to ask something and the questions waiting on you, with *Continue* opening a piece of work in Claude's desktop app, and everything this page describes under *More*. One installed before the simple home existed keeps this page; *Settings › Home* switches either way.
+
 ## What it shows
 
 - **Start here**, in a new workspace with no project yet: the one request that sets the first project up, and where the route is written.
@@ -330,7 +332,12 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `delete` | Without `confirm`, lists what deleting a project or thread would remove; with `confirm` naming it, removes it in one commit, through `scaffold.py delete` |
 | `undo` | Reverts a rename or a deletion, while it is still the zone's last commit |
 | `run` | Starts a scheduled job now, through launchd, unless it holds its lock |
-| `settings` | Saves how a thread opens, for every viewer of the page |
+| `settings` | Saves how a thread opens, for every viewer of the page, and which page Garrick opens on (`home`) |
+| `answer` | Answers a [Needs you](simple-home.md#needs-you) question by one of its options: the work's Next action becomes what the option leads to, with a dated entry, the question says it was answered, and both are committed in one commit |
+| `later` | Puts a Needs you question off to a later day, tomorrow unless `until` names one, and commits it |
+| `continue` | Commits Garrick's own record of a piece of work, asks Claude where it stands, and opens that session in Claude's desktop app ([Continue](simple-home.md#continue)) |
+| `ask-desktop` | Asks Claude the words typed into Ask something, in the workspace's folder, and opens that session in the desktop app; where the app cannot open it, the answer comes back to the page |
+| `example` | Puts the example away, or brings it back, through `System/tools/example.py` |
 | `open` | With the [cmux extra](cmux.md): a tab for a thread or project, resumed. Or by `folder`, its full path: a project's or a thread's folder, the same way, or the workspace root, whose tab starts on the request's `prompt`; any other folder is refused |
 | `close` | With the cmux extra: closes its tabs, unless one is mid-turn |
 | `startup` | With the cmux extra: starts cmux and brings back the day's tabs |

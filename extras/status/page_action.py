@@ -83,7 +83,24 @@ zone's repository, as the skills would:
                 log names only LOGGED, settings keeps no durable record, and
                 a failure is said in words of this file's own.
                 Settings › While you wait: {"while-you-wait": {...}},
-                checked by System/tools/next_up.py
+                checked by System/tools/next_up.py. Settings › Home:
+                {"home": "simple"} or "full", the page Garrick opens on
+    answer      a Needs you question answered by one of its options (#175):
+                {"zone", "file", "label"}; the work's Next action becomes
+                what the option leads to, with a dated entry, the question
+                says answered, and both are committed in one commit
+    later       "Not now": {"zone", "file", "until"?}; the question put off
+                to tomorrow, or to the day `until` names, and committed
+    continue    a piece of work opened in Claude's desktop app, already
+                oriented: {"zone", "file"}, its note. Its own record is
+                committed, a headless `claude -p` asks where it stands, and
+                that session opens with `claude --desktop --resume`, under
+                a pseudo-terminal (handoff.py, beside this file)
+    ask-desktop Ask something: {"prompt"}, asked the same way in the
+                workspace's own folder; where the desktop app cannot open
+                it, the answer comes back in the reply, as "answer"
+    example     the example put away or brought back: {"do": "archive"}
+                or "restore", through System/tools/example.py (#174)
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,

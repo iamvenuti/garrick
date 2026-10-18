@@ -126,6 +126,7 @@ CHECKS = [
     ("deliverables", "Deliverables"),
     ("anonymous", "Anonymous projects"),
     ("todo", "To-do lists"),
+    ("questions", "Needs you questions"),
     ("links", "Links"),
     ("meetings", "Meeting pages"),
     ("people", "Person pages"),
@@ -2181,6 +2182,47 @@ def zone_notes(ws: Workspace, zone: Optional[Path] = None) -> List[Tuple[Path, s
     return [(p, t) for p, t in ws.zone_notes if zone in p.parents]
 
 
+QUESTION_STATUSES = ("open", "answered", "later")
+QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+\S")
+
+
+def check_questions(ws: Workspace) -> List[Finding]:
+    """A Needs you question (#175) is a file in the folder of the work it
+    blocks, `Needs you/<YYMMDD> - <slug>.md`, which the status page's simple
+    home reads and answers. It needs `type: question`, a status the home
+    reads (open, answered or later), a `later:` date when it is put off, an
+    `answer:` once answered, and a bold line that is the question; the home
+    leaves out a file without them, so the question would never be seen."""
+    out = []
+    for project, _ in ws.projects:
+        for box in [project / "Needs you"] + [t / "Needs you" for t in visible_dirs(project / "Threads")]:
+            if not box.is_dir():
+                continue
+            for f in sorted(box.glob("*.md")):
+                if f.name.startswith((".", "_")):
+                    continue
+                r = rel(ws, f)
+                fm = parse_frontmatter(f)
+                say = "A Needs you question the home cannot read"
+                if fm.get("type") != "question":
+                    out.append(Finding(WARNING, "questions", r, "frontmatter `type` is %r, should be question" % fm.get("type"), say))
+                status = str(fm.get("status") or "").strip().lower()
+                if status not in QUESTION_STATUSES:
+                    out.append(Finding(WARNING, "questions", r, "`status` is %r; the home reads %s" % (
+                        fm.get("status"), ", ".join(QUESTION_STATUSES)), say))
+                if status == "later" and not re.match(r"^\d{4}-\d\d-\d\d$", str(fm.get("later") or "")):
+                    out.append(Finding(WARNING, "questions", r, "put off with no `later:` date, so it never comes back", say))
+                if status == "answered" and not str(fm.get("answer") or "").strip():
+                    out.append(Finding(WARNING, "questions", r, "answered, with no `answer:`", say))
+                try:
+                    body = f.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if not re.search(r"(?m)^\s*\*\*.+\*\*\s*$", body):
+                    out.append(Finding(WARNING, "questions", r, "no bold line to ask, so the home leaves it out", say))
+    return out
+
+
 def check_links(ws: Workspace) -> List[Finding]:
     """Links that cross a boundary or lead somewhere fragile: a link from one
     zone into another; an absolute path into a cloud-synced folder; a link to
@@ -4072,7 +4114,7 @@ ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
-    check_todo, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
+    check_todo, check_questions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
     check_raw, check_generated, check_preferences, check_updates,
 ]
 

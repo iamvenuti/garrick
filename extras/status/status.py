@@ -33,6 +33,12 @@ What it shows is names, party tags, dates, counts, the check's findings
 Todo.md, and the targets of links: the graph reads a note's frontmatter and
 the targets of its [[links]], and draws the links as lines. The rest of a
 note's body never reaches the page. Pass --no-graph to leave the graph out.
+The simple home (#175), which a new workspace opens on and Settings › Home
+chooses, is the one exception: a piece of work means nothing without its
+next action, so it also shows the Resume here block's Where it stands, Next
+action and Waiting on, the newest dated entry, a note's opening sentence,
+its Needs you questions and the names of the files in its folder. It still
+lives in System/generated/, never committed and outside the wall check.
 
 **It offers what this machine has**, and asks at every build. A note's link
 opens it in Obsidian when Obsidian has registered the workspace, or the zone or
@@ -1478,7 +1484,7 @@ ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
-              "delete", "undo", "interrupt")
+              "delete", "undo", "interrupt", "answer", "later", "continue")
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}
@@ -1540,7 +1546,7 @@ if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'" data
 +'</span>'+(!e.out.ok&&e.lines&&e.lines.length?'<small>'+esc(e.lines.filter(String).join(' · '))+'</small>':'')
 +(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
-+((e.phase===undefined?now-e.t0>=WHY*1000:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
++((e.phase===undefined?now-e.t0>=WHY*1000&&e.q.verb!=='continue':e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
 box.innerHTML=html;box.hidden=!html;document.body.style.setProperty('--work-h',html?box.offsetHeight+8+'px':'0px')}hold()}
 /* each second: the time so far, why after WHY, a request with no reply after LOST given up, a batch's own toast once it has taken TOAST,
    and a card that says saved gone TOAST after it came, unless the pointer is on it */
@@ -4217,7 +4223,7 @@ def act_button(req: str, label: str, say: str, cls: str = "act", extra: str = ""
 def continue_button(w: dict, label: str = "Continue", primary: bool = True) -> str:
     return act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), label,
                       "Opening %s in Claude…" % w["name"], "act go%s" % (" primary" if primary else ""),
-                      ' data-busy="Opening…" data-phrase="%s"' % E("Where am I on %s?" % w["name"]))
+                      ' data-phrase="%s"' % E("Where am I on %s?" % w["name"]))
 
 
 def work_row(w: dict, today: dt.date) -> str:
@@ -4409,7 +4415,6 @@ details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-
 .sh-ws{padding:14px 16px}.sh-ws dl{margin:0}.sh-ws dt{font-size:12px;color:var(--muted);margin-top:10px}.sh-ws dt:first-child{margin-top:0}.sh-ws dd{margin:2px 0 0;overflow-wrap:anywhere}
 .sh-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .sh-files{margin:0;padding:0;list-style:none;font-size:13px;color:var(--ink2)}.sh-files li{padding:3px 0;overflow-wrap:anywhere}.sh-gone{text-decoration:line-through;color:var(--muted)}
-.act.go[disabled]{opacity:.6;cursor:progress}
 @media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}
 #tab-home,#tab-work{max-width:none}main{padding:16px 16px 80px}body.simple .sh-dot .sh-dw{display:none}}
 """
@@ -4417,8 +4422,9 @@ details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-
 # The simple home's script: which view shows (home, a piece of work's page,
 # or a tab under More), kept in this window's sessionStorage so the rebuild
 # after an action comes back to it, and on Home for a new window; Ask
-# something, and Claude's answer when it comes back to the page; Continue
-# shown busy while Claude is primed; Settings › Home. A browser cannot act:
+# something, and Claude's answer when it comes back to the page; Settings ›
+# Home. Continue, an answer and Not now commit in a zone, so WORK_JS shows
+# each running until its reply comes, as it does every such button. A browser cannot act:
 # there Continue and Ask copy what to say to Claude instead.
 SIMPLE_JS = r"""
 (function(){var body=document.body;if(!body.classList.contains('simple'))return;
@@ -4438,8 +4444,7 @@ var m=t.closest('[data-more]');if(m){e.preventDefault();view('tab:'+m.dataset.mo
 var tb=t.closest('.tabs [data-tab]');if(tb&&tb.dataset.tab==='home'){view('home');return}
 var g=t.closest('button.go[data-act]');if(!g)return;
 if(!host){e.stopPropagation();var p=g.dataset.phrase||'';if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it into Claude.')});return}
-if(body.dataset.local==='managed'){e.stopPropagation();say('Claude can\'t open work on this Mac. See the note on the home.');return}
-setTimeout(function(){g.disabled=true;g.textContent=g.dataset.busy||'Opening…'},0)},true);
+if(body.dataset.local==='managed'){e.stopPropagation();say('Claude can\'t open work on this Mac. See the note on the home.')}},true);
 /* Ask something: in the app, Claude opens on the words; in a browser they are copied for you */
 function askReq(v){return{verb:'ask-desktop',prompt:v}}
 var form=document.getElementById('sh-ask'),box=document.getElementById('sh-askbox');
@@ -4454,9 +4459,7 @@ x.setAttribute('aria-label','Dismiss');x.onclick=function(){ss(ANS,null);el.hidd
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='ask-desktop'){var d={q:q.prompt,a:out&&out.answer||''};
 if(d.a)ss(ANS,JSON.stringify(d));else ss(ANS,null);answer();var b=form&&form.querySelector('button');if(b){b.disabled=false;b.textContent='Ask'}
 if(out&&out.ok&&box)box.value=''}
-if(q&&q.verb==='continue')[].forEach.call(document.querySelectorAll('button.go[disabled]'),function(b){b.disabled=false;b.textContent=b.dataset.label||'Continue'});
 if(prev)return prev(q,out)};
-[].forEach.call(document.querySelectorAll('button.go[data-act]'),function(b){b.dataset.label=b.textContent});
 answer();var v=ss(VIEW);view(v||'home',true)})();
 /* Settings › Home, on either page: saved for every viewer at once, then the page rebuilds on the choice */
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;

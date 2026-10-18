@@ -68,7 +68,7 @@ RECORD = ("System", "generated", "desktop-sessions.json")
 # A session continued again within this many hours is resumed as it is; an
 # older one is primed afresh, so Claude reads where the work stands now.
 FRESH_HOURS = 12
-PRIME_TIMEOUT = 240           # seconds for the headless call that answers first
+PRIME_TIMEOUT = 180           # seconds for the headless call that answers first
 DESKTOP_TIMEOUT = 45          # seconds for `claude --desktop` to hand over and exit
 FILES_MAX = 400               # files of a work's folder kept and compared
 SKIP_PARTS = {".git", ".obsidian", ".trash", "archive", "Needs you", "__pycache__", "node_modules"}

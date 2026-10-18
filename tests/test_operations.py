@@ -284,7 +284,7 @@ def shapes(text, line0=1):
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-         "rename", "delete", "undo", "interrupt")
+         "rename", "delete", "undo", "interrupt", "answer", "later", "continue")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
@@ -315,9 +315,14 @@ SHAPES = {
     # WORK_JS's queue of ticks (#107): an entry it keeps, and the batch it sends
     "window.GarrickTick: q.verb": {"todo-done": (), "todo-undo": ()},
     "flush: one.verb": {"todo-done": (), "todo-undo": ()},
+    # SIMPLE_JS (#175): Ask something, and Settings › Home
+    "askReq: 'ask-desktop'": {"ask-desktop": ()},
+    "homeReq: 'settings'": {"settings": ()},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
-PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",)}
+PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",),
+             # the simple home (#175): Continue, a Needs you answer and Not now, the example's two links
+             '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
@@ -327,7 +332,8 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "TODO_JS": {"send: verb", "held: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
-           "NOTIFY_JS": {"nact: 'settings'"}}
+           "NOTIFY_JS": {"nact: 'settings'"},
+           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'"}}
 
 
 class TestWhatThePageSends(unittest.TestCase):

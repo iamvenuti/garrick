@@ -138,7 +138,9 @@ def dates(today):
     }
     jan = datetime.date(today.year, 1, 12)
     out["list_start"] = jan if jan < out["dealer_start"] else out["dealer_start"] - 30 * DAY
-    year = today.year if (datetime.date(today.year, 3, 10) - today).days >= 90 else today.year + 1
+    year = today.year
+    while (datetime.date(year, 3, 10) - today).days < 90:   # the next March far enough off to be quiet
+        year += 1
     out["show"] = datetime.date(year, 3, 10)
     return out
 

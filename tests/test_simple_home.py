@@ -528,6 +528,25 @@ class TestContinue(HandOffCase):
         self.assertEqual("", self.git("status", "--porcelain"))
         self.assertEqual("Acme Review: saved before opening in Claude", self.git("log", "-1", "--format=%s").strip())
 
+    def test_only_garricks_record_is_committed_never_the_users_files(self):
+        project = self.work / "Acme Review"
+        draft = write(project / "Deliverables" / "private draft.docx", "mine")
+        memo = project / "Deliverables" / "260301 - Pricing memo.md"
+        memo.write_text(memo.read_text() + "\nAn edit of the user's.\n")
+        head = self.git("rev-parse", "HEAD")
+        self.go()                                                     # nothing of Garrick's changed: no commit
+        self.assertEqual(head, self.git("rev-parse", "HEAD"))
+        note = project / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\nA line written in a session.\n")
+        asked = write(project / "Threads" / "Pricing" / "Needs you" / "261016 - floor.md", question())
+        self.go()
+        changed = set(filter(None, self.git("show", "--name-only", "--format=", "HEAD").splitlines()))
+        self.assertEqual({"Acme Review/Threads/Pricing/Pricing.md", asked.relative_to(self.work).as_posix()}, changed)
+        left = self.git("status", "--porcelain", "--untracked-files=all")
+        self.assertIn("?? \"Acme Review/Deliverables/private draft.docx\"", left)
+        self.assertIn(" M \"Acme Review/Deliverables/260301 - Pricing memo.md\"", left)
+        self.assertTrue(draft.is_file())
+
     def test_a_recent_session_is_resumed_and_an_old_one_asked_afresh(self):
         now = dt.datetime.now()
         self.go(now=now)

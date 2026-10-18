@@ -28,7 +28,7 @@ Below that are its files, newest first. By default they are the project's own: `
 
 Continue opens Claude's desktop app on the piece of work, with Claude's answer to where it stands already on screen. The app's own ask box has no tools, so the conversation happens in Claude. The way in is the Claude Code command-line tool's `claude --desktop`, which opens the desktop app on a folder or, with `--resume <session id>`, on one session. It takes no prompt, so Continue, through `page_action.py`:
 
-1. commits Garrick's own record of the work, so the desktop app's *Changes* panel has nothing of Garrick's to offer you;
+1. commits Garrick's own record of the work, so the desktop app's *Changes* panel has nothing of Garrick's to offer you: the work's note, its project's hub and its questions in *Needs you*, by name. Anything else in the folder is yours and is left as it is, committed or not;
 2. asks Claude, without a window, in the work's folder: `claude -p "Where am I on Acme Review?" --output-format json --disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit`. Claude reads the workspace's `AGENTS.md` and answers, and the answer carries a session id. That call only reads: whatever the workspace allows, it runs no command and writes no file before you see anything. The session it hands over keeps the workspace's own permissions;
 3. opens that session with `claude --desktop --resume <id>`, in a terminal of its own that nobody sees, since `--desktop` refuses to run without one.
 

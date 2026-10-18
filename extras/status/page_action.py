@@ -1984,23 +1984,39 @@ def hub_value(note: Path, key: str) -> str:
     return found.group(1).strip().strip("\"'") if found else ""
 
 
-def commit_record(zone: Path, folder: Path, name: str) -> str:
+def record_files(zone: Path, note: Path, parts: tuple, folder: Path) -> list:
+    """Garrick's own record of a piece of work, as pathspecs from the zone:
+    its note, its project's hub, and the questions in each Needs you folder
+    the work keeps. Nothing else of the folder, which holds the user's files."""
+    project = zone / parts[0]
+    hub = project / (parts[0] + ".md")
+    boxes = dict.fromkeys([note.parent / NEEDS] + ([project / NEEDS] if folder == project else []))
+    return ([n.relative_to(zone).as_posix() for n in dict.fromkeys([note, hub])]
+            + [":(glob)%s/*.md" % b.relative_to(zone).as_posix() for b in boxes])
+
+
+def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str) -> str:
     """Garrick's own record of the work committed before Claude opens on it,
-    so the desktop app's Changes panel has nothing of Garrick's to offer.
-    "" when that went through or there was nothing to commit; otherwise why
-    not, for the reply. Nothing is put back: the files are the user's."""
-    rel = folder.relative_to(zone).as_posix()
-    code, said = git(zone, "status", "--porcelain", "--", rel)
-    if code != 0 or not said.strip():
+    so the desktop app's Changes panel has nothing of Garrick's to offer:
+    record_files() by name, and only those that changed; anything else in the
+    folder is the user's and is left as it is. "" when that went through or
+    there was nothing to commit; otherwise why not, for the reply. Nothing is
+    put back: the files are the user's."""
+    code, said = git(zone, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--",
+                     *record_files(zone, note, parts, folder))
+    if code != 0:
+        return ""
+    changed = [":(literal)" + e[3:] for e in said.split("\0") if len(e) > 3]
+    if not changed:
         return ""
     deadline = time.time() + COMMIT_TIMEOUT
-    code, why = git(zone, "add", "-A", "--", rel)
+    code, why = git(zone, "add", "-A", "--", *changed)
     if code == 0:
-        code, why = git(zone, "commit", "-q", "-m", ("%s: saved before opening in Claude" % name)[:200], "--", rel,
+        code, why = git(zone, "commit", "-q", "-m", ("%s: saved before opening in Claude" % name)[:200], "--", *changed,
                         timeout=deadline - time.time())
     if code == 0:
         return ""
-    git(zone, "reset", "-q", "--", rel, timeout=10)
+    git(zone, "reset", "-q", "--", *changed, timeout=10)
     return why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
 
 
@@ -2019,7 +2035,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         raise Refused(H.NO_CLI)
     folder = work_folder(zone, parts)
     with zone_lock(zone):
-        unsaved = commit_record(zone, folder, name)
+        unsaved = commit_record(zone, note, parts, folder, name)
     key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
     kept = H.session_for(ws, key)
     resume = H.fresh(kept, now) and kept.get("folder") == str(folder)

@@ -214,6 +214,12 @@ class TestYourWork(HomeCase):
         self.assertTrue(got[0][2].startswith("Yesterday"))
         self.assertEqual("Continue", got[0][3])
 
+    def test_a_next_action_loses_its_whose_it_is_tail(self):
+        S = status
+        self.assertEqual("Finish the launch email", S.without_owner("Finish the launch email; Robin's"))
+        self.assertEqual("Draft it", S.without_owner("Draft it; the assistant's"))
+        self.assertEqual("Send it to Dana's team", S.without_owner("Send it to Dana's team"))
+
     def test_a_waiting_row_says_who_and_has_no_continue(self):
         got = {r[0]: r for r in rows(self.page())}
         self.assertEqual("Waiting on Theo Marsh", got["Birch Entry, Market Sizing"][3])

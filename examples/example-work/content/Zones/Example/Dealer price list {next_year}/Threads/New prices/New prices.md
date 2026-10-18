@@ -26,7 +26,7 @@ Nadia Fenn, finance: the draft list by {dealer_dm}, so she can set the margins b
 |---|---|
 | Live artifact | `Ashgrove Shared/Finance/Dealer price list/Dealer price list {next_year} draft.csv`, Robin's draft list |
 | Rebuild with | The {year} list and Nadia's margin sheet, beside the draft in the drive |
-| Next action | None for Robin until Nadia signs off; then the signed-off prices go into the Arc chair launch email and the Westbrook pitch |
+| Next action | Once Nadia signs off, put the new prices into the Arc chair launch email and the Westbrook pitch; Robin's |
 | Keep in mind | The Arc chair's launch email stops at its pricing section until these prices are signed off |
 | Waiting on | Nadia Fenn, to sign off the dealer margins |
 | Deadline | Nadia said by {nadia_by_short}; the launch email needs the prices before the chair ships on {ship_short} |

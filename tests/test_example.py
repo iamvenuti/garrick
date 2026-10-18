@@ -180,7 +180,7 @@ class StandaloneExampleTest(unittest.TestCase):
         fm = parse_frontmatter(q)
         self.assertEqual(("question", "open", self.d["call"].isoformat()), (fm["type"], fm["status"], fm["asked"]))
         text = q.read_text(encoding="utf-8")
-        self.assertIn("**Larchmont: which date did you promise Carla for the replacement desks?**", text)
+        self.assertIn("**Which date did you promise Carla for the replacement desks?**", text)
         options = re.findall(r"^- \[([^\]]+)\] (.+)$", text, re.M)
         self.assertEqual(2, len(options), text)
         labels = [label for label, _ in options]

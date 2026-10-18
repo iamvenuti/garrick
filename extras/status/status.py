@@ -4029,6 +4029,18 @@ def home_layout(ws: Path) -> str:
     return "simple" if isinstance(data, dict) and data.get("home") == "simple" else "full"
 
 
+# A Resume block's Next action ends with whose it is ("…; Robin's", "…; the
+# assistant's"), which the home has no use for: every row there is the user's.
+OWNER_TAIL = re.compile(r"[;,]\s*(?:the\s+)?[A-Z]?[\w.-]+(?:\s+[\w.-]+){0,2}[\u2019']s\s*\.?\s*$")
+
+
+def without_owner(text: Optional[str]) -> Optional[str]:
+    """A next action without the whose-it-is tail the Resume block adds."""
+    if not text:
+        return text
+    return OWNER_TAIL.sub("", text).rstrip() or text
+
+
 def waiting_on(text: str) -> Optional[str]:
     """Who a piece of work waits on, from its Waiting on row: None where the
     row says nobody, is empty, or is still the template's placeholder."""
@@ -4187,7 +4199,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                                     hashlib.sha1(("%s/%s" % (zone, r["rel"])).encode("utf-8")).hexdigest()[:6]),
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": "%s/%s" % (zone, r["rel"]),
-                "example": zone == EXAMPLE_ZONE, "next": nxt, "waiting": waiting_on(rows.get("Waiting on", "")),
+                "example": zone == EXAMPLE_ZONE, "next": without_owner(nxt), "waiting": waiting_on(rows.get("Waiting on", "")),
                 "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
                 "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
                 "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,

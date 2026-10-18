@@ -272,6 +272,25 @@ class StandaloneExampleTest(unittest.TestCase):
             hits = [f for f in report["findings"] if f["check"] == "projects" and "`folder`" in f["message"]]
             self.assertEqual(warned, bool(hits), (value, report["findings"]))
 
+    def test_a_folder_in_another_zone_or_a_wiki_is_warned_about(self):
+        hub = self.zone / "Spring trade show" / "Spring trade show.md"
+        text = hub.read_text(encoding="utf-8")
+        self.addCleanup(hub.write_text, text, encoding="utf-8")
+        other = self.root / "Zones" / "Elsewhere" / "Their project"
+        other.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, str(other.parent))
+        for value, said in (("Zones/Elsewhere/Their project", "the Elsewhere zone"), ("Wikis/Meetings", "the Meetings wiki"),
+                            ("Wikis", "Wikis/"), (str(self.zone / "Kestle chair launch"), None),
+                            ("Quillfield Shared/Marketing", None)):
+            hub.write_text(re.sub(r"(?m)^folder: .*$", "folder: " + value, text), encoding="utf-8")
+            _, report = check(self.root)
+            hits = [f["message"] for f in report["findings"] if f["check"] == "projects" and "`folder`" in f["message"]]
+            if said is None:
+                self.assertEqual([], hits, value)
+            else:
+                self.assertEqual(1, len(hits), (value, hits))
+                self.assertIn("which is %s; the work's page would list" % said, hits[0])
+
     def test_refuses_a_second_example_and_a_full_folder(self):
         again = run([sys.executable, BUILD, "--add", self.root])
         self.assertNotEqual(0, again.returncode)

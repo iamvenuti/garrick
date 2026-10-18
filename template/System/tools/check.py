@@ -367,6 +367,33 @@ def note_frontmatter(ws: "Workspace", path: Path) -> dict:
     return {k: list(v) if isinstance(v, list) else v for k, v in fm.items()}  # a copy: callers may change it
 
 
+def folder_elsewhere(ws: "Workspace", project: Path, where: Path) -> str:
+    """Where a hub's `folder:` lands when that is another zone or a wiki, in
+    words ("the Personal zone", "the Meetings wiki", "Wikis/"); "" when it is
+    in the project's own zone or outside both."""
+    try:
+        real = where.resolve()
+    except OSError:
+        return ""
+
+    def inside(top: Path) -> Optional[Tuple[str, ...]]:
+        try:
+            return real.relative_to(top.resolve()).parts
+        except (OSError, ValueError):
+            return None
+
+    wiki = inside(ws.root / "Wikis")
+    if wiki is not None:
+        return "the %s wiki" % wiki[0] if wiki else "Wikis/"
+    zone = inside(ws.root / "Zones")
+    if zone is None:
+        return ""
+    own = project.parent.name if project.parent.parent == ws.root / "Zones" else None
+    if not zone:
+        return "Zones/"
+    return "" if zone[0] == own else "the %s zone" % zone[0]
+
+
 def visible_dirs(folder: Path) -> List[Path]:
     """Sub-folders that are real content: not hidden, not templates."""
     if not folder.is_dir():
@@ -1436,6 +1463,16 @@ def check_projects(ws: Workspace) -> List[Finding]:
                                    "`folder` is %s, which is %s" % (str(fm.get("folder")).strip(),
                                                                     "a file, not a folder" if where.exists() else "not there"),
                                    "The %s hub note points at a folder that is not there" % project.name))
+            else:
+                # The work's page lists the folder's file names, so a folder in
+                # another zone or a wiki would show them across a zone's walls.
+                crossed = folder_elsewhere(ws, project, where)
+                if crossed:
+                    out.append(Finding(WARNING, "projects", r,
+                                       "`folder` is %s, which is %s; the work's page would list that folder's file "
+                                       "names here. Name a folder outside the zones and wikis, or in this project's zone"
+                                       % (str(fm.get("folder")).strip(), crossed),
+                                       "The %s hub note points into %s" % (project.name, crossed)))
         layout = fm.get("layout")
         if layout is not None and layout not in LAYOUTS:
             out.append(Finding(WARNING, "projects", r, "`layout` is %r; the one there is: %s" % (layout, ", ".join(LAYOUTS)),

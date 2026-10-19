@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- The Garrick band follows Settings › Opening a thread ([#181](https://github.com/iamvenuti/garrick/issues/181)). The status page, the menu and the panel offer only the ways switched on there, but the band offered *Obsidian* whenever Obsidian was installed and the note sat in a vault, and *Finder* wherever macOS's `open` was, so with *Open in Obsidian* switched off it still drew the button and the pane's *Open in Obsidian*, `/garrick obsidian` still opened the note there, and *While you wait*'s open went to Obsidian. Now the band reads `launchers` in `System/garrick-settings.json`, the file it already reads for `while-you-wait`, as `shared_launchers()` in `status.py` does: `{name: true or false}` with a name left out on, or a list of the names switched on. *Obsidian* is offered only while `note` is on, and Obsidian is installed and the note in a vault, as before; *Finder* only while `finder` is on. `/garrick obsidian` and `/garrick finder` answer "Obsidian is switched off in Settings › Opening a thread." (or Finder) instead of opening it. *While you wait*'s open tries `default` first, then cmux, the note and Finder, keeping those switched on, and says so when none of them can open the suggestion; Codex and Claude are not ways the band can open. With no `launchers` saved, or a file that does not read, every launcher is on and *open* goes as before, so a hand-edited file never empties the band.
+
 ## [0.35.0] - 2026-10-18
 
 ### Added

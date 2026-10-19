@@ -211,12 +211,25 @@ DECLARED: Dict[str, Op] = {
     # The simple home (#175). A Needs you question answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.
-    "answer": _op(("zone", "file", "label"), ("file", "label"), "zone", True),
+    # `text` is an answer in the user's own words, for a question whose
+    # `own:` names the label that takes them (#182).
+    "answer": _op(("zone", "file", "label", "text"), ("file", "label", "text"), "zone", True),
     "later": _op(("zone", "file", "until"), ("file", "until"), "zone", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
-    "continue": _op(("zone", "file"), ("file",), "zone", True),
+    # `suggested` asks a first look's suggested request instead (#182).
+    "continue": _op(("zone", "file", "suggested"), ("file", "suggested"), "zone", True),
     "ask-desktop": _op(("prompt",), (), "machine"),
+    # Your own work (#182). A folder looked through by discover.py, names and
+    # dates only, its proposals kept in System/generated/; a proposal answered,
+    # a yes making Garrick's record of the work, committed in its zone; a
+    # first look written from the work's files; the record put away under the
+    # zone's archive/ and brought back. None of them writes in the folder.
+    "discover": _op(("folder",), ("folder",), "workspace"),
+    "suggestion": _op(("id", "answer", "name", "zone", "party"), ("id", "answer", "name"), "zone", True),
+    "start": _op(("zone", "file"), ("file",), "zone", True),
+    "stop-using": _op(("zone", "file"), ("file",), "zone", True),
+    "bring-back": _op(("zone", "project"), ("project",), "zone", True),
     # The example's Remove and Bring back: System/tools/example.py (#174).
     "example": _op(("do",), ("do",), "workspace"),
     # A check finding's Fix, from the Threads card (#179): nurture.py's own

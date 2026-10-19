@@ -214,7 +214,8 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
-         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix")
+         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
+         "discover", "suggestion", "start", "stop-using", "bring-back")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -227,7 +228,7 @@ ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart",
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
           "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
-          "do")       # never "token"
+          "do", "id", "answer", "suggested")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1804,7 +1805,8 @@ def uncommitted(zone: Path, path: Path) -> bool:
     return code == 0 and bool(said.strip())
 
 
-def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, *, wall: Optional[str]) -> None:
+def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, moved: tuple = (), *,
+               wall: Optional[str]) -> None:
     """Commit what scaffold.py made, by name: `paths`, from the zone, the new
     folder and the files it changed, and nothing else in the zone (#183).
     Refused, the files stay for the user; refused by the wall check, the reply
@@ -1813,11 +1815,22 @@ def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, 
     and each file in `before` gets back the bytes it held then, an edit from
     another session included. Nothing else is touched. If a file scaffold.py
     changed was edited meanwhile, all of it stays, as commit_all() leaves its
-    notes."""
+    notes. `moved` is what the request moved, (where it is now, where it
+    was): refused for any reason, each goes back, and `before` with it, so a
+    move is committed whole or not at all."""
     mine = {n: n.read_bytes() for n in before if n.is_file()}
     code, why = committing(zone, paths, message)
     if code != 0:
         git(zone, "reset", "-q", "--", *paths, timeout=10)
+        if moved:
+            for now, was in moved:
+                if now.exists() and not was.exists():
+                    os.rename(str(now), str(was))
+            for n, was in before.items():
+                n.write_bytes(was)
+            if wall and code is not None and WALL_LINE.match(why):
+                raise Refused(wall)
+            raise Refused("not committed, so nothing changed: %s" % why)
         if wall and code is not None and WALL_LINE.match(why):
             try:
                 ours = all(n.read_bytes() == wrote for n, wrote in mine.items())
@@ -1964,9 +1977,18 @@ def answer_question(ws: Path, req: dict, today: dt.date) -> str:
     question says it was answered, and the two are committed in one commit."""
     zone, q, note, parts, name = question(ws, req)
     label = answer(req, "label", most=LABEL_MAX)
+    words = answer(req, "text", required=False)
     with zone_lock(zone):
         text = open_question(q)
+        own = hub_value(q, "own")
         chosen = next(((l, a) for l, a in options(text) if l.casefold() == label.casefold()), None)
+        if own and label.casefold() == own.casefold():
+            # The answer in the user's own words (#182): what they write is the next step.
+            if not words:
+                raise Refused("say what the next step is, in your own words")
+            chosen = (own, words)
+        elif words:
+            raise Refused("only %s takes words of your own" % (own or "an answer in Claude"))
         if chosen is None:
             raise Refused("that question has no answer called %r" % label)
         q_before, n_before = q.read_bytes(), note.read_bytes()
@@ -1976,6 +1998,13 @@ def answer_question(ws: Path, req: dict, today: dt.date) -> str:
                                drop=("later",)), encoding="utf-8")
         commit_all(zone, [(note, n_before), (q, q_before)], ("%s: answered %s" % (name, chosen[0]))[:200],
                    wall=wall_refusal(ws))
+    key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
+    kept = your_work().first_looks(ws).get(key)
+    if isinstance(kept, dict) and kept.get("question") == q.relative_to(zone).as_posix():
+        # A first look's next step confirmed or put in the user's words: the request Continue asks follows it.
+        if own and chosen[0] == own:
+            your_work().keep_first_look(ws, key, request="Help me with the next step on %s: %s" % (name, chosen[1]))
+        return "Noted. Next for %s: %s. Continue in Claude starts on it" % (name, said_text(chosen[1]))
     return "Noted: %s. Next for %s: %s" % (chosen[0], name, said_text(chosen[1]))
 
 
@@ -2051,9 +2080,11 @@ def put_off(ws: Path, req: dict, today: dt.date) -> str:
 
 
 def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) -> None:
-    """commit() for several files in one commit. When the commit is refused,
-    all are put back if every one still holds what this request wrote, and
-    none if any was edited meanwhile, so they never disagree."""
+    """commit() for several files in one commit, (file, the bytes it held
+    before) each, None for a file the request made. When the commit is
+    refused, all are put back, a new one removed, if every one still holds
+    what this request wrote, and none if any was edited meanwhile, so they
+    never disagree."""
     rels = [str(n.relative_to(zone)) for n, _ in notes]
     mine = [n.read_bytes() for n, _ in notes]
     deadline = time.time() + COMMIT_TIMEOUT
@@ -2072,7 +2103,10 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
         ours = False
     if ours:                                    # all put back, or none: never one answered and the other open
         for n, before in notes:
-            n.write_bytes(before)
+            if before is None:                  # a file this request made: it goes
+                n.unlink()
+            else:
+                n.write_bytes(before)
     git(zone, "reset", "-q", "--", *rels, timeout=10)
     if not ours:
         raise Refused("not committed: %s. A note was edited meanwhile, so it was left as it is" % why)
@@ -2161,24 +2195,44 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     """Continue: Claude's desktop app opened on a piece of work, already
     oriented. The record committed, a headless call asked where the work
     stands, its session handed to the desktop app; a session continued
-    within FRESH_HOURS is resumed as it was, without asking again."""
-    H = handoff()
+    within FRESH_HOURS is resumed as it was, without asking again.
+
+    A piece of work whose files are in a folder of the user's (#182) is read
+    there and never written: the call gets the folder, and the text of its
+    Office files, with `--add-dir`, and the workspace's Claude settings deny
+    Edit and Write in it before anything opens. With `suggested`, the first
+    look's suggested request is asked instead of where it stands, once."""
+    H, Y = handoff(), your_work()
     zone, note, parts, _ = resume_note(ws, req)
     name = work_name(zone, parts)
-    asked = "Where am I on %s?" % say_name(ws, zone, parts)
+    asked, brief = "Where am I on %s?" % say_name(ws, zone, parts), H.CONTINUE_BRIEF
+    key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
+    suggested = req.get("suggested")
+    if suggested not in (None, True, False):
+        raise Refused("not a yes or no: suggested")
+    look = Y.first_looks(ws).get(key) if suggested else None
+    if suggested:
+        if not isinstance(look, dict) or look.get("used") or not look.get("request"):
+            raise Refused("there is no suggested request waiting for %s; press Continue" % name)
+        asked, brief = " ".join(str(look["request"]).split())[:PROMPT_MAX].lstrip("- "), H.REQUEST_BRIEF
     if H.managed_off(managed_places()):          # not kept: the page reads the setting at every build
         raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
     claude = H.find_claude()
     if claude is None:
         raise Refused(H.NO_CLI)
     folder = work_folder(zone, parts)
+    files, own = files_folder(ws, zone, parts)
+    add_dirs, kept_ro = [], ""
+    if not own:
+        kept_ro = read_only_for_claude(ws, files)
+        extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
+        add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
     with zone_lock(zone):
         unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
-    key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
     kept = H.session_for(ws, key)
-    resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
+    resume = not suggested and H.fresh(kept, now) and kept.get("folder") == str(folder)
     try:
-        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
+        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs)[0]
         try:
             H.open_desktop(claude, folder, sid)
         except (H.LocalOff, H.TimedOut):
@@ -2187,16 +2241,21 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             if not resume:
                 raise
             resume = False                      # the kept session would not open: ask afresh, once
-            sid = H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
+            sid = H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs)[0]
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")
         raise Refused(str(e))
     except H.HandOffError as e:
         raise Refused(str(e))
-    files, own = files_folder(ws, zone, parts)
     H.keep_session(ws, key, sid, folder, H.walk(files, project=own), primed=not resume, now=now)
-    said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    if suggested:
+        Y.keep_first_look(ws, key, used=True)
+        said = "Opened %s in Claude, with your request already asked" % name
+    else:
+        said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    if kept_ro:
+        said += "; %s" % kept_ro
     if unsaved and unsaved == wall_refusal(ws):     # the rule's sentence ends the reply, and nothing is added to it
         return "%s. Garrick's record of it is not committed. %s" % (said, unsaved)
     return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
@@ -2252,6 +2311,345 @@ def example(ws: Path, req: dict) -> str:
     return said[-1].rstrip(".") if said else ("The example is archived. Nothing of yours was touched" if do == "archive"
                                               else "The example is back")
 # ---- end of the simple home ------------------------------------------------------
+
+
+# ---- your own work (#182): a folder you already keep, read and never written ----
+# Add your own work picks a folder in the Mac app; discover.py proposes the
+# pieces of work in it from names and dates alone, and keeps the proposals and
+# the answers in System/generated/discovery.json. A yes makes Garrick's record
+# of one, a project with one thread whose hub's `folder:` names the folder,
+# committed by name. Start with this one reads its files for the first time:
+# extract.py takes the text out of its Office files, a headless read-only call
+# answers with a first look, and Garrick writes it into the thread note and the
+# hub, with the next step as a Needs you question. Stop using this puts the
+# record away under the zone's archive/, recoverably; Bring it back returns it.
+# Nothing here writes under the folder: the two tools refuse to, and Claude's
+# settings deny Edit and Write there.
+_YW = None
+FOLDER_MAX = 1024
+FIRST_LOOK_TIMEOUT = 360          # seconds for the call that reads a piece of work's files for the first time
+TOOL_TIMEOUT = 300                # for discover.py, which lists a folder that may be a large cloud drive
+EXTRACT_TIMEOUT = 180             # for extract.py, on one piece of work's Office files
+
+
+def your_work():
+    """your_work.py, beside this file: what the page and these actions share about the user's own work."""
+    global _YW
+    if _YW is None:
+        spec = importlib.util.spec_from_file_location("garrick_your_work", str(HERE / "your_work.py"))
+        _YW = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_YW)
+    return _YW
+
+
+def tool_json(ws: Path, name: str, *args, timeout: float = TOOL_TIMEOUT) -> dict:
+    """One of the workspace's own tools, with --json: what it answered, or Refused in its words."""
+    tool = ws / "System" / "tools" / name
+    if not tool.is_file():
+        raise Refused("System/tools/%s is missing; update Garrick" % name)
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--root", str(ws), "--json"] + list(args), capture_output=True,
+                           text=True, timeout=timeout, stdin=subprocess.DEVNULL, cwd=str(ws))
+    except subprocess.TimeoutExpired:
+        raise Refused("%s was still running after %s and was stopped; nothing was changed" % (name, how_long(timeout)))
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        said = (r.stderr or r.stdout).strip().splitlines()
+        raise Refused(said[-1] if said else "%s did not answer" % name)
+    if not isinstance(out, dict):
+        raise Refused("%s did not answer" % name)
+    if r.returncode != 0 or out.get("error"):
+        raise Refused(str(out.get("error") or "%s refused" % name).rstrip("."))
+    return out
+
+
+def context_of(ws: Path) -> dict:
+    lib = prefs().lib(ws)
+    try:
+        return lib.load_context(ws) if lib is not None and callable(getattr(lib, "load_context", None)) else {}
+    except Exception:
+        return {}
+
+
+def picked_folder(req: dict) -> str:
+    """The folder the picker gave: an absolute path, on one line."""
+    folder = req.get("folder")
+    if not isinstance(folder, str) or not folder.strip() or "\n" in folder or len(folder) > FOLDER_MAX:
+        raise Refused("no folder given")
+    folder = os.path.expanduser(folder.strip())
+    if not os.path.isabs(folder):
+        raise Refused("not a folder Garrick can read: %s" % folder)
+    return folder
+
+
+def discover_folder(ws: Path, req: dict) -> dict:
+    """Add your own work: the picked folder looked through by discover.py,
+    names and dates only, and its proposals kept for the page to show."""
+    out = tool_json(ws, "discover.py", "scan", picked_folder(req))
+    top, more = out.get("top") or [], out.get("more") or []
+    name = out.get("name") or os.path.basename(out.get("folder") or "")
+    if top:
+        said = "Found %d piece%s of work in %s. Nothing in it was changed" % (
+            len(top) + len(more), "" if len(top) + len(more) == 1 else "s", name)
+    else:
+        said = "Nothing new in %s looks like a piece of work. Nothing in it was changed" % name
+    return {"say": said, "view": your_work().view_id(out.get("folder") or "")}
+
+
+def suggestion(ws: Path, pid) -> tuple:
+    """(the looked-at folder, the proposal) for a proposal's id."""
+    if not isinstance(pid, str) or not re.fullmatch(r"[0-9a-f]{8}", pid):
+        raise Refused("not a suggestion: %r" % (pid,))
+    for real, entry in your_work().discovery(ws)["folders"].items():
+        for p in (entry.get("top") or []) + (entry.get("more") or []):
+            if isinstance(p, dict) and p.get("id") == pid:
+                return real, p
+    raise Refused("that suggestion is not waiting any more; the page rebuilds now")
+
+
+def answer_suggestion(ws: Path, req: dict) -> str:
+    """Yes, Rename or Not a piece of work, on one proposal. Not is kept by
+    discover.py, so it is never proposed again. A yes, or a rename, makes
+    Garrick's record of the work: a project with one thread, named after it,
+    in the workspace's only place for work, or the one the request names
+    after the page asked; its hub's `folder:` names the folder, and only the
+    new project is committed."""
+    Y = your_work()
+    real, p = suggestion(ws, req.get("id"))
+    said_answer = req.get("answer")
+    if said_answer not in ("yes", "rename", "not"):
+        raise Refused("not an answer to a suggestion: %r" % (said_answer,))
+    if said_answer == "not":
+        tool_json(ws, "discover.py", "answer", p["id"], "not")
+        return "Noted: %s is not a piece of work. It won't be suggested again" % p.get("name")
+    name = field(req, "name") if said_answer == "rename" else str(p.get("name") or "").strip()
+    options = Y.places(ws, context_of(ws))
+    if not options:
+        raise Refused("your workspace has no part to keep this work in yet: ask Claude to set one up first")
+    chosen = [o for o in options if req.get("zone") in (None, o["zone"]) and req.get("party") in (None, o["party"])]
+    if len(options) == 1:
+        chosen = options
+    if len(chosen) != 1:
+        raise Refused(Y.which_place(chosen or options))
+    place = chosen[0]
+    zone = zone_dir(ws, place["zone"])
+    path = p.get("path") or real
+    with zone_lock(zone):
+        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", place["party"], "--thread", name, "--check")
+        made = [] if (zone / name).exists() else [zone / name]
+        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", place["party"], "--thread", name)
+        hub = zone / name / (name + ".md")
+        hub.write_text(set_front(hub.read_text(encoding="utf-8"), {"folder": quoted(Y.folder_value(path)),
+                                                                     Y.DISCOVERED: p["id"]}), encoding="utf-8")
+        commit_new(zone, [name], ("New work %s, from %s" % (name, os.path.basename(real)))[:200], made, {},
+                   wall=wall_refusal(ws))
+    tool_json(ws, "discover.py", "answer", p["id"], *(("rename", name) if said_answer == "rename" else ("yes",)))
+    return "Garrick will keep track of %s. %s is as it was" % (name, os.path.basename(real))
+
+
+def work_files_of(ws: Path, zone: Path, parts: tuple) -> tuple:
+    """(the folder of a piece of work started from a folder of the user's,
+    the files of it that belong to the work or None for all, the proposal's
+    id or ""). Refused for a piece of work kept in Garrick itself."""
+    hub = zone / parts[0] / (parts[0] + ".md")
+    files, own = files_folder(ws, zone, parts)
+    if own:
+        raise Refused("%s keeps its files in Garrick, not in a folder of yours" % parts[0])
+    pid = hub_value(hub, your_work().DISCOVERED)
+    members = None
+    if pid:
+        for entry in your_work().discovery(ws)["folders"].values():
+            a = (entry.get("answers") or {}).get(pid)
+            if isinstance(a, dict) and a.get("kind") == "names":
+                members = [m for m in a.get("members") or [] if isinstance(m, str)]
+    return files, members, pid
+
+
+def read_only_for_claude(ws: Path, folder: Path) -> str:
+    """The workspace's Claude settings deny Edit and Write in the folder and
+    give it to every session there to read, committed in the workspace's own
+    repository by name. "" when that is done; otherwise what to say. Rules
+    whose commit was refused stay written: that Claude cannot change the
+    folder matters more than the record of saying so."""
+    Y = your_work()
+    try:
+        before = Y.read_only(ws, str(folder))
+    except ValueError as e:
+        raise Refused("%s, so Claude could not be kept from changing %s. Nothing was opened" % (e, folder.name))
+    if before is None or not (ws / ".git").exists():
+        return ""
+    path = ws.joinpath(*Y.CLAUDE_SETTINGS)
+    wrote = path.read_bytes()
+    try:
+        commit(ws, path, before, "Claude may read %s and never change it" % folder.name, wall=wall_refusal(ws))
+    except Refused:
+        path.write_bytes(wrote)
+        return "Claude's settings keep %s read-only, not committed yet" % folder.name
+    return ""
+
+
+def first_look_note(text: str, look: dict, today: dt.date, where: str, name: str) -> str:
+    """The thread note with the first look written in: its opening sentence,
+    a Resume here block that says it is a first look to check, and a dated
+    entry. The template's placeholders it fills go; anything else stays."""
+    Y = your_work()
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        raise Refused("%s has no frontmatter" % name)
+    if re.search(r"(?m)^%s:" % Y.FIRST_LOOK, m.group(1)):
+        raise Refused("%s already has its first look; Continue goes on from it" % name)
+    text = set_front(text, {"updated": today.isoformat(), Y.FIRST_LOOK: today.isoformat()})
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    body = text[m.end():]
+    body = re.sub(r"(?m)^<One or two sentences: what this thread is for[^\n]*>[ \t]*$", lambda _: look["what"], body, count=1)
+    body = re.sub(r"(?m)^<Who asked, when, and in their words[^\n]*>[ \t]*$",
+                  lambda _: "Started on %s from the files in %s, through Add your own work." % (Y.today_said(today), where),
+                  body, count=1)
+    body = re.sub(r"(?m)^<Dated entries[^\n]*>[ \t]*\n?", "", body)
+    body = re.sub(r"(?m)^\*\*<D Month YYYY>\.\*\*[^\n]*\n?", "", body)
+    span = resume_block(body)
+    if not span:
+        raise Refused("%s has no Resume here block to write its first look in" % name)
+    stands = " ".join(x for x in ("First look, made by Garrick from the files in %s; check it before you rely on it." % where,
+                                   look["last"], look["open"],
+                                   "Involved: %s." % look["who"].rstrip(".") if look["who"] else "") if x)
+    rows = [("Live artifact", "the files in %s, read and never changed" % where),
+            ("Rebuild with", "nothing to rebuild: the files stay where they are"),
+            ("Next action", look["next"]),
+            ("Keep in mind", "a first look, made from the files; the question in Needs you confirms the next action"),
+            ("Waiting on", look["waiting"]),
+            ("Deadline", look["deadline"])]
+    block = "\n**Where it stands, %s.** %s\n\n| | |\n|---|---|\n%s\n\n" % (
+        Y.today_said(today), stands, "\n".join("| %s | %s |" % (k, cell(v)) for k, v in rows))
+    body = body[:span[0]] + block + body[span[1]:]
+    body = dated_entry(body, today, "First look, made from the files in %s. %s" % (where, look["last"]))
+    return text[:m.end()] + body
+
+
+def first_look_hub(text: str, what: str) -> str:
+    """The hub with its opening sentence, where the template's placeholder still stands."""
+    return re.sub(r"(?m)^<One or two sentences: what this project is[^\n]*>[ \t]*$", lambda _: what, text, count=1)
+
+
+def first_look_question(name: str, look: dict, today: dt.date) -> str:
+    """The Needs you question that asks the user to confirm the proposed next step, or to say it."""
+    Y = your_work()
+    return ("---\ntype: question\nasked: %s\nstatus: open\nown: %s\n---\n\n**%s: is this your next step?**\n\n%s\n\n%s"
+            "- [%s] %s\n" % (today.isoformat(), quoted(Y.OWN), name, look["next"],
+                             "From %s.\n\n" % look["source"].rstrip(".") if look["source"] else "", Y.RIGHT, look["next"]))
+
+
+def start_work(ws: Path, req: dict, today: dt.date) -> dict:
+    """Start with this one: the first time a piece of work's files are read.
+    Their Office files' text is taken out (extract.py), one headless,
+    read-only call reads the folder and answers with a first look, and
+    Garrick writes it into the thread note's Resume here block and the hub's
+    opening sentence, with the next step as a Needs you question to confirm
+    or change. The three are committed by name, in one commit."""
+    H, Y = handoff(), your_work()
+    zone, note, parts, _ = resume_note(ws, req)
+    name = work_name(zone, parts)
+    folder, members, pid = work_files_of(ws, zone, parts)
+    text = note.read_text(encoding="utf-8")
+    if re.search(r"(?m)^%s:" % Y.FIRST_LOOK, text.split("\n---\n", 1)[0]):
+        raise Refused("%s already has its first look; Continue goes on from it" % name)
+    claude = H.find_claude()
+    if claude is None:
+        raise Refused(H.NO_CLI)
+    extracted = tool_json(ws, "extract.py", *(["--work", pid] if pid and members is not None else [str(folder)]),
+                          timeout=EXTRACT_TIMEOUT)
+    extracts = ws / extracted["extracts"] if extracted.get("made") or extracted.get("kept") else None
+    unsaved = read_only_for_claude(ws, folder)
+    where = folder.name
+    prompt = Y.first_look_prompt(name, str(folder), str(extracts) if extracts else None, members)
+    try:
+        _, said = H.prime(claude, work_folder(zone, parts), prompt, timeout=FIRST_LOOK_TIMEOUT, brief=Y.FIRST_LOOK_BRIEF,
+                          name=name, add_dirs=[folder] + ([extracts] if extracts else []))
+    except H.HandOffError as e:
+        raise Refused(str(e).replace("so nothing was opened", "so nothing was written"))
+    look = Y.parse_first_look(said)
+    if look is None:
+        raise Refused("Claude's first look at %s did not come back in a shape Garrick can use, so nothing was written. "
+                      "Try Start again" % name)
+    hub = zone / parts[0] / (parts[0] + ".md")
+    box = note.parent / NEEDS
+    q = box / ("%s - next-step.md" % today.strftime("%y%m%d"))
+    with zone_lock(zone):
+        n_before, h_before = note.read_bytes(), hub.read_bytes()
+        written = first_look_note(n_before.decode("utf-8"), look, today, where, name)
+        made_box = not box.exists()
+        if q.exists():
+            raise Refused("%s already has a question from today about its next step" % name)
+        note.write_text(written, encoding="utf-8")
+        files = [(note, n_before)]
+        if hub != note:
+            hub.write_text(first_look_hub(h_before.decode("utf-8"), look["what"]), encoding="utf-8")
+            files.append((hub, h_before))
+        box.mkdir(exist_ok=True)
+        q.write_text(first_look_question(name, look, today), encoding="utf-8")
+        files.append((q, None))
+        try:
+            commit_all(zone, files, ("%s: first look, from the files in %s" % (name, where))[:200], wall=wall_refusal(ws))
+        except Refused:
+            if made_box and box.is_dir() and not any(box.iterdir()):
+                box.rmdir()
+            raise
+    key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
+    Y.keep_first_look(ws, key, request=look["request"] or "Help me with the next step on %s: %s" % (name, look["next"]),
+                      question=q.relative_to(zone).as_posix(), made=today.isoformat(), used=False,
+                      extracts=extracted.get("extracts") or "")
+    reply = "Garrick has a first look at %s. Check it, and say whether the next step is right" % name
+    return {"say": reply + ("; %s" % unsaved if unsaved else ""), "view": Y.work_id(name, key)}
+
+
+def stop_using(ws: Path, req: dict, today: dt.date) -> str:
+    """Stop using this: Garrick's record of a piece of work put away, under
+    the zone's archive/, with the day in its hub, and committed as a move.
+    Its folder of files is not touched. Bring it back returns the record."""
+    Y = your_work()
+    zone, note, parts, _ = resume_note(ws, req)
+    name = work_name(zone, parts)
+    project = zone / parts[0]
+    if name != parts[0]:
+        raise Refused("%s is one of several threads; Stop using this puts away a piece of work that is one" % name)
+    dest = zone / Y.ARCHIVE / parts[0]
+    if dest.exists():
+        raise Refused("a piece of work called %s is already put away; bring it back or rename this one first" % parts[0])
+    with zone_lock(zone):
+        if uncommitted(zone, project):
+            raise Refused("%s has changes not saved yet. Continue it once, or wrap it, then stop using it" % name)
+        hub = project / (parts[0] + ".md")
+        before = hub.read_bytes()
+        hub.write_text(set_front(before.decode("utf-8"), {Y.PUT_AWAY: today.isoformat()}), encoding="utf-8")
+        dest.parent.mkdir(exist_ok=True)
+        os.rename(str(project), str(dest))
+        commit_new(zone, [parts[0], "%s/%s" % (Y.ARCHIVE, parts[0])], ("%s: put away, its folder left as it was" % name)[:200],
+                   [], {hub: before}, ((dest, project),), wall=wall_refusal(ws))
+    return "%s is put away. Its folder is as it was" % name
+
+
+def bring_back(ws: Path, req: dict) -> str:
+    """Bring it back: a piece of work put away returned to where it stood."""
+    Y = your_work()
+    zone = zone_dir(ws, req.get("zone"))
+    name = field(req, "project")
+    src, dest = zone / Y.ARCHIVE / name, zone / name
+    hub = src / (name + ".md")
+    if not hub.is_file() or not Y.front_value(hub, Y.PUT_AWAY):
+        raise Refused("%s is not put away" % name)
+    if dest.exists():
+        raise Refused("there is already a piece of work called %s; rename it before bringing this one back" % name)
+    with zone_lock(zone):
+        if uncommitted(zone, src):
+            raise Refused("%s has changes not saved yet in its put-away place" % name)
+        before = hub.read_bytes()
+        hub.write_text(set_front(before.decode("utf-8"), {}, drop=(Y.PUT_AWAY,)), encoding="utf-8")
+        os.rename(str(src), str(dest))
+        commit_new(zone, ["%s/%s" % (Y.ARCHIVE, name), name], ("%s: brought back" % name)[:200],
+                   [], {hub: before}, ((dest, src),), wall=wall_refusal(ws))
+    return "%s is back, where it stood" % name
+# ---- end of your own work ----------------------------------------------------------
 
 
 def fix_finding(ws: Path, req: dict) -> str:
@@ -2330,6 +2728,16 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "discover":
+        return discover_folder(ws, req)
+    if req["verb"] == "suggestion":
+        return answer_suggestion(ws, req)
+    if req["verb"] == "start":
+        return start_work(ws, req, today or dt.date.today())
+    if req["verb"] == "stop-using":
+        return stop_using(ws, req, today or dt.date.today())
+    if req["verb"] == "bring-back":
+        return bring_back(ws, req)
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)

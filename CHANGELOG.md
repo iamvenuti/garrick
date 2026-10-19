@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- A status page action or an ask box request that the zone's wall check refuses says the sentence the rules give for a wall, and nothing else ([#172](https://github.com/iamvenuti/garrick/issues/172)). 0.33.0 did this for Todo ticks and unticks only. Every other action passed on the check's own line, which names the note's path and the party on the far side of the wall: changing a Todo date, adding a line, *Park*, *Wake*, an interruption, *New project*, *New thread*, *Rename*, *Delete*, and *Continue*, whose reply added the line after "Garrick's record of it is not committed". The ask box also put "Refused:" in front of the sentence. Now each of them ends on "A wall holds some material back from this project, so I have not used it. Nothing was written." word for word. Every helper in `page_action.py` that commits now has to be given that sentence, so a verb added later cannot leave it out. *Rename* and *Delete* commit inside `scaffold.py`, so `page_action.py` looks for the check's line in the script's refusal. Run in a terminal, the script still prints the line, because whoever ran it needs it to take the material out. A refusal for any other reason, such as a hook that fails or a note edited in the meantime, still says why. The old test used a hook that printed a line of its own, so the leak passed it. The new tests' hook prints the check's real line for every verb that commits, the manage verbs run against an installed workspace's own wall check, and `tests/test_autonomy.py` now fails on any commit route in `page_action.py` that does not end on the sentence.
+
 ## [0.35.0] - 2026-10-18
 
 ### Added

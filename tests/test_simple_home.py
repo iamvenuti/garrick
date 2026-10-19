@@ -617,6 +617,30 @@ class TestContinue(HandOffCase):
         self.assertIn(" M \"Acme Review/Deliverables/260301 - Pricing memo.md\"", left)
         self.assertTrue(draft.is_file())
 
+    def test_a_record_the_wall_check_refuses_ends_the_reply_on_the_rules_sentence(self):
+        """#172: the work still opens, and the reply says the record is not
+        committed and ends on #116's sentence, never on what the check printed.
+        A refusal for another reason still says why."""
+        import check
+        ops = pa.ops_lib(self.root)
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\nA line written in a session.\n")
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        line = check.report_staged([check.Finding(check.ERROR, "walls", "Acme Review/Threads/Pricing/Pricing.md",
+                                                  "names Birch & Co (`birch`), or one of its people; "
+                                                  "a wall stands between acme and birch")])
+        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        hook.chmod(0o755)
+        said = self.go()
+        self.assertEqual("Opened Acme Review in Claude. It already knows where it stands. Garrick's record of it is "
+                         "not committed. " + ops.WALL_REFUSAL, said)
+        for leak in ("Birch", "birch", "Commit refused", "Pricing.md"):
+            self.assertNotIn(leak, said)
+        self.assertIn("M ", self.git("status", "--porcelain"))                  # nothing put back: the files are the user's
+        write(hook, "#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        said = self.go(now=dt.datetime.now() + dt.timedelta(hours=handoff.FRESH_HOURS + 1))
+        self.assertTrue(said.endswith("; Garrick's record of it is not committed: fatal: the disk is full"), said)
+
     def test_a_recent_session_is_resumed_and_an_old_one_asked_afresh(self):
         now = dt.datetime.now()
         self.go(now=now)

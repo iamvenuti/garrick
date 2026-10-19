@@ -679,6 +679,51 @@ class WallRefusalTest(unittest.TestCase):
         self.assertEqual([], strays)
         self.assertEqual([], unlisted)
 
+    def test_every_commit_the_status_page_makes_ends_a_wall_refusal_on_the_sentence(self):
+        """#172: the status page and the ask box hold no copy of the sentence, so
+        the sweep above cannot see them. They take it from operations.py, and
+        this holds every route that commits to it: each function in
+        page_action.py that runs `git commit` turns the check's line into the
+        sentence, each call of a committing helper passes the sentence as `wall`,
+        scaffold.py's runner finds the check's line inside the script's refusal,
+        and the ask box adds no "Refused:" of its own to it. A verb added later
+        with a commit of its own fails here until it does the same."""
+        status = REPO / "extras" / "status"
+        tree = ast.parse((status / "page_action.py").read_text(encoding="utf-8"))
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+        def names_in(node):
+            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+        def calls_in(node):
+            return [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+
+        committers = set()
+        for name, fn in functions.items():
+            for call in calls_in(fn):
+                if call.func.id == "git" and any(isinstance(a, ast.Constant) and a.value == "commit" for a in call.args):
+                    committers.add(name)
+        self.assertEqual({"committing", "commit_all", "commit_record"}, committers)
+        helpers = {"commit", "commit_all", "commit_new", "commit_record"}
+        for name in sorted(helpers):
+            self.assertIn("wall", [a.arg for a in functions[name].args.kwonlyargs], name)       # no default to forget
+            self.assertEqual([None], functions[name].args.kw_defaults, name)
+            self.assertIn("WALL_LINE", names_in(functions[name]), name)
+        for name in sorted(n for n in functions if "committing" in {c.func.id for c in calls_in(functions[n])}):
+            self.assertIn(name, helpers, "%s commits without turning the check's line into the sentence" % name)
+        passed = 0
+        for name, fn in functions.items():
+            for call in calls_in(fn):
+                if call.func.id not in helpers:
+                    continue
+                wall = next((k.value for k in call.keywords if k.arg == "wall"), None)
+                self.assertTrue(isinstance(wall, ast.Call) and getattr(wall.func, "id", "") == "wall_refusal",
+                                "%s calls %s without wall=wall_refusal(ws)" % (name, call.func.id))
+                passed += 1
+        self.assertGreaterEqual(passed, 9)
+        self.assertTrue({"WALL_IN", "wall_refusal"} <= names_in(functions["scaffold"]))
+        self.assertIn("pa.wall_refusal(self.ws)", (status / "ask.py").read_text(encoding="utf-8"))
+
     def test_the_sentence_names_no_far_side_party_or_person(self):
         said = self.refusal().lower()
         for name in sorted(self.far_side_names()):

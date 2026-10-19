@@ -284,7 +284,8 @@ def shapes(text, line0=1):
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-         "rename", "delete", "undo", "interrupt", "answer", "later", "continue", "fix")
+         "rename", "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start",
+         "stop-using", "bring-back")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
@@ -321,6 +322,10 @@ SHAPES = {
     "flush: one.verb": {"todo-done": (), "todo-undo": ()},
     # SIMPLE_JS (#175): Ask something, and Settings › Home
     "askReq: 'ask-desktop'": {"ask-desktop": ()},
+    # Your own work (#182): a suggestion renamed, and a next step in the user's own words; a suggestion's
+    # Yes, Not and Rename carry the part of the workspace chosen above them, merged by Object.assign
+    "renameReq: 'suggestion'": {"suggestion": ("zone", "party")},
+    "ownReq: 'answer'": {"answer": ()},
     "homeReq: 'settings'": {"settings": ()},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
@@ -328,7 +333,10 @@ PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("
              # the simple home (#175): Continue, a Needs you answer and Not now, the example's two links
              '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",),
              # a `check` chip's Fix on the Threads card (#179)
-             '"fix"': ("fix",)}
+             '"fix"': ("fix",),
+             # your own work (#182): a suggestion's Yes and Not, Start, Stop using this and Bring it back
+             '"suggestion"': ("suggestion",), '"start"': ("start",), '"stop-using"': ("stop-using",),
+             '"bring-back"': ("bring-back",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
@@ -339,7 +347,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "NOTIFY_JS": {"nact: 'settings'"},
-           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'"}}
+           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"}}
 
 
 class TestWhatThePageSends(unittest.TestCase):

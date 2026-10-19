@@ -587,7 +587,7 @@ class TestWorkOnThePage(StatusCase):
     def test_the_zone_verbs_are_the_ones_page_action_locks(self):
         # back, stack and unstack touch only the interruption stack, never a zone's git.
         # Ask something and the example's links act on no one zone (#175).
-        unzoned = {"run", "settings", "check-name", "back", "stack", "unstack", "ask-desktop", "example"}
+        unzoned = {"run", "settings", "check-name", "back", "stack", "unstack", "ask-desktop", "example", "discover"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

@@ -288,6 +288,38 @@ class TestRename(ManageCase):
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 
+    def test_a_thread_and_the_files_in_its_folder(self):
+        """#178: links to a file inside a renamed thread's folder follow it,
+        from its own note and from anywhere else in the zone."""
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        (old / "Deliverables").mkdir()
+        (old / "Deliverables" / "260914 - Brief.md").write_text("# Brief\n")
+        (old / "Sources").mkdir()
+        (old / "Sources" / "rates.csv").write_text("lane,rate\n")
+        note, hub = old / "Pricing.md", self.work / "Acme" / "Acme.md"
+        text = note.read_text()
+        self.assertIn("| Live artifact | <path, and what it is> |", text)
+        note.write_text(text.replace("| Live artifact | <path, and what it is> |",
+                                     "| Live artifact | [[Acme/Threads/Pricing/Deliverables/260914 - Brief|Deliverables/260914 - Brief]] |")
+                        + "\nRates: [[Acme/Threads/Pricing/Sources/rates.csv]].\n")
+        hub.write_text(hub.read_text() + "\nThe rates: [[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]].\n")
+        self.commit("Pricing's files")
+        before = self.git("ls-files", "-s").stdout
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        text = (self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").read_text()
+        self.assertIn("[[Acme/Threads/Renewal/Deliverables/260914 - Brief|Deliverables/260914 - Brief]]", text)
+        self.assertIn("[[Acme/Threads/Renewal/Sources/rates.csv]]", text)
+        self.assertIn("[[Work/Acme/Threads/Renewal/Sources/rates.csv|rates]]", hub.read_text())
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if "leads nowhere" in f["message"]])    # the Live artifact row too
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, self.git("ls-files", "-s").stdout)
+        self.assertIn("[[Acme/Threads/Pricing/Sources/rates.csv]]", note.read_text())
+        self.assertIn("[[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]]", hub.read_text())
+
     def test_a_project_and_its_threads(self):
         r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--to", "Apex")
         self.assertEqual(0, r.returncode, r.stderr)
@@ -397,6 +429,49 @@ class TestWhatCannotBeBroughtBack(ManageCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("repository of its own", r.stderr)
         self.assertTrue((repo / ".git").is_dir())
+
+    def machine_made(self, folder):
+        """What Finder, Python and Obsidian leave in a folder they have opened (#177)."""
+        (folder / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+        (folder / "__pycache__").mkdir()
+        (folder / "__pycache__" / "x.cpython-39.pyc").write_bytes(b"\0")
+        (folder / ".obsidian").mkdir()
+        (folder / ".obsidian" / "workspace.json").write_text("{}")
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_rename(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        new = self.work / "Acme" / "Threads" / "Renewal"
+        self.assertTrue((new / "Renewal.md").is_file())
+        self.assertFalse(old.exists())                                        # nothing left behind
+        self.assertEqual(["Renewal.md"], sorted(os.listdir(new)))            # and nothing carried over
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+
+    def test_a_file_anybody_wrote_still_refuses_a_rename_beside_them(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        (old / "notes.txt").write_text("not committed")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/Threads/Pricing/notes.txt is in Pricing but not in the zone's history", r.stderr)
+        self.assertNotIn(".DS_Store", r.stderr)
+        self.assertTrue((old / ".DS_Store").exists())                         # a refusal clears nothing
+        self.assertTrue((old / "notes.txt").exists())
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_deletion(self):
+        self.machine_made(self.freight.parent)
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertFalse(self.freight.parent.exists())
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+        self.machine_made(self.work / "Acme")
+        (self.work / "Acme" / "notes.txt").write_text("not committed")
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--confirm", "Acme")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/notes.txt is in Acme but not in the zone's history", r.stderr)
+        self.assertTrue((self.work / "Acme" / "Acme.md").is_file())
 
     def test_something_staged_elsewhere_is_never_swept_in(self):
         (self.work / "Birch Sources").mkdir()

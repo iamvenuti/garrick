@@ -197,6 +197,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -1731,17 +1732,22 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     flag = ["--check"] if check else []
     if verb == "new-project":
         name, thread = field(req, "name"), field(req, "thread")
+        made = [p for p in (zone / name,) if not p.exists()]
         said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
                         *flag)
         if not check:
             commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
-                       wall=wall_refusal(ws))
+                       made, {}, wall=wall_refusal(ws))
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
+        threads, hub = zone / project / "Threads", zone / project / ("%s.md" % project)
+        made = [p for p in (threads, threads / name) if not p.exists()]
+        before = {hub: hub.read_bytes()} if hub.is_file() else {}
         said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag)
         if not check:
-            commit_new(zone, zone / project, "%s: new thread %s" % (project, name), wall=wall_refusal(ws))
+            commit_new(zone, zone / project, "%s: new thread %s" % (project, name), made, before,
+                       wall=wall_refusal(ws))
         return said
     if verb == "undo":
         commit = req.get("commit")
@@ -1763,15 +1769,32 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     return said
 
 
-def commit_new(zone: Path, folder: Path, message: str, *, wall: Optional[str]) -> None:
+def commit_new(zone: Path, folder: Path, message: str, made: list, before: dict, *, wall: Optional[str]) -> None:
     """Commit what scaffold.py made, as the threads skill's New does: the new
     folder by name, and its hub. Refused, the folder stays for the user;
-    refused by the wall check, the reply is `wall` alone, as commit()'s is."""
+    refused by the wall check, the reply is `wall` alone, as commit()'s is,
+    and its "Nothing was written" holds (#172): `made`, the folders that were
+    not there before the request, go, and each file in `before` gets back the
+    bytes it held then, an edit from another session included. Nothing else
+    is touched. If a file scaffold.py changed was edited meanwhile, all of it
+    stays, as commit_all() leaves its notes."""
     rel = folder.relative_to(zone).as_posix()
+    mine = {n: n.read_bytes() for n in before if n.is_file()}
     code, why = committing(zone, rel, message)
     if code != 0:
         git(zone, "reset", "-q", "--", rel, timeout=10)
         if wall and code is not None and WALL_LINE.match(why):
+            try:
+                ours = all(n.read_bytes() == wrote for n, wrote in mine.items())
+            except OSError:
+                ours = False
+            if not ours:
+                raise Refused("made, but not committed. A note was edited meanwhile, so what was made was left as "
+                              "it is; take it out, or commit it by hand")
+            for n, was in before.items():
+                n.write_bytes(was)
+            for p in made:                      # the outermost first: a new Threads folder takes its thread with it
+                shutil.rmtree(p, ignore_errors=True)
             raise Refused(wall)
         if code is None:
             raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "

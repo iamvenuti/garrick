@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import shutil
 import subprocess
 import sys
 import unittest
@@ -607,11 +606,9 @@ class TestFromThePage(ManageCase):
         self.assertEqual("", self.git("status", "--porcelain").stdout)              # the rename put back
         self.assertTrue(self.freight.is_file())
         refused(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
-        self.assertTrue((self.work / "Acme" / "Threads" / "Birch Pitch" / "Birch Pitch.md").is_file())    # made, left
-        self.git("checkout", "--", "Acme/Acme.md")
-        shutil.rmtree(self.work / "Acme" / "Threads" / "Birch Pitch")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the new thread taken away
         refused(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
-        shutil.rmtree(self.work / "Cobalt")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # and the new project
         hub = self.work / "Acme" / "Acme.md"                       # written before the wall stood, say
         hub.write_text(hub.read_text() + "\nBirch & Co asked about the same lanes.\n")
         self.git("commit", "-q", "--no-verify", "-am", "a line from before the wall")
@@ -622,6 +619,34 @@ class TestFromThePage(ManageCase):
         r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
         self.assertEqual(1, r.returncode)
         self.assertIn("Commit refused: ", r.stderr)                                 # the terminal keeps the check's line
+
+    def test_a_new_thread_the_wall_check_refuses_leaves_nothing_behind(self):
+        """#172: "Nothing was written" holds. The thread's folder goes, and the
+        hub gets back the bytes it held before the request, an edit another
+        session had not committed yet included; the index is as it was."""
+        hub = self.work / "Acme" / "Acme.md"
+        hub.write_text(hub.read_text() + "\nA line typed in Obsidian, not committed yet.\n")
+        before = hub.read_bytes()
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
+        self.assertEqual(self.wall(), str(said.exception))
+        self.assertFalse((self.work / "Acme" / "Threads" / "Birch Pitch").exists())
+        self.assertEqual(before, hub.read_bytes())
+        self.assertEqual(" M Acme/Acme.md\n", self.git("status", "--porcelain").stdout)
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+
+    def test_a_new_project_the_wall_check_refuses_leaves_nothing_behind(self):
+        """Its folder goes, a Threads folder and a first thread with it, and
+        nothing that was there before the request is touched."""
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text() + "- [ ] [[Freight]]: an edit of its own\n")
+        before = {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts}
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
+        self.assertEqual(self.wall(), str(said.exception))
+        self.assertFalse((self.work / "Cobalt").exists())
+        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts})
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
 
     def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
         hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())
@@ -634,6 +659,7 @@ class TestFromThePage(ManageCase):
                 self.act(**req)
             self.assertIn("the disk is full", str(said.exception), req)
             self.assertNotIn(self.wall(), str(said.exception), req)
+        self.assertTrue((self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").is_file())    # made, left for the user
 
     def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
         """Interrupted (#32) on the template's own thread note: the rows filled,

@@ -199,7 +199,12 @@ class TestAddYourOwnWork(Case):
         self.assertTrue((self.root / "System" / "generated" / "discovery.json").is_file())
 
     def test_the_whole_mac_and_the_home_folder_are_refused(self):
-        for folder in ("/", os.path.expanduser("~")):
+        home = self.base / "home"
+        home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            with self.assertRaisesRegex(pa.Refused, "Pick the folder your work is in"):
+                self.act(verb="discover", folder=str(home))
+        for folder in ("/",):
             with self.assertRaisesRegex(pa.Refused, "Pick the folder your work is in"):
                 self.act(verb="discover", folder=folder)
         with self.assertRaisesRegex(pa.Refused, "not a folder Garrick can read"):

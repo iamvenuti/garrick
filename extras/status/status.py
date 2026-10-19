@@ -48,7 +48,11 @@ as the vault instead, and `--no-obsidian` keeps every link a file link. In
 Garrick.app (see `app/`), projects and threads also offer Reveal in
 Finder and Open in Claude, Codex or cmux, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
-does; `--no-cmux` leaves cmux out. A zone with no Todo.md gets no Open
+does; `--no-cmux` leaves cmux out. Open in Claude on a thread hands it over
+as the simple home's Continue does (#180), through page_action.py's
+`continue`, where this build finds Claude Code's command-line tool
+(handoff.py's find_claude()); without it, it falls back to the deep link,
+which leaves the question for you to send. A zone with no Todo.md gets no Open
 actions, and a workspace with none gets no card for them.
 A zone given a colour or an icon in Settings › Zones shows them wherever
 the page names it.
@@ -2507,6 +2511,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             nodes[-1]["held"] = 1                                           # woken with its project
         elif actions and kind == "thread" and in_zone and folder_thread:
             nodes[-1]["pa"] = [place, path.relative_to(root).as_posix()]   # what Park and Wake act on
+        if actions and kind == "thread" and in_zone and folder_thread and path.name == folder_thread + ".md":
+            nodes[-1]["oc"] = [place, path.relative_to(root).as_posix()]   # what Open in Claude continues (#180)
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
@@ -3122,6 +3128,8 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
         card["held"] = 1             # parked with its project: woken with it, from the project's card
     elif actions:
         card["pa"] = [r["zone"], r["rel"]]
+    if actions:
+        card["oc"] = [r["zone"], r["rel"]]     # what Open in Claude continues (#180), parked or not
     if r["note"] != r["hub"]:
         card["mg"] = [r["zone"], r["project"], r["thread"], files_in(r["note"].parent),
                       open_naming(r["note"].parents[3], {r["thread"]})]
@@ -3217,7 +3225,7 @@ def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folder
 
 
 def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: "Links", folders: bool, trouble: bool,
-              desk: Optional[Dict[str, str]] = None, drive: bool = False) -> dict:
+              desk: Optional[Dict[str, str]] = None, drive: bool = False, cli: bool = False) -> dict:
     """What the app's menu bar icon lists: per zone, its
     live projects by name, each with its live threads by name, and whether
     the Status tab carries its red dot. A project or thread gives its name,
@@ -3228,7 +3236,11 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
     project counts its threads'), and with `drive` what the desk opens
     (`dk`: zone, project, thread or ""), and `dk` on the whole menu too: the
     app then opens anything in cmux through the desk, the workspace root for
-    Process the Inbox and Ask included. The app keeps the zone the graph shows;
+    Process the Inbox and Ask included. A thread, and a project that is one
+    thread, gives its note (`oc`: zone, note from the zone): with `cli`, where
+    this build found Claude Code's command-line tool (`cli` on the whole menu),
+    the app's Open in Claude continues it through page_action.py, as the
+    page's does (#180). The app keeps the zone the graph shows;
     parked threads stay out, as do figures."""
     said = {r["thread"].casefold() for z in T.values() for r in z["rows"] + z["parked"]}
     project_n: Dict[str, int] = {}
@@ -3236,8 +3248,10 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         for p in {r["project"] for r in data["rows"] + data["parked"]}:
             project_n[p.casefold()] = project_n.get(p.casefold(), 0) + 1
 
-    def entry(name, say, note, dk):
+    def entry(name, say, note, dk, oc=None):
         e = {"n": name, "w": say, "u": link(note)}
+        if oc:
+            e["oc"] = oc
         if drive:
             e["dk"] = dk
         if folders:
@@ -3255,17 +3269,21 @@ def menu_data(T: Dict[str, dict], names: Dict[Tuple[str, str, str], str], link: 
         projects = []
         for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
             if len(rs) == 1 and rs[0]["note"] == rs[0]["hub"]:          # its own thread
-                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"], [zone, project, ""]), t=[]))
+                projects.append(dict(entry(project, names[(zone, project, project)], rs[0]["note"], [zone, project, ""],
+                                           [zone, rs[0]["rel"]]), t=[]))
                 continue
             hub = rs[0]["hub"] or rs[0]["note"]
             say = project if project.casefold() not in said and project_n.get(project.casefold()) == 1 else ""
-            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"], [zone, project, r["thread"]])
+            threads = [entry(r["thread"], names[(zone, project, r["thread"])], r["note"], [zone, project, r["thread"]],
+                             [zone, r["rel"]])
                        for r in sorted(rs, key=lambda r: r["thread"].casefold())]
             projects.append(dict(entry(project, say, hub, [zone, project, ""]), t=threads))
         zones.append({"z": zone, "p": projects})
     out = {"trouble": trouble, "zones": zones}
     if drive:
         out["dk"] = 1
+    if cli:
+        out["cli"] = 1
     return out
 
 
@@ -5047,6 +5065,13 @@ color:var(--ink);background:var(--surface);border:1px solid var(--line);border-r
 # in that folder, with the phrase that resumes it on the clipboard. There, and
 # in the Obsidian plugin, which gives the page the same bridge, the apps take
 # the place of Copy "open X"; a browser, which can only copy, keeps it.
+# Open in Claude on a thread (`oc`, its note) is the one launcher that acts
+# (#180): where the build found Claude Code's command-line tool (the body's
+# data-cli), it sends the simple home's Continue request, page_action.py's
+# `continue`, and the working card says "Opening <thread> in Claude…" until
+# the desktop app has opened on Claude's answer, or the refusal stays there in
+# its own words. Without the tool, and for a project of several threads, it
+# is the deep link, which leaves "open X" typed in for you to send.
 PANEL_JS = r"""
 /* Which apps a card offers and what clicking a thread's name does. In the
    app, the settings saved for every viewer (#launch-settings, written by
@@ -5071,6 +5096,9 @@ var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux',finder:'Finder'};
 function prefs(){return GarrickPrefs.launchers()}
 function chosen(){var on=prefs();return(document.body.dataset.launchers||'').split(',').filter(function(k){return k&&on[k]!==false})}
 function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
+/* Open in Claude on a thread, where the build found Claude Code's CLI: the simple home's Continue request (#180) */
+function cont(o){return o.oc&&document.body.dataset.cli?{verb:'continue',zone:o.oc[0],file:o.oc[1]}:null}
+function going(o){return'Opening '+o.n+' in Claude…'}
 /* What the page says the moment the button is pressed: that it is opening, never that it
    opened. The host says what opened, and only it can: a cold Claude is started and waited
    for, Codex and cmux say the clipboard now holds the phrase, Finder names the phrase it
@@ -5078,6 +5106,7 @@ function phrase(o){return o.w?'open '+o.w:o.lw?'open '+o.lw:''}
    nothing back, and then this line is all there is. */
 function launch(k,o){var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
 var l=k==='finder'?'Reveal in Finder':'Open in '+LABEL[k];
+var q=k==='claude'&&cont(o);if(q)return'<button class="act" type="button" data-k="claude"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+esc(JSON.stringify(q))+'" data-say="'+esc(going(o))+'">'+l+'</button>';
 if(k==='cmux'&&o.dk)return'<button class="act" type="button" data-k="cmux"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
 +(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+l+'</button>';
 return'<button class="act" type="button" data-launch="'+k+'" data-k="'+k+'"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+l+'</button>'}
@@ -5122,6 +5151,7 @@ document.addEventListener('click',function(e){var a=e.target.closest&&e.target.c
 var d=GarrickPrefs.def();if(!d||d==='note'||chosen().indexOf(d)<0)return;
 var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x){return}if(!o.f)return;
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
+var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;if(!(window.GarrickAct&&GarrickAct(q,going(o)))){host.postMessage({act:q});if(window.GarrickSay)GarrickSay(going(o))}return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
 return{esc:esc,acts:acts,head:head}})();
 """
@@ -5905,7 +5935,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
           show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
-          managed: Optional[List[Path]] = None) -> str:
+          managed: Optional[List[Path]] = None, cli: Optional[bool] = None) -> str:
     """The page. `vaults` and `launchers` say what this machine has (main()
     asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
@@ -5913,7 +5943,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     live in, and folders renamed or moved since, old path to new. `managed`
     names the files where a managed setting may switch Claude's local
     sessions off (main() passes this Mac's); without it only the record
-    Continue keeps is read, as a test needs."""
+    Continue keeps is read, as a test needs. `cli` says whether Claude Code's
+    command-line tool is here (main() asks handoff.py's find_claude()): with
+    it, Open in Claude on a thread goes through Continue's request (#180);
+    without it, or unsaid, through the deep link."""
     now = now or dt.datetime.now()
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
@@ -6388,7 +6421,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
-    md = menu_data(T, names, link, cmux, trouble, S, DK)
+    md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
         md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                         "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
@@ -6424,11 +6457,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
                MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'
+            '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + guide_mod().GUIDE_CSS + zone_css(),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
-                now.isoformat(timespec="seconds"), E(",".join(launch)), header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 
@@ -6500,7 +6533,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
     tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
                          vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
-                         managed=handoff_mod().managed_places(),
+                         managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                          launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
     os.replace(tmp, out)
     release_ask(ws)

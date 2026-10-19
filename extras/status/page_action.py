@@ -92,10 +92,13 @@ zone's repository, as the skills would:
     later       "Not now": {"zone", "file", "until"?}; the question put off
                 to tomorrow, or to the day `until` names, and committed
     continue    a piece of work opened in Claude's desktop app, already
-                oriented: {"zone", "file"}, its note. Its own record is
-                committed, a headless `claude -p` asks where it stands, and
-                that session opens with `claude --desktop --resume`, under
-                a pseudo-terminal (handoff.py, beside this file)
+                oriented: {"zone", "file"}, its note. The simple home's
+                Continue and, since #180, every Open in Claude on a thread
+                (the Threads card, the graph's panel, the app's menu and
+                panel). Its own record is committed, a headless `claude -p`
+                asks "Where am I on <it>?" (say_name()), and that session
+                opens with `claude --desktop --resume`, under a
+                pseudo-terminal (handoff.py, beside this file)
     ask-desktop Ask something: {"prompt"}, asked the same way in the
                 workspace's own folder; where the desktop app cannot open
                 it, the answer comes back in the reply, as "answer"
@@ -1857,6 +1860,36 @@ def work_name(zone: Path, parts: tuple) -> str:
     return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
 
 
+def say_name(ws: Path, zone: Path, parts: tuple) -> str:
+    """The name Continue asks about, "Where am I on <it>?": the name the home
+    shows (work_name()), but for a thread of a project with several, the
+    shortest that is unique, as the threads skill says it (#180): the thread
+    alone when no other thread in any zone, live or parked, has its name;
+    else project and thread; else the zone first as well. A project that is
+    one thread keeps the project's name, which is what the home calls it."""
+    name = work_name(zone, parts)
+    if len(parts) != 4 or name == parts[0]:
+        return name
+    thread, project = parts[2].casefold(), parts[0].casefold()
+    seen = []
+    for z in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
+        if not z.is_dir() or z.name.startswith((".", "_")):
+            continue
+        for p in z.iterdir():
+            if not p.is_dir() or p.name.startswith((".", "_")) or p.name in SKIP or p.name == "Inbox":
+                continue
+            notes = [t / (t.name + ".md") for t in (p / "Threads").glob("*/")
+                     if not t.name.startswith((".", "_")) and t.name not in SKIP and (t / (t.name + ".md")).is_file()]
+            if not notes and (p / (p.name + ".md")).is_file():
+                notes = [p / (p.name + ".md")]          # a project that is its own thread, by its name
+            seen += [(z.name, p.name.casefold(), n.stem.casefold()) for n in notes
+                     if front(n).get("status") not in ("done", "closed", "archived", "complete", "completed")]
+    same = [s for s in seen if s[2] == thread]
+    if len(same) <= 1:
+        return parts[2]
+    return name if sum(s[1] == project for s in same) <= 1 else "%s, %s" % (zone.name, name)
+
+
 def open_question(q: Path) -> str:
     text = q.read_text(encoding="utf-8")
     state = front(q).get("status", "open")
@@ -2074,6 +2107,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     H = handoff()
     zone, note, parts, _ = resume_note(ws, req)
     name = work_name(zone, parts)
+    asked = "Where am I on %s?" % say_name(ws, zone, parts)
     if H.managed_off(managed_places()):          # not kept: the page reads the setting at every build
         raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
     claude = H.find_claude()
@@ -2086,7 +2120,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     kept = H.session_for(ws, key)
     resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
     try:
-        sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF, name=name)[0]
+        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
         try:
             H.open_desktop(claude, folder, sid)
         except (H.LocalOff, H.TimedOut):
@@ -2095,7 +2129,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             if not resume:
                 raise
             resume = False                      # the kept session would not open: ask afresh, once
-            sid = H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF, name=name)[0]
+            sid = H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")

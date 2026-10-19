@@ -59,7 +59,7 @@ const WAITS = { poll: 500, ceiling: 40000, settle: 1000, fallback: 15000 };
 const SAYS = {
 	opened: (app, name, phrase) =>
 		!phrase ? `Opened ${app} in ${name}.`
-			: app === "Claude" ? `Opened Claude in ${name} with “${phrase}” typed in. Send it to resume.`
+			: app === "Claude" ? `Opened Claude in ${name} with “${phrase}” typed in. Press Enter to send it.`
 				: `Opened ${app} in ${name}. The clipboard now holds “${phrase}”; paste it to resume.`,
 	notOpened: (app, name, phrase) =>
 		phrase ? `${app} did not open ${name}. The phrase that resumes it is “${phrase}”.` : `${app} did not open ${name}.`,
@@ -371,7 +371,8 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	}
 
 	// As Garrick.swift's launch(): Claude gets the phrase typed into a new
-	// session for you to send; Codex and cmux get the folder, and the phrase
+	// session for you to send, only where Open in Claude cannot go through
+	// page_action.py's `continue` (#180), which the page then sends as an act; Codex and cmux get the folder, and the phrase
 	// goes on the clipboard; Finder shows the folder. Nothing is sent and no
 	// command is typed into a terminal. cmux with the cmux extra's desk ready
 	// (desk: the message says so) goes through page_action.py instead: a tab

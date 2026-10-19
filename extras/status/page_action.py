@@ -2155,12 +2155,14 @@ def hub_value(note: Path, key: str) -> str:
 
 def record_files(zone: Path, note: Path, parts: tuple, folder: Path) -> list:
     """Garrick's own record of a piece of work, as pathspecs from the zone:
-    its note, its project's hub, and the questions in each Needs you folder
-    the work keeps. Nothing else of the folder, which holds the user's files."""
+    its note, its project's hub, the questions in each Needs you folder the
+    work keeps, and the Claude settings of the folder its sessions start in.
+    Nothing else of the folder, which holds the user's files."""
     project = zone / parts[0]
     hub = project / (parts[0] + ".md")
     boxes = dict.fromkeys([note.parent / NEEDS] + ([project / NEEDS] if folder == project else []))
-    return ([n.relative_to(zone).as_posix() for n in dict.fromkeys([note, hub])]
+    settings = folder.joinpath(*your_work().CLAUDE_SETTINGS)     # the read-only rule for a folder of the user's (#182)
+    return ([n.relative_to(zone).as_posix() for n in dict.fromkeys([note, hub, settings])]
             + [":(glob)%s/*.md" % b.relative_to(zone).as_posix() for b in boxes])
 
 
@@ -2198,9 +2200,12 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     within FRESH_HOURS is resumed as it was, without asking again.
 
     A piece of work whose files are in a folder of the user's (#182) is read
-    there and never written: the call gets the folder, and the text of its
-    Office files, with `--add-dir`, and the workspace's Claude settings deny
-    Edit and Write in it before anything opens. With `suggested`, the first
+    there: the call gets the folder, and the text of its Office files, with
+    `--add-dir`, and Edit is denied in it, by a rule in the Claude settings
+    of the folder the session starts in, committed with Garrick's record
+    before anything opens, and by `--settings` on the call. The rule covers
+    Claude's file-editing tools, not a shell command the user approves. With
+    `suggested`, the first
     look's suggested request is asked instead of where it stands, once."""
     H, Y = handoff(), your_work()
     zone, note, parts, _ = resume_note(ws, req)
@@ -2222,17 +2227,19 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         raise Refused(H.NO_CLI)
     folder = work_folder(zone, parts)
     files, own = files_folder(ws, zone, parts)
-    add_dirs, kept_ro = [], ""
-    if not own:
-        kept_ro = read_only_for_claude(ws, files)
-        extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
-        add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
+    add_dirs, guard = [], None
     with zone_lock(zone):
+        if not own:
+            read_only_rule(folder, files)       # committed below, with Garrick's own record of the work
+            extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
+            add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
+            guard = Y.settings_arg(str(files))
         unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     kept = H.session_for(ws, key)
     resume = not suggested and H.fresh(kept, now) and kept.get("folder") == str(folder)
     try:
-        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs)[0]
+        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs,
+                                                 settings=guard)[0]
         try:
             H.open_desktop(claude, folder, sid)
         except (H.LocalOff, H.TimedOut):
@@ -2241,7 +2248,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             if not resume:
                 raise
             resume = False                      # the kept session would not open: ask afresh, once
-            sid = H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs)[0]
+            sid = H.prime(claude, folder, asked, brief=brief, name=name, add_dirs=add_dirs, settings=guard)[0]
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")
@@ -2254,8 +2261,6 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         said = "Opened %s in Claude, with your request already asked" % name
     else:
         said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
-    if kept_ro:
-        said += "; %s" % kept_ro
     if unsaved and unsaved == wall_refusal(ws):     # the rule's sentence ends the reply, and nothing is added to it
         return "%s. Garrick's record of it is not committed. %s" % (said, unsaved)
     return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
@@ -2323,8 +2328,10 @@ def example(ws: Path, req: dict) -> str:
 # answers with a first look, and Garrick writes it into the thread note and the
 # hub, with the next step as a Needs you question. Stop using this puts the
 # record away under the zone's archive/, recoverably; Bring it back returns it.
-# Nothing here writes under the folder: the two tools refuse to, and Claude's
-# settings deny Edit and Write there.
+# Nothing here writes under the folder: the two tools refuse to. Claude's
+# file-editing tools are kept out by an Edit deny rule in the Claude settings
+# of the folder its sessions start in, and by `--settings` on every headless
+# call; a shell command the user approves is not covered by either.
 _YW = None
 FOLDER_MAX = 1024
 FIRST_LOOK_TIMEOUT = 360          # seconds for the call that reads a piece of work's files for the first time
@@ -2442,6 +2449,9 @@ def answer_suggestion(ws: Path, req: dict) -> str:
         hub = zone / name / (name + ".md")
         hub.write_text(set_front(hub.read_text(encoding="utf-8"), {"folder": quoted(Y.folder_value(path)),
                                                                      Y.DISCOVERED: p["id"]}), encoding="utf-8")
+        # Edit denied in the folder from the start, in the project's own Claude settings, where every session on
+        # the work starts: committed with the project, it moves with it, put away and brought back.
+        read_only_rule(zone / name, Path(path))
         commit_new(zone, [name], ("New work %s, from %s" % (name, os.path.basename(real)))[:200], made, {},
                    wall=wall_refusal(ws))
     tool_json(ws, "discover.py", "answer", p["id"], *(("rename", name) if said_answer == "rename" else ("yes",)))
@@ -2466,27 +2476,19 @@ def work_files_of(ws: Path, zone: Path, parts: tuple) -> tuple:
     return files, members, pid
 
 
-def read_only_for_claude(ws: Path, folder: Path) -> str:
-    """The workspace's Claude settings deny Edit and Write in the folder and
-    give it to every session there to read, committed in the workspace's own
-    repository by name. "" when that is done; otherwise what to say. Rules
-    whose commit was refused stay written: that Claude cannot change the
-    folder matters more than the record of saying so."""
-    Y = your_work()
+def read_only_rule(session: Path, folder: Path):
+    """Edit denied in a folder of the user's, in the Claude settings of the
+    folder a session on the work starts in: Claude Code reads a project's
+    settings from there and from nowhere above it. (the file, the bytes it
+    held before or None for a new one) when it was written; None when it
+    already said so. The caller commits it with the work's record."""
     try:
-        before = Y.read_only(ws, str(folder))
+        before = your_work().read_only(session, str(folder))
     except ValueError as e:
         raise Refused("%s, so Claude could not be kept from changing %s. Nothing was opened" % (e, folder.name))
-    if before is None or not (ws / ".git").exists():
-        return ""
-    path = ws.joinpath(*Y.CLAUDE_SETTINGS)
-    wrote = path.read_bytes()
-    try:
-        commit(ws, path, before, "Claude may read %s and never change it" % folder.name, wall=wall_refusal(ws))
-    except Refused:
-        path.write_bytes(wrote)
-        return "Claude's settings keep %s read-only, not committed yet" % folder.name
-    return ""
+    if before is False:
+        return None
+    return session.joinpath(*your_work().CLAUDE_SETTINGS), before
 
 
 def first_look_note(text: str, look: dict, today: dt.date, where: str, name: str) -> str:
@@ -2560,16 +2562,28 @@ def start_work(ws: Path, req: dict, today: dt.date) -> dict:
     extracted = tool_json(ws, "extract.py", *(["--work", pid] if pid and members is not None else [str(folder)]),
                           timeout=EXTRACT_TIMEOUT)
     extracts = ws / extracted["extracts"] if extracted.get("made") or extracted.get("kept") else None
-    unsaved = read_only_for_claude(ws, folder)
     where = folder.name
+    session = work_folder(zone, parts)
+    with zone_lock(zone):
+        rule = read_only_rule(session, folder)  # in place before Claude reads the folder; committed with the first look
     prompt = Y.first_look_prompt(name, str(folder), str(extracts) if extracts else None, members)
+
+    def unwritten():
+        if rule is not None:
+            if rule[1] is None:
+                rule[0].unlink()
+            else:
+                rule[0].write_bytes(rule[1])
     try:
-        _, said = H.prime(claude, work_folder(zone, parts), prompt, timeout=FIRST_LOOK_TIMEOUT, brief=Y.FIRST_LOOK_BRIEF,
-                          name=name, add_dirs=[folder] + ([extracts] if extracts else []))
+        _, said = H.prime(claude, session, prompt, timeout=FIRST_LOOK_TIMEOUT, brief=Y.FIRST_LOOK_BRIEF,
+                          name=name, add_dirs=[folder] + ([extracts] if extracts else []),
+                          settings=Y.settings_arg(str(folder)))
     except H.HandOffError as e:
+        unwritten()
         raise Refused(str(e).replace("so nothing was opened", "so nothing was written"))
     look = Y.parse_first_look(said)
     if look is None:
+        unwritten()
         raise Refused("Claude's first look at %s did not come back in a shape Garrick can use, so nothing was written. "
                       "Try Start again" % name)
     hub = zone / parts[0] / (parts[0] + ".md")
@@ -2589,6 +2603,8 @@ def start_work(ws: Path, req: dict, today: dt.date) -> dict:
         box.mkdir(exist_ok=True)
         q.write_text(first_look_question(name, look, today), encoding="utf-8")
         files.append((q, None))
+        if rule is not None:
+            files.append(rule)
         try:
             commit_all(zone, files, ("%s: first look, from the files in %s" % (name, where))[:200], wall=wall_refusal(ws))
         except Refused:
@@ -2600,7 +2616,7 @@ def start_work(ws: Path, req: dict, today: dt.date) -> dict:
                       question=q.relative_to(zone).as_posix(), made=today.isoformat(), used=False,
                       extracts=extracted.get("extracts") or "")
     reply = "Garrick has a first look at %s. Check it, and say whether the next step is right" % name
-    return {"say": reply + ("; %s" % unsaved if unsaved else ""), "view": Y.work_id(name, key)}
+    return {"say": reply, "view": Y.work_id(name, key)}
 
 
 def stop_using(ws: Path, req: dict, today: dt.date) -> str:

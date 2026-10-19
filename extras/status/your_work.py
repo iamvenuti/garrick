@@ -22,9 +22,10 @@ id or a rule:
   (parse_first_look());
 - the machine state of a first look, System/generated/first-look.json, never
   committed: the suggested request drawn from it, until Continue has asked it;
-- the read-only rules for Claude, in the workspace's `.claude/settings.json`:
-  Edit and Write denied on the folder, which every session started there
-  reads (read_only());
+- the read-only rule for Claude: Edit denied on the folder, in the Claude
+  settings of the folder each session on the work starts in, and given with
+  `--settings` to every headless call (read_only(), settings_arg()). It
+  covers Claude's file-editing tools, not a shell command the user approves;
 - the pieces of work put away, under each zone's `archive/` (put_away()).
 
 Standard library only, Python 3.9 or later.
@@ -224,46 +225,51 @@ def keep_first_look(ws: Path, key: str, **values) -> None:
 # --------------------------------------------------------------------------- read-only for Claude
 
 def read_only_rules(folder: str) -> List[str]:
-    """The deny rules that keep Claude from changing anything in `folder`:
-    Edit, which covers every tool that edits a file, and Write. An absolute
-    path in a permission rule starts with `//`."""
+    """The deny rule that keeps Claude's file-editing tools out of `folder`.
+    Claude Code matches one kind of rule for this, Edit, which covers every
+    tool that edits or writes a file; it does not match Write rules. An
+    absolute path in a permission rule starts with `//`. A shell command the
+    user approves is not a file-editing tool, and no rule here covers it."""
     real = os.path.realpath(str(folder)).rstrip("/")
-    return ["Edit(/%s/**)" % real, "Write(/%s/**)" % real]
+    return ["Edit(/%s/**)" % real]
 
 
-def read_only(ws: Path, folder: str) -> Optional[bytes]:
-    """The workspace's Claude settings with the folder readable and never
-    writable: its deny rules, and the folder as one of the session's
-    directories, so a session opened later in Claude's desktop app reads it
-    too. Everything already there stays. Returns the bytes the file held
-    before, b"" when there was none, or None when it already said all of it.
-    Refuses with ValueError a file that is not JSON Garrick can add to."""
-    path = Path(ws).joinpath(*CLAUDE_SETTINGS)
+def settings_arg(folder: str) -> str:
+    """The same rule as the JSON `--settings` takes, for a headless call: a
+    second guard beside the settings file."""
+    return json.dumps({"permissions": {"deny": read_only_rules(folder)}}, ensure_ascii=False)
+
+
+def read_only(session: Path, folder: str) -> Optional[bytes]:
+    """The Claude settings of the folder a session starts in, `session`, with
+    Edit denied in `folder`. Claude Code reads a project's settings only from
+    the session's own working folder, never from a folder above it, so the
+    rule sits there: for a piece of work that is one thread, the project's
+    own folder, which is committed with the project and moves with it.
+    Everything already in the file stays. Returns the bytes the file held
+    before, None for a file that was not there, or False when it already said
+    it. Refuses with ValueError a file that is not JSON Garrick can add to."""
+    path = Path(session).joinpath(*CLAUDE_SETTINGS)
     try:
         before = path.read_bytes()
     except FileNotFoundError:
-        before = b""
+        before = None
     try:
-        data = json.loads(before.decode("utf-8")) if before.strip() else {}
+        data = json.loads(before.decode("utf-8")) if before and before.strip() else {}
     except ValueError:
-        raise ValueError("the workspace's Claude settings are not JSON Garrick can add to")
+        raise ValueError("this work's Claude settings are not JSON Garrick can add to")
     if not isinstance(data, dict):
-        raise ValueError("the workspace's Claude settings are not JSON Garrick can add to")
+        raise ValueError("this work's Claude settings are not JSON Garrick can add to")
     perms = data.setdefault("permissions", {})
     if not isinstance(perms, dict):
-        raise ValueError("the workspace's Claude settings have permissions Garrick cannot add to")
-    changed = False
-    real = os.path.realpath(str(folder))
-    for key, values in (("deny", read_only_rules(real)), ("additionalDirectories", [real])):
-        have = perms.setdefault(key, [])
-        if not isinstance(have, list):
-            raise ValueError("the workspace's Claude settings have a %s Garrick cannot add to" % key)
-        for v in values:
-            if v not in have:
-                have.append(v)
-                changed = True
-    if not changed:
-        return None
+        raise ValueError("this work's Claude settings have permissions Garrick cannot add to")
+    deny = perms.setdefault("deny", [])
+    if not isinstance(deny, list):
+        raise ValueError("this work's Claude settings have a deny list Garrick cannot add to")
+    added = [r for r in read_only_rules(folder) if r not in deny]
+    if not added:
+        return False
+    deny.extend(added)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return before

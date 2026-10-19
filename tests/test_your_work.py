@@ -305,22 +305,44 @@ class TestStartWithThisOne(Case):
         self.assertEqual(Y.FIRST_LOOK_BRIEF, args[args.index("--append-system-prompt") + 1])
         self.assertIn(real, args[args.index("-p") + 1])
 
-    def test_claudes_settings_deny_edit_and_write_in_the_folder(self):
-        self.start()
-        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
+    def test_edit_is_denied_in_the_settings_of_the_folder_the_session_starts_in(self):
+        """Claude Code reads a project's settings only from the session's own
+        folder, so the rule sits there, in the project, committed with it;
+        Edit alone, since Claude Code matches no Write rule; and the same rule
+        goes with --settings on the call. The workspace's own settings are
+        left alone."""
+        self.add()
+        project = self.work / "Catalogue 2027"
+        settings = project / ".claude" / "settings.json"
         real = os.path.realpath(str(self.drive / "Marketing" / "Catalogue 2027"))
-        self.assertIn("Edit(/%s/**)" % real, settings["permissions"]["deny"])
-        self.assertIn("Write(/%s/**)" % real, settings["permissions"]["deny"])
-        self.assertIn(real, settings["permissions"]["additionalDirectories"])
-        self.assertEqual("", self.git("status", "--porcelain", repo=self.root))      # committed in the workspace's own
-        self.assertEqual([".claude/settings.json"],
-                         self.git("show", "--name-only", "--format=", "HEAD", repo=self.root).split())
+        rule = "Edit(/%s/**)" % real
+        self.assertEqual({"permissions": {"deny": [rule]}}, json.loads(settings.read_text()))   # from the yes on
+        self.assertIn("Catalogue 2027/.claude/settings.json",
+                      self.git("show", "--name-only", "--format=", "HEAD").splitlines())
+        self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
+        (call,) = self.calls()
+        self.assertEqual(str(project.resolve()), str(Path(call["cwd"]).resolve()))       # where the session starts
+        self.assertEqual({"permissions": {"deny": [rule]}}, json.loads(call["args"][call["args"].index("--settings") + 1]))
+        self.assertFalse(any(r.startswith("Write(") for r in json.loads(settings.read_text())["permissions"]["deny"]))
+        self.assertFalse((self.root / ".claude" / "settings.json").exists())
+        self.assertEqual("", self.git("status", "--porcelain"))
+        pa.act(self.root, {"verb": "continue", "zone": "Work",
+                           "file": "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"})
+        prime = [c for c in self.calls() if "-p" in c["args"]][-1]
+        self.assertEqual(str(project.resolve()), str(Path(prime["cwd"]).resolve()))
+        self.assertIn("--settings", prime["args"])
 
-    def test_settings_already_there_are_kept(self):
-        write(self.root / ".claude" / "settings.json", json.dumps({"permissions": {"allow": ["Bash(git status:*)"]}}))
-        self.start()
-        settings = json.loads((self.root / ".claude" / "settings.json").read_text())
-        self.assertEqual(["Bash(git status:*)"], settings["permissions"]["allow"])
+    def test_a_rule_taken_out_is_put_back_and_committed_before_claude_opens(self):
+        self.add()
+        settings = self.work / "Catalogue 2027" / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": ["Read"]}}))
+        self.git("commit", "-q", "-am", "a rule taken out by hand")
+        pa.act(self.root, {"verb": "continue", "zone": "Work",
+                           "file": "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"})
+        kept = json.loads(settings.read_text())["permissions"]
+        self.assertEqual(["Read"], kept["allow"])                                       # what was there stays
+        self.assertEqual(1, len(kept["deny"]))
+        self.assertEqual("", self.git("status", "--porcelain"))
 
     def test_an_answer_that_is_not_a_first_look_writes_nothing(self):
         self.add()

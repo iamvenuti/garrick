@@ -53,6 +53,11 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from garrick_lib import (  # noqa: E402
+    CHECKOUT_TREE,
+    SKIP_DIRS,
+    is_checkout,
+    live_files,
+    nested_repo,
     CHECKPOINT_DAYS,
     CHECKPOINT_HEADING,
     CHECKPOINT_LABELS,
@@ -230,19 +235,8 @@ def rel(ws: Workspace, path: Path) -> str:
         return str(path)
 
 
-def nested_repo(folder: Path) -> bool:
-    """A git repository of its own inside a project, such as code checked out
-    beside the notes about it. The workspace's own repositories are its root,
-    its zones and its wikis; anything below them with a `.git` is somebody
-    else's files, not the zone's."""
-    if not (folder / ".git").exists():
-        return False
-    return not (folder.parent.name in ("Zones", "Wikis") or folder.name == "Wikis")
-
-
-# Folders no one writes in: git's own, installed packages, caches and build
-# output. Skipped by name wherever the check walks, before git is asked.
-SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "__pycache__", "dist"})
+# SKIP_DIRS (folders no one writes in) and nested_repo() come from garrick_lib,
+# which the status page's Todo card reads a zone through as well.
 
 
 def walk_files(top: Path, skip: Optional[set] = None) -> Iterable[Path]:
@@ -2199,24 +2193,12 @@ def check_todo(ws: Workspace) -> List[Finding]:
 # Links
 # ---------------------------------------------------------------------------
 
-# Folders whose notes no longer count as live: archives, build output, specs,
-# hidden and template folders.
-NOT_LIVE_DIR_RE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
 CLOUD_PATH_RE = re.compile(r"Library/CloudStorage/")
 TICKED_NOTE_RE = re.compile(r"(?<!`)`([^`\n*~/][^`\n*]*?\.md)`(?!`)")
 
 
-def live_files(folder: Path) -> Iterable[Path]:
-    """Every file under `folder` outside archives, build output, hidden and
-    template folders, any repository of its own kept inside a project, such
-    as a program's code, and any Garrick checkout, cloned or unpacked from a
-    release: their files are not notes."""
-    for dirpath, dirnames, filenames in os.walk(folder):
-        dirnames[:] = sorted(d for d in dirnames
-                             if not NOT_LIVE_DIR_RE.match(d) and not os.path.lexists(os.path.join(dirpath, d, ".git"))
-                             and not is_checkout(Path(dirpath) / d))
-        for name in sorted(filenames):
-            yield Path(dirpath) / name
+# live_files(), the walk that says which files of a zone are notes, comes from
+# garrick_lib: the status page's Todo card reads a zone through it too.
 
 
 def zone_notes(ws: Workspace, zone: Optional[Path] = None) -> List[Tuple[Path, str]]:
@@ -2824,16 +2806,8 @@ SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/g
 # being public. That holds for its docs/ too, though the installer ships them
 # as System/garrick-docs: a page being written is where real material would
 # leave for the public repository, so it counts as shared only once installed.
-CHECKOUT_TREE = "template"                  # the tree the installer copies
-CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
+# How a checkout is recognised (is_checkout, CHECKOUT_TREE) comes from garrick_lib.
 CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree
-
-
-def is_checkout(folder: Path) -> bool:
-    """Is `folder` the top of a Garrick checkout? Recognised by the installer,
-    the VERSION file it stamps into a workspace, and the tree it copies."""
-    return ((folder / CHECKOUT_TREE).is_dir()
-            and all((folder / name).is_file() for name in CHECKOUT_MARKS))
 
 
 def checkouts(ws: Workspace) -> List[Path]:

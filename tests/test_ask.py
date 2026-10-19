@@ -257,6 +257,24 @@ class TestCarryOut(AskCase):
         self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
             "refused: OSError: the disk went away  (ask)"))
 
+    def test_a_park_the_wall_check_refuses_is_the_rules_sentence_with_nothing_added(self):
+        """#172: the box lists a refusal as "Refused: <why>", but a wall's is
+        #116's sentence alone, never what the check printed."""
+        import check
+        pa = ask.page_action()
+        line = check.report_staged([check.Finding(check.ERROR, "walls", "Acme Review/Threads/Pricing/Pricing.md",
+                                                  "names Birch & Co (`birch`), or one of its people; "
+                                                  "a wall stands between acme and birch")])
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        hook.chmod(0o755)
+        out = ask.Asker(self.root).carry_out("Parked.", [{"verb": "park", "zone": "Work", "project": "Acme Review",
+                                                          "thread": "Pricing"}], self.names)
+        self.assertFalse(out["ok"])
+        self.assertEqual([pa.ops_lib(self.root).WALL_REFUSAL], out["done"])
+        self.assertNotIn("birch", (self.jobs / "page-actions.log").read_text())
+        self.assertIn("\nstatus: active\n", self.thread.read_text())
+
     def test_the_flag_off_from_the_command_line(self):
         os.remove(self.root / "System" / "garrick-flags.json")
         import contextlib

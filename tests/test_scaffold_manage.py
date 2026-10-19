@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import shutil
 import subprocess
 import sys
 import unittest
@@ -579,6 +580,60 @@ class TestFromThePage(ManageCase):
                     {"verb": "new-thread", "zone": "../Personal", "project": "Acme", "name": "X"}):
             with self.assertRaises(pa.Refused):
                 pa.act(self.root, bad)
+
+    def wall(self):
+        ops = pa.ops_lib(self.root)
+        self.assertIsNotNone(ops)
+        return ops.WALL_REFUSAL
+
+    def test_a_manage_verb_the_real_wall_check_refuses_says_the_rules_sentence_alone(self):
+        """#172: the zone's own wall check, as installed, refuses each manage
+        verb, since what it would commit names Birch & Co in a project for Acme.
+        The page says #116's sentence and nothing else, where the script, run in
+        a terminal, still prints the check's line for whoever has to take the
+        material out."""
+        wall = self.wall()
+        head = self.git("rev-parse", "HEAD").stdout
+
+        def refused(**req):
+            with self.assertRaises(pa.Refused, msg=req) as said:
+                self.act(**req)
+            self.assertEqual(wall, str(said.exception), req)
+            for leak in ("Birch", "birch", "acme", "Commit refused", "not committed"):
+                self.assertNotIn(leak, str(said.exception), req)
+            self.assertEqual(head, self.git("rev-parse", "HEAD").stdout, req)
+
+        refused(verb="rename", zone="Work", project="Acme", thread="Freight", to="Birch Lanes")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the rename put back
+        self.assertTrue(self.freight.is_file())
+        refused(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
+        self.assertTrue((self.work / "Acme" / "Threads" / "Birch Pitch" / "Birch Pitch.md").is_file())    # made, left
+        self.git("checkout", "--", "Acme/Acme.md")
+        shutil.rmtree(self.work / "Acme" / "Threads" / "Birch Pitch")
+        refused(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
+        shutil.rmtree(self.work / "Cobalt")
+        hub = self.work / "Acme" / "Acme.md"                       # written before the wall stood, say
+        hub.write_text(hub.read_text() + "\nBirch & Co asked about the same lanes.\n")
+        self.git("commit", "-q", "--no-verify", "-am", "a line from before the wall")
+        head = self.git("rev-parse", "HEAD").stdout
+        refused(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the deletion put back
+        self.assertTrue(self.freight.is_file())
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Commit refused: ", r.stderr)                                 # the terminal keeps the check's line
+
+    def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
+        hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())
+        hook = hook if hook.is_absolute() else self.work / hook
+        hook.write_text("#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        for req in ({"verb": "rename", "zone": "Work", "project": "Acme", "thread": "Freight", "to": "Lanes"},
+                    {"verb": "delete", "zone": "Work", "project": "Acme", "thread": "Freight", "confirm": "Freight"},
+                    {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Renewal"}):
+            with self.assertRaises(pa.Refused, msg=req) as said:
+                self.act(**req)
+            self.assertIn("the disk is full", str(said.exception), req)
+            self.assertNotIn(self.wall(), str(said.exception), req)
 
     def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
         """Interrupted (#32) on the template's own thread note: the rows filled,

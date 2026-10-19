@@ -111,9 +111,14 @@ zone's repository, as the skills would:
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
-not in a toast. A batch that saved says "Saved 3". A tick or untick the zone's
-wall check refused ends on the rule's own sentence, operations.py's
-WALL_REFUSAL, word for word, and says nothing of what the check found.
+not in a toast. A batch that saved says "Saved 3". Any action whose commit the
+zone's wall check refused, from a click or the ask box, ends on the rule's own
+sentence, operations.py's WALL_REFUSAL, word for word, and says nothing of
+what the check found (#107, #172): a tick, a date, a new line, park and wake,
+an interruption, an answer, a new project or thread, a rename or a deletion.
+Every helper that commits takes that sentence as `wall`, with no default, so a
+verb added later cannot forget it. A refusal for any other reason still says
+why.
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
@@ -228,8 +233,10 @@ KEYS_MAX = 50
 MDLINK = re.compile(r"!?\[([^\]]*)\]\([^)\s]*\)")
 WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 # One line of what the zone's wall check prints when it refuses a commit:
-# check.py's report_staged(), as the pre-commit hook runs it.
+# check.py's report_staged(), as the pre-commit hook runs it. WALL_IN finds
+# it inside a longer line, as scaffold.py folds git's output into its refusal.
 WALL_LINE = re.compile(r"^Commit refused: .+\. Take it out and commit again\b")
+WALL_IN = re.compile(r"(?:^|\s)Commit refused: .+?\. Take it out and commit again\b")
 REKEY_HOURS = 1
 # Seconds: how long one git command may take, then a commit's whole share
 # (add, commit and its hooks), then how long a request waits for another on
@@ -549,11 +556,12 @@ def committing(zone: Path, rel: str, message: str) -> tuple:
     return 0, ""
 
 
-def commit(zone: Path, note: Path, before: bytes, message: str, wall: Optional[str] = None) -> None:
+def commit(zone: Path, note: Path, before: bytes, message: str, *, wall: Optional[str]) -> None:
     """Commit the one file, or put it back as it was and say why. Put back
     only if it still holds what this request wrote: an edit made meanwhile,
-    in Obsidian say, is left alone. With `wall`, the sentence a refusal by
-    the zone's wall check ends on, in place of what the check printed."""
+    in Obsidian say, is left alone. `wall` is the sentence a refusal by the
+    zone's wall check ends on, in place of what the check printed: always
+    wall_refusal(ws), which is None only without operations.py."""
     rel = str(note.relative_to(zone))
     mine = note.read_bytes()
     code, why = committing(zone, rel, message)
@@ -639,8 +647,7 @@ def todo(ws: Path, req: dict) -> str:
             message = messages[0]
         else:
             message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
-        wall = wall_refusal(ws) if req["verb"] in ("todo-done", "todo-undo") else None
-        commit(zone, note, before, message[:200], wall=wall)
+        commit(zone, note, before, message[:200], wall=wall_refusal(ws))
     return said[0] if len(said) == 1 else "Saved %d" % len(said)
 
 
@@ -717,7 +724,7 @@ def todo_add(ws: Path, req: dict) -> str:
         except tl.NotFound:
             raise Refused("%s's Todo.md has no Inbox section" % zone.name)
         said = tl.parse(line)["text"]
-        commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
+        commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200], wall=wall_refusal(ws))
     return "Added to %s: %s" % (section, said_text(said))
 
 
@@ -756,7 +763,7 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         before = note.read_bytes()
         said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
                         *(["--thread", parts[2]] if is_thread else []))
-        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
+        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"), wall=wall_refusal(ws))
         if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
             drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
         return said
@@ -1082,7 +1089,7 @@ def interrupt_note(ws: Path, zone: Path, note: Path, parts: tuple, name: str, wh
     body = dated_entry(body, now.date(), "Interrupted at %s%s." % (now.strftime("%H:%M"), ", by " + by if by else ""))
     written = "---\n%s\n---\n%s" % (fm, body)
     note.write_text(rebased(ws, written) or written, encoding="utf-8")
-    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200])
+    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200], wall=wall_refusal(ws))
 
 
 def set_row(lines: list, rows: list, name: str, value: str, after: Optional[str]) -> None:
@@ -1682,7 +1689,10 @@ def field(req: dict, key: str, required: bool = True) -> Optional[str]:
 def scaffold(ws: Path, *args) -> str:
     """Run the workspace's scaffold.py: what it said, or Refused with its reason.
     A rename or a deletion commits through the wall check, so it has a
-    commit's time and a git command's besides."""
+    commit's time and a git command's besides. A refusal that carries the
+    check's own line is the wall's, and says the rule's sentence alone: the
+    script prints the line for whoever ran it in a terminal, who needs it to
+    take the material out, but the page and the ask box never show it."""
     tool = ws / "System" / "tools" / "scaffold.py"
     if not tool.is_file():
         raise Refused("System/tools/scaffold.py is missing")
@@ -1694,7 +1704,9 @@ def scaffold(ws: Path, *args) -> str:
                       "stopped; its change may be left staged, so look at git status in the zone before trying again"
                       % how_long(COMMIT_TIMEOUT + GIT_TIMEOUT))
     if r.returncode != 0:
-        raise Refused((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused")
+        why = (r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused"
+        wall = wall_refusal(ws)
+        raise Refused(wall if wall and WALL_IN.search(why) else why)
     return r.stdout.strip()
 
 
@@ -1719,13 +1731,14 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
                         *flag)
         if not check:
-            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread))
+            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
+                       wall=wall_refusal(ws))
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
         said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag)
         if not check:
-            commit_new(zone, zone / project, "%s: new thread %s" % (project, name))
+            commit_new(zone, zone / project, "%s: new thread %s" % (project, name), wall=wall_refusal(ws))
         return said
     if verb == "undo":
         commit = req.get("commit")
@@ -1747,13 +1760,16 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     return said
 
 
-def commit_new(zone: Path, folder: Path, message: str) -> None:
+def commit_new(zone: Path, folder: Path, message: str, *, wall: Optional[str]) -> None:
     """Commit what scaffold.py made, as the threads skill's New does: the new
-    folder by name, and its hub. Refused, the folder stays for the user."""
+    folder by name, and its hub. Refused, the folder stays for the user;
+    refused by the wall check, the reply is `wall` alone, as commit()'s is."""
     rel = folder.relative_to(zone).as_posix()
     code, why = committing(zone, rel, message)
     if code != 0:
         git(zone, "reset", "-q", "--", rel, timeout=10)
+        if wall and code is not None and WALL_LINE.match(why):
+            raise Refused(wall)
         if code is None:
             raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "
                           "commit waits for the check and goes through" % why)
@@ -1943,7 +1959,7 @@ def put_off(ws: Path, req: dict, today: dt.date) -> str:
     return "Put off until %s. It will be back then" % when
 
 
-def commit_all(zone: Path, notes: list, message: str, wall: Optional[str] = None) -> None:
+def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) -> None:
     """commit() for several files in one commit. When the commit is refused,
     all are put back if every one still holds what this request wrote, and
     none if any was edited meanwhile, so they never disagree."""
@@ -2023,13 +2039,14 @@ def record_files(zone: Path, note: Path, parts: tuple, folder: Path) -> list:
             + [":(glob)%s/*.md" % b.relative_to(zone).as_posix() for b in boxes])
 
 
-def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str) -> str:
+def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str, *, wall: Optional[str]) -> str:
     """Garrick's own record of the work committed before Claude opens on it,
     so the desktop app's Changes panel has nothing of Garrick's to offer:
     record_files() by name, and only those that changed; anything else in the
     folder is the user's and is left as it is. "" when that went through or
-    there was nothing to commit; otherwise why not, for the reply. Nothing is
-    put back: the files are the user's."""
+    there was nothing to commit; otherwise why not, for the reply: `wall`
+    alone where the wall check refused it. Nothing is put back: the files
+    are the user's."""
     code, said = git(zone, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--",
                      *record_files(zone, note, parts, folder))
     if code != 0:
@@ -2045,7 +2062,8 @@ def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str)
     if code == 0:
         return ""
     git(zone, "reset", "-q", "--", *changed, timeout=10)
-    return why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    why = why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    return wall if wall and code is not None and WALL_LINE.match(why) else why
 
 
 def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str:
@@ -2063,7 +2081,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         raise Refused(H.NO_CLI)
     folder = work_folder(zone, parts)
     with zone_lock(zone):
-        unsaved = commit_record(zone, note, parts, folder, name)
+        unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
     kept = H.session_for(ws, key)
     resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
@@ -2087,6 +2105,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     files, own = files_folder(ws, zone, parts)
     H.keep_session(ws, key, sid, folder, H.walk(files, project=own), primed=not resume, now=now)
     said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    if unsaved and unsaved == wall_refusal(ws):     # the rule's sentence ends the reply, and nothing is added to it
+        return "%s. Garrick's record of it is not committed. %s" % (said, unsaved)
     return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
 
 

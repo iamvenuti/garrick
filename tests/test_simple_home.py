@@ -587,9 +587,34 @@ class TestContinue(HandOffCase):
     def test_a_thread_of_a_project_with_several_opens_in_the_threads_folder(self):
         self.go("Birch Entry/Threads/Interviews/Interviews.md")
         prime = self.calls()[0]
-        self.assertEqual("Where am I on Birch Entry, Interviews?", prime["args"][1])
-        self.assertEqual("Birch Entry, Interviews", prime["args"][prime["args"].index("--name") + 1])
+        self.assertEqual("Where am I on Interviews?", prime["args"][1])                # the shortest name that is unique (#180)
+        self.assertEqual("Birch Entry, Interviews", prime["args"][prime["args"].index("--name") + 1])   # the name the home shows
         self.assertEqual(str((self.work / "Birch Entry" / "Threads" / "Interviews").resolve()), str(Path(prime["cwd"]).resolve()))
+
+    def test_the_question_names_the_thread_by_its_shortest_unique_name(self):
+        """Open in Claude sends this same request for a thread (#180): the
+        question names it as the threads skill says it, the thread alone
+        while no other thread has its name, then project and thread, and
+        the zone first when two projects of one name both have it."""
+        later = [dt.datetime.now()]
+
+        def asked(file):
+            later[0] += dt.timedelta(hours=handoff.FRESH_HOURS + 1)      # never resumed: each one asks
+            pa.act(self.root, {"verb": "continue", "zone": "Work", "file": file}, now=later[0])
+            return [c for c in self.calls() if "-p" in c["args"]][-1]["args"][1]
+        # a project that is one thread keeps the name the home gives it
+        self.assertEqual("Where am I on Acme Review?", asked("Acme Review/Threads/Pricing/Pricing.md"))
+        self.assertEqual("Where am I on Market Sizing?", asked("Birch Entry/Threads/Market Sizing/Market Sizing.md"))
+        write(self.work / "Acme Review" / "Threads" / "Interviews" / "Interviews.md", thread("Acme Review", "Interviews"))
+        self.assertEqual("Where am I on Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
+        personal = self.root / "Zones" / "Personal"
+        write(personal / "Birch Entry" / "Threads" / "Interviews" / "Interviews.md", thread("Birch Entry", "Interviews"))
+        write(personal / "Birch Entry" / "Threads" / "Other" / "Other.md", thread("Birch Entry", "Other"))
+        self.assertEqual("Where am I on Work, Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
+        # a finished thread is no longer a name to tell apart
+        done = personal / "Birch Entry" / "Threads" / "Interviews" / "Interviews.md"
+        done.write_text(done.read_text().replace("status: active", "status: done"))
+        self.assertEqual("Where am I on Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
 
     def test_it_commits_the_record_first(self):
         note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -616,6 +641,30 @@ class TestContinue(HandOffCase):
         self.assertIn("?? \"Acme Review/Deliverables/private draft.docx\"", left)
         self.assertIn(" M \"Acme Review/Deliverables/260301 - Pricing memo.md\"", left)
         self.assertTrue(draft.is_file())
+
+    def test_a_record_the_wall_check_refuses_ends_the_reply_on_the_rules_sentence(self):
+        """#172: the work still opens, and the reply says the record is not
+        committed and ends on #116's sentence, never on what the check printed.
+        A refusal for another reason still says why."""
+        import check
+        ops = pa.ops_lib(self.root)
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\nA line written in a session.\n")
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        line = check.report_staged([check.Finding(check.ERROR, "walls", "Acme Review/Threads/Pricing/Pricing.md",
+                                                  "names Birch & Co (`birch`), or one of its people; "
+                                                  "a wall stands between acme and birch")])
+        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        hook.chmod(0o755)
+        said = self.go()
+        self.assertEqual("Opened Acme Review in Claude. It already knows where it stands. Garrick's record of it is "
+                         "not committed. " + ops.WALL_REFUSAL, said)
+        for leak in ("Birch", "birch", "Commit refused", "Pricing.md"):
+            self.assertNotIn(leak, said)
+        self.assertIn("M ", self.git("status", "--porcelain"))                  # nothing put back: the files are the user's
+        write(hook, "#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        said = self.go(now=dt.datetime.now() + dt.timedelta(hours=handoff.FRESH_HOURS + 1))
+        self.assertTrue(said.endswith("; Garrick's record of it is not committed: fatal: the disk is full"), said)
 
     def test_a_recent_session_is_resumed_and_an_old_one_asked_afresh(self):
         now = dt.datetime.now()

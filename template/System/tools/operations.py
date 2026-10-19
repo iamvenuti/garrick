@@ -69,8 +69,8 @@ entry that lists every line, so a reload knows which rows are pending, and
 a batch of one is the same request as the line named by `key`.
 
 `WALL_REFUSAL` is the sentence the rule gives for a wall that held something
-back (#116). A tick refused by the zone's wall check ends on it word for
-word: say() adds no refusal wording of its own to it.
+back (#116). Any action the zone's wall check refused ends on it word for
+word (#107, #172): say() adds no refusal wording of its own to it.
 
 `OPS` stays what it has been since 0.26.0: the six verbs that keep a durable
 record, derived from the table. A newer copy of this file found by an older
@@ -219,6 +219,11 @@ DECLARED: Dict[str, Op] = {
     "ask-desktop": _op(("prompt",), (), "machine"),
     # The example's Remove and Bring back: System/tools/example.py (#174).
     "example": _op(("do",), ("do",), "workspace"),
+    # A check finding's Fix, from the Threads card (#179): nurture.py's own
+    # mechanical fix for the note named, committed in its zone. It gathers
+    # the findings again before it changes anything, so a second one finds
+    # nothing left to fix.
+    "fix": _op(("zone", "file"), ("file",), "zone", True, "safe"),
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.
@@ -427,9 +432,9 @@ FALLBACK_WHY = {"refused": "A check refused it.", "crashed": "The action stopped
 # must still read as a refusal, and both guards on that read two words back.
 NO_FIELD = "{verb} takes {names}"
 # The rule's own words for a wall that held something back, in rules.md under
-# "Zones and walls", quoted whole (#116). A tick or untick the zone's wall
-# check refused ends on this and nothing else (#107): no party, no person, no
-# subject, no tag, and no refusal wording of this file's added to it.
+# "Zones and walls", quoted whole (#116). Any page action the zone's wall
+# check refused ends on this and nothing else (#107, #172): no party, no
+# person, no subject, no tag, and no refusal wording of this file's added to it.
 WALL_REFUSAL = "A wall holds some material back from this project, so I have not used it. Nothing was written."
 ONE_FIELD = "no {name} field"
 STALE_WHY = {

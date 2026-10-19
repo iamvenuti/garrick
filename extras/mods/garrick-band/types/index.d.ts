@@ -8,7 +8,8 @@ export type Note = {
   lead: string | null
   resume: string | null
   // Where the note can be opened: Finder (macOS's `open`) and Obsidian, when
-  // it is installed and the note sits in a vault.
+  // it is installed and the note sits in a vault; each only while Settings ›
+  // Opening a thread has it switched on (`finder`, and `note` for Obsidian).
   finder: boolean
   obsidian: boolean
   // A project whose hub has no Resume here block: its live threads, each with

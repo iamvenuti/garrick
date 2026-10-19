@@ -794,28 +794,71 @@ class TestJournal(ActionCase):
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
         self.assertEqual([], list(self.jobs.glob("op-*.run")))                    # and the locks are cleared away
 
-    def test_a_commit_the_wall_check_refuses_is_refused_and_never_reads_as_saved(self):
-        """Every verb, with the zone's hook saying no."""
-        import test_operations as t
+    def committing_requests(self):
+        """One request of every verb page_action.py commits through commit() or
+        commit_all(), with the state each needs committed first: the six the
+        record keeps, and an interruption, an answer and a put-off question.
+        The manage verbs commit through scaffold.py, and are held to the same in
+        test_scaffold_manage.py, against an installed workspace's own check."""
         self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Send the revised"))
         ticked = tl.done_on(str(self.work), dt.date.today())[0]["key"]
         self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
-        self.hook('echo "wall: Acme Review names birch, a party across a wall" >&2\nexit 1\n')
-        requests = dict(self.requests(), **{
+        import test_simple_home as home
+        asked = "Birch Entry/Threads/Market Sizing/Needs you/261003 - floor.md"
+        write(self.work / asked, home.question())
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "asked")
+        return dict(self.requests(), **{
             "wake": {"verb": "wake", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
             "todo-undo": {"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "key": ticked},
-            "park": {"verb": "park", "zone": "Work", "project": "Birch Entry"}})
-        before = (self.work / "Todo.md").read_bytes(), self.thread.read_bytes()
-        self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add"}, set(requests))
+            "park": {"verb": "park", "zone": "Work", "project": "Birch Entry"},
+            "interrupt": {"verb": "interrupt", "zone": "Work", "project": "Birch Entry", "thread": "Market Sizing",
+                          "where": "Halfway through the volumes", "next": "Fill in row 14"},
+            "answer": {"verb": "answer", "zone": "Work", "file": asked, "label": "500 pallets"},
+            "later": {"verb": "later", "zone": "Work", "file": asked}})
+
+    def test_a_commit_the_wall_check_refuses_ends_on_the_rules_sentence_alone_for_every_verb(self):
+        """#172: the hook prints what the zone's wall check prints, a line
+        WALL_LINE recognises, naming the note and the far side's party. Every
+        verb that commits says #116's sentence and nothing else, in its reply
+        and in its record, and changes nothing."""
+        import test_operations as t
+        wall = t.ops.WALL_REFUSAL
+        requests = self.committing_requests()
+        self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "interrupt", "answer",
+                          "later"}, set(requests))
+        line = self.wall_line("Birch Entry/Threads/Market Sizing/Market Sizing.md",
+                              "names Acme Corp (`acme`), or one of its people; a wall stands between birch and acme")
+        self.assertTrue(pa.WALL_LINE.match(line), line)
+        self.hook("cat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        head = git(self.work, "rev-parse", "HEAD")
+        before = {p: p.read_bytes() for p in self.work.rglob("*.md")}
         for verb, request in requests.items():
             reply = self.run_script(request)
-            self.assertEqual((False, "failed", "refused"), (reply["ok"], reply["state"], reply["outcome"]), (verb, reply))
-            self.assertIn("a party across a wall", reply["say"], verb)
+            self.assertEqual((False, wall), (reply["ok"], reply["say"]), verb)
+            for leak in ("acme", "Acme", "birch", "Market Sizing", "Commit refused", "not committed", "Not done"):
+                self.assertNotIn(leak, reply["say"], verb)
+            if verb in t.ops.OPS:
+                last = self.records()[-1]
+                self.assertEqual(("failed", "refused", wall), (last["state"], last["outcome"], last["say"]), verb)
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))
+        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*.md")})        # every note put back
+
+    def test_a_commit_refused_for_any_other_reason_still_says_why(self):
+        """A hook that fails for its own reasons is not the wall check: every
+        verb says what it said, and never borrows the wall's sentence."""
+        import test_operations as t
+        requests = self.committing_requests()
+        self.hook('echo "fatal: the disk is full" >&2\nexit 1\n')
+        before = {p: p.read_bytes() for p in self.work.rglob("*.md")}
+        for verb, request in requests.items():
+            reply = self.run_script(request)
+            self.assertFalse(reply["ok"], verb)
+            self.assertIn("the disk is full", reply["say"], verb)
+            self.assertNotIn(t.ops.WALL_REFUSAL, reply["say"], verb)
             self.assertTrue(t.only_in_the_negative(reply["say"]), (verb, reply["say"]))
             self.assertFalse(t.ops.affirms(reply["say"]), (verb, reply["say"]))
-            last = self.records()[-1]
-            self.assertEqual(("failed", "refused", reply["say"]), (last["state"], last["outcome"], last["say"]), verb)
-        self.assertEqual(before, ((self.work / "Todo.md").read_bytes(), self.thread.read_bytes()))     # and nothing changed
+        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*.md")})
 
     def wall_line(self, path, message):
         """What the zone's wall check prints when it refuses: check.py's own

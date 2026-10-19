@@ -288,6 +288,38 @@ class TestRename(ManageCase):
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 
+    def test_a_thread_and_the_files_in_its_folder(self):
+        """#178: links to a file inside a renamed thread's folder follow it,
+        from its own note and from anywhere else in the zone."""
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        (old / "Deliverables").mkdir()
+        (old / "Deliverables" / "260914 - Brief.md").write_text("# Brief\n")
+        (old / "Sources").mkdir()
+        (old / "Sources" / "rates.csv").write_text("lane,rate\n")
+        note, hub = old / "Pricing.md", self.work / "Acme" / "Acme.md"
+        text = note.read_text()
+        self.assertIn("| Live artifact | <path, and what it is> |", text)
+        note.write_text(text.replace("| Live artifact | <path, and what it is> |",
+                                     "| Live artifact | [[Acme/Threads/Pricing/Deliverables/260914 - Brief|Deliverables/260914 - Brief]] |")
+                        + "\nRates: [[Acme/Threads/Pricing/Sources/rates.csv]].\n")
+        hub.write_text(hub.read_text() + "\nThe rates: [[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]].\n")
+        self.commit("Pricing's files")
+        before = self.git("ls-files", "-s").stdout
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        text = (self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").read_text()
+        self.assertIn("[[Acme/Threads/Renewal/Deliverables/260914 - Brief|Deliverables/260914 - Brief]]", text)
+        self.assertIn("[[Acme/Threads/Renewal/Sources/rates.csv]]", text)
+        self.assertIn("[[Work/Acme/Threads/Renewal/Sources/rates.csv|rates]]", hub.read_text())
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if "leads nowhere" in f["message"]])    # the Live artifact row too
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, self.git("ls-files", "-s").stdout)
+        self.assertIn("[[Acme/Threads/Pricing/Sources/rates.csv]]", note.read_text())
+        self.assertIn("[[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]]", hub.read_text())
+
     def test_a_project_and_its_threads(self):
         r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--to", "Apex")
         self.assertEqual(0, r.returncode, r.stderr)
@@ -398,6 +430,49 @@ class TestWhatCannotBeBroughtBack(ManageCase):
         self.assertIn("repository of its own", r.stderr)
         self.assertTrue((repo / ".git").is_dir())
 
+    def machine_made(self, folder):
+        """What Finder, Python and Obsidian leave in a folder they have opened (#177)."""
+        (folder / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+        (folder / "__pycache__").mkdir()
+        (folder / "__pycache__" / "x.cpython-39.pyc").write_bytes(b"\0")
+        (folder / ".obsidian").mkdir()
+        (folder / ".obsidian" / "workspace.json").write_text("{}")
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_rename(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        new = self.work / "Acme" / "Threads" / "Renewal"
+        self.assertTrue((new / "Renewal.md").is_file())
+        self.assertFalse(old.exists())                                        # nothing left behind
+        self.assertEqual(["Renewal.md"], sorted(os.listdir(new)))            # and nothing carried over
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+
+    def test_a_file_anybody_wrote_still_refuses_a_rename_beside_them(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        (old / "notes.txt").write_text("not committed")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/Threads/Pricing/notes.txt is in Pricing but not in the zone's history", r.stderr)
+        self.assertNotIn(".DS_Store", r.stderr)
+        self.assertTrue((old / ".DS_Store").exists())                         # a refusal clears nothing
+        self.assertTrue((old / "notes.txt").exists())
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_deletion(self):
+        self.machine_made(self.freight.parent)
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertFalse(self.freight.parent.exists())
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+        self.machine_made(self.work / "Acme")
+        (self.work / "Acme" / "notes.txt").write_text("not committed")
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--confirm", "Acme")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/notes.txt is in Acme but not in the zone's history", r.stderr)
+        self.assertTrue((self.work / "Acme" / "Acme.md").is_file())
+
     def test_something_staged_elsewhere_is_never_swept_in(self):
         (self.work / "Birch Sources").mkdir()
         (self.work / "Birch Sources" / "contract.pdf").write_bytes(b"%PDF staged by hand")
@@ -504,6 +579,87 @@ class TestFromThePage(ManageCase):
                     {"verb": "new-thread", "zone": "../Personal", "project": "Acme", "name": "X"}):
             with self.assertRaises(pa.Refused):
                 pa.act(self.root, bad)
+
+    def wall(self):
+        ops = pa.ops_lib(self.root)
+        self.assertIsNotNone(ops)
+        return ops.WALL_REFUSAL
+
+    def test_a_manage_verb_the_real_wall_check_refuses_says_the_rules_sentence_alone(self):
+        """#172: the zone's own wall check, as installed, refuses each manage
+        verb, since what it would commit names Birch & Co in a project for Acme.
+        The page says #116's sentence and nothing else, where the script, run in
+        a terminal, still prints the check's line for whoever has to take the
+        material out."""
+        wall = self.wall()
+        head = self.git("rev-parse", "HEAD").stdout
+
+        def refused(**req):
+            with self.assertRaises(pa.Refused, msg=req) as said:
+                self.act(**req)
+            self.assertEqual(wall, str(said.exception), req)
+            for leak in ("Birch", "birch", "acme", "Commit refused", "not committed"):
+                self.assertNotIn(leak, str(said.exception), req)
+            self.assertEqual(head, self.git("rev-parse", "HEAD").stdout, req)
+
+        refused(verb="rename", zone="Work", project="Acme", thread="Freight", to="Birch Lanes")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the rename put back
+        self.assertTrue(self.freight.is_file())
+        refused(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the new thread taken away
+        refused(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # and the new project
+        hub = self.work / "Acme" / "Acme.md"                       # written before the wall stood, say
+        hub.write_text(hub.read_text() + "\nBirch & Co asked about the same lanes.\n")
+        self.git("commit", "-q", "--no-verify", "-am", "a line from before the wall")
+        head = self.git("rev-parse", "HEAD").stdout
+        refused(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
+        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the deletion put back
+        self.assertTrue(self.freight.is_file())
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Commit refused: ", r.stderr)                                 # the terminal keeps the check's line
+
+    def test_a_new_thread_the_wall_check_refuses_leaves_nothing_behind(self):
+        """#172: "Nothing was written" holds. The thread's folder goes, and the
+        hub gets back the bytes it held before the request, an edit another
+        session had not committed yet included; the index is as it was."""
+        hub = self.work / "Acme" / "Acme.md"
+        hub.write_text(hub.read_text() + "\nA line typed in Obsidian, not committed yet.\n")
+        before = hub.read_bytes()
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
+        self.assertEqual(self.wall(), str(said.exception))
+        self.assertFalse((self.work / "Acme" / "Threads" / "Birch Pitch").exists())
+        self.assertEqual(before, hub.read_bytes())
+        self.assertEqual(" M Acme/Acme.md\n", self.git("status", "--porcelain").stdout)
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+
+    def test_a_new_project_the_wall_check_refuses_leaves_nothing_behind(self):
+        """Its folder goes, a Threads folder and a first thread with it, and
+        nothing that was there before the request is touched."""
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text() + "- [ ] [[Freight]]: an edit of its own\n")
+        before = {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts}
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
+        self.assertEqual(self.wall(), str(said.exception))
+        self.assertFalse((self.work / "Cobalt").exists())
+        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts})
+        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
+
+    def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
+        hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())
+        hook = hook if hook.is_absolute() else self.work / hook
+        hook.write_text("#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        for req in ({"verb": "rename", "zone": "Work", "project": "Acme", "thread": "Freight", "to": "Lanes"},
+                    {"verb": "delete", "zone": "Work", "project": "Acme", "thread": "Freight", "confirm": "Freight"},
+                    {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Renewal"}):
+            with self.assertRaises(pa.Refused, msg=req) as said:
+                self.act(**req)
+            self.assertIn("the disk is full", str(said.exception), req)
+            self.assertNotIn(self.wall(), str(said.exception), req)
+        self.assertTrue((self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").is_file())    # made, left for the user
 
     def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
         """Interrupted (#32) on the template's own thread note: the rows filled,

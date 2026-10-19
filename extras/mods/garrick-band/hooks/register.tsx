@@ -185,7 +185,7 @@ async function findNote($: any): Promise<Note | null> {
     const threads = parsed.resume === null ? await liveThreads($, folder, root) : []
     const lead = threads.length ? `${threads.length === 1 ? 'Thread' : `${threads.length} threads`}: ${threads.map(t => t.title).join(', ')}` : parsed.lead
 
-    return { path, rel, where, title: basename(folder), ...parsed, lead, threads, ...(await openers($, chain, folder)) }
+    return { path, rel, where, title: basename(folder), ...parsed, lead, threads, ...(await openers($, chain, folder, (await launchers($, root)).on)) }
   }
   // No thread note above the folder (System/, the root, a wiki): nothing to
   // resume or wrap, but Finder still shows the folder and, in a wiki, Obsidian
@@ -194,7 +194,7 @@ async function findNote($: any): Promise<Note | null> {
   const where = label(here.slice(root.length + 1))
   const index = `${here}/wiki/index.md`
   const target = (await $.fs.exists(index)) ? index : here
-  const open = await openers($, chain, here)
+  const open = await openers($, chain, here, (await launchers($, root)).on)
 
   return {
     path: target, rel: target.slice(root.length + 1), where: where || 'Home', title: where || 'Home',
@@ -220,23 +220,66 @@ async function liveThreads($: any, folder: string, root: string): Promise<Thread
   return out
 }
 
+// Settings › Opening a thread, as System/garrick-settings.json keeps it and
+// status.py's shared_launchers() reads it: "launchers" is {name: true or
+// false}, a name left out being on, or a list of the names switched on;
+// "default" is what clicking a thread does, "note" when it names no launcher.
+// The band can run three of them: the note in Obsidian, Finder, and cmux
+// through the desk. Nothing saved, or nothing that reads, leaves every one on
+// and no default, so a hand-edited file never empties the band.
+export const LAUNCH_KEYS = ['note', 'finder', 'cmux', 'codex', 'claude'] as const
+export type Launchers = { on: Record<string, boolean>; default: string | null }
+
+export function launcherSettings(text: string | null): Launchers {
+  let data: any = null
+  try {
+    data = text === null ? null : JSON.parse(text)
+  } catch {
+    data = null
+  }
+  const saved = data !== null && typeof data === 'object' ? data.launchers : undefined
+  const on: Record<string, boolean> = {}
+  if (saved !== null && typeof saved === 'object' && !Array.isArray(saved)) {
+    for (const k of LAUNCH_KEYS) on[k] = !(k in saved) || saved[k] === true
+  } else if (Array.isArray(saved)) {
+    for (const k of LAUNCH_KEYS) on[k] = saved.includes(k)
+  } else {
+    for (const k of LAUNCH_KEYS) on[k] = true
+
+    return { on, default: null }
+  }
+
+  return { on, default: (LAUNCH_KEYS as readonly string[]).includes(data.default) ? data.default : 'note' }
+}
+
+const launchers = async ($: any, root: string) =>
+  launcherSettings((await $.fs.read(`${root}/System/garrick-settings.json`).catch(() => null)) as string | null)
+
+const ALL_ON: Record<string, boolean> = Object.fromEntries(LAUNCH_KEYS.map(k => [k, true]))
+
 // Finder wherever macOS's `open` is there; Obsidian when it is installed and a
 // folder from the note up to the workspace root is a vault (holds .obsidian).
-async function openers($: any, chain: string[], folder: string): Promise<Pick<Note, 'finder' | 'obsidian'>> {
-  const finder: boolean = await $.fs.exists('/usr/bin/open')
-  if (!finder) return { finder, obsidian: false }
-  const home: string = (await $.env.get('HOME')) ?? ''
-  const installed = (await $.fs.exists('/Applications/Obsidian.app')) || (await $.fs.exists(`${home}/Applications/Obsidian.app`))
-  let vault = false
-  for (const dir of chain.slice(chain.indexOf(folder))) {
-    if (await $.fs.exists(`${dir}/.obsidian`)) {
-      vault = true
-      break
+// Each only when Settings › Opening a thread has it switched on: Obsidian is
+// the note's own launcher, `note`.
+async function openers($: any, chain: string[], folder: string, switched: Record<string, boolean> = ALL_ON): Promise<Pick<Note, 'finder' | 'obsidian'>> {
+  const open: boolean = await $.fs.exists('/usr/bin/open')
+  if (!open) return { finder: false, obsidian: false }
+  let inVault = false
+  if (switched.note !== false) {
+    const home: string = (await $.env.get('HOME')) ?? ''
+    const installed = (await $.fs.exists('/Applications/Obsidian.app')) || (await $.fs.exists(`${home}/Applications/Obsidian.app`))
+    for (const dir of installed ? chain.slice(chain.indexOf(folder)) : []) {
+      if (await $.fs.exists(`${dir}/.obsidian`)) {
+        inVault = true
+        break
+      }
     }
   }
 
-  return { finder, obsidian: installed && vault }
+  return { finder: switched.finder !== false, obsidian: inVault }
 }
+
+export const switchedOff = (app: 'Finder' | 'Obsidian') => `${app} is switched off in Settings › Opening a thread.`
 
 export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIComponent(abs)
 
@@ -467,29 +510,57 @@ async function pageAction($: any, root: string, req: object): Promise<{ ok: bool
   }
 }
 
-// Opens the pick elsewhere: its thread's own cmux tab where the desk is
-// installed, else its note in Obsidian when it sits in a vault, else with the
-// Mac's default app; an Inbox opens a tab at the root on "process the inbox",
-// or the folder in Finder.
+// The order While you wait's open tries the launchers in: the default first,
+// then the band's own order, cmux, the note, Finder, keeping those switched
+// on. With nothing saved, as before Settings › Opening a thread existed: cmux,
+// the note, then the Mac's default app ('app').
+export function waitOrder(l: Launchers): string[] {
+  if (l.default === null) return ['cmux', 'note', 'app']
+  const order = [l.default, 'cmux', 'note', 'finder'].filter(k => l.on[k] === true)
+
+  return order.filter((k, i) => order.indexOf(k) === i)
+}
+
+// Opens the pick elsewhere, the way Settings › Opening a thread says: its
+// thread's own cmux tab where the desk is installed (an Inbox opens a tab at
+// the root on "process the inbox"), its note in Obsidian when it sits in a
+// vault, or Finder; the default first, then the first of the others switched
+// on that can open it here.
 async function waitOpen($: any): Promise<string> {
   const pick = shownPick(await read($, wait))
   const n = await read($, note)
   if (pick === null || n === null || pick.note === null) return 'Nothing is on offer to open.'
   const root = rootOf(n)
   const abs = `${root}/${pick.note}`
-  const desk = (await $.fs.exists(`${root}/System/status/page_action.py`)) && (await $.fs.exists(`${root}/System/cmux/desk.py`))
-  if (desk && pick.zone !== null && pick.project !== null) {
-    const reply = await pageAction($, root, { verb: 'open', zone: pick.zone, project: pick.project, ...(pick.thread ? { thread: pick.thread } : {}) })
-    if (reply.ok) return reply.say || `Opened ${pick.thread ?? pick.project} in cmux.`
-  }
-  if (desk && pick.source === 'inbox') {
-    const reply = await pageAction($, root, { verb: 'open', folder: root, prompt: 'process the inbox' })
-    if (reply.ok) return reply.say || 'Opened a tab on "process the inbox".'
-  }
-  const vault = abs.endsWith('.md') && (await openers($, chainOf(abs, root), parent(abs))).obsidian
-  const { exitCode } = await $.process.run(['/usr/bin/open', vault ? obsidianUrl(abs) : abs]).catch(() => ({ exitCode: 1 }))
+  const name = pick.thread ?? pick.project ?? basename(pick.note)
+  const run = async (argv: string[], said: string) => {
+    const { exitCode } = await $.process.run(argv).catch(() => ({ exitCode: 1 }))
 
-  return exitCode === 0 ? `Opened ${pick.thread ?? pick.project ?? basename(pick.note)}${vault ? ' in Obsidian' : ''}.` : 'It did not open.'
+    return exitCode === 0 ? said : 'It did not open.'
+  }
+  for (const way of waitOrder(await launchers($, root))) {
+    if (way === 'cmux') {
+      const desk = (await $.fs.exists(`${root}/System/status/page_action.py`)) && (await $.fs.exists(`${root}/System/cmux/desk.py`))
+      if (desk && pick.zone !== null && pick.project !== null) {
+        const reply = await pageAction($, root, { verb: 'open', zone: pick.zone, project: pick.project, ...(pick.thread ? { thread: pick.thread } : {}) })
+        if (reply.ok) return reply.say || `Opened ${pick.thread ?? pick.project} in cmux.`
+      }
+      if (desk && pick.source === 'inbox') {
+        const reply = await pageAction($, root, { verb: 'open', folder: root, prompt: 'process the inbox' })
+        if (reply.ok) return reply.say || 'Opened a tab on "process the inbox".'
+      }
+    } else if (way === 'note') {
+      if (abs.endsWith('.md') && (await openers($, chainOf(abs, root), parent(abs))).obsidian) return run(['/usr/bin/open', obsidianUrl(abs)], `Opened ${name} in Obsidian.`)
+    } else if (way === 'finder') {
+      // A folder, such as an Inbox, opens in Finder; a file is shown in its folder.
+      const file = /\.[A-Za-z0-9]{1,5}$/.test(basename(abs))
+      if (await $.fs.exists('/usr/bin/open')) return run(['/usr/bin/open', ...(file ? ['-R'] : []), abs], `Opened ${name} in Finder.`)
+    } else if (way === 'app') {
+      return run(['/usr/bin/open', abs], `Opened ${name}.`)
+    }
+  }
+
+  return 'Nothing switched on in Settings › Opening a thread can open it here.'
 }
 
 // The folders from a file's own up to the root, as findNote walks them.
@@ -640,6 +711,8 @@ export const register: Register = on => {
     const current = await read($, note)
     if (arg === 'finder' || arg === 'obsidian') {
       if (current === null || current.path === '') return { text: 'No project or thread note above this folder.' }
+      const switched = (await launchers($, rootOf(current))).on
+      if (switched[arg === 'finder' ? 'finder' : 'note'] === false) return { text: switchedOff(arg === 'finder' ? 'Finder' : 'Obsidian') }
       if (!current[arg]) return { text: arg === 'finder' ? 'Finder is not available here.' : 'This note is not in an Obsidian vault, or Obsidian is not installed.' }
       void (arg === 'finder' ? finder($, current) : obsidian($, current))
 

@@ -566,8 +566,10 @@ class Asker:
                 asked[same] = out["again"]
                 questions.append(out["say"])
                 done.append(out["say"])
+            elif good or said == pa.wall_refusal(self.ws):
+                done.append(said)                   # a wall's refusal is the rule's sentence, with nothing added (#172)
             else:
-                done.append(said if good else "Refused: " + said)
+                done.append("Refused: " + said)
             ok = ok and good
         self.asked = asked
         self.results = "\n".join(done)

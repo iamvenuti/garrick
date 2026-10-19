@@ -92,21 +92,36 @@ zone's repository, as the skills would:
     later       "Not now": {"zone", "file", "until"?}; the question put off
                 to tomorrow, or to the day `until` names, and committed
     continue    a piece of work opened in Claude's desktop app, already
-                oriented: {"zone", "file"}, its note. Its own record is
-                committed, a headless `claude -p` asks where it stands, and
-                that session opens with `claude --desktop --resume`, under
-                a pseudo-terminal (handoff.py, beside this file)
+                oriented: {"zone", "file"}, its note. The simple home's
+                Continue and, since #180, every Open in Claude on a thread
+                (the Threads card, the graph's panel, the app's menu and
+                panel). Its own record is committed, a headless `claude -p`
+                asks "Where am I on <it>?" (say_name()), and that session
+                opens with `claude --desktop --resume`, under a
+                pseudo-terminal (handoff.py, beside this file)
     ask-desktop Ask something: {"prompt"}, asked the same way in the
                 workspace's own folder; where the desktop app cannot open
                 it, the answer comes back in the reply, as "answer"
     example     the example put away or brought back: {"do": "archive"}
                 or "restore", through System/tools/example.py (#174)
+    fix         a check finding Nurture has a mechanical fix for, fixed from
+                the Threads card's `check` chip (#179): {"zone", "file"}, the
+                note the finding names. System/tools/nurture.py's own `fix
+                --yes`, scoped to that note and run as its nightly run is
+                (GARRICK_HEADLESS=1), so it applies only the mechanical kind,
+                commits in the zone and puts the note back when the wall
+                check refuses; under the zone's lock
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
-not in a toast. A batch that saved says "Saved 3". A tick or untick the zone's
-wall check refused ends on the rule's own sentence, operations.py's
-WALL_REFUSAL, word for word, and says nothing of what the check found.
+not in a toast. A batch that saved says "Saved 3". Any action whose commit the
+zone's wall check refused, from a click or the ask box, ends on the rule's own
+sentence, operations.py's WALL_REFUSAL, word for word, and says nothing of
+what the check found (#107, #172): a tick, a date, a new line, park and wake,
+an interruption, an answer, a new project or thread, a rename or a deletion.
+Every helper that commits takes that sentence as `wall`, with no default, so a
+verb added later cannot forget it. A refusal for any other reason still says
+why.
 
 A line is named by its zone, its file and the hash of its exact text, so a page
 built before the line last changed finds nothing and is refused, rather than
@@ -182,6 +197,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -198,7 +214,7 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
-         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example")
+         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -221,8 +237,10 @@ KEYS_MAX = 50
 MDLINK = re.compile(r"!?\[([^\]]*)\]\([^)\s]*\)")
 WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 # One line of what the zone's wall check prints when it refuses a commit:
-# check.py's report_staged(), as the pre-commit hook runs it.
+# check.py's report_staged(), as the pre-commit hook runs it. WALL_IN finds
+# it inside a longer line, as scaffold.py folds git's output into its refusal.
 WALL_LINE = re.compile(r"^Commit refused: .+\. Take it out and commit again\b")
+WALL_IN = re.compile(r"(?:^|\s)Commit refused: .+?\. Take it out and commit again\b")
 REKEY_HOURS = 1
 # Seconds: how long one git command may take, then a commit's whole share
 # (add, commit and its hooks), then how long a request waits for another on
@@ -542,11 +560,12 @@ def committing(zone: Path, rel: str, message: str) -> tuple:
     return 0, ""
 
 
-def commit(zone: Path, note: Path, before: bytes, message: str, wall: Optional[str] = None) -> None:
+def commit(zone: Path, note: Path, before: bytes, message: str, *, wall: Optional[str]) -> None:
     """Commit the one file, or put it back as it was and say why. Put back
     only if it still holds what this request wrote: an edit made meanwhile,
-    in Obsidian say, is left alone. With `wall`, the sentence a refusal by
-    the zone's wall check ends on, in place of what the check printed."""
+    in Obsidian say, is left alone. `wall` is the sentence a refusal by the
+    zone's wall check ends on, in place of what the check printed: always
+    wall_refusal(ws), which is None only without operations.py."""
     rel = str(note.relative_to(zone))
     mine = note.read_bytes()
     code, why = committing(zone, rel, message)
@@ -632,8 +651,7 @@ def todo(ws: Path, req: dict) -> str:
             message = messages[0]
         else:
             message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
-        wall = wall_refusal(ws) if req["verb"] in ("todo-done", "todo-undo") else None
-        commit(zone, note, before, message[:200], wall=wall)
+        commit(zone, note, before, message[:200], wall=wall_refusal(ws))
     return said[0] if len(said) == 1 else "Saved %d" % len(said)
 
 
@@ -710,7 +728,7 @@ def todo_add(ws: Path, req: dict) -> str:
         except tl.NotFound:
             raise Refused("%s's Todo.md has no Inbox section" % zone.name)
         said = tl.parse(line)["text"]
-        commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200])
+        commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200], wall=wall_refusal(ws))
     return "Added to %s: %s" % (section, said_text(said))
 
 
@@ -749,7 +767,7 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         before = note.read_bytes()
         said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
                         *(["--thread", parts[2]] if is_thread else []))
-        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"))
+        commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"), wall=wall_refusal(ws))
         if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
             drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
         return said
@@ -1075,7 +1093,7 @@ def interrupt_note(ws: Path, zone: Path, note: Path, parts: tuple, name: str, wh
     body = dated_entry(body, now.date(), "Interrupted at %s%s." % (now.strftime("%H:%M"), ", by " + by if by else ""))
     written = "---\n%s\n---\n%s" % (fm, body)
     note.write_text(rebased(ws, written) or written, encoding="utf-8")
-    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200])
+    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200], wall=wall_refusal(ws))
 
 
 def set_row(lines: list, rows: list, name: str, value: str, after: Optional[str]) -> None:
@@ -1675,7 +1693,10 @@ def field(req: dict, key: str, required: bool = True) -> Optional[str]:
 def scaffold(ws: Path, *args) -> str:
     """Run the workspace's scaffold.py: what it said, or Refused with its reason.
     A rename or a deletion commits through the wall check, so it has a
-    commit's time and a git command's besides."""
+    commit's time and a git command's besides. A refusal that carries the
+    check's own line is the wall's, and says the rule's sentence alone: the
+    script prints the line for whoever ran it in a terminal, who needs it to
+    take the material out, but the page and the ask box never show it."""
     tool = ws / "System" / "tools" / "scaffold.py"
     if not tool.is_file():
         raise Refused("System/tools/scaffold.py is missing")
@@ -1687,7 +1708,9 @@ def scaffold(ws: Path, *args) -> str:
                       "stopped; its change may be left staged, so look at git status in the zone before trying again"
                       % how_long(COMMIT_TIMEOUT + GIT_TIMEOUT))
     if r.returncode != 0:
-        raise Refused((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused")
+        why = (r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "scaffold.py refused"
+        wall = wall_refusal(ws)
+        raise Refused(wall if wall and WALL_IN.search(why) else why)
     return r.stdout.strip()
 
 
@@ -1709,16 +1732,22 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     flag = ["--check"] if check else []
     if verb == "new-project":
         name, thread = field(req, "name"), field(req, "thread")
+        made = [p for p in (zone / name,) if not p.exists()]
         said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
                         *flag)
         if not check:
-            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread))
+            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
+                       made, {}, wall=wall_refusal(ws))
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
+        threads, hub = zone / project / "Threads", zone / project / ("%s.md" % project)
+        made = [p for p in (threads, threads / name) if not p.exists()]
+        before = {hub: hub.read_bytes()} if hub.is_file() else {}
         said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag)
         if not check:
-            commit_new(zone, zone / project, "%s: new thread %s" % (project, name))
+            commit_new(zone, zone / project, "%s: new thread %s" % (project, name), made, before,
+                       wall=wall_refusal(ws))
         return said
     if verb == "undo":
         commit = req.get("commit")
@@ -1740,13 +1769,33 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     return said
 
 
-def commit_new(zone: Path, folder: Path, message: str) -> None:
+def commit_new(zone: Path, folder: Path, message: str, made: list, before: dict, *, wall: Optional[str]) -> None:
     """Commit what scaffold.py made, as the threads skill's New does: the new
-    folder by name, and its hub. Refused, the folder stays for the user."""
+    folder by name, and its hub. Refused, the folder stays for the user;
+    refused by the wall check, the reply is `wall` alone, as commit()'s is,
+    and its "Nothing was written" holds (#172): `made`, the folders that were
+    not there before the request, go, and each file in `before` gets back the
+    bytes it held then, an edit from another session included. Nothing else
+    is touched. If a file scaffold.py changed was edited meanwhile, all of it
+    stays, as commit_all() leaves its notes."""
     rel = folder.relative_to(zone).as_posix()
+    mine = {n: n.read_bytes() for n in before if n.is_file()}
     code, why = committing(zone, rel, message)
     if code != 0:
         git(zone, "reset", "-q", "--", rel, timeout=10)
+        if wall and code is not None and WALL_LINE.match(why):
+            try:
+                ours = all(n.read_bytes() == wrote for n, wrote in mine.items())
+            except OSError:
+                ours = False
+            if not ours:
+                raise Refused("made, but not committed. A note was edited meanwhile, so what was made was left as "
+                              "it is; take it out, or commit it by hand")
+            for n, was in before.items():
+                n.write_bytes(was)
+            for p in made:                      # the outermost first: a new Threads folder takes its thread with it
+                shutil.rmtree(p, ignore_errors=True)
+            raise Refused(wall)
         if code is None:
             raise Refused("made, but not committed: %s. The files are there, unstaged; commit them by hand: that "
                           "commit waits for the check and goes through" % why)
@@ -1832,6 +1881,36 @@ def work_name(zone: Path, parts: tuple) -> str:
         return parts[0]
     threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
     return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
+
+
+def say_name(ws: Path, zone: Path, parts: tuple) -> str:
+    """The name Continue asks about, "Where am I on <it>?": the name the home
+    shows (work_name()), but for a thread of a project with several, the
+    shortest that is unique, as the threads skill says it (#180): the thread
+    alone when no other thread in any zone, live or parked, has its name;
+    else project and thread; else the zone first as well. A project that is
+    one thread keeps the project's name, which is what the home calls it."""
+    name = work_name(zone, parts)
+    if len(parts) != 4 or name == parts[0]:
+        return name
+    thread, project = parts[2].casefold(), parts[0].casefold()
+    seen = []
+    for z in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
+        if not z.is_dir() or z.name.startswith((".", "_")):
+            continue
+        for p in z.iterdir():
+            if not p.is_dir() or p.name.startswith((".", "_")) or p.name in SKIP or p.name == "Inbox":
+                continue
+            notes = [t / (t.name + ".md") for t in (p / "Threads").glob("*/")
+                     if not t.name.startswith((".", "_")) and t.name not in SKIP and (t / (t.name + ".md")).is_file()]
+            if not notes and (p / (p.name + ".md")).is_file():
+                notes = [p / (p.name + ".md")]          # a project that is its own thread, by its name
+            seen += [(z.name, p.name.casefold(), n.stem.casefold()) for n in notes
+                     if front(n).get("status") not in ("done", "closed", "archived", "complete", "completed")]
+    same = [s for s in seen if s[2] == thread]
+    if len(same) <= 1:
+        return parts[2]
+    return name if sum(s[1] == project for s in same) <= 1 else "%s, %s" % (zone.name, name)
 
 
 def open_question(q: Path) -> str:
@@ -1936,7 +2015,7 @@ def put_off(ws: Path, req: dict, today: dt.date) -> str:
     return "Put off until %s. It will be back then" % when
 
 
-def commit_all(zone: Path, notes: list, message: str, wall: Optional[str] = None) -> None:
+def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) -> None:
     """commit() for several files in one commit. When the commit is refused,
     all are put back if every one still holds what this request wrote, and
     none if any was edited meanwhile, so they never disagree."""
@@ -2016,13 +2095,14 @@ def record_files(zone: Path, note: Path, parts: tuple, folder: Path) -> list:
             + [":(glob)%s/*.md" % b.relative_to(zone).as_posix() for b in boxes])
 
 
-def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str) -> str:
+def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str, *, wall: Optional[str]) -> str:
     """Garrick's own record of the work committed before Claude opens on it,
     so the desktop app's Changes panel has nothing of Garrick's to offer:
     record_files() by name, and only those that changed; anything else in the
     folder is the user's and is left as it is. "" when that went through or
-    there was nothing to commit; otherwise why not, for the reply. Nothing is
-    put back: the files are the user's."""
+    there was nothing to commit; otherwise why not, for the reply: `wall`
+    alone where the wall check refused it. Nothing is put back: the files
+    are the user's."""
     code, said = git(zone, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--",
                      *record_files(zone, note, parts, folder))
     if code != 0:
@@ -2038,7 +2118,8 @@ def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str)
     if code == 0:
         return ""
     git(zone, "reset", "-q", "--", *changed, timeout=10)
-    return why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    why = why if code is None else (why.strip().splitlines() or ["git refused"])[-1]
+    return wall if wall and code is not None and WALL_LINE.match(why) else why
 
 
 def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str:
@@ -2049,6 +2130,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     H = handoff()
     zone, note, parts, _ = resume_note(ws, req)
     name = work_name(zone, parts)
+    asked = "Where am I on %s?" % say_name(ws, zone, parts)
     if H.managed_off(managed_places()):          # not kept: the page reads the setting at every build
         raise Refused("%s %s" % (H.LOCAL_OFF_TITLE, H.LOCAL_OFF))
     claude = H.find_claude()
@@ -2056,12 +2138,12 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         raise Refused(H.NO_CLI)
     folder = work_folder(zone, parts)
     with zone_lock(zone):
-        unsaved = commit_record(zone, note, parts, folder, name)
+        unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     key = "%s/%s" % (zone.name, note.relative_to(zone).as_posix())
     kept = H.session_for(ws, key)
     resume = H.fresh(kept, now) and kept.get("folder") == str(folder)
     try:
-        sid = kept["id"] if resume else H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF, name=name)[0]
+        sid = kept["id"] if resume else H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
         try:
             H.open_desktop(claude, folder, sid)
         except (H.LocalOff, H.TimedOut):
@@ -2070,7 +2152,7 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             if not resume:
                 raise
             resume = False                      # the kept session would not open: ask afresh, once
-            sid = H.prime(claude, folder, "Where am I on %s?" % name, brief=H.CONTINUE_BRIEF, name=name)[0]
+            sid = H.prime(claude, folder, asked, brief=H.CONTINUE_BRIEF, name=name)[0]
             H.open_desktop(claude, folder, sid)
     except H.LocalOff as e:
         H.mark_local_off(ws, "refused")
@@ -2080,6 +2162,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     files, own = files_folder(ws, zone, parts)
     H.keep_session(ws, key, sid, folder, H.walk(files, project=own), primed=not resume, now=now)
     said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    if unsaved and unsaved == wall_refusal(ws):     # the rule's sentence ends the reply, and nothing is added to it
+        return "%s. Garrick's record of it is not committed. %s" % (said, unsaved)
     return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
 
 
@@ -2135,6 +2219,44 @@ def example(ws: Path, req: dict) -> str:
 # ---- end of the simple home ------------------------------------------------------
 
 
+def fix_finding(ws: Path, req: dict) -> str:
+    """The Fix button on a `check` chip's finding (#179): Nurture's own
+    mechanical fix for the note it names, and nothing else. `nurture.py fix
+    --yes --scope <note>` gathers the findings again, so a finding fixed
+    meanwhile, or one whose fix it would now hold, is refused in its words
+    rather than guessed at; it commits in the zone, one commit, and puts the
+    note back when the wall check refuses. GARRICK_HEADLESS=1, as the nightly
+    run sets it, keeps it to the kinds registered as unattended and reads
+    drift from what drift.py last saved, since the app may not read a cloud
+    folder. Run under the zone's lock, as every edit of a zone from the page."""
+    zone = zone_dir(ws, req.get("zone"))
+    note = live_note(zone, req.get("file"))
+    tool = ws / "System" / "tools" / "nurture.py"
+    if not tool.is_file():
+        raise Refused("System/tools/nurture.py is missing; update Garrick")
+    scope = note.relative_to(ws.resolve()).as_posix()
+    with zone_lock(zone):
+        try:
+            r = subprocess.run([sys.executable, str(tool), "--root", str(ws), "fix", "--scope", scope, "--yes", "--json"],
+                               capture_output=True, text=True, timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL,
+                               cwd=str(ws), env=dict(os.environ, GARRICK_HEADLESS="1"))
+        except subprocess.TimeoutExpired:
+            raise Refused("nurture.py was still running after %s and was stopped; look at git status in %s"
+                          % (how_long(COMMIT_TIMEOUT + GIT_TIMEOUT), zone.name))
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        said = (r.stderr or r.stdout).strip().splitlines()
+        raise Refused(said[-1] if said else "nurture.py did not answer")
+    fixed = [i for i in out.get("fixed") or [] if isinstance(i, dict)]
+    if out.get("refused"):
+        raise Refused(wall_refusal(ws) or "the zone's wall check refused the commit, so the note is as it was")
+    if not fixed:
+        held = [str(i.get("held") or "") for i in out.get("held") or [] if isinstance(i, dict) and i.get("held")]
+        raise Refused("not fixed: %s" % held[0] if held else "nothing here has a mechanical fix any more; the page rebuilds now")
+    return "Fixed: %s" % "; ".join(str(i.get("said") or i.get("line") or "") for i in fixed)
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or, for back
     and stack, a reply whose "say" comes with what the caller reads back."""
@@ -2171,6 +2293,8 @@ def act(ws: Path, req, today=None, now=None):
         return ask_desktop(ws, req)
     if req["verb"] == "example":
         return example(ws, req)
+    if req["verb"] == "fix":
+        return fix_finding(ws, req)
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)

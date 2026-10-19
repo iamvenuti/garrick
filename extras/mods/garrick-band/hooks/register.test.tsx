@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { buildIndex, cut, fileHref, label, linkify, lookup, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, plain, promptLine, resumePrompt, rootOf, stepLine, waitSettings, wrapPrompt, zoneOf } from './register'
+import { buildIndex, cut, fileHref, label, launcherSettings, linkify, lookup, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, plain, promptLine, resumePrompt, rootOf, stepLine, switchedOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -81,7 +81,9 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100 },
 } as any
 
-async function inThread($: any, on: any, text: string, extra: string[] = []) {
+// settings: what System/garrick-settings.json holds, as a string or an object;
+// left out, every file read is the note, so the settings do not parse.
+async function inThread($: any, on: any, text: string, extra: string[] = [], settings?: object | string) {
   const cwd = `${ROOT}/Zones/Work/Acme`
   on('session.root', async () => ({ value: cwd }))
   on('session.cwd', async () => ({ value: `${ROOT}/System/tools` }))      // a cd in a tool call: the band keeps its thread
@@ -89,7 +91,10 @@ async function inThread($: any, on: any, text: string, extra: string[] = []) {
   on('fs.exists', async (_$: any, e: any) => ({
     value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...extra].includes(e.path),
   }))
-  on('fs.read', async () => ({ value: text }))
+  on('fs.read', async (_$: any, e: any) => ({
+    value: settings !== undefined && e.path === `${ROOT}/System/garrick-settings.json`
+      ? (typeof settings === 'string' ? settings : JSON.stringify(settings)) : text,
+  }))
   on('turn.complete', async () => ({ text: '' }))
   await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
 }
@@ -347,6 +352,90 @@ describe('Finder and Obsidian', () => {
   })
 })
 
+describe('Settings › Opening a thread', () => {
+  const VAULT = [`/usr/bin/open`, `/Applications/Obsidian.app`, `${ROOT}/Zones/Work/.obsidian`]
+  const ALL = { note: true, finder: true, cmux: true, codex: true, claude: true }
+
+  test('read as status.py reads them: a key left out is on, or a list of those on', () => {
+    expect(launcherSettings(null)).toEqual({ on: ALL, default: null })
+    expect(launcherSettings('{}')).toEqual({ on: ALL, default: null })
+    expect(launcherSettings('not json')).toEqual({ on: ALL, default: null })
+    expect(launcherSettings('{"launchers": "note"}')).toEqual({ on: ALL, default: null })
+    expect(launcherSettings('{"launchers": {"note": false}}')).toEqual({ on: { ...ALL, note: false }, default: 'note' })
+    expect(launcherSettings('{"launchers": {"finder": null}, "default": "cmux"}')).toEqual({ on: { ...ALL, finder: false }, default: 'cmux' })
+    expect(launcherSettings('{"launchers": ["finder", "cmux"], "default": "elsewhere"}'))
+      .toEqual({ on: { note: false, finder: true, cmux: true, codex: false, claude: false }, default: 'note' })
+  })
+
+  test('While you wait tries the default first, then the others switched on', () => {
+    expect(waitOrder({ on: ALL, default: null })).toEqual(['cmux', 'note', 'app'])
+    expect(waitOrder({ on: ALL, default: 'note' })).toEqual(['note', 'cmux', 'finder'])
+    expect(waitOrder({ on: ALL, default: 'finder' })).toEqual(['finder', 'cmux', 'note'])
+    expect(waitOrder({ on: { ...ALL, note: false }, default: 'note' })).toEqual(['cmux', 'finder'])
+    expect(waitOrder({ on: { ...ALL, note: false, finder: false, cmux: false }, default: 'codex' })).toEqual(['codex'])
+  })
+
+  test('with the note switched off: no Obsidian, and /garrick obsidian refuses', async ($, on) => {
+    const ran: string[][] = []
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
+    })
+    await inThread($, on, NOTE, VAULT, { launchers: { note: false, finder: true }, default: 'note' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'obsidian' })).toBeUndefined()
+    expect(await band.find({ key: 'finder' })).toBeDefined()
+    expect((await $.command.run({ command: 'garrick', args: 'obsidian' } as any)).text).toBe('Obsidian is switched off in Settings › Opening a thread.')
+    expect(ran.filter(r => r[0] === '/usr/bin/open')).toEqual([])
+    const pane = await $.ui.mount({ plugin: 'garrick-band', surface: 'terminal', component: 'Pane', requestId: 'garrick-resume', props: {} } as any)
+    expect(await pane.find({ key: 'pane-obsidian' })).toBeUndefined()
+    expect(await pane.find({ key: 'pane-finder' })).toBeDefined()
+  })
+
+  test('with the note switched on, Obsidian installed and a vault, the button is back', async ($, on) => {
+    await inThread($, on, NOTE, VAULT, { launchers: { note: true, finder: false }, default: 'note' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'obsidian' })).toBeDefined()
+    expect(await band.find({ key: 'finder' })).toBeUndefined()
+    const pane = await $.ui.mount({ plugin: 'garrick-band', surface: 'terminal', component: 'Pane', requestId: 'garrick-resume', props: {} } as any)
+    expect(await pane.find({ key: 'pane-obsidian' })).toBeDefined()
+    expect(await pane.find({ key: 'pane-finder' })).toBeUndefined()
+  })
+
+  test('with Finder switched off: no Finder, and /garrick finder refuses', async ($, on) => {
+    await inThread($, on, NOTE, VAULT, { launchers: ['note', 'cmux'], default: 'cmux' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'finder' })).toBeUndefined()
+    expect(await band.find({ key: 'obsidian' })).toBeDefined()
+    expect((await $.command.run({ command: 'garrick', args: 'finder' } as any)).text).toBe(switchedOff('Finder'))
+  })
+
+  for (const [what, settings] of [['no launchers key', { 'while-you-wait': { on: true } }], ['a file that does not parse', '{"launchers": {']] as const) {
+    test(`with ${what}, both show as before`, async ($, on) => {
+      await inThread($, on, NOTE, VAULT, settings)
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ key: 'obsidian' })).toBeDefined()
+      expect(await band.find({ key: 'finder' })).toBeDefined()
+    })
+  }
+
+  test('a wiki with the note switched off offers no Obsidian on its index', async ($, on) => {
+    on('session.root', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
+    on('session.cwd', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$, e: any) => ({
+      value: [`${ROOT}/System/rules.md`, '/usr/bin/open', '/Applications/Obsidian.app', `${ROOT}/Wikis/.obsidian`,
+              `${ROOT}/Wikis/Meetings/wiki/index.md`].includes(e.path),
+    }))
+    on('fs.read', async () => ({ value: JSON.stringify({ launchers: { note: false } }) }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'finder' })).toBeDefined()
+    expect(await band.find({ key: 'obsidian' })).toBeUndefined()
+  })
+})
+
 describe('activity', () => {
   test('the band shows the last prompt and the step it is on', async ($, on) => {
     on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
@@ -401,7 +490,7 @@ describe('while you wait', () => {
 
   // A thread in Work with next_up.py and page_action.py installed; every
   // command the band runs is recorded, and next_up.py answers PICKS.
-  async function waiting($: any, on: any, settings: object | null = null) {
+  async function waiting($: any, on: any, settings: object | null = null, extra: string[] = []) {
     const clock = mock.clock(on)
     const ran: { argv: string[]; stdin?: string }[] = []
     const submitted: string[] = []
@@ -421,7 +510,7 @@ describe('while you wait', () => {
     on('session.cwd', async () => ({ value: cwd }))
     on('env.get', async () => ({ value: '/Users/someone' }))
     on('fs.exists', async (_$: any, e: any) => ({
-      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, `${ROOT}/System/tools/next_up.py`, `${ROOT}/System/status/page_action.py`, '/usr/bin/open'].includes(e.path),
+      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, `${ROOT}/System/tools/next_up.py`, `${ROOT}/System/status/page_action.py`, '/usr/bin/open', ...extra].includes(e.path),
     }))
     on('fs.read', async (_$: any, e: any) => ({ value: e.path.endsWith('garrick-settings.json') ? JSON.stringify(settings ?? {}) : NOTE }))
     on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
@@ -525,6 +614,43 @@ describe('while you wait', () => {
     expect(await w.garrick('open')).toBe('Opened Renewal.')
     expect(w.ran.some(r => r.argv[0] === '/usr/bin/open' && r.argv[1] === `${ROOT}/Zones/Personal/Birch/Threads/Renewal/Renewal.md`)).toBe(true)
     expect(w.submitted).toEqual([])
+  })
+
+  // Renewal, the first pick, sits in the Personal zone's vault.
+  const VAULT = ['/Applications/Obsidian.app', `${ROOT}/Zones/Personal/.obsidian`]
+  const RENEWAL = `${ROOT}/Zones/Personal/Birch/Threads/Renewal/Renewal.md`
+  const opened = (w: any) => w.ran.filter((r: any) => r.argv[0] === '/usr/bin/open').map((r: any) => r.argv.slice(1))
+
+  test('open follows the default: the note in Obsidian', async ($, on) => {
+    const w = await waiting($, on, { launchers: { note: true, finder: true, cmux: true }, default: 'note' }, VAULT)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('open')).toBe('Opened Renewal in Obsidian.')
+    expect(opened(w)).toEqual([[obsidianUrl(RENEWAL)]])
+  })
+
+  test('open follows the default: Finder, even in a vault', async ($, on) => {
+    const w = await waiting($, on, { launchers: { note: true, finder: true }, default: 'finder' }, VAULT)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('open')).toBe('Opened Renewal in Finder.')
+    expect(opened(w)).toEqual([['-R', RENEWAL]])
+  })
+
+  test('with the note switched off, open falls back to the first launcher on that can run', async ($, on) => {
+    const w = await waiting($, on, { launchers: { note: false, finder: true, cmux: true }, default: 'note' }, VAULT)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('open')).toBe('Opened Renewal in Finder.')       // no desk, so no cmux
+    expect(opened(w)).toEqual([['-R', RENEWAL]])
+  })
+
+  test('with nothing on that the band can run, open says so and opens nothing', async ($, on) => {
+    const w = await waiting($, on, { launchers: ['claude'], default: 'claude' }, VAULT)
+    await w.start()
+    await w.clock.advance(46_000)
+    expect(await w.garrick('open')).toBe('Nothing switched on in Settings › Opening a thread can open it here.')
+    expect(opened(w)).toEqual([])
   })
 
   test('with nothing on offer, the commands say so', async ($, on) => {

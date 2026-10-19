@@ -19,13 +19,15 @@ Above the prompt:
   - *Finder* (`f`) shows the thread note in Finder, on a Mac.
   - *Obsidian* (`o`) opens the thread note in Obsidian. It is offered only when Obsidian is installed and the note sits in a vault, so a folder like `System/`, which is not a vault, gets no Obsidian.
 
+  *Finder* and *Obsidian*, here and in the pane, follow Settings › Opening a thread on the [status page](../../docs/extras/status-page.md#settings): *Obsidian* only while *Open in Obsidian* (`note`) is switched on, *Finder* only while *Reveal in Finder* is. The band reads `launchers` in `System/garrick-settings.json` when the session starts and after every turn. With no `launchers` saved, or a file that does not read, both are offered as above.
+
   At a project whose hub has no Resume here block because each thread keeps its own, the band names the live threads (`2 threads: Pricing, Renewal`). *Resume* asks where each one stands, *Note* shows every thread's block, and *Wrap* asks the assistant to wrap the thread this session worked on, and the hub too if its status changed. When the session touched no thread, it says so and stops. Parked and done threads are left out.
 
   Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.
 
-The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick resume`, `/garrick wrap`, `/garrick note`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band. `/garrick next`, `open`, `tick` and `later` act on [While you wait](#while-you-wait).
+The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick resume`, `/garrick wrap`, `/garrick note`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band. With the launcher switched off in Settings, `/garrick obsidian` answers "Obsidian is switched off in Settings › Opening a thread." and opens nothing, and `/garrick finder` the same for Finder. `/garrick next`, `open`, `tick` and `later` act on [While you wait](#while-you-wait).
 
 In the assistant's replies, a path in backticks becomes a link, so Cmd-click opens the file in its default app, or a folder in Finder:
 
@@ -49,7 +51,7 @@ It comes from `System/tools/next_up.py`, which ranks by six plain rules and asks
 Four words act on it, typed as `/garrick next`, `/garrick open`, `/garrick tick` and `/garrick later`, which run at once while the turn goes on, or clicked on the line:
 
 - *next* shows the following suggestion. The band reads the list once when the line appears, and again on *next* only when that answer is more than a minute old.
-- *open* opens it elsewhere: the thread's own cmux tab with the [desk](../../docs/extras/cmux.md), else its note in Obsidian when it sits in a vault, else with the Mac's default app. An Inbox opens a tab on "process the inbox" with the desk, or the folder in Finder.
+- *open* opens it elsewhere, the way Settings › Opening a thread says: the default first, then the first of the others switched on that the band can run here, cmux, the note, Finder, in that order. *Open in cmux* is the thread's own cmux tab with the [desk](../../docs/extras/cmux.md), and an Inbox opens a tab on "process the inbox"; *Open in Obsidian* is the note in Obsidian when it sits in a vault; *Reveal in Finder* shows the note in its folder, or an Inbox's folder. Codex and Claude are not among them. When none switched on can open it, it says so and opens nothing. With no `launchers` saved, it goes as before Settings had the section: the cmux tab, else the note in Obsidian, else the Mac's default app.
 - *tick* ticks a Todo line through the status page's `page_action.py`, as the page does, committed in its zone. A tick in the zone the turn is working in waits for the turn to end, so the two commits never meet, and the band says so; a session outside any zone holds every tick.
 - *later* puts the line away for this turn.
 

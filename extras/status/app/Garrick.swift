@@ -706,7 +706,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// says the same words; tests/test_status_more.py compares the two.
 	func opened(_ app: String, _ name: String, _ phrase: String) -> String {
 		if phrase.isEmpty { return "Opened \(app) in \(name)." }
-		if app == "Claude" { return "Opened Claude in \(name) with “\(phrase)” typed in. Send it to resume." }
+		if app == "Claude" { return "Opened Claude in \(name) with “\(phrase)” typed in. Press Enter to send it." }
 		return "Opened \(app) in \(name). The clipboard now holds “\(phrase)”; paste it to resume."
 	}
 
@@ -1198,14 +1198,18 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// A row's actions, as its card offers them: the note's own link, then each
 	// app switched on in Settings that can open its folder. The one Settings
 	// picks for clicking a thread is the default, and the note where it is not
-	// on offer.
+	// on offer. Claude on a thread, where the page found Claude Code's
+	// command-line tool (the menu's `cli`), carries the thread's note (`oc`),
+	// which run() continues as the page's Open in Claude does (#180).
 	func acts(_ r: [String: Any]) -> [[String: Any]] {
 		var out: [[String: Any]] = []
 		if menuState?["note"] as? Bool != false, let u = r["u"] as? String { out.append(["k": "note", "u": u]) }
+		let cli = (menuState?["data"] as? [String: Any])?["cli"] as? Int == 1
 		if let f = r["f"] as? String {
 			for k in menuState?["launchers"] as? [String] ?? [] {
 				var a: [String: Any] = ["k": k, "f": f, "w": r["w"] as? String ?? ""]
 				if k == "cmux", let dk = r["dk"] { a["dk"] = dk }      // the cmux extra's desk opens it
+				if k == "claude", cli, let oc = r["oc"] as? [String], oc.count == 2 { a["oc"] = oc; a["n"] = r["n"] as? String ?? "" }
 				out.append(a)
 			}
 		}
@@ -1386,10 +1390,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// An action: the note's link to macOS, or the folder to an app, as the
-	// card's button opens it.
+	// card's button opens it. Claude on a thread with its note (`oc`) is the
+	// simple home's Continue (#180): page_action.py primes a session that
+	// asks where the thread stands and opens the desktop app on its answer,
+	// and its reply, or its refusal, is the toast that follows.
 	func run(_ a: [String: Any]) {
 		let k = a["k"] as? String ?? ""
 		if checking { return heard.append("menu:" + k) }
+		if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {
+			let name = a["n"] as? String ?? "it"
+			toast("Opening \(name) in Claude…", alsoNotify: false)
+			act(["verb": "continue", "zone": oc[0], "file": oc[1]])
+			return
+		}
 		if k == "note" {
 			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
 		} else if let f = a["f"] as? String {

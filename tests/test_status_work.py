@@ -174,6 +174,33 @@ class TestWorkUnderNode(NodeCase):
         self.assertIn('class="wk bad"', out[1]["box"])
         self.assertIn("made, but not committed: the wall check refused", out[1]["box"])
 
+    def test_a_quick_refusal_of_a_rename_stays_until_it_is_dismissed(self):
+        """#177: the dialog has closed and the eye is on the card, so a refused
+        rename, deletion, new project or new thread stays, however quick."""
+        why = ("Acme/Threads/Pricing/notes.txt is in Pricing but not in the zone's history, so nothing could bring it back. "
+               "Commit it or move it out, then rename.")
+        rename = {"verb": "rename", "zone": "Work", "project": "Acme", "thread": "Pricing", "to": "Renewal"}
+        out = self.run_js(("act", 0, rename, "Renaming Pricing…"), ("reply", 0.6, rename, {"ok": False, "say": why}),
+                          ("tick", 5), ("tick", 60), ("reload", 61), ("dismiss", 62, 0))
+        sent, replied, five, minute, rebuilt, dismissed = out
+        self.assertIn('class="wk bad"', replied["box"])
+        self.assertIn("notes.txt is in Pricing but not in the zone", replied["box"])
+        self.assertIn("Renaming Pricing, 1 s", replied["box"])
+        self.assertIn('data-wx="0"', replied["box"])
+        self.assertEqual(0, replied["opacity"])                              # the card says it; the toast steps aside
+        for later in (five, minute, rebuilt):                                # no fade, and a rebuild keeps it
+            self.assertIn("notes.txt", later["box"])
+        self.assertEqual("", dismissed["box"])
+        for verb, q in (("delete", {"verb": "delete", "zone": "Work", "project": "Acme", "confirm": "Acme"}), ("new-project", ACME),
+                        ("new-thread", {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Freight"})):
+            out = self.run_js(("act", 0, q, "Working…"), ("reply", 1, q, {"ok": False, "say": "Refused."}), ("tick", 30))
+            self.assertIn("Refused.", out[-1]["box"], verb)
+        # a quick refusal of anything else is the host's toast, as before; and so is a quick success of these
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, {"ok": False, "say": "Refused."}))
+        self.assertEqual("", out[-1]["box"])
+        out = self.run_js(("act", 0, rename, "Renaming Pricing…"), ("reply", 1, rename, {"ok": True, "say": "Renamed."}))
+        self.assertEqual("", out[-1]["box"])
+
     def test_the_zone_is_held_and_the_others_are_not(self):
         out = self.run_js(("act", 0, ACME, "Making Acme…"), ("act", 3, PARK, "Parking Birch Entry…"),
                           ("act", 4, HOME, "Adding to Personal: Book the car service…"),

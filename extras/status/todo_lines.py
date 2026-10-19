@@ -9,8 +9,15 @@ line, the day to chase). The fields stay at the end, because Tasks reads them
 nowhere else.
 
 The tasks that count are every top-level `- [ ]` line in the zone's notes,
-outside `archive/`, `_template/` and code fences, and not under an
-`## Active threads` heading, whose lines are workstreams, not actions.
+outside code fences and not under an `## Active threads` heading, whose lines
+are workstreams, not actions. The zone's notes are what the check reads as
+its notes, through the workspace's own `garrick_lib.live_files()`: no
+archive, build output, hidden or template folder, no installed package or
+cache (`node_modules/`, `.venv/`, `dist/`), and nothing in a repository of
+its own or a Garrick checkout kept inside a project. Of those, a note the
+vault's Obsidian excludes (`userIgnoreFilters` in `.obsidian/app.json`) is
+left out too, as the page's graph leaves it out; the zone's `Todo.md` always
+counts.
 
 A line is addressed by its file and `key()`, a hash of its exact text. An
 edit made from a page built before the line last changed finds no match and
@@ -19,9 +26,11 @@ are here for the page's actions, a preview feature; the page itself only reads.
 """
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
+from pathlib import Path
 
 PRIORITY = re.compile(r" *([🔺⏫🔼🔽⏬])️?")
 DATE = re.compile(r" *((?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)️? *\d{4}-\d{2}-\d{2})")
@@ -33,7 +42,10 @@ SRC = re.compile(r"\s*·\s*\[src\]\(([^)\s]*)\)")
 ALSO = re.compile(r"\s*\(also in ((?:[^()]|\([^()]*\))*)\)")
 MDLINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
 TAG = re.compile(r"(?<!\S)#[^\s#]+")
+# What the walk leaves out when no garrick_lib with live_files() can be found:
+# the folders this file skipped before the check's walk was shared with it.
 SKIP_DIRS = {"archive", "_template", ".obsidian", ".git", ".trash"}
+HERE = Path(__file__).resolve().parent
 LEDGER = ".todo-seen.json"
 SECTIONS = ("Inbox", "This week", "Waiting on", "Soon", "Someday")
 
@@ -99,12 +111,101 @@ def parse(line):
             "waiting": any(t.startswith("#waiting") for t in tags)}
 
 
-def notes(zone_dir):
+_LIBS = {}
+
+
+def _lib_places(ws):
+    """Where a garrick_lib.py may be, as prefs.py looks: the workspace's own,
+    the one beside this folder (an extra sits in System/, a step from
+    System/tools/), then a Garrick clone's template/, as the tests run."""
+    if ws is not None:
+        yield ws / "System" / "tools" / "garrick_lib.py"
+    yield HERE.parent / "tools" / "garrick_lib.py"
+    yield HERE.parent.parent / "template" / "System" / "tools" / "garrick_lib.py"
+
+
+def walk_lib(ws):
+    """The first garrick_lib with live_files() in it, or None: one older than
+    the shared walk has none, and the walk below falls back to SKIP_DIRS."""
+    if ws not in _LIBS:
+        found = None
+        for src in _lib_places(ws):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_todo_walk_lib", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "live_files", None)):
+                found = mod
+                break
+        _LIBS[ws] = found
+    return _LIBS[ws]
+
+
+def vault_of(top, folder):
+    """The Obsidian vault a folder's notes belong to: the nearest folder at or
+    above it, up to `top` (the workspace root), that holds a .obsidian folder."""
+    folder, top = Path(folder), Path(top)
+    for f in (folder, *folder.parents):
+        if (f / ".obsidian").is_dir():
+            return f
+        if f == top or f == f.parent:
+            return None
+    return None
+
+
+def ignore_filters(vault):
+    """The vault's Excluded files (.obsidian/app.json, `userIgnoreFilters`): a
+    path prefix or a /regex/ each. Empty when there are none or they do not read."""
+    out = []
+    if vault is None:
+        return out
+    try:
+        with open(os.path.join(str(vault), ".obsidian", "app.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        for flt in data.get("userIgnoreFilters") or []:
+            if not isinstance(flt, str) or not flt:
+                continue
+            try:
+                out.append(re.compile(flt[1:-1]) if len(flt) > 2 and flt.startswith("/") and flt.endswith("/") else flt)
+            except re.error:
+                continue
+    except (OSError, ValueError, AttributeError, TypeError):
+        return []
+    return out
+
+
+def ignored(rel, filters):
+    """Whether a path inside the vault, `/`-separated, is one Obsidian excludes."""
+    return any(f.search(rel) if hasattr(f, "search") else rel.startswith(f) for f in filters)
+
+
+def _old_walk(zone_dir):
     for d, dirs, files in os.walk(zone_dir):
         dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
         for f in sorted(files):
-            if f.endswith(".md"):
-                yield os.path.join(d, f)
+            yield os.path.join(d, f)
+
+
+def notes(zone_dir):
+    """Every Markdown note of the zone, as the module's docstring says."""
+    zone = Path(os.path.abspath(str(zone_dir)))
+    ws = zone.parent.parent if zone.parent.name == "Zones" else None
+    lib = walk_lib(ws)
+    files = (str(p) for p in lib.live_files(zone_dir)) if lib is not None else _old_walk(zone_dir)
+    vault = vault_of(ws or zone, zone)
+    filters = ignore_filters(vault)
+    for path in files:
+        if not path.endswith(".md"):
+            continue
+        if filters and os.path.relpath(path, str(zone_dir)) != "Todo.md":
+            rel = Path(os.path.abspath(path)).relative_to(vault).as_posix()
+            if ignored(rel, filters):
+                continue
+        yield path
 
 
 def _scan(zone_dir):

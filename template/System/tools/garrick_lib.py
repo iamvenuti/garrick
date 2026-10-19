@@ -21,6 +21,8 @@ functions below keep their signatures:
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
     walled(context, tag_a, tag_b) -> bool
     workspace_root(start=None) -> Path
+    nested_repo(folder) -> bool / is_checkout(folder) -> bool
+    live_files(folder) -> [Path]
     link_on_the_way(base, path) -> Path or None
     landing(root, home, path) -> Path
     write_new(root, home, path, data) / write_over(...) / move_new(root, home, src, path)
@@ -105,6 +107,13 @@ __all__ = [
     "knowledge_schema",
     "walled",
     "workspace_root",
+    "SKIP_DIRS",
+    "NOT_LIVE_DIR_RE",
+    "CHECKOUT_TREE",
+    "CHECKOUT_MARKS",
+    "nested_repo",
+    "is_checkout",
+    "live_files",
     "link_on_the_way",
     "OffCourse",
     "landing",
@@ -153,6 +162,8 @@ __all__ = [
     "local_file",
     "IGNORE_BEGIN",
     "IGNORE_END",
+    "MACHINE_IGNORES",
+    "machine_made",
     "garrick_ignores",
     "ignore_block",
     "ignore_parts",
@@ -1019,6 +1030,55 @@ def workspace_root(start: Optional[PathLike] = None) -> Path:
     raise FileNotFoundError("no workspace (a folder holding System/rules.md) above %s" % here)
 
 
+# What a walk of a zone leaves out, in one place: the check reads a zone's
+# notes through live_files(), and the status page's Todo card reads its
+# checkboxes through the same function, so the two cannot drift apart.
+#
+# Folders no one writes in: git's own, installed packages, caches and build
+# output. Skipped by name wherever a tool walks, before git is asked.
+SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "__pycache__", "dist"})
+# Folders whose notes no longer count as live: archives, build output, specs,
+# hidden and template folders.
+NOT_LIVE_DIR_RE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
+# A Garrick checkout, cloned or unpacked from a release ZIP, which has no .git.
+CHECKOUT_TREE = "template"                  # the tree the installer copies
+CHECKOUT_MARKS = ("VERSION", "install.py")  # what only Garrick's own source has
+
+
+def nested_repo(folder: PathLike) -> bool:
+    """A git repository of its own inside a project, such as code checked out
+    beside the notes about it. The workspace's own repositories are its root,
+    its zones and its wikis; anything below them with a `.git` is somebody
+    else's files, not the zone's."""
+    folder = Path(folder)
+    if not (folder / ".git").exists():
+        return False
+    return not (folder.parent.name in ("Zones", "Wikis") or folder.name == "Wikis")
+
+
+def is_checkout(folder: PathLike) -> bool:
+    """Is `folder` the top of a Garrick checkout? Recognised by the installer,
+    the VERSION file it stamps into a workspace, and the tree it copies."""
+    folder = Path(folder)
+    return ((folder / CHECKOUT_TREE).is_dir()
+            and all((folder / name).is_file() for name in CHECKOUT_MARKS))
+
+
+def live_files(folder: PathLike) -> Iterable[Path]:
+    """Every file under `folder` outside archives, build output, hidden and
+    template folders, installed packages and caches (SKIP_DIRS), any
+    repository of its own kept inside a project, such as a program's code,
+    and any Garrick checkout, cloned or unpacked from a release: their files
+    are not notes."""
+    for dirpath, dirnames, filenames in os.walk(str(folder)):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in SKIP_DIRS and not NOT_LIVE_DIR_RE.match(d)
+                             and not os.path.lexists(os.path.join(dirpath, d, ".git"))
+                             and not is_checkout(Path(dirpath) / d))
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
+
+
 def link_on_the_way(base: PathLike, path: PathLike) -> Optional[Path]:
     """The first symbolic link on the way from `base` down to `path`, `path`
     itself included, or None when there is none. `base` may be a link, and so
@@ -1695,14 +1755,43 @@ def local_file(path: str) -> str:
 IGNORE_BEGIN = "# >>> Garrick manages the lines below; an update replaces them"
 IGNORE_END = "# <<< Garrick"
 
+# The files a machine makes on its own in any folder: Finder's, Python's and
+# Obsidian's. Every repository's block starts with them, and they hold nothing
+# anybody wrote, so a rename or a deletion clears them rather than refusing.
+MACHINE_IGNORES = (".DS_Store\n._*\n__pycache__/\n"
+                   "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
+                   "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+
+
+def machine_made(rel: str) -> bool:
+    """Whether a path, from the top of its repository, is one MACHINE_IGNORES
+    names, as git matches those lines: a line with no slash inside it at any
+    depth, `**/` from any folder, and a trailing slash a folder and everything
+    in it. `rel` ends in a slash where git reports a folder."""
+    import fnmatch
+    parts = rel.strip("/").split("/")
+    folder = rel.endswith("/")
+    for line in MACHINE_IGNORES.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        dir_only = line.endswith("/")
+        pat = line.rstrip("/")
+        pat = pat[3:] if pat.startswith("**/") else pat
+        want = pat.split("/")
+        for i in range(len(parts) - len(want) + 1):
+            last = i + len(want) == len(parts)
+            if dir_only and last and not folder:
+                continue                                    # the line names a folder; this is a file
+            if all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts[i:i + len(want)], want)):
+                return True
+    return False
+
 
 def garrick_ignores(zones) -> Dict[str, str]:
     """Garrick's lines for the .gitignore of every repository the installer
     makes, and the zone template's, which a zone added later copies: {path
     from the top: the lines, without the markers}."""
-    common = (".DS_Store\n._*\n__pycache__/\n"
-              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
-              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+    common = MACHINE_IGNORES
     inbox = ("# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
              "# When each Inbox and Waiting on line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n"
              "# Links to shared cloud folders carry the provider's own path, which is this machine's alone.\n.shared/\n")

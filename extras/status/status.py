@@ -805,10 +805,12 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     return out
 
 
-def todo_row(r: dict, today: dt.date, actions: bool) -> str:
+def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) -> str:
     """One action. The row carries what a button sends back (its zone, file,
     the line's key) and what the filters and sorts read (late, undated, the
-    date, the A-Z key); the buttons themselves are drawn only with actions."""
+    date, the A-Z key); the buttons themselves are drawn only with actions.
+    With `said_late`, a late line also says so in words (late_said()), as a
+    thread's todo list on the Threads card draws it (#179)."""
     when = r["when"]
     if when is None:
         chip, cls = ("waiting" if r["waiting"] else "") if not actions else ("＋ chase date" if r["waiting"] else "＋ date"), "none"
@@ -827,6 +829,8 @@ def todo_row(r: dict, today: dt.date, actions: bool) -> str:
         meta.append("<span>also in %d more</span>" % len(r["also"]))
     if r["file"] != "Todo.md":
         meta.append("<span>in the thread note</span>")
+    if said_late and r["late"] and when is not None:
+        meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
     tick = ('<button class="tick" type="button" aria-label="%s: %s"></button>' % ("Reopen" if r["done"] else "Mark done", E(r["text"][:80]))
             if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
@@ -841,21 +845,28 @@ def todo_row(r: dict, today: dt.date, actions: bool) -> str:
 
 def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws: Path) -> None:
     """Hang what a thread owes on each of its rows: `actions`, its open task
-    lines; `next`, the most pressing of them; `late`, whether one of them is
-    overdue or due a chase; `flagged`, how many check findings name a file in
-    its folder; and `urgent`, those two together.
+    lines, the late ones first; `next`, the first of them; `late`, whether
+    one of them is overdue or due a chase; `checks`, the error findings
+    against a file in its folder that the page can explain and fix
+    (explained(), with Nurture's mechanical fix where it has one), and
+    `flagged`, how many; and `urgent`, late or flagged.
 
     The actions are the zone's own task lines, the ones the Todo tab shows: a
     line in `Todo.md` whose `[[label]]` names the thread, and any line in the
     thread's own folder. Urgency is the action's and never the row's age. A
     thread nobody has touched for seven weeks is often simply slow, or
     waiting on somebody; a thread with nothing open at all is not urgent
-    either, and `next` being None is what the cards say so from."""
-    flags: Dict[str, int] = {}
+    either. A warning never marks a row, nor an error the page cannot say
+    in plain words with its fix (#179): both stay on the Checks card and in
+    Nurture, where the user goes to tidy up on purpose."""
+    flags: Dict[str, List[dict]] = {}
     for f in (C or {}).get("findings") or []:
-        path = str(f.get("path") or "")
-        if path:
-            flags[path] = flags.get(path, 0) + 1
+        if f.get("severity") != "error":
+            continue
+        path = re.sub(r":\d+$", "", str(f.get("path") or ""))
+        said = explained(f)
+        if path and said:
+            flags.setdefault(path, []).append(dict(said, path=path, finding=f))
     per_zone = {z["zone"]: [r for _, rows in z["groups"] for r in rows] for z in lists}
     for zone, data in T.items():
         labels: Dict[str, List[dict]] = {}
@@ -876,8 +887,129 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
             r["actions"] = mine
             r["next"] = mine[0] if mine else None
             r["late"] = any(a["late"] for a in mine)
-            r["flagged"] = sum(n for path, n in flags.items() if path.startswith(here))
+            r["checks"] = []
+            for path in sorted(p for p in flags if p.startswith(here)):
+                for x in flags[path]:
+                    if "fixed_by" not in x:
+                        x["fixed_by"] = nurture_fix(ws, x["finding"])
+                    r["checks"].append(dict(x, shown=path[len(here):]))
+            r["flagged"] = len(r["checks"])
             r["urgent"] = bool(r["late"] or r["flagged"])
+
+
+# The check chip (#179). An error finding marks a thread's row only where the
+# page can say what is wrong in plain words and what fixes it. Each entry is
+# the checks it is for, a pattern for check.py's message, what is wrong, what
+# fixes it, and the request to copy for the assistant, said with the thread's
+# name: `nurture`, `wrap` or `finish`. A message no entry matches leaves the
+# row as it is. A wall finding is said without its material: no party, file
+# content or words that matched, which the Checks card and Nurture name.
+CHECK_SAID = (
+    (("threads", "projects"), r"`status` is (?P<v>.+?), should be ",
+     "Its status says {v}, a word no tool reads: a thread is active, parked or done.",
+     "Set `status:` to whichever of the three it is.", "nurture"),
+    (("threads", "projects"), r"frontmatter `type` is (?P<v>.+?), should be (?P<want>\w+)$",
+     "It is not marked as a {want}, so the tools do not read it as one.",
+     "Set `type: {want}` in its frontmatter.", "nurture"),
+    (("projects",), r"frontmatter `zone` is (?P<v>.+?) but the project sits in (?P<zone>.+)$",
+     "It names the zone {v}, but the project sits in {zone}.",
+     "Set `zone: {zone}` in its frontmatter.", "nurture"),
+    (("threads", "projects"), r"`(?P<key>created|updated)` is (?P<v>.+?), should be a date written YYYY-MM-DD$",
+     "Its `{key}:` date, {v}, is not one the tools can read.",
+     "Write it as the year, month and day, YYYY-MM-DD.", "nurture"),
+    (("threads",), r"status is done but there is no `### Outcome` block$",
+     "It says done, but has no Outcome block saying what was delivered or decided.",
+     "Finish it: the threads skill writes the Outcome where the resume point was.", "finish"),
+    (("threads",), r"`### Outcome` sits outside `## State of play`$",
+     "Its Outcome block sits outside State of play, where the tools look for it.",
+     "Move `### Outcome` under `## State of play`.", "nurture"),
+    (("threads",), r"no `## State of play` section$",
+     "It has no State of play section, where its resume point lives.",
+     "Wrap it: a wrap writes the section and its Resume here block.", "wrap"),
+    (("threads",), r"no `### Resume here` block$",
+     "It has no Resume here block, so nobody can pick it up cold.",
+     "Wrap it: a wrap writes the block.", "wrap"),
+    (("threads",), r"`### Resume here` sits outside `## State of play`$",
+     "Its Resume here block sits outside State of play, where the tools look for it.",
+     "Move `### Resume here` under `## State of play`.", "nurture"),
+    (("threads", "projects"), r"`party` (?P<v>\S+) is not a tag in the Parties table$",
+     "It names the party {v}, which is not in the Parties table, so no wall can be checked for it.",
+     "Correct the tag, or add the party to the Parties table first.", "nurture"),
+    (("links",), r"links (?P<v>.+), in the (?P<zone>.+) zone; zones never reference each other unless asked$",
+     "It links into the {zone} zone, and zones never link to each other.",
+     "Take the link out, or keep what it points at in this zone.", "nurture"),
+    (("placeholders",), r"unfilled (?P<v>.+); the install did not finish$",
+     "It still holds {v}, which the installer should have filled in.",
+     "Fill each one in, or take it out.", "nurture"),
+    (("walls",), r"",
+     "It names, links or quotes something from the far side of a wall, so its zone will not commit it.",
+     "Take that material out. Nurture names the file and the wall, and takes it out only on your yes.", "nurture"),
+)
+
+
+def explained(f: dict) -> Optional[dict]:
+    """What the page says of an error finding: `what` is wrong and what `fix`es
+    it, in plain words, and `say`, the request to copy; None for a finding no
+    entry of CHECK_SAID covers, which then marks no row."""
+    check, message = str(f.get("check") or ""), str(f.get("message") or "")
+    for checks, pattern, what, fix, say in CHECK_SAID:
+        m = re.match(pattern, message) if check in checks else None
+        if m:
+            words = {k: (v if k in ("key", "want", "zone") else "“%s”" % v.strip("'\"")) for k, v in m.groupdict().items()}
+            return {"check": check, "what": what.format(**words), "fix": fix.format(**words), "say": say}
+    return None
+
+
+_NURTURE: Dict[Path, object] = {}
+
+
+def nurture_lib(ws: Path):
+    """The workspace's own System/tools/nurture.py and a context for it, once
+    per workspace, or None: the page asks it which findings it has a
+    mechanical fix for, so a Fix button stands exactly where `nurture.py fix`
+    would apply one. What it imports leaves sys.modules and sys.path as they
+    were; the module keeps its own references."""
+    if ws not in _NURTURE:
+        lib, src = None, ws / "System" / "tools" / "nurture.py"
+        if src.is_file():
+            path, before, name = list(sys.path), set(sys.modules), "garrick_status_nurture"
+            try:
+                spec = importlib.util.spec_from_file_location(name, str(src))
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[name] = mod                 # its dataclasses look their module up by name
+                spec.loader.exec_module(mod)
+                if callable(getattr(mod, "claim_mechanical", None)):
+                    lib = (mod, mod.Ctx(ws, headless=True))
+            except Exception:
+                lib = None
+            finally:
+                sys.path[:] = path
+                for k in set(sys.modules) - before:
+                    sys.modules.pop(k, None)
+        _NURTURE[ws] = lib
+    return _NURTURE[ws]
+
+
+def nurture_fix(ws: Path, f: dict) -> Optional[str]:
+    """Nurture's mechanical fix for a finding, in words, or None where it has
+    none: claimed as `nurture.py` claims it, so the page never offers a Fix
+    the tool would hold or decline."""
+    lib = nurture_lib(ws)
+    if lib is None:
+        return None
+    N, ctx = lib
+    try:
+        item = N.Item("check", str(f.get("check") or ""), N.strip_line(str(f.get("path") or "")),
+                      str(f.get("message") or ""), str(f.get("ear") or ""), str(f.get("severity") or "warning"))
+        if not N.claim_mechanical(ctx, item) or not item.fix:
+            return None
+        if item.fix.get("op") == "status":
+            return "Change it to `%s`, the word every tool reads." % item.fix.get("to")
+        said = N.say_mechanical(item)
+    except Exception:
+        return None
+    said = said[len(item.path) + 2:] if said.startswith(item.path + ": ") else said
+    return said[:1].upper() + said[1:] + "."
 
 
 def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
@@ -1081,11 +1213,6 @@ def torder_switch() -> str:
                       for k, label in (("name", "By name"), ("recent", "Recent"))))
 
 
-# The quiet chip a live thread's row carries when no open action names it.
-NO_NEXT = ('<span class="chip nores" title="No open action names this thread, in its zone&#39;s Todo.md or in its own notes">'
-           'no next action</span>')
-
-
 def tview_switch() -> str:
     """Updated, Time, Cost: what the Threads card's bars and figures show."""
     return ('<div class="tmodes" role="group" aria-label="What the bars show">%s</div>'
@@ -1110,6 +1237,12 @@ TVIEW_CSS = r"""
 .tview .num.mt,.tview .num.mc{text-align:right;font-variant-numeric:tabular-nums}
 .ebar{height:6px;border-radius:3px;background:var(--grid);position:relative}.ebar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent);min-width:2px}
 .efoot{margin-top:10px}.efoot b{font-weight:600;color:var(--ink2)}
+.chip.tchip{font:inherit;font-size:11px;line-height:1.45;background:none;cursor:pointer}.chip.tchip:hover{border-color:var(--base)}
+.chip.todo.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}.chip.tchip[aria-expanded="true"]{background:var(--wash)}
+.tpop{grid-column:1/-1;margin:2px 0 4px 16px;padding:4px 6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;font-size:13px}
+.tpop[hidden]{display:none}.tpop-h{margin:4px 8px 2px;font-size:11.5px;color:var(--muted)}.tpop .trows{padding:0}.tpop .lateby{color:var(--critical)}
+.cfind{padding:8px}.cfind+.cfind{border-top:1px solid var(--grid)}.cfind p{margin:0 0 4px;line-height:1.45}.cfind .cfix{color:var(--ink2)}
+.cfind .hacts{margin:6px 0 2px}.webonly{display:none}.nohost .webonly{display:inline}
 """
 
 TVIEW_JS = r"""
@@ -1130,6 +1263,24 @@ v.querySelectorAll('.tmodes button[data-tm]').forEach(function(b){b.onclick=func
 v.querySelectorAll('.tmodes button[data-to]').forEach(function(b){b.onclick=function(){by(b.dataset.to)}});
 var m=st.get('garrick-threads-view');if(m&&v.querySelector('.tmodes button[data-tm="'+m+'"]'))mode(m);
 var o=st.get('garrick-threads-order');if(o&&v.querySelector('.tmodes button[data-to="'+o+'"]'))by(o)});
+"""
+
+# The Threads card's chips (#179): `todo N` and `check` each open their list
+# at the foot of their row, one at a time per row, and shut it on a second
+# click; the thread's card stands aside while a list is open. The list left
+# open is remembered in this window, so the rebuild a tick brings shows it
+# again, until the row has nothing left to list.
+TCHIP_JS = r"""
+(function(){var KEY='garrick-tchip';
+function pop(b){return document.getElementById(b.getAttribute('aria-controls'))}
+function set(b,o){var p=pop(b);if(!p)return;p.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}
+function keep(id){try{if(id)sessionStorage.setItem(KEY,id);else sessionStorage.removeItem(KEY)}catch(e){}}
+document.querySelectorAll('.tview').forEach(function(v){v.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.tchip');if(!b)return;
+e.preventDefault();e.stopPropagation();var p=pop(b);if(!p)return;var o=p.hidden,row=b.closest('.thread');
+[].forEach.call(document.querySelectorAll('button.tchip[aria-expanded="true"]'),function(x){set(x,false)});
+set(b,o);keep(o?p.id:'');if(o&&window.ThreadRows)ThreadRows.close();if(o&&row)row.classList.remove('on')})});
+var was=null;try{was=sessionStorage.getItem(KEY)}catch(e){}
+if(was){var b=document.querySelector('button.tchip[aria-controls="'+was.replace(/[^\w-]/g,'')+'"]');if(b)set(b,true);else keep('')}})();
 """
 
 
@@ -1484,7 +1635,7 @@ ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
-              "delete", "undo", "interrupt", "answer", "later", "continue")
+              "delete", "undo", "interrupt", "answer", "later", "continue", "fix")
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}
@@ -1745,11 +1896,16 @@ function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset
 if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
 function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
-/* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before */
-todo.addEventListener('click',function(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
+/* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179), which ticks and dates the same way */
+var places=[todo].concat([].slice.call(document.querySelectorAll('.tview')));
+function twins(r){return[].filter.call(document.querySelectorAll('.trow'),function(x){return x===r||x.dataset.z===r.dataset.z&&x.dataset.f===r.dataset.f&&x.dataset.k===r.dataset.k})}
+/* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before.
+   Every place the line is drawn is struck through with it */
+function onTick(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
 var d=!r.classList.contains('done'),verb=d?'todo-done':'todo-undo';
 if(!(window.GarrickTick&&GarrickTick({verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k}))){if(held(verb,r))return;send(verb,r,null,d?'Ticking it…':'Reopening it…')}
-r.classList.toggle('done',d);b.setAttribute('aria-label',(d?'Reopen':'Mark done')+b.getAttribute('aria-label').replace(/^[^:]*/,''))});
+twins(r).forEach(function(x){var t=x.querySelector('.tick');x.classList.toggle('done',d);if(t)t.setAttribute('aria-label',(d?'Reopen':'Mark done')+t.getAttribute('aria-label').replace(/^[^:]*/,''))})}
+places.forEach(function(el){el.addEventListener('click',onTick)});
 /* the date menu: the date is worked out at the click, so a page built yesterday still means today */
 var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
 function at(n){var d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return d}
@@ -1765,7 +1921,7 @@ menu.innerHTML='<div class="dh">'+(w?'Chase on':'Due')+'</div>'+o.map(function(x
 menu.hidden=false;var q=b.getBoundingClientRect(),mw=menu.offsetWidth,mh=menu.offsetHeight,y=q.bottom+4;if(y+mh>window.innerHeight-8)y=q.top-mh-4;
 menu.style.left=Math.max(8,Math.min(q.right-mw,window.innerWidth-mw-8))+'px';menu.style.top=Math.max(8,y)+'px';var f=menu.querySelector('button');if(f)f.focus()}
 function shut(){menu.hidden=true;mrow=null}
-todo.addEventListener('click',function(e){var b=e.target.closest('button.tdate');if(!b||!host)return;e.stopPropagation();var r=b.closest('.trow');if(mrow===r&&!menu.hidden)shut();else if(!held('todo-date',r))open(r,b)});
+places.forEach(function(el){el.addEventListener('click',function(e){var b=e.target.closest('button.tdate');if(!b||!host)return;e.stopPropagation();var r=b.closest('.trow');if(mrow===r&&!menu.hidden)shut();else if(!held('todo-date',r))open(r,b)})});
 menu.addEventListener('click',function(e){var b=e.target.closest('button');if(!b||!mrow)return;var v=b.classList.contains('set')?menu.querySelector('input').value:b.dataset.v;if(!v)return;apply(mrow,v);shut()});
 menu.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.tagName==='INPUT'){e.preventDefault();menu.querySelector('.set').click()}});
 document.addEventListener('click',function(e){if(!menu.hidden&&!menu.contains(e.target))shut()});
@@ -3899,27 +4055,111 @@ def cost_chart(L: dict) -> str:
 
 
 # ------------------------------------------------- what you were doing, what you owe
-# Overview opens on the Threads card (#143): each live thread with its next
-# action under its name, or a `no next action` chip where nothing names it,
-# listed by name or most recently touched first. Open actions and the
-# inboxes sit beside it, and the graph keeps every mode it has behind Explore
-# at the foot of the same tab.
+# Overview opens on the Threads card (#143): each live thread by name or most
+# recently touched first. Open actions and the inboxes sit beside it, and the
+# graph keeps every mode it has behind Explore at the foot of the same tab.
+#
+# A row is the thread's name, its age bar, and at most two chips (#179):
+# `todo N` for what is owed, green, or red once one of its open lines is late,
+# and `check` for an error the page can explain and fix. Each opens a list
+# under the row on a click: the open lines, late first, each with its box to
+# tick as the Todo tab draws it; or the finding in plain words, with Fix where
+# Nurture has a mechanical fix and the request to copy where it has not. A
+# thread with nothing open shows nothing: its age bar says how long it has
+# been quiet, and its next action is one click away rather than repeated
+# under its name.
 #
 # Nothing here is coloured for age. The days since a note moved are a figure
-# and nothing more; red belongs to the thread's own next action, which
-# thread_actions() works out.
+# and nothing more; red belongs to the thread's own open actions and errors,
+# which thread_actions() works out.
 
 
-def when_chip(a: dict, today: dt.date) -> str:
-    """An action's date as a pill, in the Todo tab's words and colours: red
-    once a due date has passed, or a `#waiting` line's chase date has come."""
-    when = a["when"]
-    if when is None:
-        return '<span class="tdate none">%s</span>' % ("waiting" if a["waiting"] else "no date")
-    rel = "today" if when == today else "tomorrow" if (when - today).days == 1 else \
+def day_said(when: dt.date, today: dt.date) -> str:
+    """A date as the Todo tab says it: today, tomorrow, or Wed 18 Mar."""
+    return "today" if when == today else "tomorrow" if (when - today).days == 1 else \
         "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b"))
-    return '<span class="tdate %s">%s %s</span>' % ("overdue" if a["late"] else "today" if when == today else "",
-                                                    "Chase" if a["waiting"] else "Due", E(rel))
+
+
+def late_said(a: dict, today: dt.date) -> str:
+    """What makes a line late, and since when: a due date that has passed, or
+    a `#waiting` line's chase date that has come."""
+    return ("to chase since %s" if a["waiting"] else "was due %s") % day_said(a["when"], today)
+
+
+def row_id(r: dict) -> str:
+    """A row's own name for the lists its chips open, the same on every build,
+    so a list left open stays open across the rebuild a tick brings."""
+    return hashlib.sha1(("%s/%s" % (r["zone"], r["rel"])).encode("utf-8")).hexdigest()[:10]
+
+
+def todo_chip(r: dict, today: dt.date) -> str:
+    """`todo N`, for a thread with open actions: green when none is late, red
+    when one is. Colour is not the only signal: the red chip's tooltip says
+    which lines are late and since when."""
+    mine = r.get("actions") or []
+    if not mine:
+        return ""
+    late = [a for a in mine if a["late"]]
+    n = len(mine)
+    if late:
+        tip = "%d of %d open action%s late: %s" % (len(late), n, "" if n == 1 else "s", "; ".join(
+            "%s, %s" % (re.sub(r"[*_`\[\]]", "", a["text"])[:60], late_said(a, today)) for a in late[:3])) + \
+            ("; and %d more" % (len(late) - 3) if len(late) > 3 else "")
+    else:
+        tip = "%d open action%s, none late" % (n, "" if n == 1 else "s")
+    return ('<button type="button" class="chip tchip todo %s" aria-expanded="false" aria-controls="tp-%s" title="%s">todo %d</button>'
+            % ("late" if late else "ok", row_id(r), E(tip + ". Click to list them"), n))
+
+
+def todo_pop(r: dict, today: dt.date, actions: bool) -> str:
+    """The list a `todo` chip opens: the thread's open lines, late first, each
+    drawn by todo_row() as the Todo tab draws it, with its box and date in the
+    app and the late ones saying since when. A tick here goes the Todo tab's
+    way (TODO_JS), queued with the ticks around it (#107)."""
+    mine = r.get("actions") or []
+    if not mine:
+        return ""
+    late = sum(1 for a in mine if a["late"])
+    head = "%d open%s" % (len(mine), " · %d late" % late if late else ", none late")
+    return ('<div class="tpop" id="tp-%s" hidden><p class="tpop-h">%s</p><div class="trows">%s</div></div>'
+            % (row_id(r), head, "".join(todo_row(dict(a, label=None, unsure=False), today, actions, said_late=True)
+                                        for a in mine)))
+
+
+def check_chip(r: dict) -> str:
+    """`check`, for a thread with an error the page can explain and fix."""
+    found = r.get("checks") or []
+    if not found:
+        return ""
+    tip = "The check found an error here: %s%s Click for what fixes it" % (
+        re.sub(r"`", "", found[0]["what"]), " And %d more." % (len(found) - 1) if len(found) > 1 else "")
+    return ('<button type="button" class="chip tchip check late" aria-expanded="false" aria-controls="cp-%s" title="%s">check</button>'
+            % (row_id(r), E(tip)))
+
+
+def check_pop(r: dict, name: str) -> str:
+    """What a `check` chip opens: each finding in plain words, the file it is
+    in, and its fix. Where Nurture has a mechanical fix, a Fix button runs it
+    (page_action.py's `fix`), shown in the app; otherwise, and in a browser,
+    the request to copy for the assistant: `nurture <thread>`, or `wrap` or
+    `finish` where that is what writes the missing block."""
+    found = r.get("checks") or []
+    if not found:
+        return ""
+    items = ""
+    for x in found:
+        zone, shown = re.match(r"Zones/([^/]+)/(.+)$", x["path"]), x.get("shown") or x["path"]
+        phrase = "%s %s" % (x["say"], name)
+        ask = copy("Copy “%s”" % phrase, phrase, "Copied “%s”. Paste it to your assistant." % phrase)
+        if x.get("fixed_by") and zone and zone.group(1) == r["zone"]:
+            fix, acts = x["fixed_by"], (
+                '<button class="act primary tacts" type="button" data-act="%s" data-say="%s">Fix</button><span class="webonly">%s</span>'
+                % (E(json.dumps({"verb": "fix", "zone": r["zone"], "file": zone.group(2)})), E("Fixing %s…" % shown), ask))
+        else:
+            fix, acts = x["fix"], ask
+        items += ('<div class="cfind"><p><b>%s</b> %s</p><p class="cfix">%s</p><div class="hacts">%s</div></div>'
+                  % (E(shown), md_inline(x["what"]), md_inline(fix), acts))
+    return '<div class="tpop" id="cp-%s" hidden>%s</div>' % (row_id(r), items)
 
 
 def start_card() -> str:
@@ -3941,7 +4181,6 @@ HOME_CSS = r"""
 .chip.late{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
 .hacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
 .hsay{font-family:var(--display);font-size:17px;margin:12px 0}
-.thread .t .tnext .tdate{font-size:10.5px;padding:0 6px;margin-left:6px;border-radius:6px}
 .torder{margin-right:8px}
 .hleft{margin:0 0 16px;padding:12px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--accent)}
 .hleft p{margin:0 0 8px}.hleft p.hint{margin:0}
@@ -5030,11 +5269,13 @@ function tLater(){clearTimeout(tShow);clearTimeout(tHide);tHide=setTimeout(tClos
 /* the row's node in the graph, lit while the row is hovered or has the focus (#62); GarrickGraph is there only with the graph */
 function light(row){var g=window.GarrickGraph,o;if(!g)return;try{o=JSON.parse(row.dataset.card)}catch(x){return}g.focus(o.u)}
 function dark(){if(window.GarrickGraph)GarrickGraph.focus(null)}
+/* a row whose todo or check list is open (TCHIP_JS) keeps its card shut, so the list can be read and ticked */
+function listing(row){return!!row.querySelector('.tpop:not([hidden])')}
 function bindRow(row){
-row.addEventListener('mouseenter',function(){light(row);clearTimeout(tHide);clearTimeout(tShow);if(tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
+row.addEventListener('mouseenter',function(){light(row);clearTimeout(tHide);clearTimeout(tShow);if(listing(row)||tRow===row&&!tc.hidden)return;tShow=setTimeout(function(){tOpen(row)},tRow&&!tc.hidden?350:150)});
 row.addEventListener('mouseleave',function(){dark();tLater()});
-row.addEventListener('focusin',function(){light(row);if(tQuiet){tQuiet=false;return}tOpen(row)});
-row.addEventListener('click',function(e){if(e.target.closest('a,button'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})}
+row.addEventListener('focusin',function(){light(row);if(tQuiet){tQuiet=false;return}if(listing(row))return;tOpen(row)});
+row.addEventListener('click',function(e){if(e.target.closest('a,button,.tpop'))return;if(tRow===row&&!tc.hidden)tClose();else tOpen(row)})}
 document.querySelectorAll('.thread[data-card]').forEach(bindRow);
 tc.addEventListener('mouseenter',function(){clearTimeout(tHide);clearTimeout(tShow)});tc.addEventListener('mouseleave',tLater);
 document.addEventListener('focusin',function(e){if(tRow&&!tRow.contains(e.target)&&!tc.contains(e.target))tClose()});
@@ -5842,19 +6083,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
 
     # Age is not urgency: the bar and the figure are the days since the note
     # moved, and nothing about them says a thread is in trouble. What does is
-    # the thread's own next action (thread_actions): a due date that has
-    # passed, a #waiting line whose chase date has come, or a check finding
-    # against one of its files.
-    def urgent_chip(r):
-        a = r.get("next")
-        if a and a["late"]:
-            return '<span class="chip late" title="%s">%s</span>' % (
-                E("Its next action is a #waiting line to chase from %s" % a["when"] if a["waiting"]
-                  else "Its next action was due %s" % a["when"]), "chase due" if a["waiting"] else "overdue")
-        if r.get("flagged"):
-            return '<span class="chip late" title="%s">check</span>' % E(
-                "The check reported %d finding%s against a file in this thread" % (r["flagged"], "" if r["flagged"] == 1 else "s"))
-        return ""
+    # the thread's own open actions and errors (thread_actions): a red `todo`
+    # chip, for a due date that has passed or a #waiting line whose chase date
+    # has come, and a `check` chip, for an error in one of its files that the
+    # page can explain and fix (#179).
 
     def live_dot(state, what):
         return ('<span class="live %s" title="%s"></span>' % (state, E("A session is open in %s, %s" % (what, state)))) if state else ""
@@ -5871,27 +6103,24 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         days = (now.date() - r["updated"]).days if r["updated"] else None
         k = not parked and bool(r.get("urgent"))
         # The party tags are the card's, not the row's: under a name they read as part of it.
-        chips = "" if parked else (
-            ("" if r.get("next") else NO_NEXT)
-            + ("" if r.get("resume") else '<span class="chip nores" title="The note has no Resume here block to resume from">no resume block</span>')
-            + checkpoint_chip(r) + urgent_chip(r))
+        # Under the name, at most the two chips that say something is owed or
+        # broken (#179), beside an unwrapped checkpoint's; the lists they open
+        # sit at the foot of the row, shut until a click.
+        chips = "" if parked else checkpoint_chip(r) + todo_chip(r, now.date()) + check_chip(r)
+        pops = "" if parked else todo_pop(r, now.date(), acting) + check_pop(r, names[(r["zone"], r["project"], r["thread"])])
         under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
-        # What happens next, under the name: the thread's own next action, in
-        # the row's muted text, with its date chip when it has a date (#143).
-        a = None if parked else r.get("next")
-        nxt = ('<small class="tnext">%s%s</small>' % (md_inline(a["text"]), when_chip(a, now.date()) if a["when"] else "")) if a else ""
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
                 max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
-        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s%s</div>%s'
-                '<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
+                '<span class="num muted mu" style="text-align:right">%s</span>%s%s</div>'
                 % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
-                   E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"), nxt,
+                   E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
                    ("<small>%s</small>" % under if under else (chips and "<small>%s</small>" % chips)),
-                   bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "")), k
+                   bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "", pops)), k
 
     def project_card(zone, project, items, days):
         hub = items[0]["hub"]
@@ -5980,7 +6209,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
                  % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
-    legend = ('<div class="legend mu"><span><i class="critical"></i>Its next action is overdue, or a <code>#waiting</code> chase date has come</span>'
+    legend = ('<div class="legend mu"><span><i class="critical"></i>A red <code>todo</code>: an open action is overdue, or a <code>#waiting</code> '
+              'chase date has come. <code>check</code>: an error the page can explain and fix</span>'
               '<span><i style="background:var(--base)"></i>Days since the note moved, toward sixty: a figure, not a fault</span></div>')
     # The search box leads the row, New project and New thread follow it, and
     # what it finds takes the columns' place while a query is in it (#140).
@@ -6137,8 +6367,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
-    # The Overview opens on the Threads card: each live thread with its next
-    # action, or a `no next action` chip, listed by name or most recently
+    # The Overview opens on the Threads card: each live thread with at most
+    # its `todo` and `check` chips (#179), listed by name or most recently
     # touched first (#143). Open actions on the left, the inboxes on the right,
     # and the graph behind Explore at the foot. A workspace with no project
     # yet has no work to show, so Start here leads instead. A browser that
@@ -6200,7 +6430,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # FIND_JS after it, so its results are drawn again once a row has moved,
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
                MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"><div class="app">%s%s</div>%s'

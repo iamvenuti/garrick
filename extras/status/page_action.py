@@ -101,6 +101,13 @@ zone's repository, as the skills would:
                 it, the answer comes back in the reply, as "answer"
     example     the example put away or brought back: {"do": "archive"}
                 or "restore", through System/tools/example.py (#174)
+    fix         a check finding Nurture has a mechanical fix for, fixed from
+                the Threads card's `check` chip (#179): {"zone", "file"}, the
+                note the finding names. System/tools/nurture.py's own `fix
+                --yes`, scoped to that note and run as its nightly run is
+                (GARRICK_HEADLESS=1), so it applies only the mechanical kind,
+                commits in the zone and puts the note back when the wall
+                check refuses; under the zone's lock
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -198,7 +205,7 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
-         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example")
+         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -2135,6 +2142,44 @@ def example(ws: Path, req: dict) -> str:
 # ---- end of the simple home ------------------------------------------------------
 
 
+def fix_finding(ws: Path, req: dict) -> str:
+    """The Fix button on a `check` chip's finding (#179): Nurture's own
+    mechanical fix for the note it names, and nothing else. `nurture.py fix
+    --yes --scope <note>` gathers the findings again, so a finding fixed
+    meanwhile, or one whose fix it would now hold, is refused in its words
+    rather than guessed at; it commits in the zone, one commit, and puts the
+    note back when the wall check refuses. GARRICK_HEADLESS=1, as the nightly
+    run sets it, keeps it to the kinds registered as unattended and reads
+    drift from what drift.py last saved, since the app may not read a cloud
+    folder. Run under the zone's lock, as every edit of a zone from the page."""
+    zone = zone_dir(ws, req.get("zone"))
+    note = live_note(zone, req.get("file"))
+    tool = ws / "System" / "tools" / "nurture.py"
+    if not tool.is_file():
+        raise Refused("System/tools/nurture.py is missing; update Garrick")
+    scope = note.relative_to(ws.resolve()).as_posix()
+    with zone_lock(zone):
+        try:
+            r = subprocess.run([sys.executable, str(tool), "--root", str(ws), "fix", "--scope", scope, "--yes", "--json"],
+                               capture_output=True, text=True, timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL,
+                               cwd=str(ws), env=dict(os.environ, GARRICK_HEADLESS="1"))
+        except subprocess.TimeoutExpired:
+            raise Refused("nurture.py was still running after %s and was stopped; look at git status in %s"
+                          % (how_long(COMMIT_TIMEOUT + GIT_TIMEOUT), zone.name))
+    try:
+        out = json.loads(r.stdout)
+    except ValueError:
+        said = (r.stderr or r.stdout).strip().splitlines()
+        raise Refused(said[-1] if said else "nurture.py did not answer")
+    fixed = [i for i in out.get("fixed") or [] if isinstance(i, dict)]
+    if out.get("refused"):
+        raise Refused(wall_refusal(ws) or "the zone's wall check refused the commit, so the note is as it was")
+    if not fixed:
+        held = [str(i.get("held") or "") for i in out.get("held") or [] if isinstance(i, dict) and i.get("held")]
+        raise Refused("not fixed: %s" % held[0] if held else "nothing here has a mechanical fix any more; the page rebuilds now")
+    return "Fixed: %s" % "; ".join(str(i.get("said") or i.get("line") or "") for i in fixed)
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or, for back
     and stack, a reply whose "say" comes with what the caller reads back."""
@@ -2171,6 +2216,8 @@ def act(ws: Path, req, today=None, now=None):
         return ask_desktop(ws, req)
     if req["verb"] == "example":
         return example(ws, req)
+    if req["verb"] == "fix":
+        return fix_finding(ws, req)
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)

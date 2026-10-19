@@ -1633,15 +1633,15 @@ var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;ren
 # its lines, with their boxes put back. The queue is kept in sessionStorage
 # with the rest, so a rebuild draws a queued tick as clicked.
 # A refused ACTION_KEEP stays as a card too, however quickly it came back
-# (#177): each is a deliberate, one-off action, its dialog has closed, and a
-# four-second toast with a long reason is gone before it is read.
+# (#177): each is a deliberate, one-off action, its dialog or the Undo bar has
+# closed, and a four-second toast with a long reason is gone before it is read.
 ACTION_TOAST = 4
 ACTION_BATCH = 2
 ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "delete", "new-project", "new-thread")
+ACTION_KEEP = ("rename", "delete", "new-project", "new-thread", "undo")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
               "delete", "undo", "interrupt", "answer", "later", "continue", "fix")
 
@@ -1757,7 +1757,7 @@ if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q
 keep();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.
    A batch of ticks that saved is one small notice however long it took; one refused stays, naming its lines, with their boxes back.
-   A refused rename, deletion, new project or new thread stays too, however quick (KEEP, #177) */
+   A refused rename, deletion, new project, new thread or undo stays too, however quick (KEEP, #177) */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='operations'){heard(out);return}
 var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||running(q.zone));
 if(e&&e.q.verb===q.verb){var now=Date.now();

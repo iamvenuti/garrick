@@ -284,7 +284,7 @@ def shapes(text, line0=1):
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-         "rename", "delete", "undo", "interrupt", "answer", "later", "continue")
+         "rename", "delete", "undo", "interrupt", "answer", "later", "continue", "fix")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
@@ -299,6 +299,9 @@ SHAPES = {
     # merged by `for(var k in more)`, which no scanner of the literal sees
     "send: verb": {"todo-done": (), "todo-undo": (), "todo-date": ("date",)},
     "held: verb": {"todo-done": (), "todo-date": ()},    # TODO_JS: the busy check, not a request
+    # TODO_JS: a box ticked on the Todo tab or in a thread's todo list on the Threads card (#179),
+    # handed to WORK_JS's queue
+    "onTick: verb": {"todo-done": (), "todo-undo": ()},
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
     "sdReq: 'settings'": {"settings": ()},               # JS: what Settings closes with, zones and notifications alone
@@ -322,14 +325,16 @@ SHAPES = {
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",),
              # the simple home (#175): Continue, a Needs you answer and Not now, the example's two links
-             '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",)}
+             '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",),
+             # a `check` chip's Fix on the Threads card (#179)
+             '"fix"': ("fix",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
-           "TODO_JS": {"send: verb", "held: verb"},
+           "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "NOTIFY_JS": {"nact: 'settings'"},

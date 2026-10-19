@@ -136,9 +136,11 @@ class TestResumePoints(StatusCase):
         self.assertEqual((False, None), status.resume_point(self.note()))
 
     def test_a_live_thread_without_one_is_marked(self):
+        # #179: on its row it is the check's error, with a `check` chip that says what writes it;
+        # the project's row still counts it, and its card still says it.
         self.note().write_text(thread_note("Acme Review", "Pricing").replace("### Resume here", "### Notes"))
         html = self.page()
-        self.assertIn("no resume block</span>", html)
+        self.assertNotIn("no resume block</span>", html)
         self.assertIn("1 thread · 1 without a resume block", html)
         self.assertEqual(0, cards(html)[("Acme Review", "Pricing")]["r"])
         self.assertIn("'No resume block'", status.PANEL_JS)

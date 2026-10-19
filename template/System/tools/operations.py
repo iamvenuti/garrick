@@ -219,6 +219,11 @@ DECLARED: Dict[str, Op] = {
     "ask-desktop": _op(("prompt",), (), "machine"),
     # The example's Remove and Bring back: System/tools/example.py (#174).
     "example": _op(("do",), ("do",), "workspace"),
+    # A check finding's Fix, from the Threads card (#179): nurture.py's own
+    # mechanical fix for the note named, committed in its zone. It gathers
+    # the findings again before it changes anything, so a second one finds
+    # nothing left to fix.
+    "fix": _op(("zone", "file"), ("file",), "zone", True, "safe"),
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.

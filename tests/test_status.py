@@ -596,25 +596,6 @@ class TestOpensOnTheWork(StatusCase):
         self.assertIn('id="checks"', machinery)
         self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))
 
-    def test_the_next_action_sits_under_the_threads_name(self):
-        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
-                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
-        html = self.page()
-        pricing = self.row(html, "Pricing")
-        self.assertIn('<small class="tnext">send the renewal floor to Dana<span class="tdate overdue">Due Wed 18 Mar</span></small>',
-                      pricing)
-        sizing = self.row(html, "Market Sizing")
-        self.assertIn("chase the survey", sizing)
-        self.assertIn(">Chase ", sizing)
-        for row in (pricing, sizing):
-            self.assertNotIn("no next action", row)
-
-    def test_an_undated_next_action_has_no_date_chip(self):
-        self.actions("[[Pricing]]: send the renewal floor to Dana")
-        pricing = self.row(self.page(), "Pricing")
-        self.assertIn('<small class="tnext">send the renewal floor to Dana</small>', pricing)
-        self.assertNotIn("tdate", pricing)
-
     def test_parked_and_finished_work_stays_out(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", status="parked"))
@@ -625,7 +606,7 @@ class TestOpensOnTheWork(StatusCase):
         parked = threads[threads.index('<details class="parked'):]
         self.assertIn("Pricing", parked)                                     # in its fold, and quiet there
         self.assertNotIn("send the floor", parked)
-        self.assertNotIn("no next action", parked)
+        self.assertNotIn("tchip", parked)
         self.assertNotIn(">Market Sizing<", threads)
 
     def test_age_alone_is_never_a_fault(self):
@@ -648,13 +629,60 @@ class TestOpensOnTheWork(StatusCase):
         self.assertNotIn("n.d>45", status.GRAPH_JS)                  # nor on the graph: its ring is the action's
         self.assertIn("function ring(n){return n.s||!n.lt?null:C['--critical']}", status.GRAPH_JS)
 
-    def test_an_overdue_action_is_what_makes_a_thread_urgent(self):
-        self.touched("Acme Review", "Pricing", str(self.now.date()))          # touched today
-        self.actions("[[Pricing]]: send the floor 📅 2026-03-01")
-        threads = self.rows(self.page(), "threads")
-        self.assertIn('<span class="chip late" title="Its next action was due 2026-03-01">overdue</span>', threads)
+    def chips(self, row):
+        """The chips under a row's name, as their words: `todo 2`, `check`."""
+        small = re.search(r'<div class="t">.*?</div>', row, re.S).group(0)
+        return [htmllib.unescape(t) for t in re.findall(r'<button type="button" class="chip tchip[^"]*"[^>]*>([^<]*)</button>', small)]
+
+    def pop(self, row, kind):
+        """The list a row's `todo` (tp) or `check` (cp) chip opens."""
+        m = re.search(r'<div class="tpop" id="%s-[0-9a-f]+" hidden>' % kind, row)
+        return row[m.start():] if m else ""
+
+    def test_a_thread_with_open_actions_shows_only_its_todo_chip(self):
+        # #179's follow-up: the next action no longer sits under the name; the chip carries the count.
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
+                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
+        html = self.page()
+        for name in ("Pricing", "Market Sizing"):
+            row = self.row(html, name)
+            self.assertEqual(["todo 1"], self.chips(row), name)
+            head = re.search(r'<div class="t">.*?</div>', row, re.S).group(0)
+            self.assertEqual(name, re.sub(r"<[^>]+>|todo 1", "", head).strip(), name)     # no text under the name
+            self.assertNotIn("tnext", row)
+            self.assertNotIn("no next action", row)
+        self.assertNotIn("tnext", status.CSS + status.HOME_CSS + status.TVIEW_CSS)
+
+    def test_two_open_lines_neither_late_show_a_green_todo_2(self):
+        later = self.now.date() + dt.timedelta(days=5)
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 %s" % later, "[[Pricing]]: book the call with Dana")
+        pricing = self.row(self.page(), "Pricing")
+        self.assertEqual(["todo 2"], self.chips(pricing))
+        self.assertIn('class="chip tchip todo ok"', pricing)
+        self.assertIn('title="2 open actions, none late. Click to list them">todo 2</button>', pricing)
+        self.assertIn('data-ok="1"', pricing[:60])                             # owed, and nothing late: not a fault
+        listed = self.pop(pricing, "tp")
+        self.assertIn("2 open, none late", listed)
+        self.assertEqual(2, listed.count(' data-k="'))
+        self.assertEqual(2, listed.count('<button class="tick" type="button"'))    # each with its box, as the Todo tab draws it
+
+    def test_a_late_line_turns_the_chip_red_and_leads_its_list(self):
+        self.touched("Acme Review", "Pricing", str(self.now.date()))          # touched today: the red is the line's
+        later = self.now.date() + dt.timedelta(days=5)
+        self.actions("[[Pricing]]: book the call with Dana 📅 %s" % later, "[[Pricing]]: send the floor 📅 2026-03-01")
+        html = self.page()
+        threads, pricing = self.rows(html, "threads"), self.row(html, "Pricing")
+        self.assertEqual(["todo 2"], self.chips(pricing))
+        self.assertIn('class="chip tchip todo late"', pricing)
+        self.assertIn('title="1 of 2 open actions late: send the floor, was due Sun 1 Mar. Click to list them"', pricing)
+        listed = self.pop(pricing, "tp")
+        self.assertIn("2 open · 1 late", listed)
+        self.assertLess(listed.index("send the floor"), listed.index("book the call"))       # the late one first
+        self.assertIn('<span class="lateby">was due Sun 1 Mar</span>', listed)                 # said in words, not by colour alone
         self.assertIn('data-ok="0"', threads)
         self.assertIn("1 needing a chase", threads)                          # the project's row, and its zone's meta
+        for gone in (">overdue</span>", ">chase due</span>"):
+            self.assertNotIn(gone, threads)
 
     def test_the_row_carries_its_urgency_so_a_park_recounts_in_the_same_words(self):
         self.touched("Acme Review", "Pricing", str(self.now.date()))
@@ -667,32 +695,72 @@ class TestOpensOnTheWork(StatusCase):
         for word in ("aging", "stale", ".fresh.warning", ".fresh.critical"):
             self.assertNotIn(word, status.PARK_JS, word)
 
-    def test_a_chase_date_that_has_come_is_urgent_too(self):
+    def test_a_chase_date_that_has_come_is_late_too(self):
         self.actions("[[Pricing]]: chase Dana #waiting ⏳ %s" % self.now.date())
-        threads = self.rows(self.page(), "threads")
-        self.assertIn(">chase due</span>", threads)
-        self.assertIn("to chase from %s" % self.now.date(), threads)
+        pricing = self.row(self.page(), "Pricing")
+        self.assertIn('class="chip tchip todo late"', pricing)
+        self.assertIn("chase Dana, to chase since today", pricing)
+        self.assertIn('<span class="lateby">to chase since today</span>', self.pop(pricing, "tp"))
 
-    def test_a_check_finding_against_a_thread_marks_it(self):
+    def test_ticking_the_only_line_leaves_the_row_with_no_chip(self):
+        self.actions("[[Pricing]]: send the floor 📅 2026-03-01")
+        self.assertEqual(["todo 1"], self.chips(self.row(self.page(), "Pricing")))
+        write(self.root / "Zones" / "Work" / "Todo.md",
+              "# Work: open actions\n\n## Inbox\n\n## Done\n\n- [x] [[Pricing]]: send the floor 📅 2026-03-01 ✅ %s\n" % self.now.date())
+        html = self.page()                                              # the rebuild after the tick
+        pricing = self.row(html, "Pricing")
+        self.assertEqual([], self.chips(pricing))
+        self.assertNotIn('class="tpop"', pricing)
+        self.assertNotIn("<small>", pricing)                            # its name and its age bar, nothing else
+        self.assertIn('data-ok="1"', pricing[:60])
+        self.assertIn(">1 thread<", self.rows(html, "threads"))         # and the project's row adds no count for it
+
+    def fake_check(self, *findings):
         tools = self.root / "System" / "tools"
         tools.mkdir(parents=True, exist_ok=True)
-        (tools / "check.py").write_text(
-            "import json\nprint(json.dumps({'errors': 1, 'warnings': 0, 'findings': "
-            "[{'check': 'walls', 'severity': 'error', 'path': 'Zones/Work/Acme Review/Threads/Pricing/Pricing.md',"
-            " 'message': 'a wall'}]}))\n")
-        threads = self.rows(self.page(), "threads")
-        self.assertIn(">check</span>", threads)
-        self.assertIn("The check reported 1 finding against a file in this thread", threads)
+        errors = sum(1 for f in findings if f["severity"] == "error")
+        (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
+            "errors": errors, "warnings": len(findings) - errors, "findings": list(findings)})
 
-    def test_a_thread_with_no_next_action_is_said_so_about_not_reddened(self):
-        html = self.page()                                            # the fixture has no Todo lines at all
+    def test_a_warning_never_marks_a_row(self):
+        self.fake_check({"check": "deliverables", "severity": "warning",
+                         "path": "Zones/Work/Acme Review/Threads/Pricing/261019 6.55pm - Deck.pptx",
+                         "message": "name does not start with its creation date, `YYMMDD - <name>`"})
+        html = self.page()
         pricing = self.row(html, "Pricing")
-        self.assertIn('<span class="chip nores" title="No open action names this thread, in its zone&#39;s Todo.md '
-                      'or in its own notes">no next action</span>', pricing)
-        self.assertNotIn('class="chip late', pricing)                 # saying so is not calling it a fault
-        self.assertNotIn("tnext", pricing)
-        self.assertIn('data-ok="1"', pricing)
-        self.assertIn(">1 thread<", self.rows(html, "threads"))       # and the project's row adds no count for it
+        self.assertEqual([], self.chips(pricing))
+        self.assertIn('data-ok="1"', pricing[:60])
+        self.assertIn("261019 6.55pm - Deck.pptx", self.rows(html, "checks"))     # it stays on the Checks card
+
+    def test_an_error_the_page_cannot_explain_marks_no_row(self):
+        self.fake_check({"check": "threads", "severity": "error",
+                         "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "message": "a kind no entry knows"})
+        self.assertEqual([], self.chips(self.row(self.page(), "Pricing")))
+
+    def test_an_error_finding_shows_check_with_what_is_wrong_and_what_fixes_it(self):
+        self.fake_check({"check": "threads", "severity": "error",
+                         "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "message": "no `### Resume here` block"})
+        pricing = self.row(self.page(), "Pricing")
+        self.assertEqual(["check"], self.chips(pricing))
+        self.assertIn('class="chip tchip check late"', pricing)
+        self.assertIn('data-ok="0"', pricing[:60])
+        found = self.pop(pricing, "cp")
+        self.assertIn("<b>Pricing.md</b> It has no Resume here block, so nobody can pick it up cold.", found)
+        self.assertIn("Wrap it: a wrap writes the block.", found)
+        self.assertIn('data-copy="wrap Pricing"', found)                     # no mechanical fix: the request to copy
+        self.assertNotIn('"verb": "fix"', htmllib.unescape(found))
+
+    def test_a_wall_finding_is_explained_without_its_material(self):
+        self.fake_check({"check": "walls", "severity": "error",
+                         "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                         "message": "names Birch Entry, but a wall stands between acme and birch"})
+        pricing = self.row(self.page(), "Pricing")
+        self.assertEqual(["check"], self.chips(pricing))
+        found = self.pop(pricing, "cp")
+        self.assertIn("from the far side of a wall", found)
+        self.assertIn('data-copy="nurture Pricing"', found)
+        for said in ("birch", "Birch", "a wall stands between"):
+            self.assertNotIn(said, pricing)
 
     def test_a_missing_resume_block_keeps_its_count_on_the_project_row(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -700,7 +768,8 @@ class TestOpensOnTheWork(StatusCase):
         note.write_text(re.sub(r"### Resume here.*?(?=\n## |\Z)", "", text, flags=re.S), encoding="utf-8")
         html = self.page()
         self.assertIn("1 thread · 1 without a resume block", self.rows(html, "threads"))
-        self.assertIn(">no resume block</span>", self.row(html, "Pricing"))
+        self.assertNotIn("no resume block</span>", self.row(html, "Pricing"))      # on the row it is the check's error (#179)
+        self.assertEqual(0, cards(html)[("Acme Review", "Pricing")]["r"])          # and its card still says so
 
     def test_by_name_or_recent(self):
         threads = self.rows(self.page(), "threads")
@@ -2249,6 +2318,54 @@ class TestApp(unittest.TestCase):
             self.skipTest("no swiftc")
         done = subprocess.run(["xcrun", "swiftc", "-typecheck", str(self.APP / "Garrick.swift")], capture_output=True, text=True)
         self.assertEqual(0, done.returncode, done.stderr)
+
+
+@unittest.skipUnless(fixtures.HAVE_GIT, "git is not installed")
+class TestCheckChipFix(StatusCase):
+    """#179: a `check` chip's Fix runs Nurture's own mechanical fix, and the
+    chip is gone once the page rebuilds. Real tools, a real repository."""
+
+    rows, row = TestOpensOnTheWork.rows, TestOpensOnTheWork.row
+
+    def setUp(self):
+        super().setUp()
+        env = mock.patch.dict(os.environ, dict({k: v for k, v in fixtures.GIT_ENV.items() if k.startswith("GIT_")},
+                                               GARRICK_JOBS_DIR=str(self.jobs)))
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("GIT_DIR", None)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.work = self.root / "Zones" / "Work"
+        self.note = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        self.note.write_text(self.note.read_text(encoding="utf-8").replace("status: active", "status: ongoing"), encoding="utf-8")
+        shutil.rmtree(self.work / ".git")
+        fixtures.git(self.work, "init", "-q")
+        fixtures.git(self.work, "add", "-A")
+        fixtures.git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+
+    def test_fix_clears_the_chip_once_the_rebuild_finishes(self):
+        row = self.row(self.page(), "Market Sizing")
+        self.assertIn('class="chip tchip check late"', row)
+        self.assertIn("Its status says “ongoing”, a word no tool reads", row)
+        self.assertIn("Change it to <code>active</code>, the word every tool reads.", row)
+        act = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"[^>]*>Fix</button>', row)
+        req = json.loads(htmllib.unescape(act.group(1)))
+        self.assertEqual({"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}, req)
+        self.assertIn("fix", status.ZONE_VERBS)                       # shown running, and its zone held, while it works
+        spec = importlib.util.spec_from_file_location("page_action_for_fix", REPO / "extras" / "status" / "page_action.py")
+        page_action = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(page_action)
+        said = page_action.act(self.root, req)
+        self.assertIn("Fixed: ", said)
+        self.assertIn("status: active", self.note.read_text(encoding="utf-8"))
+        self.assertEqual("", fixtures.git(self.work, "status", "--porcelain").strip())      # committed, in the zone
+        self.assertEqual(2, len(fixtures.git(self.work, "log", "--format=%h").split()))
+        row = self.row(self.page(), "Market Sizing")
+        self.assertNotIn("tchip", row)
+        with self.assertRaises(page_action.Refused):                   # a second click finds nothing left to fix
+            page_action.act(self.root, req)
 
 
 if __name__ == "__main__":

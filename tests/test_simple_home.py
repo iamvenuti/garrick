@@ -587,9 +587,34 @@ class TestContinue(HandOffCase):
     def test_a_thread_of_a_project_with_several_opens_in_the_threads_folder(self):
         self.go("Birch Entry/Threads/Interviews/Interviews.md")
         prime = self.calls()[0]
-        self.assertEqual("Where am I on Birch Entry, Interviews?", prime["args"][1])
-        self.assertEqual("Birch Entry, Interviews", prime["args"][prime["args"].index("--name") + 1])
+        self.assertEqual("Where am I on Interviews?", prime["args"][1])                # the shortest name that is unique (#180)
+        self.assertEqual("Birch Entry, Interviews", prime["args"][prime["args"].index("--name") + 1])   # the name the home shows
         self.assertEqual(str((self.work / "Birch Entry" / "Threads" / "Interviews").resolve()), str(Path(prime["cwd"]).resolve()))
+
+    def test_the_question_names_the_thread_by_its_shortest_unique_name(self):
+        """Open in Claude sends this same request for a thread (#180): the
+        question names it as the threads skill says it, the thread alone
+        while no other thread has its name, then project and thread, and
+        the zone first when two projects of one name both have it."""
+        later = [dt.datetime.now()]
+
+        def asked(file):
+            later[0] += dt.timedelta(hours=handoff.FRESH_HOURS + 1)      # never resumed: each one asks
+            pa.act(self.root, {"verb": "continue", "zone": "Work", "file": file}, now=later[0])
+            return [c for c in self.calls() if "-p" in c["args"]][-1]["args"][1]
+        # a project that is one thread keeps the name the home gives it
+        self.assertEqual("Where am I on Acme Review?", asked("Acme Review/Threads/Pricing/Pricing.md"))
+        self.assertEqual("Where am I on Market Sizing?", asked("Birch Entry/Threads/Market Sizing/Market Sizing.md"))
+        write(self.work / "Acme Review" / "Threads" / "Interviews" / "Interviews.md", thread("Acme Review", "Interviews"))
+        self.assertEqual("Where am I on Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
+        personal = self.root / "Zones" / "Personal"
+        write(personal / "Birch Entry" / "Threads" / "Interviews" / "Interviews.md", thread("Birch Entry", "Interviews"))
+        write(personal / "Birch Entry" / "Threads" / "Other" / "Other.md", thread("Birch Entry", "Other"))
+        self.assertEqual("Where am I on Work, Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
+        # a finished thread is no longer a name to tell apart
+        done = personal / "Birch Entry" / "Threads" / "Interviews" / "Interviews.md"
+        done.write_text(done.read_text().replace("status: active", "status: done"))
+        self.assertEqual("Where am I on Birch Entry, Interviews?", asked("Birch Entry/Threads/Interviews/Interviews.md"))
 
     def test_it_commits_the_record_first(self):
         note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"

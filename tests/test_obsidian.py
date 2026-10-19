@@ -340,7 +340,7 @@ class TestWhatALaunchSays(ActionCase):
     def claude_message(self):
         return {"launch": "claude", "folder": self.pricing(), "phrase": "open Pricing"}
 
-    OPENED = "Opened Claude in Pricing with “open Pricing” typed in. Send it to resume."
+    OPENED = "Opened Claude in Pricing with “open Pricing” typed in. Press Enter to send it."
 
     def found(self, name="Claude", cli=None):
         return {"match": "mdfind", "out": self.fake_app(name, cli) + "\n"}

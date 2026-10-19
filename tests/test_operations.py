@@ -311,6 +311,7 @@ SHAPES = {
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
     "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
     "park: v": {"park": (), "wake": ()},                 # PANEL_JS park(o): by name, or by file
+    "cont: 'continue'": {"continue": ()},                # PANEL_JS cont(o): Open in Claude on a thread (#180)
     # the page's own cache entries, which are never sent back: their verbs
     # are the zoned ones, and `op` is what GarrickAct adds to what it sends
     "reconcile: r.verb": {verb: () for verb in ZONED},           # WORK_JS
@@ -335,7 +336,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
-           "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v"},
+           "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "NOTIFY_JS": {"nact: 'settings'"},
            "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'"}}

@@ -736,9 +736,10 @@ def project_cards(html):
 
 PANEL_HARNESS = r"""
 const vm = require("vm");
-const [js, hosted, calls, launchers] = JSON.parse(process.argv[1]);
+const [js, hosted, calls, launchers, cli] = JSON.parse(process.argv[1]);
+const dataset = cli ? { launchers, cli: "1" } : { launchers };
 const ctx = { JSON, String, Array, localStorage: { getItem: () => null, setItem: () => {} },
-              document: { getElementById: () => null, addEventListener: () => {}, body: { dataset: { launchers } } } };
+              document: { getElementById: () => null, addEventListener: () => {}, body: { dataset } } };
 ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
 vm.createContext(ctx);
 vm.runInContext(js + ";this.out=" + JSON.stringify(calls) + ".map(function(c){return Panel[c[0]](c[1],c[2])})", ctx);
@@ -746,13 +747,14 @@ process.stdout.write(JSON.stringify(ctx.out));
 """
 
 
-def panel(hosted, *calls, launchers=""):
+def panel(hosted, *calls, launchers="", cli=False):
     """Panel.head or Panel.acts, run in Node as the app (hosted) or a browser would.
     A call is (name, card) or, for a row's card, ("head", card, 1). `launchers`
-    is what the page's body carries: the ways to open a thread this Mac has."""
+    is what the page's body carries: the ways to open a thread this Mac has;
+    `cli`, whether it says the build found Claude Code's command-line tool."""
     import subprocess
     done = subprocess.run(["node", "-e", PANEL_HARNESS,
-                           json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls], launchers])],
+                           json.dumps([status.PANEL_JS, hosted, [list(c) for c in calls], launchers, cli])],
                           capture_output=True, text=True, timeout=30)
     if done.returncode:
         raise AssertionError(done.stderr)
@@ -1940,11 +1942,55 @@ class TestWhatALaunchSays(StatusCase):
         self.assertIn('data-launch="cmux"', plain)
         self.assertIn('data-say="Opening Pricing in cmux…"', plain)
 
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_open_in_claude_on_a_thread_is_continue_where_the_cli_is_here(self):
+        """#180: where the build found Claude Code's command-line tool, Open
+        in Claude on a thread sends the simple home's Continue request, and
+        the working card says it is opening; without the tool it is the deep
+        link, as before, and so is a card with no note to continue."""
+        self.assertNotIn("data-cli", self.page(launchers=("claude",)))           # unsaid: the deep link
+        html = self.page(launchers=("claude",), cli=True)
+        self.assertIn('data-cli="1"', html)
+        card = cards(html)[("Acme Review", "Pricing")]
+        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["oc"])
+        acts = panel(True, ("acts", card), launchers="claude", cli=True)[0]
+        q = re.search(r'data-k="claude"[^>]*data-act="(\{.*?\})" data-say="([^"]*)"', acts)
+        self.assertIsNotNone(q, acts)
+        self.assertEqual({"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}, json.loads(q.group(1)))
+        self.assertEqual("Opening Pricing in Claude…", q.group(2))
+        self.assertNotIn('data-launch="claude"', acts)
+        self.assertNotIn("claude://", status.PANEL_JS)                          # the page never builds the link itself
+        # no tool here: the deep link, which leaves the phrase for you to send
+        plain = panel(True, ("acts", card), launchers="claude")[0]
+        self.assertIn('data-launch="claude"', plain)
+        self.assertIn('data-phrase="open Pricing"', plain)
+        self.assertNotIn('"verb":"continue"', plain)
+        # a project of several threads has no one note to continue
+        project = panel(True, ("acts", dict(card, oc=None, n="Acme Review")), launchers="claude", cli=True)[0]
+        self.assertIn('data-launch="claude"', project)
+        # clicking the thread's name, with Claude the default, sends the same request through the working card
+        self.assertIn("var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;"
+                      "if(!(window.GarrickAct&&GarrickAct(q,going(o))))", status.PANEL_JS)
+        self.assertIn("continue", status.ZONE_VERBS)                            # a zone verb: the working card shows it running
+
+    def test_the_apps_menu_and_panel_continue_a_thread_in_claude(self):
+        """#180: the app's menu and panel run a row's action through run(),
+        which continues a thread in Claude through page_action.py where the
+        page's menu says the tool is here, and keeps the deep link otherwise."""
+        swift = self.swift()
+        acts = swift[swift.index("func acts(_ r: [String: Any])"):swift.index("// The menu: a field")]
+        self.assertIn('let cli = (menuState?["data"] as? [String: Any])?["cli"] as? Int == 1', acts)
+        self.assertIn('if k == "claude", cli, let oc = r["oc"] as? [String], oc.count == 2 { a["oc"] = oc;', acts)
+        run = swift[swift.index("func run(_ a: [String: Any])"):swift.index("// A row's icon, kept visible")]
+        self.assertIn('if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {', run)
+        self.assertIn('act(["verb": "continue", "zone": oc[0], "file": oc[1]])', run)
+        self.assertLess(run.index('act(["verb": "continue"'), run.index("launch(k, f,"))      # before the deep link
+
     def test_both_hosts_say_the_same_words(self):
         # One page, two hosts: the sentences are the same in each, so what a
         # launcher tells you does not depend on where the page is being shown.
         swift, plugin = self.swift(), self.plugin()
-        for sentence in ('” typed in. Send it to resume.',                      # Claude: the phrase is in the session
+        for sentence in ('” typed in. Press Enter to send it.',                 # Claude: the phrase is in the session, not sent
                          '. The clipboard now holds “',                          # Codex and cmux: replaced, and said
                          '; paste it to resume.',
                          ' in Finder. Nothing was copied; the phrase that resumes it is “',
@@ -2021,7 +2067,10 @@ class TestWhatALaunchSays(StatusCase):
         states = {(r[0].strip(), r[1].strip()) for r in rows if len(r) >= 3}
         for launcher in ("*Open in Claude*", "*Open in Codex*", "*Open in cmux*", "*Reveal in Finder*"):
             self.assertTrue([s for s in states if s[0] == launcher], launcher)
-        for state in ("Running", "Not running", "Not installed"):
+        # through Continue's request where the command-line tool is here (#180), the deep link where it is not
+        for state in ("The command-line tool is here", "The command-line tool is here, pressed again within twelve hours",
+                      "The command-line tool is here, but the call is refused", "No command-line tool, Claude running",
+                      "No command-line tool, Claude not running", "Not installed"):
             self.assertIn(("*Open in Claude*", state), states, state)
         self.assertIn(("*Open in Codex*", "Installed without its own launcher"), states)
         self.assertIn("boot: done", page)                      # the mark the wait watches for

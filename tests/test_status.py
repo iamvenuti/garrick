@@ -162,7 +162,8 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp", "oc"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], data["nodes"][self.node(data, "Pricing")]["oc"])   # what Open in Claude continues (#180)
         self.assertNotIn("Decisions.", html)
 
     def test_mail_pages_have_a_kind_of_their_own(self):
@@ -1066,7 +1067,8 @@ class TestThreadCards(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(thread_note("Acme Review", "Pricing", "acme", "The renewal floor is a private figure."))
         card = cards(self.page(now=dt.datetime(2026, 3, 11, 9, 0)))[("Acme Review", "Pricing")]
-        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg", "pa"}, set(card))
+        self.assertEqual({"n", "kl", "z", "p", "t", "d", "s", "w", "h", "u", "r", "rd", "mg", "pa", "oc"}, set(card))
+        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], card["oc"])     # what Open in Claude continues (#180)
         self.assertEqual((1, 10), (card["r"], card["rd"]))                     # a Resume here block, dated 1 March
         self.assertEqual(("Pricing", "thread", "Work", "Acme Review", ["acme"], 10, 0, "Pricing", 0),
                          tuple(card[k] for k in ("n", "kl", "z", "p", "t", "d", "s", "w", "h")))
@@ -1540,8 +1542,13 @@ class TestPreviewFeatures(StatusCase):
         self.assertEqual([], projects["Solo"]["t"])                                         # a project that is its own thread
         self.assertEqual("Solo", projects["Solo"]["w"])
         pricing = acme["t"][0]
-        self.assertEqual({"n", "w", "u"}, set(pricing))
+        self.assertEqual({"n", "w", "u", "oc"}, set(pricing))
         self.assertEqual("Pricing", pricing["w"])
+        # the note Open in Claude continues (#180): a thread's, or the hub of a project that is its own thread
+        self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], pricing["oc"])
+        self.assertEqual(["Work", "Solo/Solo.md"], projects["Solo"]["oc"])
+        self.assertNotIn("cli", menu)                                                       # no CLI said: the deep link
+        self.assertEqual(1, self.menu(self.page(cli=True))["cli"])
         work_zone = [z for z in self.menu(self.page(launchers=("claude",)))["zones"] if z["z"] == "Work"][0]
         self.assertEqual(str(work / "Acme Review" / "Threads" / "Pricing"), work_zone["p"][0]["t"][0]["f"])   # a folder where an app can open it
         self.assertEqual(str(work / "Acme Review"), work_zone["p"][0]["f"])

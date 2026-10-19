@@ -398,6 +398,49 @@ class TestWhatCannotBeBroughtBack(ManageCase):
         self.assertIn("repository of its own", r.stderr)
         self.assertTrue((repo / ".git").is_dir())
 
+    def machine_made(self, folder):
+        """What Finder, Python and Obsidian leave in a folder they have opened (#177)."""
+        (folder / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+        (folder / "__pycache__").mkdir()
+        (folder / "__pycache__" / "x.cpython-39.pyc").write_bytes(b"\0")
+        (folder / ".obsidian").mkdir()
+        (folder / ".obsidian" / "workspace.json").write_text("{}")
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_rename(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        new = self.work / "Acme" / "Threads" / "Renewal"
+        self.assertTrue((new / "Renewal.md").is_file())
+        self.assertFalse(old.exists())                                        # nothing left behind
+        self.assertEqual(["Renewal.md"], sorted(os.listdir(new)))            # and nothing carried over
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+
+    def test_a_file_anybody_wrote_still_refuses_a_rename_beside_them(self):
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        self.machine_made(old)
+        (old / "notes.txt").write_text("not committed")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/Threads/Pricing/notes.txt is in Pricing but not in the zone's history", r.stderr)
+        self.assertNotIn(".DS_Store", r.stderr)
+        self.assertTrue((old / ".DS_Store").exists())                         # a refusal clears nothing
+        self.assertTrue((old / "notes.txt").exists())
+
+    def test_what_a_machine_makes_is_cleared_and_never_refuses_a_deletion(self):
+        self.machine_made(self.freight.parent)
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertFalse(self.freight.parent.exists())
+        self.assertEqual("", self.git("status", "--porcelain", "--ignored").stdout)
+        self.machine_made(self.work / "Acme")
+        (self.work / "Acme" / "notes.txt").write_text("not committed")
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--confirm", "Acme")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("Acme/notes.txt is in Acme but not in the zone's history", r.stderr)
+        self.assertTrue((self.work / "Acme" / "Acme.md").is_file())
+
     def test_something_staged_elsewhere_is_never_swept_in(self):
         (self.work / "Birch Sources").mkdir()
         (self.work / "Birch Sources" / "contract.pdf").write_bytes(b"%PDF staged by hand")

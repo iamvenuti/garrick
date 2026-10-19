@@ -153,6 +153,8 @@ __all__ = [
     "local_file",
     "IGNORE_BEGIN",
     "IGNORE_END",
+    "MACHINE_IGNORES",
+    "machine_made",
     "garrick_ignores",
     "ignore_block",
     "ignore_parts",
@@ -1695,14 +1697,43 @@ def local_file(path: str) -> str:
 IGNORE_BEGIN = "# >>> Garrick manages the lines below; an update replaces them"
 IGNORE_END = "# <<< Garrick"
 
+# The files a machine makes on its own in any folder: Finder's, Python's and
+# Obsidian's. Every repository's block starts with them, and they hold nothing
+# anybody wrote, so a rename or a deletion clears them rather than refusing.
+MACHINE_IGNORES = (".DS_Store\n._*\n__pycache__/\n"
+                   "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
+                   "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+
+
+def machine_made(rel: str) -> bool:
+    """Whether a path, from the top of its repository, is one MACHINE_IGNORES
+    names, as git matches those lines: a line with no slash inside it at any
+    depth, `**/` from any folder, and a trailing slash a folder and everything
+    in it. `rel` ends in a slash where git reports a folder."""
+    import fnmatch
+    parts = rel.strip("/").split("/")
+    folder = rel.endswith("/")
+    for line in MACHINE_IGNORES.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        dir_only = line.endswith("/")
+        pat = line.rstrip("/")
+        pat = pat[3:] if pat.startswith("**/") else pat
+        want = pat.split("/")
+        for i in range(len(parts) - len(want) + 1):
+            last = i + len(want) == len(parts)
+            if dir_only and last and not folder:
+                continue                                    # the line names a folder; this is a file
+            if all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts[i:i + len(want)], want)):
+                return True
+    return False
+
 
 def garrick_ignores(zones) -> Dict[str, str]:
     """Garrick's lines for the .gitignore of every repository the installer
     makes, and the zone template's, which a zone added later copies: {path
     from the top: the lines, without the markers}."""
-    common = (".DS_Store\n._*\n__pycache__/\n"
-              "# Obsidian rewrites these on every pan, zoom and click, in whichever folder is opened as a vault.\n"
-              "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
+    common = MACHINE_IGNORES
     inbox = ("# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
              "# When each Inbox and Waiting on line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n"
              "# Links to shared cloud folders carry the provider's own path, which is this machine's alone.\n.shared/\n")

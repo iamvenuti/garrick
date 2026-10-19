@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Renaming or deleting a project or thread whose folder Finder has opened works again ([#177](https://github.com/iamvenuti/garrick/issues/177)). `scaffold.py` refuses a rename or a deletion when the folder holds a file the zone's history does not, since no revert could bring it back. Finder writes a `.DS_Store` into every folder it opens, and that counted, so a folder browsed once, in Finder or a file dialog, could not be renamed or deleted, by voice or from the page, and the reason gave no hint that the file was Finder's. Now the files a machine makes on its own refuse nothing: `.DS_Store`, `._*`, `__pycache__/` and the files Obsidian rewrites on every click, read from the lines that open Garrick's block in every `.gitignore` (`MACHINE_IGNORES` and `machine_made()` in `garrick_lib.py`), not from a second list. They are removed before git moves or removes the folder, so the old folder does not linger holding only a `.DS_Store`. Any other file git does not hold still refuses, and the reason names it. On the status page, a refused *Rename…*, *Delete…*, *New project* or *New thread* stays as a card until it is dismissed, however quickly it came back, as a refused batch of ticks already does: the dialog has closed by then, and the four-second toast faded before its reason could be read, so the action seemed to do nothing. The Mac app is unchanged and needs no rebuild.
+
 ## [0.35.0] - 2026-10-18
 
 ### Added

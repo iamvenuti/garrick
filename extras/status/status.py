@@ -1477,12 +1477,16 @@ var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;ren
 # 3" in the small toast, which fades, and one refused stays as a card naming
 # its lines, with their boxes put back. The queue is kept in sessionStorage
 # with the rest, so a rebuild draws a queued tick as clicked.
+# A refused ACTION_KEEP stays as a card too, however quickly it came back
+# (#177): each is a deliberate, one-off action, its dialog has closed, and a
+# four-second toast with a long reason is gone before it is read.
 ACTION_TOAST = 4
 ACTION_BATCH = 2
 ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
+ACTION_KEEP = ("rename", "delete", "new-project", "new-thread")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
               "delete", "undo", "interrupt", "answer", "later", "continue")
 
@@ -1506,7 +1510,7 @@ WORK_CSS = r"""
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
-BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'];
+BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
@@ -1597,7 +1601,8 @@ var was=Q.filter(function(x){return x.q.zone===q.zone&&x.q.file===q.file&&x.q.ke
 if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q.verb,zone:q.zone,file:q.file,key:q.key},t:Date.now()});
 keep();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.
-   A batch of ticks that saved is one small notice however long it took; one refused stays, naming its lines, with their boxes back */
+   A batch of ticks that saved is one small notice however long it took; one refused stays, naming its lines, with their boxes back.
+   A refused rename, deletion, new project or new thread stays too, however quick (KEEP, #177) */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='operations'){heard(out);return}
 var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||running(q.zone));
 if(e&&e.q.verb===q.verb){var now=Date.now();
@@ -1609,7 +1614,7 @@ keep();render();run();return}
    comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
-else if(now-e.t0>TOAST*1000||again||e.q.keys){e.out={ok:ok,say:out&&out.say||'That did not work.',again:again};e.done=now;
+else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok&&KEEP.indexOf(e.q.verb)>=0){e.out={ok:ok,say:out&&out.say||'That did not work.',again:again};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
@@ -1627,7 +1632,8 @@ W.forEach(function(e){if(!e.out&&e.q.keys)e.q.keys.forEach(function(k){paint(e.q
 sweep();render();run();poll(true)})();
 """.replace("@TOAST@", str(ACTION_TOAST)).replace("@WHY@", str(ACTION_WHY)).replace("@LOST@", str(ACTION_LOST)) \
     .replace("@POLL@", str(ACTION_POLL)).replace("@UNKNOWN@", str(ACTION_UNKNOWN)).replace("@BATCH@", str(ACTION_BATCH)) \
-    .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":")))
+    .replace("@ZONED@", json.dumps(list(ZONE_VERBS), separators=(",", ":"))) \
+    .replace("@KEEP@", json.dumps(list(ACTION_KEEP), separators=(",", ":")))
 
 
 TADD_JS = r"""

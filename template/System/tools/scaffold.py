@@ -111,6 +111,7 @@ from garrick_lib import (  # noqa: E402
     learned_cell,
     learned_row,
     load_context,
+    machine_made,
     parse_frontmatter,
     place_checkpoint,
     read_checkpoint,
@@ -130,8 +131,6 @@ from garrick_lib import (  # noqa: E402
     write_if_unchanged,
     zone_todo,
 )
-
-IGNORED = {".DS_Store", "__pycache__"}
 
 
 class Refusal(Exception):
@@ -158,7 +157,7 @@ def copy_filled(src, dst, values):
 def fill_into(src, dst, values):
     """Copy what a template folder holds into the folder `dst`, filling placeholders."""
     for item in sorted(src.iterdir()):
-        if item.name in IGNORED or item.name.startswith("._"):
+        if machine_made(item.name + ("/" if item.is_dir() else "")):
             continue
         out = dst / fill(item.name, values)
         if item.is_dir():
@@ -686,7 +685,10 @@ def preflight(zone_dir, folder, verb):
     """Refuse a rename or a deletion that git could not put back exactly:
     a merge or rebase under way, anything already staged (it would go into
     this commit), or a folder holding files git does not track, ignores, or
-    keeps in a repository of its own, which no revert brings back."""
+    keeps in a repository of its own, which no revert brings back. The files
+    a machine makes on its own (MACHINE_IGNORES: Finder's .DS_Store and the
+    like) hold nothing to bring back and refuse nothing: their paths, from the
+    zone's top, are what it returns, for clear_machine_made()."""
     gitdir = zone_dir / ".git"
     if any((gitdir / m).exists() for m in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD")):
         raise Refusal(f"{zone_dir.name} is in the middle of a merge or rebase. Finish it, then {verb}.")
@@ -699,9 +701,32 @@ def preflight(zone_dir, folder, verb):
                       f"Move it out of {folder.name} first, then {verb}.")
     status = git_value(["status", "--porcelain", "--ignored", "--untracked-files=all", "--", rel], zone_dir)
     loose = [l[3:].strip().strip('"') for l in status.splitlines() if l[:2] in ("!!", "??")]
+    made = [p for p in loose if machine_made(p)]
+    loose = [p for p in loose if p not in made]
     if loose:
         raise Refusal(f"{loose[0]}{' and %d more' % (len(loose) - 1) if len(loose) > 1 else ''} is in {folder.name} but "
                       f"not in the zone's history, so nothing could bring it back. Commit it or move it out, then {verb}.")
+    return made
+
+
+def clear_machine_made(zone_dir, folder, made):
+    """The files preflight() let through, removed before git moves or removes
+    the folder, so the new folder starts without them and the old one goes
+    once git has taken the rest. A folder they leave empty goes with them.
+    Finder writes a new .DS_Store the next time the folder is opened."""
+    for rel in made:
+        path = zone_dir / rel
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except FileNotFoundError:
+            pass
+        up = path.parent
+        while up != folder and folder in up.parents and up.is_dir() and not os.listdir(up):
+            up.rmdir()
+            up = up.parent
 
 
 def remove_empty(folder):
@@ -877,7 +902,7 @@ def cmd_rename(root, args, today):
     others = [n for n in notes if n.stem.lower() == old.lower() and n != note]
     if folder.parent / new != folder and (folder.parent / new).exists() and new.lower() != old.lower():
         raise Refusal(f"{(folder.parent / new).relative_to(root)} already exists.")
-    preflight(zone_dir, folder, "rename")
+    made = preflight(zone_dir, folder, "rename")
     dirty = uncommitted(zone_dir, [folder] + notes)
     if dirty:
         raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
@@ -893,6 +918,7 @@ def cmd_rename(root, args, today):
     moved = zone_dir / rel_new
     touched = set()
     what = f"{project_dir.name}, {old}" if is_thread else old
+    clear_machine_made(zone_dir, folder, made)
     try:
         # The folder and its note, through git, so history follows.
         tmp = folder.parent / f".rename-{new}"
@@ -1001,12 +1027,13 @@ def cmd_delete(root, args, today):
     if args.confirm != name:
         raise Refusal(f'--confirm must name it exactly: "{name}". Nothing was deleted.')
     todo = zone_dir / "Todo.md"
-    preflight(zone_dir, folder, "delete")
+    made = preflight(zone_dir, folder, "delete")
     dirty = uncommitted(zone_dir, [folder] + [p for p in (hub, todo) if p.is_file()])
     if dirty:
         raise Refusal(f"{', '.join(dirty[:3])} has changes not committed. Commit or undo them, then delete.")
     if mid_turn(root, folder):
         raise Refusal(f"A session is mid-turn in {name}. Let it finish, then delete.")
+    clear_machine_made(zone_dir, folder, made)
     git_ok(["rm", "-r", "-q", "--", rel], zone_dir)
     if folder.exists():
         remove_empty(folder)                                       # git took every file; only empty folders stay

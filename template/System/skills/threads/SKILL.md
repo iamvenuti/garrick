@@ -802,13 +802,15 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
    may mean that one: ask, naming it.
 3. **Run the script.** It refuses a name that will not work, that sounds
    like a sibling or is taken, and a rename while the files it would change
-   have changes not committed, or while a session is mid-turn there; relay
-   the reason as under *New*. It moves the folder and the note with git,
-   renames the title and heading, rewrites every link to it in the zone (the
-   hub's list, `Todo.md`, `project:` frontmatter, the notes between) and adds
-   the dated entry "Renamed from <old>.", all in one commit in the zone. It
-   adds the old name as a heard alias in `System/context.md`: commit that in
-   the workspace root's repository.
+   have changes not committed, while its folder holds a file the zone's
+   history does not, or while a session is mid-turn there; relay the reason
+   as under *New*. Finder's `.DS_Store` and the other files a machine makes
+   on its own refuse nothing: the script clears them. It moves the folder and
+   the note with git, renames the title and heading, rewrites every link to
+   it in the zone (the hub's list, `Todo.md`, `project:` frontmatter, the
+   notes between) and adds the dated entry "Renamed from <old>.", all in one
+   commit in the zone. It adds the old name as a heard alias in
+   `System/context.md`: commit that in the workspace root's repository.
 4. **The memory pointer**, if you keep one: point it at the new note.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
 

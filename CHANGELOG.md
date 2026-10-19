@@ -4,6 +4,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-18
+
 ### Added
 
 - A first example of one person's ordinary work, sealed in a zone of its own and removed in one step ([#174](https://github.com/iamvenuti/garrick/issues/174)). The advisor demo shows two competing clients and a wall between them, which is the right demo for walls and the wrong first impression for someone with one employer. The new one is a week of Robin Hale's work as product marketing manager at Quillfield Furniture, an invented maker of office furniture: five pieces of work, each a project with one thread (the Kestle chair launch, whose launch email was half written yesterday and stops before pricing; a customer's damaged delivery, with a call transcript in which two replacement dates are said; a university tender; next year's dealer price list, waiting on finance; and a trade show quiet for three weeks), with Resume here blocks, owed lines in `Todo.md` and one question in Needs you: which date was promised. Its files are in a shared drive, `Quillfield Shared/`, in the workspace's top folder, outside every zone and wiki, never committed and never written to, with a little real mess in it (`Misc`, `Old - do not use`, `Final_v3` beside `Final_v3 (1)`), and each hub points at its folder there with a new key, `folder:`. Its party and people go into `System/context.md` with Example as their zone. Dates are relative to the day it is added, so "yesterday" is true on first open: the last session is the previous working day, the calls two working days and a week before it. `examples/example-work/build.py` builds it into a new workspace (`--target`) or adds it to one already installed (`--add`); `install.py --example` adds it to a workspace as it is installed. A new tool, `System/tools/example.py`, says where it is (`status`), puts the zone, the drive and those rows away in `.archive/Example/` (`archive`), and brings them back exactly (`restore`); neither touches anything else, and each commits `System/context.md` and the version stamp only when neither had changes of yours waiting. The root `.gitignore` keeps the drive and `.archive/` out of the workspace's history. Page: [The example](docs/example.md).
@@ -815,7 +817,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/iamvenuti/garrick/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/iamvenuti/garrick/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/iamvenuti/garrick/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/iamvenuti/garrick/compare/v0.31.0...v0.32.0

@@ -288,6 +288,38 @@ class TestRename(ManageCase):
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 
+    def test_a_thread_and_the_files_in_its_folder(self):
+        """#178: links to a file inside a renamed thread's folder follow it,
+        from its own note and from anywhere else in the zone."""
+        old = self.work / "Acme" / "Threads" / "Pricing"
+        (old / "Deliverables").mkdir()
+        (old / "Deliverables" / "260914 - Brief.md").write_text("# Brief\n")
+        (old / "Sources").mkdir()
+        (old / "Sources" / "rates.csv").write_text("lane,rate\n")
+        note, hub = old / "Pricing.md", self.work / "Acme" / "Acme.md"
+        text = note.read_text()
+        self.assertIn("| Live artifact | <path, and what it is> |", text)
+        note.write_text(text.replace("| Live artifact | <path, and what it is> |",
+                                     "| Live artifact | [[Acme/Threads/Pricing/Deliverables/260914 - Brief|Deliverables/260914 - Brief]] |")
+                        + "\nRates: [[Acme/Threads/Pricing/Sources/rates.csv]].\n")
+        hub.write_text(hub.read_text() + "\nThe rates: [[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]].\n")
+        self.commit("Pricing's files")
+        before = self.git("ls-files", "-s").stdout
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        self.assertEqual(0, r.returncode, r.stderr)
+        text = (self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").read_text()
+        self.assertIn("[[Acme/Threads/Renewal/Deliverables/260914 - Brief|Deliverables/260914 - Brief]]", text)
+        self.assertIn("[[Acme/Threads/Renewal/Sources/rates.csv]]", text)
+        self.assertIn("[[Work/Acme/Threads/Renewal/Sources/rates.csv|rates]]", hub.read_text())
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if "leads nowhere" in f["message"]])    # the Live artifact row too
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, self.git("ls-files", "-s").stdout)
+        self.assertIn("[[Acme/Threads/Pricing/Sources/rates.csv]]", note.read_text())
+        self.assertIn("[[Work/Acme/Threads/Pricing/Sources/rates.csv|rates]]", hub.read_text())
+
     def test_a_project_and_its_threads(self):
         r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--to", "Apex")
         self.assertEqual(0, r.returncode, r.stderr)

@@ -740,7 +740,7 @@ def relink(text, swaps, prefixes, old_name, new_name, heads=("",)):
     """Every [[link]] to the renamed note pointed at its new name, in its
     bare, labelled, heading and path forms: `swaps` are whole targets (old,
     new, without .md), `prefixes` folders a target may run through, for the
-    threads of a renamed project. A path counts only from the zone, written
+    files inside a renamed folder. A path counts only from the zone, written
     from its top or with one of `heads` before it (`Work/`, `Zones/Work/`):
     a thread elsewhere that shares a name is another note. A label that was
     the old name follows it."""
@@ -911,9 +911,10 @@ def cmd_rename(root, args, today):
         raise Refusal(f"A session is mid-turn in {old}. Let it finish, then rename.")
     rel_old = folder.relative_to(zone_dir).as_posix()
     rel_new = (folder.parent / new).relative_to(zone_dir).as_posix()
-    # Link targets, without .md: the note by its path, and by its name when no other note shares it.
+    # Link targets, without .md: the note by its path, and by its name when no other note shares it;
+    # and every file inside its folder, a thread's Deliverables as much as a project's threads.
     swaps = [(f"{rel_old}/{old}", f"{rel_new}/{new}")] + ([(old, new)] if not others else [])
-    prefixes = [] if is_thread else [(rel_old, rel_new)]
+    prefixes = [(rel_old, rel_new)]
     heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
     moved = zone_dir / rel_new
     touched = set()

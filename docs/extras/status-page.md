@@ -328,7 +328,7 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `new-project` | Makes a project with its first thread, through `scaffold.py`, and commits it in the zone |
 | `new-thread` | Makes a thread in a project the same way |
 | `check-name` | Says whether a new name, or a new name for a rename, would do; makes nothing |
-| `rename` | Renames a project or thread and every link to it in the zone, through `scaffold.py rename`, in one commit |
+| `rename` | Renames a project or thread, every link to it in the zone and every link to a file inside its folder, through `scaffold.py rename`, in one commit |
 | `delete` | Without `confirm`, lists what deleting a project or thread would remove; with `confirm` naming it, removes it in one commit, through `scaffold.py delete` |
 | `undo` | Reverts a rename or a deletion, while it is still the zone's last commit |
 | `run` | Starts a scheduled job now, through launchd, unless it holds its lock |

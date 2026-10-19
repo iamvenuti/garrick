@@ -10,7 +10,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/System/rules.md` | How an assistant behaves in an installed workspace. Garrick's only copy; a workspace's own rules go in `System/rules.local.md`, which the installer starts from `template/System/rules.local.md` and never lists or updates |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
 | `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
-| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `correct.py`, which stops a wrong value everywhere it was written; the two tools that reach the network, `release.py`, only when asked or switched on, and `notifications.py`, every notice Garrick sends, to Telegram only when that channel is switched on |
+| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `correct.py`, which stops a wrong value everywhere it was written; `example.py`, which puts the worked example away and brings it back; the two tools that reach the network, `release.py`, only when asked or switched on, and `notifications.py`, every notice Garrick sends, to Telegram only when that channel is switched on |
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
@@ -19,6 +19,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. *Releasing* has the step that rewrites it; a test fails until the result is committed |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |
+| `examples/example-work/` | The worked example: one person's ordinary work, a zone of its own with a shared drive beside it. `build.py` builds it with dates relative to today, into a new workspace or one already installed; `install.py --example` adds it, and `System/tools/example.py` archives and restores it |
 | `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs, and the status page with its Mac app |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |

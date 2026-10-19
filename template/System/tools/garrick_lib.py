@@ -33,6 +33,7 @@ functions below keep their signatures:
     write_if_unchanged(note, text, expect) -> bool
     same_action(line) -> str
     install_wall_hook(zone) -> Path
+    work_folder(root, value) -> Path or None
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
     skill_links(root, repo) -> [(link, target)]
@@ -142,6 +143,9 @@ __all__ = [
     "WALL_HOOK_NESTED",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
+    "ZONE_TODO",
+    "zone_todo",
+    "simple_home",
     "INSTRUCTION_FILES",
     "LOCAL_RULES",
     "LOCAL_HEADER",
@@ -1534,6 +1538,46 @@ def hooks_path(repo: PathLike) -> str:
 # Every zone starts as a copy of this folder, with the zone's name filled in:
 # the installer's zones and the ones scaffold.py adds later alike.
 ZONE_TEMPLATE = ("System", "templates", "zone")
+# A zone's Todo.md opens with an example line, `<angle bracket>` placeholders
+# and all, under a sentence that says so: the shape, for someone who reads the
+# list as a file. A workspace on the simple home is for someone who never does,
+# and an assistant asked what is owed would tell them the list holds only a
+# sample, so its zones start without the two (zone_todo()).
+ZONE_TODO = "Todo.md"
+_TODO_EXAMPLE_NOTE = re.compile(r"^The line below is an example\b[^\n]*\n", re.M)
+_TODO_EXAMPLE_LINE = re.compile(r"^- \[ \] [^\n]*<[^<>\n]+>[^\n]*\n?", re.M)
+
+
+def zone_todo(text: str, simple: bool) -> str:
+    """A zone's Todo.md as the zone template has it, filled in: with its example
+    line and the sentence about it, or without both for a workspace on the
+    simple home."""
+    if not simple:
+        return text
+    text = _TODO_EXAMPLE_LINE.sub("", _TODO_EXAMPLE_NOTE.sub("", text))
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+# The worked example (examples/example-work/ in Garrick's source): a zone of its
+# own, with a shared drive beside it in the workspace's top folder that its
+# hubs point into. System/tools/example.py archives both into ARCHIVE, a
+# folder of the top folder that no repository commits, and brings them back.
+EXAMPLE_DRIVE = "Quillfield Shared"
+EXAMPLE_MANIFEST = ".example.json"
+ARCHIVE = ".archive"
+
+
+def work_folder(root: PathLike, value) -> Optional[Path]:
+    """Where a hub's `folder:` says the project's files are: a path from the
+    workspace's top folder, an absolute one, or one starting `~/`. None for a
+    key that is absent or empty. Whether the folder is there is the caller's
+    question: the check warns, and a page offers nothing to open."""
+    if value is None or isinstance(value, (list, dict)):
+        return None
+    text = str(value).strip().strip('"').strip("'").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser() if text.startswith("~") else Path(text)
+    return path if path.is_absolute() else Path(root) / path
 
 # Claude Code looks for skills in .claude/skills and Codex in .agents/skills,
 # from the session's folder up to its git repository's root.
@@ -1667,7 +1711,11 @@ def garrick_ignores(zones) -> Dict[str, str]:
     generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
     shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
               "Inbox/*\n!Inbox/.gitkeep\n")
-    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared + common,
+    example = ("# The example's shared drive, read and never written, and what System/tools/example.py\n"
+               "# put away when the example was removed. Neither is ever committed.\n"
+               "/%s/\n/%s/\n" % (EXAMPLE_DRIVE, ARCHIVE))
+    out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared
+                         + example + common,
            "Wikis/.gitignore": common + transcripts}
     for zone in zones:
         out["Zones/%s/.gitignore" % zone] = common + inbox
@@ -1819,6 +1867,12 @@ def read_settings(root: PathLike) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def simple_home(root: PathLike) -> bool:
+    """Whether the workspace opens on the simple home, `"home": "simple"` in
+    the settings file. One without the key keeps the full page it had."""
+    return read_settings(root).get("home") == "simple"
+
+
 def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
 
@@ -1867,8 +1921,10 @@ def release_repository(root: PathLike) -> str:
 # reads the same file by the same keys. "notifications" is Settings ›
 # Notifications, which System/tools/notifications.py reads and checks;
 # "while-you-wait" is Settings › While you wait, which System/tools/next_up.py
-# reads and checks.
-PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait")
+# reads and checks; "home" is Settings › Home, "simple" or "full", what the
+# status page opens on: the installer writes "simple" for a new workspace,
+# and a workspace without it keeps the page it had.
+PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

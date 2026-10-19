@@ -69,7 +69,7 @@ check and the status page find the thread in `System/`.
    skill's step 8 says. A line the user moved to another section is never
    reworded, moved or ticked.
    **The example line goes with the first real action.** A list nobody has
-   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   written to yet may hold one, in `<angle brackets>`, to show the shape; delete
    it in the same edit that writes the first real line. It is a task like any
    other, so anything that counts open actions counts it, and `check.py`
    warns while a real action and the example sit in one list.

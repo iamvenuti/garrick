@@ -28,6 +28,8 @@ To allow those commands in a workspace already installed, because you answered n
 python3 install.py --allowlist ~/Garrick
 ```
 
+To start with something to try Garrick on, add `--example` to either form of the install. It adds [the example](example.md), Robin Hale's work at an invented furniture maker, as a zone of its own, Example, with its files in `Quillfield Shared/` in the workspace's top folder. `python3 System/tools/example.py archive` puts it away again, and `restore` brings it back.
+
 The installer writes only inside the target folder. It refuses a target that is your home folder, sits under `~/Documents`, `~/Desktop`, `~/Downloads` or `~/Library` (macOS blocks scheduled jobs from reading those), overlaps the folder Garrick came in (that folder, one inside it, or one holding it), or already has files in it. It compares the folders themselves, not their names: on a Mac, `~/garrick` and `~/Garrick` are the same folder. `--force` lets it install next to files that are already there, but it still stops if the folder holds an `AGENTS.md`, `System`, `Zones`, `Wikis`, `.git`, `.gitignore`, `.claude` or `.agents`.
 
 ## What you get

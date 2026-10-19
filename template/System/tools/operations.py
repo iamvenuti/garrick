@@ -207,7 +207,18 @@ DECLARED: Dict[str, Op] = {
     # "token" and "find-chat" are Telegram's Set up…. Settings keeps no
     # record (RECORDED), so the token is never written to the journal.
     "settings": _op(("launchers", "default", "zones", "notifications", "test", "token", "find-chat",
-                         "while-you-wait"), (), "workspace"),
+                         "while-you-wait", "home"), (), "workspace"),
+    # The simple home (#175). A Needs you question answered by one of its
+    # options, or put off to a later day: the question's file and the work's
+    # note, committed in its zone.
+    "answer": _op(("zone", "file", "label"), ("file", "label"), "zone", True),
+    "later": _op(("zone", "file", "until"), ("file", "until"), "zone", True),
+    # Continue commits the work's own record in its zone, then opens it in
+    # Claude's desktop app; Ask something opens the app on the workspace.
+    "continue": _op(("zone", "file"), ("file",), "zone", True),
+    "ask-desktop": _op(("prompt",), (), "machine"),
+    # The example's Remove and Bring back: System/tools/example.py (#174).
+    "example": _op(("do",), ("do",), "workspace"),
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.

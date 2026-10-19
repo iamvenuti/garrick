@@ -185,7 +185,7 @@ One meeting at a time, even when several files are waiting.
    line with the party or person the action is for, `<Party>: `, and never
    guess a thread. Touch no other line.
    **The example line goes with the first real action.** A list nobody has
-   written to yet holds one, in `<angle brackets>`, to show the shape; delete
+   written to yet may hold one, in `<angle brackets>`, to show the shape; delete
    it in the same edit that writes the first real line. It is a task like any
    other, so anything that counts open actions counts it.
 9. **Commit.** The meeting page, the raw file, any new person page, the

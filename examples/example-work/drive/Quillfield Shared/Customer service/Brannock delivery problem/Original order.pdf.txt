@@ -1,0 +1,12 @@
+Quillfield Furniture
+Order confirmation
+
+Customer: Brannock Hotels
+Contact: Carla Mendes, facilities manager
+Order date: {order_long}
+
+40 Halden desk, 140 by 70, oak top, graphite frame
+  26 to Brannock Riverside
+  14 to Brannock Harbour
+
+Delivery by carrier, on pallets, not stacked.

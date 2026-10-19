@@ -543,15 +543,17 @@ def how_long(seconds: float) -> str:
     return "%d minutes" % round(seconds / 60) if seconds >= 120 else "%d s" % round(seconds)
 
 
-def committing(zone: Path, rel: str, message: str) -> tuple:
-    """Add and commit `rel` within COMMIT_TIMEOUT: (exit code, why not). The
-    code is None when the commit was stopped while its hooks ran: the wall
-    check had found nothing wrong yet."""
+def committing(zone: Path, rel, message: str) -> tuple:
+    """Add and commit `rel`, one path from the zone or a list of them, and
+    nothing else, within COMMIT_TIMEOUT: (exit code, why not). The code is
+    None when the commit was stopped while its hooks ran: the wall check had
+    found nothing wrong yet. A path that is gone is committed as gone."""
+    rels = [rel] if isinstance(rel, str) else list(rel)
     deadline = time.time() + COMMIT_TIMEOUT
-    code, said = git(zone, "add", "--", rel)
+    code, said = git(zone, "add", "-A", "--", *rels)
     if code == 0:
         note_event("phase", "checking")         # the wall check runs inside git commit
-        code, said = git(zone, "commit", "-q", "-m", message, "--", rel, timeout=deadline - time.time())
+        code, said = git(zone, "commit", "-q", "-m", message, "--", *rels, timeout=deadline - time.time())
         if code is None:
             return None, "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
     if code != 0:
@@ -1736,7 +1738,7 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
                         *flag)
         if not check:
-            commit_new(zone, zone / name, "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
+            commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
                        made, {}, wall=wall_refusal(ws))
         return said
     if verb == "new-thread":
@@ -1744,10 +1746,23 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         threads, hub = zone / project / "Threads", zone / project / ("%s.md" % project)
         made = [p for p in (threads, threads / name) if not p.exists()]
         before = {hub: hub.read_bytes()} if hub.is_file() else {}
-        said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag)
-        if not check:
-            commit_new(zone, zone / project, "%s: new thread %s" % (project, name), made, before,
-                       wall=wall_refusal(ws))
+        # The hub is committed with the new thread only when it held nothing
+        # else uncommitted: another session's edit is never filed under this
+        # commit's message (#183). Otherwise its new line waits for a wrap.
+        held = bool(before) and not check and uncommitted(zone, hub)
+        said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag,
+                        *([] if check else ["--touched"]))
+        if check:
+            return said
+        said, touched = touched_paths(said)
+        if touched is None:                     # a scaffold.py that does not say: what it always writes
+            touched = [(threads / name).relative_to(zone).as_posix(), hub.relative_to(zone).as_posix()]
+        hub_rel = hub.relative_to(zone).as_posix()
+        paths = [t for t in touched if not (held and t == hub_rel)]
+        commit_new(zone, paths, "%s: new thread %s" % (project, name), made, before, wall=wall_refusal(ws))
+        if held and hub_rel in touched:
+            said += ("\nThe hub's line for it is not committed yet: %s had other changes not committed, so it is "
+                     "left for the next wrap." % hub.name)
         return said
     if verb == "undo":
         commit = req.get("commit")
@@ -1769,20 +1784,40 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     return said
 
 
-def commit_new(zone: Path, folder: Path, message: str, made: list, before: dict, *, wall: Optional[str]) -> None:
-    """Commit what scaffold.py made, as the threads skill's New does: the new
-    folder by name, and its hub. Refused, the folder stays for the user;
-    refused by the wall check, the reply is `wall` alone, as commit()'s is,
-    and its "Nothing was written" holds (#172): `made`, the folders that were
-    not there before the request, go, and each file in `before` gets back the
-    bytes it held then, an edit from another session included. Nothing else
-    is touched. If a file scaffold.py changed was edited meanwhile, all of it
-    stays, as commit_all() leaves its notes."""
-    rel = folder.relative_to(zone).as_posix()
+def touched_paths(said: str) -> tuple:
+    """scaffold.py's reply without its last line `Touched: [...]`, and the
+    paths from the zone that line lists; None when there is no such line."""
+    lines = said.splitlines()
+    if lines and lines[-1].startswith("Touched: "):
+        try:
+            found = json.loads(lines[-1][len("Touched: "):])
+        except ValueError:
+            found = None
+        if isinstance(found, list) and all(isinstance(p, str) for p in found):
+            return "\n".join(lines[:-1]).strip(), found
+    return said, None
+
+
+def uncommitted(zone: Path, path: Path) -> bool:
+    """Whether `path` holds changes git has not committed, staged or not."""
+    code, said = git(zone, "status", "--porcelain", "--", path.relative_to(zone).as_posix())
+    return code == 0 and bool(said.strip())
+
+
+def commit_new(zone: Path, paths: list, message: str, made: list, before: dict, *, wall: Optional[str]) -> None:
+    """Commit what scaffold.py made, by name: `paths`, from the zone, the new
+    folder and the files it changed, and nothing else in the zone (#183).
+    Refused, the files stay for the user; refused by the wall check, the reply
+    is `wall` alone, as commit()'s is, and its "Nothing was written" holds
+    (#172): `made`, the folders that were not there before the request, go,
+    and each file in `before` gets back the bytes it held then, an edit from
+    another session included. Nothing else is touched. If a file scaffold.py
+    changed was edited meanwhile, all of it stays, as commit_all() leaves its
+    notes."""
     mine = {n: n.read_bytes() for n in before if n.is_file()}
-    code, why = committing(zone, rel, message)
+    code, why = committing(zone, paths, message)
     if code != 0:
-        git(zone, "reset", "-q", "--", rel, timeout=10)
+        git(zone, "reset", "-q", "--", *paths, timeout=10)
         if wall and code is not None and WALL_LINE.match(why):
             try:
                 ours = all(n.read_bytes() == wrote for n, wrote in mine.items())

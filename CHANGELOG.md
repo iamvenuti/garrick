@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- *New thread* on the status page commits only what it wrote ([#183](https://github.com/iamvenuti/garrick/issues/183)). It committed the whole project folder, so an edit another session had not committed yet, to another thread's note or a deliverable half saved, went into the "new thread" commit under a message that said nothing about it. Now `scaffold.py thread --touched` ends with the paths it wrote, the new thread's folder and the hub it listed the thread in, and `page_action.py` commits those by name and nothing else. When the hub already held changes of its own, it is left out of the commit and the reply says its new line waits for the next wrap. Every commit the page makes now names its files: `committing()` takes a list of paths. *New project* was not affected, since its folder holds only what was just made.
+
 ## [0.36.0] - 2026-10-19
 
 ### Changed

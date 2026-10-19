@@ -527,6 +527,40 @@ class TestFromThePage(ManageCase):
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
 
+    def test_a_new_thread_commits_only_what_it_wrote(self):
+        """#183: an uncommitted edit to another thread's note stays out of the
+        new thread's commit, and stays uncommitted."""
+        self.freight.write_text(self.freight.read_text() + "\nAn edit another session has not committed.\n")
+        said = self.act(verb="new-thread", zone="Work", project="Acme", name="Renewal")
+        self.assertIn("Created thread Renewal", said)
+        self.assertNotIn("Touched:", said)
+        changed = set(filter(None, self.git("show", "--name-only", "--format=", "HEAD").stdout.splitlines()))
+        self.assertEqual({"Acme/Acme.md", "Acme/Threads/Renewal/Renewal.md"}, changed)
+        diff = self.git("show", "--format=", "HEAD", "--", "Acme/Acme.md").stdout
+        self.assertEqual(["+- [[Acme/Threads/Renewal/Renewal|Renewal]]: <what it produces>"],
+                         [l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++") and "Renewal" in l])
+        self.assertEqual(" M Acme/Threads/Freight/Freight.md\n", self.git("status", "--porcelain").stdout)
+
+    def test_a_hub_with_other_changes_is_left_for_the_next_wrap(self):
+        """#183: the hub had an edit of its own, so it is not committed; the
+        new thread's folder is, and the reply says the hub waits."""
+        hub = self.work / "Acme" / "Acme.md"
+        hub.write_text(hub.read_text() + "\nA line typed in Obsidian, not committed yet.\n")
+        said = self.act(verb="new-thread", zone="Work", project="Acme", name="Renewal")
+        self.assertIn("left for the next wrap", said)
+        changed = set(filter(None, self.git("show", "--name-only", "--format=", "HEAD").stdout.splitlines()))
+        self.assertEqual({"Acme/Threads/Renewal/Renewal.md"}, changed)
+        self.assertEqual(" M Acme/Acme.md\n", self.git("status", "--porcelain").stdout)
+        self.assertIn("Renewal|Renewal]]", hub.read_text())
+        self.assertIn("A line typed in Obsidian", hub.read_text())
+
+    def test_scaffold_names_what_a_new_thread_touched_only_when_asked(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal", "--touched")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual('Touched: ["Acme/Threads/Renewal", "Acme/Acme.md"]', r.stdout.strip().splitlines()[-1])
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Lanes")
+        self.assertNotIn("Touched:", r.stdout)
+
     def slow_hook(self, seconds):
         """The zone's own wall check, after `seconds` of sleep: a workspace whose check takes that long."""
         hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())

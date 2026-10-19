@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- The status page's Todo card counts only the actions of the zone's own notes ([#171](https://github.com/iamvenuti/garrick/issues/171)). It read every top-level `- [ ]` in a zone, skipping only `archive/`, `_template/`, `.obsidian/`, `.git/` and `.trash/`, so a Garrick checkout kept in a project added its demo's `Todo.md` lines and its pull request template, a project's `node_modules/` added every package README with a checklist, and a folder excluded in Obsidian still counted; on one workspace the card said 120 open where the zone's `Todo.md` held ten. Now `todo_lines.py` walks a zone through `live_files()`, the walk `check.py` reads a zone's notes with, which has moved into `garrick_lib.py` with `SKIP_DIRS`, `nested_repo()` and `is_checkout()`, so the check and the card leave out the same folders and cannot drift apart: archives, build output, hidden and template folders, `node_modules`, `.venv`, `dist` and `__pycache__`, a repository of its own inside a project, and a checkout cloned or unpacked from a release. A note the vault's `userIgnoreFilters` in `.obsidian/app.json` excludes is left out too, read by the same functions the page's graph now uses; the zone's `Todo.md` always counts. The check's own notes walk gains the dependency and build folders it did not skip before, so a `node_modules/` README is no longer read as a zone note there either. Run against a workspace whose `garrick_lib.py` is older than the shared walk, the card falls back to the folders it skipped before.
+
 ## [0.35.0] - 2026-10-18
 
 ### Added

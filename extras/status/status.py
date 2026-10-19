@@ -2118,12 +2118,7 @@ OTHER = next(c for k, _, c in KINDS if k == "note")    # a note no colour group 
 def vault_of(ws: Path, folder: Path) -> Optional[Path]:
     """The Obsidian vault a folder's notes belong to: the nearest folder at or
     above it, up to the workspace root, that holds a .obsidian folder."""
-    for f in (folder, *folder.parents):
-        if (f / ".obsidian").is_dir():
-            return f
-        if f == ws or f == f.parent:
-            return None
-    return None
+    return todo_lines().vault_of(ws, folder)
 
 
 def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, str]], List[object]]:
@@ -2144,17 +2139,7 @@ def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, st
                 groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms, len(groups) + 1)))
     except (OSError, ValueError, AttributeError, TypeError):
         groups = []
-    try:
-        data = json.loads((vault / ".obsidian" / "app.json").read_text(encoding="utf-8"))
-        for f in data.get("userIgnoreFilters") or []:
-            if not isinstance(f, str) or not f:
-                continue
-            try:
-                ignore.append(re.compile(f[1:-1]) if len(f) > 2 and f.startswith("/") and f.endswith("/") else f)
-            except re.error:
-                continue
-    except (OSError, ValueError, AttributeError, TypeError):
-        ignore = []
+    ignore = todo_lines().ignore_filters(vault)      # read as the Todo card reads them
     return groups, ignore
 
 
@@ -2229,7 +2214,7 @@ def group_match(term: str, fm: dict, rel: str) -> bool:
 
 
 def ignored(rel: str, filters: List[object]) -> bool:
-    return any(f.search(rel) if hasattr(f, "search") else rel.startswith(f) for f in filters)
+    return todo_lines().ignored(rel, filters)
 
 
 def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: bool = False, actions: bool = False,

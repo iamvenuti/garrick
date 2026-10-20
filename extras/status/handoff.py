@@ -85,7 +85,9 @@ READ_ONLY = "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"
 # is two or three sentences; Ask something's answers the user's own words, at
 # whatever length they need.
 PLAIN = ("No table, no file paths or links, no commands. This is a read-only look, so do not mention tools you lack "
-         "or checks you could not run.")
+         "or checks you could not run. Talk about the work itself, not Garrick's record of it: never name the Resume "
+         "here block or its rows, such as Next action, Waiting on or Deadline, never quote a placeholder or \"not given\", "
+         "never draft the record, and never say how a file was read or that its text came through blank.")
 CONTINUE_BRIEF = ("This first answer is shown to someone who is not technical, before they have typed anything. Answer in "
                   "two or three plain sentences: where the work stands and the next step, with who it waits on and a "
                   "deadline if one is near. " + PLAIN + " A checkpoint not yet confirmed may be mentioned in one plain "

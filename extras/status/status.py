@@ -4894,7 +4894,8 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
     elif suggested_ready(w):
         extra += ('<h2 class="sh-h">Suggested request</h2><div class="sh-card sh-req">Garrick suggests starting here:'
                   '<blockquote>%s</blockquote>%s<div class="sh-what">Opens Claude\'s desktop app on %s, with this request '
-                  'already asked. Claude can read the folder and is set not to edit it; only a command you approve yourself could change it.</div></div>'
+                  'already asked. Claude can read the folder, and its editing tools are kept out of it in every mode. '
+                  'A shell command is not covered, whether you approve it or Claude\'s Auto mode runs it.</div></div>'
                   % (E(w["look"]["request"]), continue_button(w, "Continue in Claude"), E(w["name"])))
         acts = ""
     foot = ""

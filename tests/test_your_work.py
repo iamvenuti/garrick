@@ -480,7 +480,10 @@ class TestTheNextStep(Case):
         self.assertIn("| Next action | Confirm 64 pages to the printer by Friday |", self.note().read_text())
         self.assertEqual("Opened Catalogue 2027 in Claude, with your request already asked", self.suggested())
         prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
-        self.assertEqual(LOOK["request"], prime[prime.index("-p") + 1])
+        asked = prime[prime.index("-p") + 1]
+        extracts = self.root / "System" / "generated" / "extracts"
+        self.assertTrue(asked.startswith(LOOK["request"] + " Its Word, PowerPoint and Excel files are read as text from "
+                                         + str(extracts)), asked)
         self.assertEqual(H.REQUEST_BRIEF, prime[prime.index("--append-system-prompt") + 1])
         real = os.path.realpath(str(self.drive / "Marketing" / "Catalogue 2027"))
         self.assertEqual(real, prime[prime.index("--add-dir") + 1])
@@ -505,7 +508,14 @@ class TestTheNextStep(Case):
         pa.act(self.root, {"verb": "continue", "zone": "Work",
                            "file": "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"})
         prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
-        self.assertEqual("Where am I on Catalogue 2027?", prime[prime.index("-p") + 1])
+        asked = prime[prime.index("-p") + 1]
+        self.assertTrue(asked.startswith("Where am I on Catalogue 2027? Its Word, PowerPoint and Excel files are read as "
+                                         "text from %s" % (self.root / "System" / "generated" / "extracts")), asked)
+        self.assertTrue(Path(asked.split(" from ", 1)[1].rsplit(", one", 1)[0]).is_dir())
+        brief = prime[prime.index("--append-system-prompt") + 1]
+        for said in ("Resume here", "Next action, Waiting on or Deadline", "placeholder", "not given",
+                     "never draft the record", "came through blank"):
+            self.assertIn(said, brief)
         self.assertIn("--add-dir", prime)
 
 

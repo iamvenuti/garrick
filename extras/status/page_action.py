@@ -2204,7 +2204,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     `--add-dir`, and Edit is denied in it, by a rule in the Claude settings
     of the folder the session starts in, committed with Garrick's record
     before anything opens, and by `--settings` on the call. The rule covers
-    Claude's file-editing tools, not a shell command the user approves. With
+    Claude's file-editing tools in every mode, not a shell command, approved
+    or run by Auto mode. With
     `suggested`, the first
     look's suggested request is asked instead of where it stands, once."""
     H, Y = handoff(), your_work()
@@ -2234,6 +2235,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
             add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
             guard = Y.settings_arg(str(files))
+            if len(add_dirs) > 1:               # where the text of its Office files is, said once, after the question
+                asked = "%s %s" % (asked, Y.EXTRACTS_SAID % add_dirs[1])
         unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     kept = H.session_for(ws, key)
     resume = not suggested and H.fresh(kept, now) and kept.get("folder") == str(folder)
@@ -2331,7 +2334,7 @@ def example(ws: Path, req: dict) -> str:
 # Nothing here writes under the folder: the two tools refuse to. Claude's
 # file-editing tools are kept out by an Edit deny rule in the Claude settings
 # of the folder its sessions start in, and by `--settings` on every headless
-# call; a shell command the user approves is not covered by either.
+# call; a shell command, approved or run by Auto mode, is covered by neither.
 _YW = None
 FOLDER_MAX = 1024
 FIRST_LOOK_TIMEOUT = 360          # seconds for the call that reads a piece of work's files for the first time

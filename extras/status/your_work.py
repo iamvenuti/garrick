@@ -25,7 +25,7 @@ id or a rule:
 - the read-only rule for Claude: Edit denied on the folder, in the Claude
   settings of the folder each session on the work starts in, and given with
   `--settings` to every headless call (read_only(), settings_arg()). It
-  covers Claude's file-editing tools, not a shell command the user approves;
+  covers Claude's file-editing tools in every permission mode, not a shell command, approved or run by Auto mode;
 - the pieces of work put away, under each zone's `archive/` (put_away()).
 
 Standard library only, Python 3.9 or later.
@@ -79,6 +79,10 @@ FIRST_LOOK_BRIEF = FIRST_LOOK_BRIEF % UNDATED
 FIRST_ENTRY = "First look, made from the files in %s; last in them: %s"
 FIRST_ENTRY_RE = re.compile(r"^First look, made from the files in .*?; last in them: (.*)$")
 SOURCE_MAX = 80
+# Said after the question Continue asks, and after a suggested request, for a
+# piece of work whose Office files Garrick took the text out of: where that
+# text is, so a session reads it there rather than opening the files.
+EXTRACTS_SAID = "Its Word, PowerPoint and Excel files are read as text from %s, one .txt file for each."
 KEYS = ("what", "who", "last", "open", "next", "source", "waiting", "deadline", "request")
 NEEDED = ("what", "next")
 
@@ -281,7 +285,8 @@ def read_only_rules(folder: str) -> List[str]:
     Claude Code matches one kind of rule for this, Edit, which covers every
     tool that edits or writes a file; it does not match Write rules. An
     absolute path in a permission rule starts with `//`. A shell command the
-    user approves is not a file-editing tool, and no rule here covers it."""
+    approved by the user or run by Auto mode is not a file-editing tool, and
+    no rule here covers it."""
     real = os.path.realpath(str(folder)).rstrip("/")
     return ["Edit(/%s/**)" % real]
 

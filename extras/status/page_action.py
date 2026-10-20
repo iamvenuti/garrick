@@ -2433,7 +2433,7 @@ def answer_suggestion(ws: Path, req: dict) -> str:
     name = field(req, "name") if said_answer == "rename" else str(p.get("name") or "").strip()
     options = Y.places(ws, context_of(ws))
     if not options:
-        raise Refused("your workspace has no part to keep this work in yet: ask Claude to set one up first")
+        raise Refused(Y.NOWHERE)
     chosen = [o for o in options if req.get("zone") in (None, o["zone"]) and req.get("party") in (None, o["party"])]
     if len(options) == 1:
         chosen = options
@@ -2442,10 +2442,18 @@ def answer_suggestion(ws: Path, req: dict) -> str:
     place = chosen[0]
     zone = zone_dir(ws, place["zone"])
     path = p.get("path") or real
+    owner = answer(req, "owner", required=False, most=NAME_MAX)
     with zone_lock(zone):
-        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", place["party"], "--thread", name, "--check")
+        party = place["party"]
+        if party is None:
+            # The work's zone has no party yet, as before any interview: whose work it is, asked on the page,
+            # becomes one, committed on its own in the workspace's repository, then the yes goes on.
+            if not owner:
+                raise Refused(Y.OWNER_ASK)
+            party = owner_party(ws, zone, Y.owner_name(owner))
+        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", party, "--thread", name, "--check")
         made = [] if (zone / name).exists() else [zone / name]
-        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", place["party"], "--thread", name)
+        scaffold(ws, "project", "--zone", zone.name, "--name", name, "--party", party, "--thread", name)
         hub = zone / name / (name + ".md")
         hub.write_text(set_front(hub.read_text(encoding="utf-8"), {"folder": quoted(Y.folder_value(path)),
                                                                      Y.DISCOVERED: p["id"]}), encoding="utf-8")
@@ -2456,6 +2464,38 @@ def answer_suggestion(ws: Path, req: dict) -> str:
                    wall=wall_refusal(ws))
     tool_json(ws, "discover.py", "answer", p["id"], *(("rename", name) if said_answer == "rename" else ("yes",)))
     return "Garrick will keep track of %s. %s is as it was" % (name, os.path.basename(real))
+
+
+def owner_party(ws: Path, zone: Path, name: str) -> str:
+    """The tag of the party `name` in `zone`, made by `scaffold.py party` when
+    there is none, and System/context.md committed on its own in the
+    workspace's own repository, as scaffold.py says a new party is."""
+    if not name or "\n" in name or len(name) > NAME_MAX or name.startswith("-"):
+        raise Refused(your_work().OWNER_ASK)
+
+    def found():
+        for tag, p in (context_of(ws).get("parties") or {}).items():
+            if str(p.get("party") or "").strip().casefold() == name.casefold():
+                return tag, str(p.get("zone") or "").strip()
+        return None, ""
+    tag, where = found()
+    if tag:
+        if where.casefold() != zone.name.casefold():
+            raise Refused("%s already has work kept elsewhere in your workspace. Ask Claude where this work belongs"
+                          % name)
+        return tag
+    context = ws / "System" / "context.md"
+    before = context.read_bytes() if context.is_file() else b""
+    scaffold(ws, "party", "--name", name, "--zone", zone.name, "--what",
+             "Whose work is kept in %s, as said on the simple home" % zone.name)
+    tag, _ = found()
+    if not tag:
+        context.write_bytes(before)
+        raise Refused("Garrick could not note whose work this is. Ask Claude to set up your workspace")
+    if (ws / ".git").exists():
+        commit(ws, context, before, "New party %s (%s), in %s, from the simple home" % (name, tag, zone.name),
+               wall=wall_refusal(ws))
+    return tag
 
 
 def work_files_of(ws: Path, zone: Path, parts: tuple) -> tuple:

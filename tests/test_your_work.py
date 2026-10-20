@@ -115,6 +115,7 @@ class Case(unittest.TestCase):
     workspace's own folder, and a drive of the user's beside it."""
 
     context = ONE_PARTY
+    personal = False
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -124,6 +125,8 @@ class Case(unittest.TestCase):
         self.jobs = base / "jobs"
         self.jobs.mkdir()
         build_workspace(self.root)
+        if not self.personal:                               # a zone with no party is a place a yes asks about
+            shutil.rmtree(self.root / "Zones" / "Personal")
         (self.root / "System" / "context.md").write_text(self.context, encoding="utf-8")
         tools = self.root / "System" / "tools"
         tools.mkdir(parents=True, exist_ok=True)
@@ -131,7 +134,8 @@ class Case(unittest.TestCase):
             shutil.copy2(f, tools / f.name)
         shutil.copytree(REPO / "template" / "System" / "templates", self.root / "System" / "templates")
         self.work = self.root / "Zones" / "Work"
-        for repo in (self.work, self.root):
+        repos = [self.work, self.root] + ([self.root / "Zones" / "Personal"] if self.personal else [])
+        for repo in repos:
             shutil.rmtree(repo / ".git", ignore_errors=True)
             for args in (("init", "-q"), ("config", "user.name", "Sam Rivera"), ("config", "user.email", "sam@example.com"),
                          ("config", "commit.gpgsign", "false"), ("config", "core.hooksPath", os.devnull),
@@ -139,7 +143,7 @@ class Case(unittest.TestCase):
                 subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True)
         write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
         (self.root / "System" / "garrick-settings.json").write_text(json.dumps({"home": "simple"}), encoding="utf-8")
-        for repo in (self.work, self.root):
+        for repo in repos:
             subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
             subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "start"], check=True, capture_output=True)
         self.drive = drive(base)
@@ -252,17 +256,31 @@ class TestAddYourOwnWork(Case):
 
 class TestSeveralPlaces(Case):
     context = CONTEXT                                       # Work holds Acme Corp and Birch & Co
+    personal = True                                         # and Personal has no one yet
 
     def test_a_yes_asks_which_in_one_line_then_goes_there(self):
         _, props = self.scan()
         pid = props["Catalogue 2027"]["id"]
         with self.assertRaises(pa.Refused) as said:
             self.act(verb="suggestion", id=pid, answer="yes")
-        self.assertEqual("Which part of your workspace is this work for: Work (Acme Corp) or Work (Birch & Co)?",
-                         str(said.exception))
+        self.assertEqual("Which part of your workspace is this work for: Personal, Work (Acme Corp) or "
+                         "Work (Birch & Co)?", str(said.exception))
         self.assertFalse((self.work / "Catalogue 2027").exists())
         self.act(verb="suggestion", id=pid, answer="yes", zone="Work", party="birch")
         self.assertIn("party: birch", (self.work / "Catalogue 2027" / "Catalogue 2027.md").read_text())
+
+    def test_a_place_with_no_one_yet_asks_whose_work_after_which(self):
+        _, props = self.scan()
+        pid = props["Website refresh"]["id"]
+        html = self.page()
+        self.assertIn('<option value="%s">Personal</option>' % htmllib.escape(json.dumps({"zone": "Personal"})), html)
+        self.assertIn('class="sh-card sh-place sh-owner" hidden', html)         # shown once Personal is chosen
+        with self.assertRaisesRegex(pa.Refused, "^Whose work is this\\?"):
+            self.act(verb="suggestion", id=pid, answer="yes", zone="Personal")
+        self.act(verb="suggestion", id=pid, answer="yes", zone="Personal", owner="my own")
+        personal = self.root / "Zones" / "Personal"
+        self.assertTrue((personal / "Website refresh" / "Website refresh.md").is_file())
+        self.assertIn("| Own work |", (self.root / "System" / "context.md").read_text())
 
 
 class TestStartWithThisOne(Case):
@@ -455,6 +473,102 @@ class TestStopUsingThis(Case):
         with self.assertRaisesRegex(pa.Refused, "has changes not saved yet"):
             self.act(verb="stop-using", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
         self.assertTrue(self.note().is_file())
+
+
+class TestAFirstWorkspace(unittest.TestCase):
+    """The workspace examples/example-work/build.py makes: the Example zone
+    with its party, and the user's own Work zone with none yet, as before any
+    interview. A yes asks whose work it is instead of refusing, makes that
+    party in Work, committed on its own in the workspace's repository, and
+    goes on in the same request."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.made = Path(cls._tmp.name).resolve() / "built"
+        r = subprocess.run([sys.executable, str(REPO / "examples" / "example-work" / "build.py"), "--target", str(cls.made)],
+                           capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        assert r.returncode == 0, r.stderr + r.stdout
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self._here = tempfile.TemporaryDirectory()
+        base = Path(self._here.name).resolve()
+        self.root = base / "Workspace"
+        shutil.copytree(self.made, self.root, symlinks=True)
+        self.drive = drive(base)
+        self.before = manifest(self.drive)
+        env = mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(base / "jobs"), "GIT_AUTHOR_NAME": "Sam Rivera",
+                                           "GIT_AUTHOR_EMAIL": "sam@example.com", "GIT_COMMITTER_NAME": "Sam Rivera",
+                                           "GIT_COMMITTER_EMAIL": "sam@example.com"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.work = self.root / "Zones" / "Work"
+
+    def tearDown(self):
+        self.assertEqual(self.before, manifest(self.drive), "the user's folder changed")
+        self._here.cleanup()
+
+    def git(self, repo, *args):
+        return subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True, text=True).stdout
+
+    def props(self):
+        pa.act(self.root, {"verb": "discover", "folder": str(self.drive)})
+        entry = Y.discovery(self.root)["folders"][os.path.realpath(str(self.drive))]
+        return {p["name"]: p for p in entry["top"] + entry["more"]}
+
+    def test_yes_asks_whose_work_it_is_then_makes_the_party_and_the_work(self):
+        pid = self.props()["Catalogue 2027"]["id"]
+        root_head = self.git(self.root, "rev-parse", "HEAD")
+        with self.assertRaises(pa.Refused) as said:
+            pa.act(self.root, {"verb": "suggestion", "id": pid, "answer": "yes"})
+        self.assertEqual(Y.OWNER_ASK, str(said.exception))
+        for jargon in ("part", "zone", "party"):
+            self.assertNotRegex(str(said.exception), r"\b%s\b" % jargon)
+        self.assertEqual(root_head, self.git(self.root, "rev-parse", "HEAD"))          # nothing made yet
+        said = pa.act(self.root, {"verb": "suggestion", "id": pid, "answer": "yes", "owner": "Harbourline Studio"})
+        self.assertEqual("Garrick will keep track of Catalogue 2027. Shared Drive is as it was", said)
+        ctx = (self.root / "System" / "context.md").read_text()
+        self.assertRegex(ctx, r"\| Harbourline Studio \| [^|]+ \| Work \| `harbourline` \|")
+        self.assertEqual(["System/context.md"], self.git(self.root, "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain"))
+        self.assertIn("party: harbourline", (self.work / "Catalogue 2027" / "Catalogue 2027.md").read_text())
+        self.assertEqual("", self.git(self.work, "status", "--porcelain"))
+        # the next yes goes straight through, to the party now there
+        pa.act(self.root, {"verb": "suggestion", "id": self.props()["Lounge seating launch"]["id"], "answer": "yes"})
+        self.assertIn("party: harbourline", (self.work / "Lounge seating launch" / "Lounge seating launch.md").read_text())
+
+    def test_rename_does_the_same_and_the_page_shows_the_new_name(self):
+        props = self.props()
+        pa.act(self.root, {"verb": "suggestion", "id": props["Website refresh"]["id"], "answer": "rename",
+                           "name": "New Website", "owner": "my own"})
+        self.assertTrue((self.work / "New Website" / "New Website.md").is_file())
+        self.assertIn("| Own work |", (self.root / "System" / "context.md").read_text())
+        html = status.build(self.root, folder=self.root.parent / "jobs")
+        start = html.split('id="sh-startone"', 1)[1].split("</div></div>", 1)[0]
+        self.assertIn("New Website", start)
+        disc = html.split('id="%s"' % Y.view_id(os.path.realpath(str(self.drive))), 1)[1].split("</article>", 1)[0]
+        self.assertIn("New Website</div>", disc)
+        self.assertIn("renamed from Website refresh", disc)
+        self.assertNotIn('data-name="Website refresh"', disc)                      # no longer waiting for an answer
+
+    def test_the_page_asks_in_place(self):
+        self.props()
+        html = status.build(self.root, folder=self.root.parent / "jobs")
+        self.assertIn("<b>%s</b>" % htmllib.escape(Y.OWNER), html)
+        self.assertIn('data-owner data-needed="1"', html)
+
+    def test_no_place_at_all_refuses_in_plain_words(self):
+        pid = self.props()["Catalogue 2027"]["id"]
+        shutil.rmtree(self.work)
+        with self.assertRaises(pa.Refused) as said:
+            pa.act(self.root, {"verb": "suggestion", "id": pid, "answer": "yes", "owner": "Harbourline Studio"})
+        self.assertEqual(Y.NOWHERE, str(said.exception))
+        for jargon in ("part", "zone", "party"):
+            self.assertNotRegex(str(said.exception), r"\b%s\b" % jargon)
 
 
 class TestThePage(Case):

@@ -144,7 +144,8 @@ def places(ws: Path, ctx: dict) -> List[dict]:
     {"zone", "party", "label"}. Every zone of the user's, never the example's,
     with the parties System/context.md puts in it; a zone with one party is
     named alone, one with several once for each, "Work (Acme Corp)". A zone
-    with no party cannot hold a project, so it is not offered."""
+    with no party yet is offered too, with "party" None: a yes there asks
+    whose work it is (OWNER), and makes that party first."""
     zones = Path(ws) / "Zones"
     example = example_zone(ws)
     out = []
@@ -156,6 +157,8 @@ def places(ws: Path, ctx: dict) -> List[dict]:
         for tag, p in parties:
             label = zone.name if len(parties) == 1 else "%s (%s)" % (zone.name, p.get("party") or tag)
             out.append({"zone": zone.name, "party": tag, "label": label})
+        if not parties:
+            out.append({"zone": zone.name, "party": None, "label": zone.name})
     return out
 
 
@@ -164,6 +167,25 @@ def which_place(options: List[dict]) -> str:
     names = [o["label"] for o in options]
     listed = ", ".join(names[:-1]) + " or " + names[-1] if len(names) > 1 else "".join(names)
     return "Which part of your workspace is this work for: %s?" % listed
+
+
+# Whose work it is, asked in place where the work's zone has no party yet: a
+# new user who presses Add your own work before any interview. The answer
+# becomes that party, through scaffold.py party.
+OWNER = "Whose work is this?"
+OWNER_HINT = "Your employer's name, or “my own”"
+OWNER_ASK = "Whose work is this? Say your employer's name, or “my own”, and press Yes again."
+NOWHERE = "Garrick has nowhere to keep your own work yet. Ask Claude to set up your workspace, then press Yes again."
+OWN_WORDS = {"my own", "mine", "my own work", "own", "own work", "me", "myself", "just me", "nobody", "no one",
+             "none", "personal", "my work"}
+OWN_NAME = "Own work"
+
+
+def owner_name(said: str) -> str:
+    """The party a user's answer to OWNER names: their employer as they wrote
+    it, or OWN_NAME for work of their own."""
+    said = " ".join(str(said or "").split()).strip(" .")
+    return OWN_NAME if said.casefold().strip("“”\"'") in OWN_WORDS else said
 
 
 # --------------------------------------------------------------------------- the first look

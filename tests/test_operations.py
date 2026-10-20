@@ -324,7 +324,7 @@ SHAPES = {
     "askReq: 'ask-desktop'": {"ask-desktop": ()},
     # Your own work (#182): a suggestion renamed, and a next step in the user's own words; a suggestion's
     # Yes, Not and Rename carry the part of the workspace chosen above them, merged by Object.assign
-    "renameReq: 'suggestion'": {"suggestion": ("zone", "party")},
+    "renameReq: 'suggestion'": {"suggestion": ("zone", "party", "owner")},
     "ownReq: 'answer'": {"answer": ()},
     "homeReq: 'settings'": {"settings": ()},
 }

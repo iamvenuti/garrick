@@ -4722,15 +4722,26 @@ def discovery_pages(ws: Path, today: dt.date) -> str:
     if len(options) > 1:
         place = ('<div class="sh-card sh-place"><label><b>Which part of your workspace is this work for?</b> '
                  '<select data-place><option value="">Choose…</option>%s</select></label></div>'
-                 % "".join('<option value="%s">%s</option>' % (E(json.dumps({"zone": o["zone"], "party": o["party"]})),
+                 % "".join('<option value="%s">%s</option>' % (E(json.dumps(dict({"zone": o["zone"]},
+                                                                                **({"party": o["party"]} if o["party"] else {})))),
                                                                E(o["label"])) for o in options))
+    if any(o["party"] is None for o in options):
+        # A zone with no party yet, as before any interview: whose work it is, asked here, in place (#182).
+        place += ('<div class="sh-card sh-place sh-owner"%s><label><b>%s</b> <input data-owner data-needed="%s" '
+                  'placeholder="%s" aria-label="%s"></label></div>'
+                  % (" hidden" if len(options) > 1 else "", E(Y.OWNER), "1" if len(options) == 1 else "",
+                     E(Y.OWNER_HINT), E(Y.OWNER)))
     out = []
     for real, entry in sorted(Y.discovery(ws)["folders"].items()):
+        if not isinstance(entry, dict):
+            continue
         top, more = entry.get("top") or [], entry.get("more") or []
-        if not isinstance(entry, dict) or not (top or more):
+        if not (top or more):
             continue
         name = entry.get("name") or os.path.basename(real)
         rows = [suggestion_row(dict(p, _picked=name), today) for p in top]
+        # What was said yes to from this folder stays in the list, marked, under its own name: a rename shows.
+        rows += [kept_row(dict(p, _picked=name)) for p in entry.get("confirmed") or [] if isinstance(p, dict)]
         rest = [suggestion_row(dict(p, _picked=name), today) for p in more]
         listing = "".join(rows) + ('<details class="sh-more"><summary>%d more, quieter lately</summary>%s</details>'
                                    % (len(rest), "".join(rest)) if rest else "")
@@ -4764,6 +4775,14 @@ def suggestion_row(p: dict, today: dt.date) -> str:
     return ('<div class="sh-row sh-prop" data-sugg-id="%s"><div class="sh-name">%s</div><div class="sh-next">%s</div>'
             '<div class="sh-meta">%s</div>%s<span class="go sh-ans">%s%s%s</span></div>'
             % (E(p["id"]), E(p.get("name") or ""), where_said(p), E(meta), latest, yes, rename, no))
+
+
+def kept_row(p: dict) -> str:
+    """A suggestion already said yes to: its name, as renamed, and that Garrick keeps track of it."""
+    renamed = p.get("suggested") and p.get("suggested") != p.get("name")
+    return ('<div class="sh-row sh-prop sh-kept"><div class="sh-name">%s</div><div class="sh-next">%s</div>'
+            '<div class="sh-meta sh-said">✓ Garrick will keep track of this%s.</div></div>'
+            % (E(p.get("name") or ""), where_said(p), ", renamed from %s" % E(p["suggested"]) if renamed else ""))
 
 
 def left_out_said(entry: dict) -> str:
@@ -4939,6 +4958,8 @@ details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-
 .sh-flat,.sh-place{padding:12px 16px;border-left:3px solid var(--accent);margin-bottom:14px;color:var(--ink2)}.sh-place select{font:inherit;margin-left:6px}
 .sh-ans{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}.sh-prop .sh-name{overflow-wrap:anywhere}
 .sh-prop .sh-edit{display:flex;gap:6px;flex-wrap:wrap}.sh-prop .sh-edit input{font:inherit;font-weight:600;min-width:0;width:min(320px,100%);padding:4px 8px;border-radius:7px;border:1px solid var(--accent);background:var(--raise);color:var(--ink)}
+.sh-said{color:var(--good)}.sh-kept .sh-name{color:var(--ink2)}
+.sh-owner input{font:inherit;min-width:0;width:min(320px,100%);margin-left:6px;padding:4px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink)}
 .sh-left{padding:10px 16px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
 .sh-first{font-size:12px;color:var(--muted);margin:0 0 10px}.sh-first i{font-style:normal;color:var(--good)}
 .sh-req{padding:14px 16px}.sh-req blockquote{margin:6px 0 12px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash);border-radius:0 8px 8px 0;color:var(--ink)}
@@ -4997,16 +5018,26 @@ answer();var v=ss(VIEW);view(v||'home',true);
    workspace chosen above them; Rename and Change it open a box for the user's words */
 function act(q,said){if(!host){say('Answer this in the Garrick app: a browser cannot change anything.');return}
 if(!(window.GarrickAct&&GarrickAct(q,said))){host.postMessage({act:q});say(said)}}
-function placed(el,q){var art=el.closest('article'),sel=art&&art.querySelector('select[data-place]');if(!sel)return q;
-if(!sel.value){sel.focus();say('First choose which part of your workspace this work is for.');return null}
-try{var pl=JSON.parse(sel.value);return Object.assign({},q,{zone:pl.zone,party:pl.party})}catch(x){return null}}
+function placed(el,q){var art=el.closest('article'),sel=art&&art.querySelector('select[data-place]'),ow=art&&art.querySelector('input[data-owner]'),pl={};
+if(sel){if(!sel.value){sel.focus();say('First choose which part of your workspace this work is for.');return null}
+try{pl=JSON.parse(sel.value)}catch(x){return null}}
+q=Object.assign({},q,pl);
+/* whose work it is, where that part of the workspace has no one yet: kept for the rebuild, in case the answer is refused */
+if(ow&&(sel?!pl.party:ow.dataset.needed==='1')){var v=ow.value.trim();if(!v){ow.focus();say('First say whose work this is: your employer, or “my own”.');return null}
+ss('garrick-owner',v);q=Object.assign(q,{owner:v})}
+return q}
+function owner(){[].forEach.call(document.querySelectorAll('select[data-place]'),function(sel){var art=sel.closest('article'),box=art&&art.querySelector('.sh-owner');
+function show(){var pl={};try{pl=JSON.parse(sel.value||'{}')}catch(x){}if(box)box.hidden=!sel.value||!!pl.party}sel.onchange=show;show()});
+var kept=ss('garrick-owner');if(kept)[].forEach.call(document.querySelectorAll('input[data-owner]'),function(i){if(!i.value)i.value=kept})}
 function renameReq(id,v){return{verb:'suggestion',id:id,answer:'rename',name:v}}
 function ownReq(z,f,l,v){return{verb:'answer',zone:z,file:f,label:l,text:v}}
 function rename(b){var row=b.closest('.sh-prop'),cell=row&&row.querySelector('.sh-name');if(!cell||cell.querySelector('input'))return;
-var was=cell.textContent;cell.innerHTML='<div class="sh-edit"><input aria-label="New name"><button class="act primary" type="button">Save</button><button class="act" type="button">Cancel</button></div>';
-var inp=cell.querySelector('input'),bs=cell.querySelectorAll('button');inp.value=b.dataset.name||was;inp.focus();inp.select();
-function save(){var v=inp.value.trim();if(!v){inp.focus();return}var q=placed(b,renameReq(b.dataset.rename,v));if(q)act(q,'Adding '+v+'…')}
-bs[0].onclick=save;bs[1].onclick=function(){cell.textContent=was};inp.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();save()}if(e.key==='Escape')cell.textContent=was}}
+var was=cell.textContent,key='garrick-rename-'+b.dataset.rename;cell.innerHTML='<div class="sh-edit"><input aria-label="New name"><button class="act primary" type="button">Save</button><button class="act" type="button">Cancel</button></div>';
+var inp=cell.querySelector('input'),bs=cell.querySelectorAll('button');inp.value=ss(key)||b.dataset.name||was;inp.focus();inp.select();
+/* the name typed is kept until the rename is saved, so a refusal and the rebuild after it never lose it */
+function save(){var v=inp.value.trim();if(!v){inp.focus();return}ss(key,v);var q=placed(b,renameReq(b.dataset.rename,v));if(q)act(q,'Adding '+v+'…')}
+function drop(){ss(key,null);cell.textContent=was}
+bs[0].onclick=save;bs[1].onclick=drop;inp.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();save()}if(e.key==='Escape')drop()}}
 function own(b){var card=b.closest('.sh-q'),box=card&&card.querySelector('.sh-ownbox');if(!card)return;if(box){box.remove();return}
 box=document.createElement('div');box.className='sh-ownbox';var ta=document.createElement('textarea');ta.setAttribute('aria-label','The next step, in your words');
 box.appendChild(ta);var row=document.createElement('div');row.className='sh-opts';row.innerHTML='<button class="act primary" type="button">Save</button><button class="act" type="button">Cancel</button>';
@@ -5019,7 +5050,11 @@ else if(window.GarrickCopy)GarrickCopy(pk.dataset.phrase||'').then(function(){sa
 var sg=t.closest('button[data-sugg]');if(sg){var q;try{q=JSON.parse(sg.dataset.act)}catch(x){return}e.preventDefault();e.stopPropagation();
 q=placed(sg,q);if(q)act(q,sg.dataset.say);return}
 var rn=t.closest('button[data-rename]');if(rn){e.preventDefault();rename(rn);return}
-var ow=t.closest('button[data-own]');if(ow){e.preventDefault();own(ow)}},true)})();
+var ow=t.closest('button[data-own]');if(ow){e.preventDefault();own(ow)}},true);
+/* after a rebuild: a rename typed and not yet saved opens again with its words, and whose work it is is filled in again */
+owner();[].forEach.call(document.querySelectorAll('button[data-rename]'),function(b){if(ss('garrick-rename-'+b.dataset.rename))rename(b)});
+var prior=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='suggestion'&&out&&out.ok){
+if(q.answer==='rename')ss('garrick-rename-'+q.id,null);if(q.owner)ss('garrick-owner',null)}if(prior)return prior(q,out)}})();
 /* Settings › Home, on either page: saved for every viewer at once, then the page rebuilds on the choice */
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function homeReq(v){return{verb:'settings',home:v}}

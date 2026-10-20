@@ -33,6 +33,7 @@ sys.dont_write_bytecode = True
 from fixtures import CONTEXT, build_workspace, write  # noqa: E402
 from test_extract import docx, manifest, pptx, xlsx  # noqa: E402
 from test_simple_home import _load  # noqa: E402
+from test_status_more import DOM  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 HERE = REPO / "extras" / "status"
@@ -649,6 +650,123 @@ class TestAFirstWorkspace(unittest.TestCase):
         self.assertEqual(Y.NOWHERE, str(said.exception))
         for jargon in ("part", "zone", "party"):
             self.assertNotRegex(str(said.exception), r"\b%s\b" % jargon)
+
+
+# The simple home's script against a page status.py wrote, in Node, with the
+# small DOM the status page's other script tests use: the steps a person takes
+# (a click, a field filled in), then what the page sent the app, what it said,
+# and what it kept in the window's storage.
+PAGE_HARNESS = r"""
+const vm = require("vm");
+const [html, js, steps, kept] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+Object.defineProperty(El.prototype, "value", {
+  get() { return this._value !== undefined ? this._value : (this.getAttribute("value") || (this.localName === "textarea" ? this.textContent : "")); },
+  set(v) { this._value = String(v); } });
+El.prototype.focus = function () {};
+El.prototype.select = function () {};
+const doc = new El("#document");
+parse(html, doc);
+const body = doc.querySelector("body");
+const store = Object.assign({}, kept || {}), posted = [], said = [], listeners = [];
+const ctx = { JSON, String, Array, Object, Promise, setTimeout: () => 0, clearTimeout: () => {},
+  sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
+                    removeItem: (k) => { delete store[k]; } },
+  document: { body, querySelectorAll: (q) => doc.querySelectorAll(q), querySelector: (q) => doc.querySelector(q),
+              createElement: (t) => new El(t), getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null,
+              addEventListener: (type, fn, capture) => { if (type === "click") listeners.push([!!capture, fn]); } } };
+Object.assign(ctx, { webkit: { messageHandlers: { garrick: { postMessage: (m) => posted.push(m) } } },
+                    StatusTab: () => {}, scrollTo: () => {}, GarrickSay: (t) => said.push(t),
+                    GarrickCopy: (t) => Promise.resolve(t) });
+ctx.window = ctx;                                  // the page's globals are the window's, as in a browser
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+function click(el) {
+  let stopped = false;
+  const ev = { target: el, preventDefault() {}, stopPropagation() { stopped = true; } };
+  for (const [cap, fn] of listeners.filter((l) => l[0]).concat(listeners.filter((l) => !l[0]))) { if (stopped) break; fn(ev); }
+  if (!stopped && typeof el.onclick === "function") el.onclick(ev);
+}
+for (const st of steps) {
+  const all = doc.querySelectorAll(st.sel), el = all[st.nth || 0];
+  if (!el) throw new Error("no element for " + st.sel);
+  if (st.do === "click") click(el); else el.value = st.value;
+}
+const editing = doc.querySelectorAll(".sh-edit input").map((i) => i.value);
+process.stdout.write(JSON.stringify({ posted, said, store, editing }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestThePageScript(Case):
+    """What the page's own buttons send, driven as a person would, so a
+    button wired to nothing fails here and not in the hand checks: Rename,
+    a Yes with the part of the workspace chosen and whose work it is, Change
+    it, and Add your own work."""
+    context = CONTEXT
+    personal = True
+
+    def drive_page(self, *steps, kept=None):
+        html = self.page()
+        done = subprocess.run(["node", "-e", PAGE_HARNESS, json.dumps([html, status.SIMPLE_JS, list(steps), kept])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def row(self, pid):
+        return '.sh-prop[data-sugg-id="%s"]' % pid
+
+    def test_rename_sends_the_name_typed_with_the_place_chosen(self):
+        _, props = self.scan()
+        pid = props["Website refresh"]["id"]
+        work = json.dumps({"zone": "Work", "party": "acme"})
+        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": work},
+                              {"do": "click", "sel": self.row(pid) + " button[data-rename]"},
+                              {"do": "set", "sel": self.row(pid) + " input", "value": "New Website"},
+                              {"do": "click", "sel": self.row(pid) + " .sh-edit button"})
+        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "rename", "name": "New Website",
+                                   "zone": "Work", "party": "acme"}}], out["posted"])
+        self.assertEqual("New Website", out["store"]["garrick-rename-" + pid])       # kept until it is saved
+        again = self.drive_page({"do": "set", "sel": "select[data-place]", "value": work}, kept=out["store"])
+        self.assertEqual([], again["posted"])                                          # a rebuild reopens it, sends nothing
+        self.assertEqual(["New Website"], again["editing"])                            # with the name typed
+        self.act(**out["posted"][0]["act"])
+        self.assertTrue((self.work / "New Website" / "New Website.md").is_file())
+
+    def test_yes_waits_for_the_place_and_whose_work_it_is(self):
+        _, props = self.scan()
+        pid = props["Catalogue 2027"]["id"]
+        yes = self.row(pid) + " button[data-sugg]"
+        out = self.drive_page({"do": "click", "sel": yes})
+        self.assertEqual([], out["posted"])
+        self.assertEqual(["First choose which part of your workspace this work is for."], out["said"])
+        personal = json.dumps({"zone": "Personal"})
+        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": personal}, {"do": "click", "sel": yes})
+        self.assertEqual([], out["posted"])
+        self.assertIn("whose work this is", out["said"][-1])
+        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": personal},
+                              {"do": "set", "sel": "input[data-owner]", "value": "my own"}, {"do": "click", "sel": yes})
+        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "yes", "zone": "Personal", "owner": "my own"}}],
+                         out["posted"])
+        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": json.dumps({"zone": "Work", "party": "birch"})},
+                              {"do": "click", "sel": self.row(pid) + " button[data-sugg]", "nth": 1})
+        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "not", "zone": "Work", "party": "birch"}}],
+                         out["posted"])
+
+    def test_change_it_sends_the_words_typed(self):
+        _, props = self.scan()
+        self.act(verb="suggestion", id=props["Catalogue 2027"]["id"], answer="yes", zone="Work", party="acme")
+        self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
+        q = next((self.note().parent / "Needs you").glob("*.md")).relative_to(self.work).as_posix()
+        out = self.drive_page({"do": "click", "sel": "button[data-own]"},
+                              {"do": "set", "sel": ".sh-ownbox textarea", "value": "Ask Owen for the prices"},
+                              {"do": "click", "sel": ".sh-ownbox button"})
+        self.assertEqual([{"act": {"verb": "answer", "zone": "Work", "file": q, "label": "Change it",
+                                   "text": "Ask Owen for the prices"}}], out["posted"])
+
+    def test_add_your_own_work_asks_the_app_for_its_picker(self):
+        out = self.drive_page({"do": "click", "sel": "button[data-pick]"})
+        self.assertEqual([{"pick": "folder"}], out["posted"])
 
 
 class TestThePage(Case):

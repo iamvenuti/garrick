@@ -942,7 +942,8 @@ class TestAWorksPage(HandOffCase):
         html = self.page()
         w = self.works()["Acme Review"]
         page = html.split('<article class="sh-work" id="%s"' % w["id"], 1)[1].split("</article>", 1)[0]
-        self.assertIn("Folder: %s" % htmllib.escape(str(shared)), page)
+        self.assertIn("Folder: Acme, in Shared", page)                     # its name and the folder it is in, never a path
+        self.assertNotIn(htmllib.escape(str(shared)), page)
         self.assertIn("1 new, 1 changed, 1 missing since you last continued it today", page)
         self.assertIn('<li>Photos/Pallets.jpg <span class="sh-tag">new</span></li>', page)
         self.assertIn('<li>Price sheet.xlsx <span class="sh-tag">changed</span></li>', page)

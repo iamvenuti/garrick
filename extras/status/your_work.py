@@ -61,13 +61,24 @@ FIELD_MAX = 400               # of any one field of a first look
 FIRST_LOOK_BRIEF = (
     "You are making Garrick's first record of a piece of work, from its own files, for someone who is not technical. "
     "Read the files; change nothing. Answer with one JSON object and nothing else, with these keys, each a string: "
-    "\"what\", one sentence on what the work is; \"who\", who is involved, each name with their part in a few words, "
-    "or \"\"; \"last\", what happened last and when, in one or two sentences; \"open\", what is still open, in one or two "
-    "sentences; \"next\", the single next step for the user, small enough to start in two minutes; \"source\", where "
-    "that next step comes from, named as a person would, such as \"the proof review call on 14 October\"; \"waiting\", "
-    "who the work waits on, or \"nobody\"; \"deadline\", the nearest date that matters and what it is for, or "
-    "\"not given\"; \"request\", one request the user could ask you to carry out now, drawn from the next step, in the "
-    "user's own voice. Plain words: no file paths, no tables, no commands, nothing about tools.")
+    "\"what\", one sentence on what the work is; \"who\", the people the files name, each with their part in a few "
+    "words, or \"\" when the files name nobody, and never an organisation in place of people; \"last\", the work's own "
+    "most recent event and its date, as the files give them, in one or two sentences, or exactly \"%s\" when nothing in "
+    "them is dated; \"open\", what is still open, in one or two sentences; \"next\", the single next step for the "
+    "user, small enough to start in two minutes; \"source\", the title of the one file or call that next step comes "
+    "from, as a person would name it, without its extension or folder, such as \"Launch timeline\" or \"Proof review "
+    "call\", and nothing else; \"waiting\", who the work waits on, or \"nobody\"; \"deadline\", the nearest date that "
+    "matters and what it is for, or \"not given\"; \"request\", one request the user could ask you to carry out now, "
+    "drawn from the next step, in the user's own voice. Write about the work and its people in the third person: never "
+    "\"I\", \"me\" or \"my\" except in \"request\". Say nothing about how the files were read: no extracted text, blank "
+    "pages, file formats, folders, paths, tables, commands or tools.")
+UNDATED = "Nothing in its files says when it last moved."
+FIRST_LOOK_BRIEF = FIRST_LOOK_BRIEF % UNDATED
+# The thread note's dated entry for a first look, and how the page finds the
+# work's own last event in it: the entry is Garrick's, the event is the work's.
+FIRST_ENTRY = "First look, made from the files in %s; last in them: %s"
+FIRST_ENTRY_RE = re.compile(r"^First look, made from the files in .*?; last in them: (.*)$")
+SOURCE_MAX = 80
 KEYS = ("what", "who", "last", "open", "next", "source", "waiting", "deadline", "request")
 NEEDED = ("what", "next")
 
@@ -225,9 +236,28 @@ def parse_first_look(answer: str) -> Optional[Dict[str, str]]:
         if all(look[k] for k in NEEDED):
             look["waiting"] = look["waiting"] or "nobody"
             look["deadline"] = look["deadline"] or "not given"
+            look["last"] = look["last"] or UNDATED
+            look["source"] = source_said(look["source"])
             return look
         return None
     return None
+
+
+def source_said(source: str) -> str:
+    """Where a next step comes from, as the question says it: a title, never
+    commentary. What follows a semicolon, a dash or a comma that opens a
+    clause goes, and so do a file's extension, its folders, a leading "the"
+    and a closing full stop; a source that still talks in the first person
+    is dropped."""
+    s = re.split(r"\s*(?:;|\s[\u2013\u2014-]\s|,\s)", one_line(source), maxsplit=1)[0]
+    s = re.sub(r"^(?:from\s*:?\s*)", "", s, flags=re.I).strip()
+    s = s.rsplit("/", 1)[-1]
+    s = re.sub(r"\.(?:docx?|xlsx?|pptx?|pdf|txt|md|csv|key|pages|numbers)$", "", s, flags=re.I)
+    s = re.sub(r"\s+(?:in|from)\s+(?:the\s+)?(?:[\w'&-]+\s+){0,4}(?:folder|drive)\b.*$", "", s, flags=re.I)
+    s = re.sub(r"^the\s+", "", s, flags=re.I).strip().rstrip(".")
+    if re.search(r"\b(?:I|me|my|I'm|I've)\b", s) or len(s) > SOURCE_MAX:
+        return ""
+    return s[:1].upper() + s[1:]
 
 
 def first_looks(ws: Path) -> dict:

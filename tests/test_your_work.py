@@ -304,7 +304,7 @@ class TestStartWithThisOne(Case):
         self.assertIn("**Catalogue 2027: is this your next step?**", text)
         self.assertIn("- [That's right] Confirm 64 pages to the printer by Friday", text)
         self.assertIn('own: "Change it"', text)
-        self.assertIn("From the proof review call on 14 October.", text)
+        self.assertIn("From: Proof review call on 14 October", text)
         changed = set(filter(None, self.git("show", "--name-only", "--format=", "HEAD").splitlines()))
         self.assertEqual({"Catalogue 2027/Catalogue 2027.md", "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md",
                           q.relative_to(self.work).as_posix()}, changed)
@@ -398,6 +398,68 @@ class TestStartWithThisOne(Case):
         self.start()
         with self.assertRaisesRegex(pa.Refused, "already has its first look"):
             self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
+
+
+class TestTheWorksPage(Case):
+    """A piece of work's page after Start with this one, as the sketch has it."""
+
+    def started(self, **look):
+        self.add()
+        with mock.patch.dict(os.environ, {"MOCK_LOOK": json.dumps(dict(LOOK, **look))}):
+            self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
+        key = "Work/Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"
+        html = self.page()
+        return html.split('<article class="sh-work" id="%s"' % Y.work_id("Catalogue 2027", key), 1)[1].split("</article>", 1)[0]
+
+    def test_the_folder_is_named_with_its_parent_never_as_a_path(self):
+        page = self.started()
+        self.assertIn("Folder: Catalogue 2027, in Marketing", page)
+        self.assertNotIn(str(self.drive), page)
+        self.assertNotIn(os.path.realpath(str(self.drive)), page)
+
+    def test_who_is_involved_is_the_people_the_files_name_never_the_party(self):
+        page = self.started()
+        self.assertIn("<dt>Who&#x27;s involved</dt><dd>Hana Royle (layout), Owen Tarrant (prices)</dd>", page)
+        self.assertNotIn("Acme Corp", page)
+
+    def test_nobody_named_is_said_plainly(self):
+        page = self.started(who="")
+        self.assertIn("<dt>Who&#x27;s involved</dt><dd>No one is named in its files yet.</dd>", page)
+        self.assertNotIn("Acme Corp", page)
+
+    def test_what_happened_last_is_the_works_own_event_not_garricks(self):
+        page = self.started()
+        self.assertIn("<dt>What happened last</dt><dd>%s</dd>" % htmllib.escape(LOOK["last"], quote=False), page)
+        self.assertNotIn("First look, made from the files", page)
+        self.assertIn("; last in them: ", self.note().read_text())                  # the note keeps Garrick's entry
+
+    def test_nothing_dated_is_one_plain_sentence(self):
+        page = self.started(last="")
+        self.assertIn("<dt>What happened last</dt><dd>%s</dd>" % Y.UNDATED, page)
+
+    def test_the_question_says_the_next_step_once_and_a_short_source(self):
+        page = self.started(source="the launch timeline in the shared Lounge launch folder; it's only a name to me, "
+                                   "because its pages came through blank.")
+        q = page.split('<div class="sh-q"', 1)[1]
+        self.assertIn("<p>Confirm 64 pages to the printer by Friday From: Launch timeline</p>", q)
+        self.assertNotIn("<dt>Next</dt>", page)                                     # the question says it, once
+        self.assertEqual(1, page.count(">Confirm 64 pages to the printer by Friday"))
+        for said in ("blank", " me,", "only a name"):
+            self.assertNotIn(said, page)
+
+    def test_a_source_is_a_title(self):
+        for said, want in (("the proof review call on 14 October", "Proof review call on 14 October"),
+                           ("Launch timeline.xlsx", "Launch timeline"),
+                           ("From: Marketing/Launches/Launch plan.docx", "Launch plan"),
+                           ("I could not tell", ""),
+                           ("the price list, which I read twice", "Price list")):
+            self.assertEqual(want, Y.source_said(said), said)
+
+    def test_the_brief_keeps_answers_third_person_and_off_how_files_were_read(self):
+        brief = Y.FIRST_LOOK_BRIEF
+        for needle in ("third person", "never \"I\"", "extracted text", "blank pages", "the title of the one file",
+                       "never an organisation in place of people", Y.UNDATED):
+            self.assertIn(needle, brief)
 
 
 class TestTheNextStep(Case):

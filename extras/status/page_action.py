@@ -2565,7 +2565,7 @@ def first_look_note(text: str, look: dict, today: dt.date, where: str, name: str
     block = "\n**Where it stands, %s.** %s\n\n| | |\n|---|---|\n%s\n\n" % (
         Y.today_said(today), stands, "\n".join("| %s | %s |" % (k, cell(v)) for k, v in rows))
     body = body[:span[0]] + block + body[span[1]:]
-    body = dated_entry(body, today, "First look, made from the files in %s. %s" % (where, look["last"]))
+    body = dated_entry(body, today, Y.FIRST_ENTRY % (where, look["last"]))
     return text[:m.end()] + body
 
 
@@ -2579,7 +2579,7 @@ def first_look_question(name: str, look: dict, today: dt.date) -> str:
     Y = your_work()
     return ("---\ntype: question\nasked: %s\nstatus: open\nown: %s\n---\n\n**%s: is this your next step?**\n\n%s\n\n%s"
             "- [%s] %s\n" % (today.isoformat(), quoted(Y.OWN), name, look["next"],
-                             "From %s.\n\n" % look["source"].rstrip(".") if look["source"] else "", Y.RIGHT, look["next"]))
+                             "From: %s\n\n" % look["source"] if look["source"] else "", Y.RIGHT, look["next"]))
 
 
 def start_work(ws: Path, req: dict, today: dt.date) -> dict:

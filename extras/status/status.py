@@ -4664,7 +4664,7 @@ def start_section(waiting: List[dict], started: bool, confirmed: Dict[str, dict]
     rows = []
     for i, w in enumerate(waiting):
         p = confirmed.get(w["discovered"]) or {}
-        meta = [where_said(p) if p else "Folder %s" % E(w["folder_said"])]
+        meta = [where_said(p) if p else "Folder %s" % E(your_work_mod().said_folder(w["folder_said"].rstrip("/")))]
         if p.get("last"):
             meta.append("last activity %s" % ago(as_date(p["last"]), today).lower())
         if p.get("files"):
@@ -4839,13 +4839,22 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
     dl = []
     if w["about"]:
         dl.append(("What it is", md_inline(w["about"])))
-    involved = re.search(r"\bInvolved: (.+?)\.?$", w["where"] or "") if w["first_look"] else None
-    if involved:
-        dl.append(("Who's involved", md_inline(involved.group(1))))
+    Y = your_work_mod()
+    if w["discovered"]:
+        # Work from a folder of the user's (#182): the people its files name, from its first look, never the party
+        # the work was filed under, which may be only whose work it is.
+        involved = re.search(r"\bInvolved: (.+?)\.(?=\s+Answered on |\s*$)", w["where"] or "")
+        dl.append(("Who's involved", md_inline(involved.group(1)) if involved else
+                   E("No one is named in its files yet.") if w["first_look"] else
+                   E("Garrick has not read its files yet.")))
     elif w["who"]:
         dl.append(("Who's involved", E("; ".join(w["who"]))))
     entry = w["entry"]
-    if entry and entry[1]:
+    first = Y.FIRST_ENTRY_RE.match(entry[1]) if entry and entry[1] else None
+    if first:
+        # The newest dated entry is Garrick's own first look: what the page shows is the work's own last event.
+        dl.append(("What happened last", md_inline(first.group(1))))
+    elif entry and entry[1]:
         dl.append(("What happened last", ("%s: " % E(ago(entry[0], today)) if entry[0] else "") + md_inline(entry[1])))
     elif w["where"]:
         dl.append(("What happened last", md_inline(w["where"])))
@@ -4861,13 +4870,15 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
         opened.append("Waiting on %s" % E(w["waiting"]) + (", %s" % md_inline(w["deadline"]) if w["deadline"] else ""))
     if opened:
         dl.append(("Open", "<br>".join(opened)))
-    dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
-    head, files = work_files(w, kept, today)
-    where = ("Folder: %s" % E(w["folder_said"])) if w["files"] is not None else "Kept with the work in Garrick"
-    if w["folder_said"] and w["files"] is None:
-        where = "Folder: %s, which is not there now" % E(w["folder_said"])
-    first = ""
     asking = [q for q in w["questions"] if q["file"] == look_q]
+    if not asking:                              # an open first look's question says the next step itself, once
+        dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
+    head, files = work_files(w, kept, today)
+    # A folder is named with the one it is in, never as a path (#182).
+    where = ("Folder: %s" % E(Y.said_folder(str(w["files"])))) if w["files"] is not None else "Kept with the work in Garrick"
+    if w["folder_said"] and w["files"] is None:
+        where = "Folder: %s, which is not there now" % E(Y.said_folder(w["folder_said"].rstrip("/")))
+    first = ""
     if w["first_look"] and asking:
         first = ('<div class="sh-first"><i aria-hidden="true">✓</i> First look, made %s from the folder\'s files. Check it '
                  'before you rely on it.</div>' % E(ago(w["first_look"], today).lower()))

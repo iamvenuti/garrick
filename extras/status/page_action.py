@@ -2235,8 +2235,8 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
             extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
             add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
             guard = Y.settings_arg(str(files))
-            if len(add_dirs) > 1:               # where the text of its Office files is, said once, after the question
-                asked = "%s %s" % (asked, Y.EXTRACTS_SAID % add_dirs[1])
+            if len(add_dirs) > 1:               # where the text of its Office files is: in the hidden brief, never the
+                brief = "%s %s" % (brief, Y.EXTRACTS_SAID % add_dirs[1])     # message the user sees as theirs
         unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     kept = H.session_for(ws, key)
     resume = not suggested and H.fresh(kept, now) and kept.get("folder") == str(folder)

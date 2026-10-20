@@ -489,11 +489,13 @@ class TestTheNextStep(Case):
         self.assertIn("| Next action | Confirm 64 pages to the printer by Friday |", self.note().read_text())
         self.assertEqual("Opened Catalogue 2027 in Claude, with your request already asked", self.suggested())
         prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
-        asked = prime[prime.index("-p") + 1]
         extracts = self.root / "System" / "generated" / "extracts"
-        self.assertTrue(asked.startswith(LOOK["request"] + " Its Word, PowerPoint and Excel files are read as text from "
-                                         + str(extracts)), asked)
-        self.assertEqual(H.REQUEST_BRIEF, prime[prime.index("--append-system-prompt") + 1])
+        self.assertEqual(LOOK["request"], prime[prime.index("-p") + 1])               # no path in what the user sees
+        brief = prime[prime.index("--append-system-prompt") + 1]
+        self.assertTrue(brief.startswith(H.REQUEST_BRIEF + " Its Word, PowerPoint and Excel files are read as text from "
+                                         + str(extracts)), brief)
+        dirs = [prime[i + 1] for i, a in enumerate(prime) if a == "--add-dir"]
+        self.assertTrue(dirs[1].startswith(str(extracts)))
         real = os.path.realpath(str(self.drive / "Marketing" / "Catalogue 2027"))
         self.assertEqual(real, prime[prime.index("--add-dir") + 1])
         self.assertIn("--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit", prime)
@@ -517,11 +519,13 @@ class TestTheNextStep(Case):
         pa.act(self.root, {"verb": "continue", "zone": "Work",
                            "file": "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"})
         prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
-        asked = prime[prime.index("-p") + 1]
-        self.assertTrue(asked.startswith("Where am I on Catalogue 2027? Its Word, PowerPoint and Excel files are read as "
-                                         "text from %s" % (self.root / "System" / "generated" / "extracts")), asked)
-        self.assertTrue(Path(asked.split(" from ", 1)[1].rsplit(", one", 1)[0]).is_dir())
+        self.assertEqual("Where am I on Catalogue 2027?", prime[prime.index("-p") + 1])   # no path in what the user sees
         brief = prime[prime.index("--append-system-prompt") + 1]
+        self.assertTrue(brief.startswith(H.CONTINUE_BRIEF + " Its Word, PowerPoint and Excel files are read as text from "
+                                         "%s" % (self.root / "System" / "generated" / "extracts")), brief)
+        self.assertTrue(Path(brief.rsplit(" from ", 1)[1].rsplit(", one", 1)[0]).is_dir())
+        self.assertIn(brief.rsplit(" from ", 1)[1].rsplit(", one", 1)[0],
+                      [prime[i + 1] for i, a in enumerate(prime) if a == "--add-dir"])
         for said in ("Resume here", "Next action, Waiting on or Deadline", "placeholder", "not given",
                      "never draft the record", "came through blank"):
             self.assertIn(said, brief)

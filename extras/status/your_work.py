@@ -79,9 +79,10 @@ FIRST_LOOK_BRIEF = FIRST_LOOK_BRIEF % UNDATED
 FIRST_ENTRY = "First look, made from the files in %s; last in them: %s"
 FIRST_ENTRY_RE = re.compile(r"^First look, made from the files in .*?; last in them: (.*)$")
 SOURCE_MAX = 80
-# Said after the question Continue asks, and after a suggested request, for a
-# piece of work whose Office files Garrick took the text out of: where that
-# text is, so a session reads it there rather than opening the files.
+# Added to the hidden brief of the question Continue asks, and of a suggested
+# request, for a piece of work whose Office files Garrick took the text out
+# of: where that text is, so a session reads it there rather than opening the
+# files. Never in the question itself, which the user sees as their own.
 EXTRACTS_SAID = "Its Word, PowerPoint and Excel files are read as text from %s, one .txt file for each."
 KEYS = ("what", "who", "last", "open", "next", "source", "waiting", "deadline", "request")
 NEEDED = ("what", "next")

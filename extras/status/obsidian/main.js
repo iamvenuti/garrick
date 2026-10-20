@@ -39,7 +39,7 @@ const VIEW = "garrick-status";
 const MAX_AGE_MS = 30 * 60 * 1000;
 // Every kind of message the page posts to the bridge. tests/test_obsidian.py
 // reads status.py's postMessage calls and fails when one is missing here.
-const KINDS = ["act", "app", "copy", "cmux", "launch", "menu", "rebuild"];
+const KINDS = ["act", "app", "copy", "cmux", "launch", "menu", "pick", "rebuild"];
 const BUNDLES = { claude: "com.anthropic.claudefordesktop", codex: "com.openai.codex", cmux: "com.cmuxterm.app" };
 const NAMES = { claude: "Claude", codex: "Codex", cmux: "cmux" };
 const CODEX_CLI = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"];
@@ -338,6 +338,8 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	handle(view, body) {
 		if (body.menu !== undefined) return;            // Garrick.app's menu bar: nothing to do here
 		if (body.app) return view.toast("That setting is Garrick.app's own.");
+		// Add your own work (#182): the folder picker, which also grants access, is Garrick.app's own.
+		if (body.pick !== undefined) return view.toast("Only the Garrick app can open your folders. In Claude, ask it to look through the folder you keep your work in.");
 		// A Copy button's own text. A launch carries the phrase too, for a host
 		// older than this one; here the launcher owns the clipboard and says
 		// when it replaced it, so the copy is left to it and never happens twice.

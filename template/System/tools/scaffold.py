@@ -613,9 +613,14 @@ def cmd_thread(root, args, today):
         if (threads / name).exists():
             raise Refusal(f"{(threads / name).relative_to(root)} already exists.")
         return "\n".join([f"{name} will do as a thread in {project_dir.name}."] + asked)
-    make_thread(root, project_dir, name, party, today, spoken)
+    target = make_thread(root, project_dir, name, party, today, spoken)
     link_thread_in_hub(hub, name, today)
-    return "\n".join([f"Created thread {name} in {project_dir.name}."] + asked)
+    said = [f"Created thread {name} in {project_dir.name}."] + asked
+    if getattr(args, "touched", False):
+        # What it wrote, from the zone, for a caller that commits it by name and nothing else (#183).
+        said.append("Touched: " + json.dumps([target.relative_to(zone_dir).as_posix(),
+                                              hub.relative_to(zone_dir).as_posix()], ensure_ascii=False))
+    return "\n".join(said)
 
 
 # --------------------------------------------------------------------------- rename and delete
@@ -1538,6 +1543,8 @@ def main(argv=None):
     t.add_argument("--project", required=True)
     t.add_argument("--name", required=True)
     t.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
+    t.add_argument("--touched", action="store_true",
+                   help="end with a line `Touched: [...]`, the paths from the zone it wrote, for a caller that commits them")
     r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")
     r.add_argument("--zone", required=True)
     r.add_argument("--project", required=True)

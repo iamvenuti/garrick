@@ -16,6 +16,8 @@
 //     show as the icons its menu bar draws, where a browser shows words;
 //   - every link the page holds (a note in Obsidian, a file, the web) goes to
 //     the app macOS uses for it;
+//   - Add your own work opens macOS's folder picker, which grants the app
+//     access to the folder picked, and hands it to page_action.py (#182);
 //   - an icon in the menu bar listing the live
 //     threads of the zone the graph shows, each opening a session, with a red
 //     dot when the Status tab has one, and Keep awake: for a time, until
@@ -658,6 +660,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return setMenu(m as? [String: Any])
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
+		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
 		// A Copy button's own text. A launch carries the phrase too, for an app
 		// built before 0.28.0; here the launcher owns the clipboard and says
@@ -673,6 +676,33 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if body["rebuild"] as? Bool == true { freshen(force: true) }
 		if let request = body["act"] as? [String: Any] { act(request) }
+	}
+
+	// Add your own work (#182): macOS's own folder picker, which also grants
+	// this app access to the folder picked, as a sheet on the window. It opens
+	// on the cloud drives where there are any, since that is where work is
+	// usually kept. The folder goes to page_action.py's `discover`, which
+	// reads its names and dates and changes nothing in it; discover.py
+	// refuses the whole Mac, the home folder and Garrick's own folders. The
+	// page then opens on what it found.
+	func pickFolder() {
+		let panel = NSOpenPanel()
+		panel.canChooseDirectories = true
+		panel.canChooseFiles = false
+		panel.allowsMultipleSelection = false
+		panel.canCreateDirectories = false
+		panel.prompt = "Choose"
+		panel.message = "Choose the folder you work from. Garrick reads the names and dates in it, and never changes anything."
+		let cloud = URL(fileURLWithPath: NSHomeDirectory() + "/Library/CloudStorage", isDirectory: true)
+		var isDir: ObjCBool = false
+		panel.directoryURL = FileManager.default.fileExists(atPath: cloud.path, isDirectory: &isDir) && isDir.boolValue
+			? cloud : URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+		panel.beginSheetModal(for: window) { [weak self] response in
+			guard let self, response == .OK, let folder = panel.url else { return }
+			self.toast("Looking through \(folder.lastPathComponent): names and dates only, and nothing in it is changed.",
+			           alsoNotify: false)
+			self.act(["verb": "discover", "folder": folder.path])
+		}
 	}
 
 	// A folder of this workspace that still exists, or nil, with the page rebuilt.

@@ -85,12 +85,19 @@ READ_ONLY = "--disallowedTools=Bash,Edit,Write,MultiEdit,NotebookEdit"
 # is two or three sentences; Ask something's answers the user's own words, at
 # whatever length they need.
 PLAIN = ("No table, no file paths or links, no commands. This is a read-only look, so do not mention tools you lack "
-         "or checks you could not run.")
+         "or checks you could not run. Talk about the work itself, not Garrick's record of it: never name the Resume "
+         "here block or its rows, such as Next action, Waiting on or Deadline, never quote a placeholder or \"not given\", "
+         "never draft the record, and never say how a file was read or that its text came through blank.")
 CONTINUE_BRIEF = ("This first answer is shown to someone who is not technical, before they have typed anything. Answer in "
                   "two or three plain sentences: where the work stands and the next step, with who it waits on and a "
                   "deadline if one is near. " + PLAIN + " A checkpoint not yet confirmed may be mentioned in one plain "
                   "sentence, as not yet saved.")
 ASK_BRIEF = "This answer is shown to someone who is not technical. Answer in plain words. " + PLAIN
+# Continue with a first look's suggested request already asked (#182): the
+# request is the user's, drawn from the next step they confirmed.
+REQUEST_BRIEF = ("This request is asked for someone who is not technical, before they have typed anything. Carry it out as "
+                 "far as a look that only reads allows: write what is asked, such as a draft, in your answer, then say in "
+                 "one plain sentence what you would do next. " + PLAIN)
 # A session's name, from Ask something's question: its first words, cut on a
 # word boundary. The CLI shows it in the prompt box, the /resume picker and
 # the terminal title; whether the desktop app's sidebar shows it is not known.
@@ -369,15 +376,26 @@ def session_name(words: str, most: int = NAME_MAX) -> str:
 
 
 def prime(claude: Path, folder: Path, prompt: str, timeout: Optional[float] = None,
-          env: Optional[dict] = None, brief: str = CONTINUE_BRIEF, name: Optional[str] = None) -> Tuple[str, str]:
+          env: Optional[dict] = None, brief: str = CONTINUE_BRIEF, name: Optional[str] = None,
+          add_dirs: Iterable[Path] = (), settings: Optional[str] = None) -> Tuple[str, str]:
     """The headless call that answers first: (its session id, its answer).
     `brief` is how the answer is to read, appended to Claude's system prompt;
     `name` is the session's display name, given whole and never as a flag.
+    `add_dirs` are folders outside the work's own that it may read (#182): a
+    folder the user keeps their work in, and the text Garrick took out of its
+    Office files. The call stays read-only (READ_ONLY) whatever it is given.
+    `settings`, JSON, is given with `--settings`: the deny rule that keeps
+    Claude's file-editing tools out of such a folder, a second guard beside
+    the settings file in the session's folder.
     HandOffError in plain words when it did not answer. It runs in a process
     group of its own, so what it started is stopped with it at the time."""
     timeout = PRIME_TIMEOUT if timeout is None else timeout
     name = " ".join(str(name or "").split()).lstrip("- ")
-    argv = ([str(claude), "-p", prompt, "--output-format", "json"] + (["--name", name] if name else []) +
+    dirs = []
+    for d in add_dirs:
+        dirs += ["--add-dir", str(d)]           # each one followed by a flag, so the list ends there
+    argv = ([str(claude), "-p", prompt, "--output-format", "json"] + dirs + (["--settings", settings] if settings else []) +
+            (["--name", name] if name else []) +
             (["--append-system-prompt", brief] if brief else []))
     try:
         p = subprocess.Popen(argv + [READ_ONLY], cwd=str(folder),

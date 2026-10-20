@@ -1643,7 +1643,8 @@ ACTION_POLL = 3
 ACTION_UNKNOWN = 60
 ACTION_KEEP = ("rename", "delete", "new-project", "new-thread", "undo")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
-              "delete", "undo", "interrupt", "answer", "later", "continue", "fix")
+              "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
+              "bring-back")
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}
@@ -1705,7 +1706,7 @@ if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'" data
 +'</span>'+(!e.out.ok&&e.lines&&e.lines.length?'<small>'+esc(e.lines.filter(String).join(' · '))+'</small>':'')
 +(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
-+((e.phase===undefined?now-e.t0>=WHY*1000&&e.q.verb!=='continue':e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
++((e.phase===undefined?now-e.t0>=WHY*1000&&['continue','start'].indexOf(e.q.verb)<0:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
 box.innerHTML=html;box.hidden=!html;document.body.style.setProperty('--work-h',html?box.offsetHeight+8+'px':'0px')}hold()}
 /* each second: the time so far, why after WHY, a request with no reply after LOST given up, a batch's own toast once it has taken TOAST,
    and a card that says saved gone TOAST after it came, unless the pointer is on it */
@@ -4270,6 +4271,20 @@ def handoff_mod():
     return _HO
 
 
+_YW = None
+
+
+def your_work_mod():
+    """your_work.py, beside this file: what the home and page_action.py share
+    about the user's own work, a folder read and never written (#182)."""
+    global _YW
+    if _YW is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_your_work", str(Path(__file__).with_name("your_work.py")))
+        _YW = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_YW)
+    return _YW
+
+
 def home_layout(ws: Path) -> str:
     """"simple" where System/garrick-settings.json says `"home": "simple"`,
     otherwise "full": a workspace that never chose keeps the page it had."""
@@ -4383,7 +4398,7 @@ def questions_in(folder: Path, zone: Path, today: dt.date) -> List[dict]:
         if not ask:
             continue
         out.append({"file": f.relative_to(zone).as_posix(), "zone": zone.name, "ask": ask, "context": " ".join(context),
-                    "options": opts, "asked": as_date(fm.get("asked")), "later": later,
+                    "options": opts, "own": as_text(fm.get("own")).strip(), "asked": as_date(fm.get("asked")), "later": later,
                     "shown": state == "open" or (later is not None and later <= today)})
     return out
 
@@ -4447,6 +4462,8 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
         except Exception:
             ctx = {}
     example = example_zone(ws)
+    Y = your_work_mod()
+    looks = Y.first_looks(ws)
     out = []
     for zone, data in T.items():
         zdir = data["folder"]
@@ -4463,9 +4480,17 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
             about = read.get("about") or ""
             if not about and r["hub"] and r["hub"] != r["note"]:
                 about = resume_read(r["hub"])["about"]
+            key = "%s/%s" % (zone, r["rel"])
+            note_fm = hub_fm if r["note"] == r["hub"] else frontmatter(r["note"], ws)
+            first_look = as_date(note_fm.get(Y.FIRST_LOOK))
+            discovered = as_text(hub_fm.get(Y.DISCOVERED)).strip()
+            look = looks.get(key) if isinstance(looks.get(key), dict) else None
             out.append({
-                "id": "pw-%s-%s" % (re.sub(r"[^a-z0-9]+", "-", work_name_for(r).lower()).strip("-")[:40],
-                                    hashlib.sha1(("%s/%s" % (zone, r["rel"])).encode("utf-8")).hexdigest()[:6]),
+                "id": Y.work_id(work_name_for(r), key),
+                # From a folder of the user's (#182): made by a yes, read for the first time by Start with
+                # this one, its first look and the request drawn from it, and whether it waits to be started.
+                "discovered": discovered, "first_look": first_look, "look": look,
+                "unstarted": bool(discovered) and files is not None and first_look is None and zone != example,
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": "%s/%s" % (zone, r["rel"]),
                 "example": zone == example, "next": without_owner(nxt), "waiting": waiting_on(rows.get("Waiting on", "")),
@@ -4505,9 +4530,31 @@ def act_button(req: str, label: str, say: str, cls: str = "act", extra: str = ""
 
 
 def continue_button(w: dict, label: str = "Continue", primary: bool = True) -> str:
+    """Continue, or Continue in Claude: with a first look's suggested request
+    waiting (#182), the request is what Claude is asked, once."""
+    if suggested_ready(w):
+        return act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"], "suggested": True}), label,
+                          "Opening %s in Claude, with your request…" % w["name"], "act go%s" % (" primary" if primary else ""),
+                          ' data-phrase="%s"' % E(w["look"]["request"]))
     return act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), label,
                       "Opening %s in Claude…" % w["name"], "act go%s" % (" primary" if primary else ""),
                       ' data-phrase="%s"' % E("Where am I on %s?" % w["name"]))
+
+
+def suggested_ready(w: dict) -> bool:
+    """Whether a first look's suggested request waits to be asked: its
+    question answered, and Continue not yet pressed on it."""
+    look = w.get("look")
+    if not look or look.get("used") or not look.get("request"):
+        return False
+    return look.get("question") not in [q["file"] for q in w["questions"]]
+
+
+def start_button(w: dict, label: str = "Start with this one", primary: bool = False) -> str:
+    """Start with this one (#182): the first time Garrick reads the work's files."""
+    return act_button(json.dumps({"verb": "start", "zone": w["zone"], "file": w["rel"]}), label,
+                      "Reading %s: Garrick reads its files now, and changes nothing in the folder. This takes a minute "
+                      "or two…" % w["name"], "act go%s" % (" primary" if primary else ""))
 
 
 def work_row(w: dict, today: dt.date) -> str:
@@ -4534,15 +4581,25 @@ def question_card(q: dict, w: dict) -> str:
                       for label, action in q["options"])
     if not q["options"]:
         buttons = continue_button(w, "Answer in Claude", primary=False)
-    later = act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
-                       "Putting it off until tomorrow…", "act sh-later")
+    if q.get("own"):
+        # An answer in the user's own words (#182): a box opens under the buttons, and its words are the answer.
+        buttons += ('<button class="act sh-own" type="button" data-own="%s" data-zone="%s" data-file="%s">%s</button>'
+                    % (E(q["own"]), E(q["zone"]), E(q["file"]), E(q["own"])))
+        later = '<button class="act" type="button" data-w-open="%s">See where it stands</button>' % E(w["id"])
+    else:
+        later = act_button(json.dumps({"verb": "later", "zone": q["zone"], "file": q["file"]}), "Not now",
+                           "Putting it off until tomorrow…", "act sh-later")
     return ('<div class="sh-q" data-q="%s"><b>%s</b>%s<div class="sh-opts">%s%s</div></div>'
             % (E(q["file"]), md_inline(ask), '<p>%s</p>' % md_inline(q["context"]) if q["context"] else "", buttons, later))
 
 
-def home_section(W: List[dict], today: dt.date, example: Optional[str], local: Optional[str]) -> str:
+def home_section(W: List[dict], today: dt.date, example: Optional[str], local: Optional[str],
+                 yours: Optional[dict] = None) -> str:
     """The home: Ask something, Needs you, the note when local sessions are
-    off, Your work, and the example's foot."""
+    off, the work from a folder of the user's waiting to be started and the
+    suggestions waiting for an answer (#182), Your work with Add your own
+    work, and the foot: the example's line, and the work put away."""
+    yours = yours or {}
     shown = [(q, w) for w in W for q in w["questions"] if q["shown"]]
     shown.sort(key=lambda qw: (qw[0]["asked"] or dt.date.min, qw[0]["file"]))
     put_off = sum(1 for w in W for q in w["questions"] if not q["shown"])
@@ -4552,6 +4609,11 @@ def home_section(W: List[dict], today: dt.date, example: Optional[str], local: O
              else '<div class="sh-empty">Nothing needs you.</div>')
     off = ('<div class="sh-card sh-warn" id="sh-off" role="status"><b>%s</b><p>%s</p></div>'
            % (E(handoff_mod().LOCAL_OFF_TITLE), E(handoff_mod().LOCAL_OFF))) if local else ""
+    start = start_section([w for w in W if w["unstarted"]], any(w["discovered"] and w["first_look"] for w in W),
+                          yours.get("confirmed") or {}, today)
+    waiting = "".join('<div class="sh-card sh-waiting"><span>%s</span><button class="act" type="button" data-w-open="%s">'
+                      'See them</button></div>' % (E(said), E(vid)) for vid, said in yours.get("waiting") or [])
+    W = [w for w in W if not w["unstarted"]]
     rows = [work_row(w, today) for w in W]
     if rows:
         rest = W[VISIBLE_WORK:]
@@ -4563,8 +4625,9 @@ def home_section(W: List[dict], today: dt.date, example: Optional[str], local: O
         listing = '<div class="sh-card sh-list" id="sh-list">%s%s</div>' % ("".join(rows[:VISIBLE_WORK]), more)
     else:
         listing = ('<div class="sh-card sh-start" id="sh-start"><div class="sh-big">Start with your own work</div>'
-                   '<p>Say what you are working on in Ask something above, in your own words, and Claude sets it up as '
-                   'a piece of work here. There is nothing to learn first.</p></div>')
+                   '<p>Press <b>Add your own work</b> and pick the folder you work from: Garrick suggests the pieces of '
+                   'work in it, and changes nothing there. Or say what you are working on in Ask something above, in '
+                   'your own words. There is nothing to learn first.</p></div>')
     foot = ""
     if example == "present":
         foot = ('<div class="sh-foot"><span>Everything marked Example is made up, to show how Garrick works.</span>%s</div>'
@@ -4575,12 +4638,165 @@ def home_section(W: List[dict], today: dt.date, example: Optional[str], local: O
         foot = ('<div class="sh-foot"><span>The example is archived. Nothing of yours was touched.</span>%s</div>'
                 % act_button(json.dumps({"verb": "example", "do": "restore"}), "Bring the example back",
                              "Bringing the example back…", "sh-link"))
+    for a in yours.get("away") or []:
+        foot += ('<div class="sh-foot sh-away"><span>%s is put away. Its folder is as it was.</span>%s</div>'
+                 % (E(a["project"]), act_button(json.dumps({"verb": "bring-back", "zone": a["zone"], "project": a["project"]}),
+                                                "Bring it back", "Bringing %s back…" % a["project"], "sh-link")))
+    add = ('<span class="sh-right"><button class="act" type="button" data-pick="folder" data-phrase="%s">Add your own work'
+           '</button></span>' % E(ADD_PHRASE))
     return ('<form class="sh-ask" id="sh-ask" autocomplete="off"><input id="sh-askbox" name="q" placeholder="Ask something, or start new work" '
             'aria-label="Ask something"><button class="act primary" type="submit">Ask</button></form>'
             '<div class="sh-answer" id="sh-answer" role="status" hidden></div>'
-            '<h2 class="sh-h">Needs you <small>%s</small></h2><div class="sh-card" id="sh-needs">%s</div>%s'
-            '<h2 class="sh-h">Your work <small>most recent first</small></h2>%s%s'
-            % (E(count), needs, off, listing, foot))
+            '<h2 class="sh-h">Needs you <small>%s</small></h2><div class="sh-card" id="sh-needs">%s</div>%s%s%s'
+            '<h2 class="sh-h">Your work <small>most recent first</small>%s</h2>%s%s'
+            % (E(count), needs, off, start, waiting, add, listing, foot))
+
+
+# What a browser copies for Add your own work, since only the Mac app can open its folder picker.
+ADD_PHRASE = "Look through the folder I keep my work in, and suggest the pieces of work in it. Change nothing there."
+
+
+def start_section(waiting: List[dict], started: bool, confirmed: Dict[str, dict], today: dt.date) -> str:
+    """The work a yes made from a folder of the user's, not read yet (#182):
+    Start with one, before any is started, then Ready to start."""
+    if not waiting:
+        return ""
+    rows = []
+    for i, w in enumerate(waiting):
+        p = confirmed.get(w["discovered"]) or {}
+        meta = [where_said(p) if p else "Folder %s" % E(your_work_mod().said_folder(w["folder_said"].rstrip("/")))]
+        if p.get("last"):
+            meta.append("last activity %s" % ago(as_date(p["last"]), today).lower())
+        if p.get("files"):
+            meta.append("%d files" % p["files"])
+        rows.append('<div class="sh-row" data-w="%s"><div class="sh-name"><button type="button" class="sh-link" data-w-open="%s">'
+                    '%s</button>%s</div><div class="sh-meta">%s</div>%s</div>'
+                    % (E(w["id"]), E(w["id"]), E(w["name"]), "" if started else '<span class="sh-tag sh-new">New</span>',
+                       " · ".join(meta), start_button(w, "Start" if started else "Start with this one",
+                                                      primary=not started and i == 0)))
+    if started:
+        return ('<h2 class="sh-h">Ready to start <small>not read yet</small></h2><div class="sh-card sh-list" id="sh-ready">%s</div>'
+                % "".join(rows))
+    return ('<h2 class="sh-h">Start with one</h2><div class="sh-card sh-list" id="sh-startone"><div class="sh-lead">You said yes to '
+            '%d piece%s of work. Pick one to start: Garrick reads its files now and tells you where it stands. The others '
+            'wait here until you are ready.</div>%s</div>' % (len(waiting), "" if len(waiting) == 1 else "s", "".join(rows)))
+
+
+def where_said(p: dict) -> str:
+    """Where a proposal's files are, as the page says it: a folder with the one it is in, or the word its files' names share."""
+    if p.get("kind") == "names":
+        return "Files whose names include “%s”" % E(p.get("name") or "")
+    parts = [x for x in str(p.get("folder") or "").split("/") if x]
+    if not parts:
+        return "The folder itself"
+    return "Folder %s, in %s" % (E(parts[-1]), E(parts[-2] if len(parts) > 1 else p.get("_picked") or "the folder you picked"))
+
+
+def your_work_data(ws: Path) -> dict:
+    """What the home needs from the folders looked through (#182): the
+    proposals said yes to, by id; one line for each folder whose suggestions
+    still wait, with its view's id; and the work put away."""
+    Y = your_work_mod()
+    confirmed, waiting = {}, []
+    for real, entry in sorted(Y.discovery(ws)["folders"].items()):
+        if not isinstance(entry, dict):
+            continue
+        for p in entry.get("confirmed") or []:
+            if isinstance(p, dict) and p.get("id"):
+                confirmed[p["id"]] = dict(p, _picked=entry.get("name") or "")
+        n = len(entry.get("top") or []) + len(entry.get("more") or [])
+        if n:
+            waiting.append((Y.view_id(real), "%d suggestion%s from %s wait%s for your answer." % (
+                n, "" if n == 1 else "s", entry.get("name") or os.path.basename(real), "s" if n == 1 else "")))
+    return {"confirmed": confirmed, "waiting": waiting, "away": Y.put_away(ws)}
+
+
+def discovery_pages(ws: Path, today: dt.date) -> str:
+    """One page for each folder looked through whose suggestions still wait
+    (#182): the pieces of work Garrick found, most recently active first,
+    each with Yes, Rename and Not a piece of work; the rest under more; and
+    what was left out, and why."""
+    Y = your_work_mod()
+    options = Y.places(ws, workspace_context(ws) or {})
+    place = ""
+    if len(options) > 1:
+        place = ('<div class="sh-card sh-place"><label><b>Which part of your workspace is this work for?</b> '
+                 '<select data-place><option value="">Choose…</option>%s</select></label></div>'
+                 % "".join('<option value="%s">%s</option>' % (E(json.dumps(dict({"zone": o["zone"]},
+                                                                                **({"party": o["party"]} if o["party"] else {})))),
+                                                               E(o["label"])) for o in options))
+    if any(o["party"] is None for o in options):
+        # A zone with no party yet, as before any interview: whose work it is, asked here, in place (#182).
+        place += ('<div class="sh-card sh-place sh-owner"%s><label><b>%s</b> <input data-owner data-needed="%s" '
+                  'placeholder="%s" aria-label="%s"></label></div>'
+                  % (" hidden" if len(options) > 1 else "", E(Y.OWNER), "1" if len(options) == 1 else "",
+                     E(Y.OWNER_HINT), E(Y.OWNER)))
+    out = []
+    for real, entry in sorted(Y.discovery(ws)["folders"].items()):
+        if not isinstance(entry, dict):
+            continue
+        top, more = entry.get("top") or [], entry.get("more") or []
+        if not (top or more):
+            continue
+        name = entry.get("name") or os.path.basename(real)
+        rows = [suggestion_row(dict(p, _picked=name), today) for p in top]
+        # What was said yes to from this folder stays in the list, marked, under its own name: a rename shows.
+        rows += [kept_row(dict(p, _picked=name)) for p in entry.get("confirmed") or [] if isinstance(p, dict)]
+        rest = [suggestion_row(dict(p, _picked=name), today) for p in more]
+        listing = "".join(rows) + ('<details class="sh-more"><summary>%d more, quieter lately</summary>%s</details>'
+                                   % (len(rest), "".join(rest)) if rest else "")
+        left = left_out_said(entry)
+        flat = ('<div class="sh-card sh-flat"><b>%s is mostly loose files, not folders.</b> So Garrick grouped them by a '
+                'word their names share. The groups are a guess: rename any that read wrong.</div>' % E(name)
+                if entry.get("flat") else "")
+        out.append('<article class="sh-work sh-disc" id="%s" hidden><button type="button" class="sh-link sh-back" data-home>‹ Home'
+                   '</button><h1>Your work in %s</h1><div class="sh-sub">%s</div><div class="sh-assure">Garrick read only names '
+                   'and dates, %d files, and changed nothing in %s.</div>%s%s<div class="sh-card sh-list">%s%s</div></article>'
+                   % (E(Y.view_id(real)), E(name),
+                      "Groups of files you worked on lately, most recent first. Say yes to the ones you want Garrick to "
+                      "keep track of." if entry.get("flat") else "Pieces of work you were busy with lately, most recent "
+                      "first. Say yes to the ones you want Garrick to keep track of.",
+                      int(entry.get("files") or 0), E(name), flat, place, listing,
+                      '<div class="sh-left">%s</div>' % E(left) if left else ""))
+    return "".join(out)
+
+
+def suggestion_row(p: dict, today: dt.date) -> str:
+    """One proposal: its name, where its files are, when it last moved, and the three answers."""
+    meta = "Last activity %s · %d files" % (ago(as_date(p.get("last")), today).lower(), int(p.get("files") or 0))
+    latest = ""
+    if p.get("kind") == "names" and p.get("latest"):
+        latest = '<div class="sh-meta">Latest: %s</div>' % E("; ".join(p["latest"][:3]))
+    yes = act_button(json.dumps({"verb": "suggestion", "id": p["id"], "answer": "yes"}), "Yes",
+                     "Adding %s…" % p.get("name"), "act primary", ' data-sugg=""')
+    no = act_button(json.dumps({"verb": "suggestion", "id": p["id"], "answer": "not"}), "Not a piece of work",
+                    "Noting it…", "act", ' data-sugg=""')
+    rename = ('<button class="act" type="button" data-rename="%s" data-name="%s">Rename</button>' % (E(p["id"]), E(p.get("name") or "")))
+    return ('<div class="sh-row sh-prop" data-sugg-id="%s"><div class="sh-name">%s</div><div class="sh-next">%s</div>'
+            '<div class="sh-meta">%s</div>%s<span class="go sh-ans">%s%s%s</span></div>'
+            % (E(p["id"]), E(p.get("name") or ""), where_said(p), E(meta), latest, yes, rename, no))
+
+
+def kept_row(p: dict) -> str:
+    """A suggestion already said yes to: its name, as renamed, and that Garrick keeps track of it."""
+    renamed = p.get("suggested") and p.get("suggested") != p.get("name")
+    return ('<div class="sh-row sh-prop sh-kept"><div class="sh-name">%s</div><div class="sh-next">%s</div>'
+            '<div class="sh-meta sh-said">✓ Garrick will keep track of this%s.</div></div>'
+            % (E(p.get("name") or ""), where_said(p), ", renamed from %s" % E(p["suggested"]) if renamed else ""))
+
+
+def left_out_said(entry: dict) -> str:
+    """The line under the suggestions: what was left out, and why, three names at most for each reason."""
+    by: Dict[str, List[str]] = {}
+    for l in entry.get("left_out") or []:
+        if isinstance(l, dict) and l.get("folder"):
+            by.setdefault(str(l.get("said") or "left out"), []).append(str(l["folder"]).replace("/", " › "))
+    for r in entry.get("routines") or []:
+        if isinstance(r, dict) and r.get("label"):
+            by.setdefault("a report made again and again", []).append(str(r["label"]))
+    parts = ["%s (%s%s)" % (said, ", ".join(names[:3]), " and %d more" % (len(names) - 3) if len(names) > 3 else "")
+             for said, names in by.items()]
+    return ("Not suggested: " + "; ".join(parts) + ".") if parts else ""
 
 
 def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]:
@@ -4602,7 +4818,7 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]
         said_since = "since it last moved" if moved else ""
     marks = {p: "new" for p in diff["new"]}
     marks.update({p: "changed" for p in diff["changed"]})
-    ordered = sorted(now, key=lambda p: (p not in marks, -now[p][0], p.casefold()))
+    ordered = sorted(now, key=lambda p: (-now[p][0], p.casefold()))       # most recent first; new and changed say so
     items = "".join('<li>%s%s</li>' % (E(p), ' <span class="sh-tag">%s</span>' % marks[p] if p in marks else "")
                     for p in ordered[:FILES_SHOWN])
     items += "".join('<li class="sh-gone">%s <span class="sh-tag">missing</span></li>' % E(p) for p in diff["missing"][:FILES_SHOWN])
@@ -4616,20 +4832,36 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]
 
 def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
     """A piece of work's own page: what it is, who is involved, what happened
-    last, what is open, the next step, Continue, and its files."""
+    last, what is open, the next step, Continue, and its files. One from a
+    folder of the user's (#182) also says when its first look was made, to
+    be checked; asks its next step there; offers the request drawn from it;
+    says where its files live; and has Stop using this."""
     dl = []
     if w["about"]:
         dl.append(("What it is", md_inline(w["about"])))
-    if w["who"]:
+    Y = your_work_mod()
+    if w["discovered"]:
+        # Work from a folder of the user's (#182): the people its files name, from its first look, never the party
+        # the work was filed under, which may be only whose work it is.
+        involved = re.search(r"\bInvolved: (.+?)\.(?=\s+Answered on |\s*$)", w["where"] or "")
+        dl.append(("Who's involved", md_inline(involved.group(1)) if involved else
+                   E("No one is named in its files yet.") if w["first_look"] else
+                   E("Garrick has not read its files yet.")))
+    elif w["who"]:
         dl.append(("Who's involved", E("; ".join(w["who"]))))
     entry = w["entry"]
-    if entry and entry[1]:
+    first = Y.FIRST_ENTRY_RE.match(entry[1]) if entry and entry[1] else None
+    if first:
+        # The newest dated entry is Garrick's own first look: what the page shows is the work's own last event.
+        dl.append(("What happened last", md_inline(first.group(1))))
+    elif entry and entry[1]:
         dl.append(("What happened last", ("%s: " % E(ago(entry[0], today)) if entry[0] else "") + md_inline(entry[1])))
     elif w["where"]:
         dl.append(("What happened last", md_inline(w["where"])))
     opened = []
     shown = [q for q in w["questions"] if q["shown"]]
-    if shown:
+    look_q = (w.get("look") or {}).get("question")
+    if shown and not (len(shown) == 1 and shown[0]["file"] == look_q):
         opened.append("A question for you, on the home: %s" % E(shown[0]["ask"]))
     for a in w["owed"]:
         opened.append('<span class="sh-owed">Owed%s:</span> %s' % (" by %s" % E(due_said(a["when"], today)) if a["when"] else "",
@@ -4638,17 +4870,47 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
         opened.append("Waiting on %s" % E(w["waiting"]) + (", %s" % md_inline(w["deadline"]) if w["deadline"] else ""))
     if opened:
         dl.append(("Open", "<br>".join(opened)))
-    dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
+    asking = [q for q in w["questions"] if q["file"] == look_q]
+    if not asking:                              # an open first look's question says the next step itself, once
+        dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
     head, files = work_files(w, kept, today)
-    where = ("Folder: %s" % E(w["folder_said"])) if w["files"] is not None else "Kept with the work in Garrick"
+    # A folder is named with the one it is in, never as a path (#182).
+    where = ("Folder: %s" % E(Y.said_folder(str(w["files"])))) if w["files"] is not None else "Kept with the work in Garrick"
     if w["folder_said"] and w["files"] is None:
-        where = "Folder: %s, which is not there now" % E(w["folder_said"])
+        where = "Folder: %s, which is not there now" % E(Y.said_folder(w["folder_said"].rstrip("/")))
+    first = ""
+    if w["first_look"] and asking:
+        first = ('<div class="sh-first"><i aria-hidden="true">✓</i> First look, made %s from the folder\'s files. Check it '
+                 'before you rely on it.</div>' % E(ago(w["first_look"], today).lower()))
+    if w["unstarted"]:
+        acts = start_button(w, primary=True)
+        dl = [("Not read yet", "Garrick has not opened these files. Start with this one reads them and tells you where "
+               "the work stands; nothing in the folder is changed.")]
+    else:
+        acts = continue_button(w, "Continue in Claude", primary=not w["waiting"] and not asking)
+    extra = ""
+    if asking:
+        extra += '<h2 class="sh-h">Needs you <small>1 question</small></h2><div class="sh-card">%s</div>' % question_card(asking[0], w)
+    elif suggested_ready(w):
+        extra += ('<h2 class="sh-h">Suggested request</h2><div class="sh-card sh-req">Garrick suggests starting here:'
+                  '<blockquote>%s</blockquote>%s<div class="sh-what">Opens Claude\'s desktop app on %s, with this request '
+                  'already asked. Claude can read the folder, and its editing tools are kept out of it in every mode. '
+                  'A shell command is not covered, whether you approve it or Claude\'s Auto mode runs it.</div></div>'
+                  % (E(w["look"]["request"]), continue_button(w, "Continue in Claude"), E(w["name"])))
+        acts = ""
+    foot = ""
+    if w["files"] is not None and not w["example"]:
+        foot = ('<div class="sh-foot"><span>Where these files live: left in place, in %s. Garrick only reads them.</span>%s</div>'
+                % (E(Path(str(w["files"])).name), act_button(
+                    json.dumps({"verb": "stop-using", "zone": w["zone"], "file": w["rel"]}), "Stop using this",
+                    "Putting %s away…" % w["name"], "sh-link",
+                    ' data-confirm="Click again: Garrick puts its record away, and the folder stays as it is"')))
     return ('<article class="sh-work" id="%s" hidden><button type="button" class="sh-link sh-back" data-home>‹ Home</button>'
-            '<h1>%s%s</h1><div class="sh-sub">%s%s</div><div class="sh-card sh-ws"><dl>%s</dl><div class="sh-acts">%s</div></div>'
-            '<h2 class="sh-h">Files <small>%s</small></h2><div class="sh-card sh-ws">%s</div></article>'
+            '<h1>%s%s</h1><div class="sh-sub">%s%s</div><div class="sh-card sh-ws">%s<dl>%s</dl><div class="sh-acts">%s</div></div>%s'
+            '<h2 class="sh-h">Files <small>%s</small></h2><div class="sh-card sh-ws">%s</div>%s</article>'
             % (E(w["id"]), E(w["name"]), '<span class="sh-tag">Example</span>' if w["example"] else "", where,
-               " · %s" % E(head) if head else "", "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), v) for k, v in dl),
-               continue_button(w, "Continue in Claude", primary=not w["waiting"]), E(head), files))
+               " · %s" % E(head) if head else "", first, "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), v) for k, v in dl),
+               acts, extra, E(head), files, foot))
 
 
 def home_settings(layout: str) -> str:
@@ -4699,7 +4961,23 @@ details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-
 .sh-ws{padding:14px 16px}.sh-ws dl{margin:0}.sh-ws dt{font-size:12px;color:var(--muted);margin-top:10px}.sh-ws dt:first-child{margin-top:0}.sh-ws dd{margin:2px 0 0;overflow-wrap:anywhere}
 .sh-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .sh-files{margin:0;padding:0;list-style:none;font-size:13px;color:var(--ink2)}.sh-files li{padding:3px 0;overflow-wrap:anywhere}.sh-gone{text-decoration:line-through;color:var(--muted)}
-@media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}
+.sh-right{margin-left:auto;font-family:system-ui,-apple-system,sans-serif}.sh-right .act{font-size:13px;padding:6px 12px;border-radius:8px}
+.sh-tag.sh-new{color:var(--good);background:color-mix(in srgb,var(--good) 12%,transparent)}
+.sh-lead{padding:12px 16px 4px;color:var(--ink2)}.sh-list>.sh-lead+.sh-row{border-top:0}
+.sh-waiting{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between;padding:12px 16px;margin-top:12px;color:var(--ink2)}
+.sh-waiting .act,.sh-q .act,.sh-ans .act,.sh-req .act{font-size:13px;padding:6px 12px;border-radius:8px}
+.sh-assure{font-size:13px;color:var(--ink2);background:var(--wash);border-radius:10px;padding:9px 12px;margin:0 0 14px}
+.sh-flat,.sh-place{padding:12px 16px;border-left:3px solid var(--accent);margin-bottom:14px;color:var(--ink2)}.sh-place select{font:inherit;margin-left:6px}
+.sh-ans{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}.sh-prop .sh-name{overflow-wrap:anywhere}
+.sh-prop .sh-edit{display:flex;gap:6px;flex-wrap:wrap}.sh-prop .sh-edit input{font:inherit;font-weight:600;min-width:0;width:min(320px,100%);padding:4px 8px;border-radius:7px;border:1px solid var(--accent);background:var(--raise);color:var(--ink)}
+.sh-said{color:var(--good)}.sh-kept .sh-name{color:var(--ink2)}
+.sh-owner input{font:inherit;min-width:0;width:min(320px,100%);margin-left:6px;padding:4px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink)}
+.sh-left{padding:10px 16px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
+.sh-first{font-size:12px;color:var(--muted);margin:0 0 10px}.sh-first i{font-style:normal;color:var(--good)}
+.sh-req{padding:14px 16px}.sh-req blockquote{margin:6px 0 12px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash);border-radius:0 8px 8px 0;color:var(--ink)}
+.sh-what{font-size:12px;color:var(--muted);margin-top:8px}
+.sh-ownbox{margin-top:10px}.sh-ownbox textarea{width:100%;font:inherit;color:var(--ink);background:var(--raise);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;min-height:60px;resize:vertical}
+@media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}.sh-ans{justify-content:flex-start}
 #tab-home,#tab-work{max-width:none}main{padding:16px 16px 80px}body.simple .sh-dot .sh-dw{display:none}}
 """
 
@@ -4740,11 +5018,55 @@ function answer(){var d=null;try{d=JSON.parse(ss(ANS)||'null')}catch(e){}var el=
 if(!d||!d.a){el.hidden=true;return}el.hidden=false;el.textContent='';var h=document.createElement('b');h.textContent=d.q;el.appendChild(h);
 el.appendChild(document.createTextNode(d.a));var x=document.createElement('button');x.className='wx';x.type='button';x.textContent='×';
 x.setAttribute('aria-label','Dismiss');x.onclick=function(){ss(ANS,null);el.hidden=true};el.appendChild(x)}
-var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='ask-desktop'){var d={q:q.prompt,a:out&&out.answer||''};
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&(q.verb==='discover'||q.verb==='start')&&out&&out.ok&&out.view)ss(VIEW,'work:'+out.view);   /* the suggestions, or the work's first look, after the rebuild */
+if(q&&q.verb==='ask-desktop'){var d={q:q.prompt,a:out&&out.answer||''};
 if(d.a)ss(ANS,JSON.stringify(d));else ss(ANS,null);answer();var b=form&&form.querySelector('button');if(b){b.disabled=false;b.textContent='Ask'}
 if(out&&out.ok&&box)box.value=''}
 if(prev)return prev(q,out)};
-answer();var v=ss(VIEW);view(v||'home',true)})();
+answer();var v=ss(VIEW);view(v||'home',true);
+/* Add your own work (#182): the Mac app opens its own folder picker, and picking a folder grants it access; a browser
+   cannot, so it copies what to ask Claude instead. A suggestion's Yes and Not a piece of work carry the part of the
+   workspace chosen above them; Rename and Change it open a box for the user's words */
+function act(q,said){if(!host){say('Answer this in the Garrick app: a browser cannot change anything.');return}
+if(!(window.GarrickAct&&GarrickAct(q,said))){host.postMessage({act:q});say(said)}}
+function placed(el,q){var art=el.closest('article'),sel=art&&art.querySelector('select[data-place]'),ow=art&&art.querySelector('input[data-owner]'),pl={};
+if(sel){if(!sel.value){sel.focus();say('First choose which part of your workspace this work is for.');return null}
+try{pl=JSON.parse(sel.value)}catch(x){return null}}
+q=Object.assign({},q,pl);
+/* whose work it is, where that part of the workspace has no one yet: kept for the rebuild, in case the answer is refused */
+if(ow&&(sel?!pl.party:ow.dataset.needed==='1')){var v=ow.value.trim();if(!v){ow.focus();say('First say whose work this is: your employer, or “my own”.');return null}
+ss('garrick-owner',v);q=Object.assign(q,{owner:v})}
+return q}
+function owner(){[].forEach.call(document.querySelectorAll('select[data-place]'),function(sel){var art=sel.closest('article'),box=art&&art.querySelector('.sh-owner');
+function show(){var pl={};try{pl=JSON.parse(sel.value||'{}')}catch(x){}if(box)box.hidden=!sel.value||!!pl.party}sel.onchange=show;show()});
+var kept=ss('garrick-owner');if(kept)[].forEach.call(document.querySelectorAll('input[data-owner]'),function(i){if(!i.value)i.value=kept})}
+function renameReq(id,v){return{verb:'suggestion',id:id,answer:'rename',name:v}}
+function ownReq(z,f,l,v){return{verb:'answer',zone:z,file:f,label:l,text:v}}
+function rename(b){var row=b.closest('.sh-prop'),cell=row&&row.querySelector('.sh-name');if(!cell||cell.querySelector('input'))return;
+var was=cell.textContent,key='garrick-rename-'+b.dataset.rename;cell.innerHTML='<div class="sh-edit"><input aria-label="New name"><button class="act primary" type="button">Save</button><button class="act" type="button">Cancel</button></div>';
+var inp=cell.querySelector('input'),bs=cell.querySelectorAll('button');inp.value=ss(key)||b.dataset.name||was;inp.focus();inp.select();
+/* the name typed is kept until the rename is saved, so a refusal and the rebuild after it never lose it */
+function save(){var v=inp.value.trim();if(!v){inp.focus();return}ss(key,v);var q=placed(b,renameReq(b.dataset.rename,v));if(q)act(q,'Adding '+v+'…')}
+function drop(){ss(key,null);cell.textContent=was}
+bs[0].onclick=save;bs[1].onclick=drop;inp.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();save()}if(e.key==='Escape')drop()}}
+function own(b){var card=b.closest('.sh-q'),box=card&&card.querySelector('.sh-ownbox');if(!card)return;if(box){box.remove();return}
+box=document.createElement('div');box.className='sh-ownbox';var ta=document.createElement('textarea');ta.setAttribute('aria-label','The next step, in your words');
+box.appendChild(ta);var row=document.createElement('div');row.className='sh-opts';row.innerHTML='<button class="act primary" type="button">Save</button><button class="act" type="button">Cancel</button>';
+box.appendChild(row);card.appendChild(box);var bs=row.querySelectorAll('button');ta.focus();
+bs[0].onclick=function(){var v=ta.value.trim();if(!v){ta.focus();return}act(ownReq(b.dataset.zone,b.dataset.file,b.dataset.own,v),'Noting the next step…')};
+bs[1].onclick=function(){box.remove()}}
+document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
+var pk=t.closest('[data-pick]');if(pk){e.preventDefault();e.stopPropagation();if(host)host.postMessage({pick:pk.dataset.pick});
+else if(window.GarrickCopy)GarrickCopy(pk.dataset.phrase||'').then(function(){say('Only the Garrick app can open your folders. What to ask Claude instead is copied: paste it into Claude.')});return}
+var sg=t.closest('button[data-sugg]');if(sg){var q;try{q=JSON.parse(sg.dataset.act)}catch(x){return}e.preventDefault();e.stopPropagation();
+q=placed(sg,q);if(q)act(q,sg.dataset.say);return}
+var rn=t.closest('button[data-rename]');if(rn){e.preventDefault();rename(rn);return}
+var ow=t.closest('button[data-own]');if(ow){e.preventDefault();own(ow)}},true);
+/* after a rebuild: a rename typed and not yet saved opens again with its words, and whose work it is is filled in again */
+owner();[].forEach.call(document.querySelectorAll('button[data-rename]'),function(b){if(ss('garrick-rename-'+b.dataset.rename))rename(b)});
+var prior=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='suggestion'&&out&&out.ok){
+if(q.answer==='rename')ss('garrick-rename-'+q.id,null);if(q.owner)ss('garrick-owner',null)}if(prior)return prior(q,out)}})();
 /* Settings › Home, on either page: saved for every viewer at once, then the page rebuilds on the choice */
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function homeReq(v){return{verb:'settings',home:v}}
@@ -6441,8 +6763,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     guide_body, guide_pages = guide_tab(ws)
     home_tabs = ""
     if simple:
-        home_tabs = (section("home", False, home_section(HW, now.date(), example, local))
-                     + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)))
+        home_tabs = (section("home", False, home_section(HW, now.date(), example, local, your_work_data(ws)))
+                     + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
+                               + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s</main>%s'
             % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,

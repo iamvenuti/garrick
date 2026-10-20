@@ -98,6 +98,8 @@ ALLOWED_TOOLS = (
     "System/tools/drift.py",
     "System/tools/next_up.py",
     "System/tools/nurture.py",
+    "System/tools/discover.py",
+    "System/tools/extract.py",
     "System/skills/intake/intake.py",
     "System/skills/meetings/ingest.py",
     "System/skills/todo/todo.py",

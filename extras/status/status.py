@@ -4818,7 +4818,7 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]
         said_since = "since it last moved" if moved else ""
     marks = {p: "new" for p in diff["new"]}
     marks.update({p: "changed" for p in diff["changed"]})
-    ordered = sorted(now, key=lambda p: (p not in marks, -now[p][0], p.casefold()))
+    ordered = sorted(now, key=lambda p: (-now[p][0], p.casefold()))       # most recent first; new and changed say so
     items = "".join('<li>%s%s</li>' % (E(p), ' <span class="sh-tag">%s</span>' % marks[p] if p in marks else "")
                     for p in ordered[:FILES_SHOWN])
     items += "".join('<li class="sh-gone">%s <span class="sh-tag">missing</span></li>' % E(p) for p in diff["missing"][:FILES_SHOWN])

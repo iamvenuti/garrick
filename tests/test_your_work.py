@@ -447,6 +447,14 @@ class TestTheWorksPage(Case):
         for said in ("blank", " me,", "only a name"):
             self.assertNotIn(said, page)
 
+    def test_its_files_are_listed_most_recent_first(self):
+        page = self.started()
+        listed = re.findall(r"<li>([^<]+?)(?: <span|</li>)", page.split('<ul class="sh-files">', 1)[1].split("</ul>", 1)[0])
+        folder = self.drive / "Marketing" / "Catalogue 2027"
+        when = {rel: (folder / rel).stat().st_mtime for rel in listed}
+        self.assertEqual(sorted(listed, key=lambda r: (-int(when[r]), r.casefold())), listed)
+        self.assertEqual("Catalogue 2027 page plan.xlsx", listed[0])
+
     def test_a_source_is_a_title(self):
         for said, want in (("the proof review call on 14 October", "Proof review call on 14 October"),
                            ("Launch timeline.xlsx", "Launch timeline"),

@@ -231,6 +231,16 @@ DECLARED: Dict[str, Op] = {
     "start": _op(("zone", "file"), ("file",), "zone", True),
     "stop-using": _op(("zone", "file"), ("file",), "zone", True),
     "bring-back": _op(("zone", "project"), ("project",), "zone", True),
+    # Where a work's files live (#189): Keep a copy, Refresh now, the media
+    # switch, Move into Garrick, Undo the move, and back to left in place, the
+    # copy kept or deleted; committed in its zone. Stop, while a copy or a move
+    # is still copying and checking, and how far it has got, which only reads.
+    # A work's own file opened, its folder shown in Finder, or an earlier
+    # version opened or saved as a separate file (`to`, from the Save panel).
+    "files": _op(("zone", "file", "do"), ("file", "do"), "zone", True),
+    "files-stop": _op(("zone", "file"), ("file",), "workspace"),
+    "files-progress": _op(("zone", "file"), ("file",), "none", retry="safe"),
+    "work-file": _op(("zone", "file", "do", "path", "version", "to"), ("file", "do", "path", "version"), "machine"),
     # The example's Remove and Bring back: System/tools/example.py (#174).
     "example": _op(("do",), ("do",), "workspace"),
     # A check finding's Fix, from the Threads card (#179): nurture.py's own

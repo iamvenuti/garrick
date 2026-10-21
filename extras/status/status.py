@@ -1644,7 +1644,7 @@ ACTION_UNKNOWN = 60
 ACTION_KEEP = ("rename", "delete", "new-project", "new-thread", "undo")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
               "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
-              "bring-back")
+              "bring-back", "files")
 
 WORK_CSS = r"""
 #work{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:10;display:flex;flex-direction:column;gap:6px;width:max-content;max-width:90vw}
@@ -4285,6 +4285,20 @@ def your_work_mod():
     return _YW
 
 
+_WF = None
+
+
+def work_files_mod():
+    """work_files.py, beside this file: where a piece of work's files live,
+    left in place, a copy kept or moved into Garrick (#189)."""
+    global _WF
+    if _WF is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_work_files", str(Path(__file__).with_name("work_files.py")))
+        _WF = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_WF)
+    return _WF
+
+
 def home_layout(ws: Path) -> str:
     """"simple" where System/garrick-settings.json says `"home": "simple"`,
     otherwise "full": a workspace that never chose keeps the page it had."""
@@ -4485,6 +4499,15 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
             first_look = as_date(note_fm.get(Y.FIRST_LOOK))
             discovered = as_text(hub_fm.get(Y.DISCOVERED)).strip()
             look = looks.get(key) if isinstance(looks.get(key), dict) else None
+            # Where its files live (#189): left in place, a copy kept, or moved into Garrick, for a piece of work
+            # from a folder of the user's that is one thread.
+            store = storage_info(ws, key, hub_fm, r["hub"].parent, files, folder_said, discovered) \
+                if discovered and folder_said and r["hub"] and zone != example and work_name_for(r) == r["project"] else None
+            if store and store["mode"] == work_files_mod().MOVED:
+                files_dir_ = store["files"]
+            else:
+                files_dir_ = files or (r["hub"].parent if r["hub"] else
+                                       r["note"].parents[2] if r["note"].parent.parent.name == "Threads" else r["note"].parent)
             out.append({
                 "id": Y.work_id(work_name_for(r), key),
                 # From a folder of the user's (#182): made by a yes, read for the first time by Start with
@@ -4497,9 +4520,8 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
                 "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
                 "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,
-                "files_dir": files or (r["hub"].parent if r["hub"] else
-                                       r["note"].parents[2] if r["note"].parent.parent.name == "Threads" else r["note"].parent),
-                "own_files": files is None, "questions": questions_in(r["note"].parent, zdir, today),
+                "files_dir": files_dir_, "store": store,
+                "own_files": files is None and not (store and store["mode"] == work_files_mod().MOVED), "questions": questions_in(r["note"].parent, zdir, today),
             })
     out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))
     return out
@@ -4799,11 +4821,13 @@ def left_out_said(entry: dict) -> str:
     return ("Not suggested: " + "; ".join(parts) + ".") if parts else ""
 
 
-def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]:
+def work_files(w: dict, kept: Optional[dict], today: dt.date, deco=None) -> Tuple[str, str]:
     """A piece of work's files, (the summary for its heading, the list): what
     is new, changed or missing since it was last continued, from the files
     Continue kept; before its first Continue, what changed since the work last
-    moved."""
+    moved. `deco`, for one whose files have a copy or are in Garrick (#189),
+    gives each file's name as the list shows it and what follows it: its
+    versions, whether it is left out of the copy, a button that opens it."""
     H = handoff_mod()
     now = H.walk(w["files_dir"], project=w["own_files"])
     since = None
@@ -4819,8 +4843,9 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date) -> Tuple[str, str]
     marks = {p: "new" for p in diff["new"]}
     marks.update({p: "changed" for p in diff["changed"]})
     ordered = sorted(now, key=lambda p: (-now[p][0], p.casefold()))       # most recent first; new and changed say so
-    items = "".join('<li>%s%s</li>' % (E(p), ' <span class="sh-tag">%s</span>' % marks[p] if p in marks else "")
-                    for p in ordered[:FILES_SHOWN])
+    deco = deco or (lambda p: (E(p), ""))
+    items = "".join('<li>%s%s%s</li>' % (deco(p)[0], ' <span class="sh-tag">%s</span>' % marks[p] if p in marks else "",
+                                         deco(p)[1]) for p in ordered[:FILES_SHOWN])
     items += "".join('<li class="sh-gone">%s <span class="sh-tag">missing</span></li>' % E(p) for p in diff["missing"][:FILES_SHOWN])
     if len(ordered) > FILES_SHOWN:
         items += '<li class="muted">%d more</li>' % (len(ordered) - FILES_SHOWN)
@@ -4873,11 +4898,20 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
     asking = [q for q in w["questions"] if q["file"] == look_q]
     if not asking:                              # an open first look's question says the next step itself, once
         dl.append(("Next", "<b>%s</b>" % md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'))
-    head, files = work_files(w, kept, today)
+    store = w.get("store") if not w["unstarted"] else None
+    head, files = work_files(w, kept, today, file_deco(w, store, today) if store else None)
     # A folder is named with the one it is in, never as a path (#182).
     where = ("Folder: %s" % E(Y.said_folder(str(w["files"])))) if w["files"] is not None else "Kept with the work in Garrick"
     if w["folder_said"] and w["files"] is None:
         where = "Folder: %s, which is not there now" % E(Y.said_folder(w["folder_said"].rstrip("/")))
+    F = work_files_mod()
+    mode = store["mode"] if store else None
+    if mode == F.COPY:
+        where += " · read, never changed · a copy kept in Garrick"
+    elif mode == F.MOVED:
+        where = "In Garrick · moved from the folder %s%s · %s" % (
+            E(Y.said_folder(w["folder_said"].rstrip("/"))),
+            ", %s" % E(ago(store["moved_on"], today).lower()) if store["moved_on"] else "", E(F.said_files(store["src"]["files"])))
     first = ""
     if w["first_look"] and asking:
         first = ('<div class="sh-first"><i aria-hidden="true">✓</i> First look, made %s from the folder\'s files. Check it '
@@ -4888,6 +4922,12 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
                "the work stands; nothing in the folder is changed.")]
     else:
         acts = continue_button(w, "Continue in Claude", primary=not w["waiting"] and not asking)
+        if mode == F.COPY:
+            acts += ('<div class="sh-what">Garrick refreshes its copy from your folder first, then opens Claude\'s desktop app '
+                     'on %s. Claude reads your folder, as before.</div>' % E(w["name"]))
+        elif mode == F.MOVED:
+            acts += ('<div class="sh-what">Opens Claude\'s desktop app on %s. Claude reads the files in Garrick now, and may '
+                     'change them: Garrick keeps a version first, so a change can be undone.</div>' % E(w["name"]))
     extra = ""
     if asking:
         extra += '<h2 class="sh-h">Needs you <small>1 question</small></h2><div class="sh-card">%s</div>' % question_card(asking[0], w)
@@ -4898,8 +4938,17 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
                   'A shell command is not covered, whether you approve it or Claude\'s Auto mode runs it.</div></div>'
                   % (E(w["look"]["request"]), continue_button(w, "Continue in Claude"), E(w["name"])))
         acts = ""
-    foot = ""
-    if w["files"] is not None and not w["example"]:
+    foot, choices = "", ""
+    if store:
+        extra += where_card(w, store, today)
+        choices = where_page(w, store)
+        foot = ('<div class="sh-foot">%s%s</div>' % (where_line(w, store), act_button(
+            json.dumps({"verb": "stop-using", "zone": w["zone"], "file": w["rel"]}), "Stop using this",
+            "Putting %s away…" % w["name"], "sh-link",
+            ' data-confirm="%s"' % E("Click again: Garrick puts the files back in %s first, then puts its record away"
+                                     % Path(w["folder_said"].rstrip("/")).name if mode == F.MOVED else
+                                     "Click again: Garrick puts its record away, and the folder stays as it is"))))
+    elif w["files"] is not None and not w["example"]:
         foot = ('<div class="sh-foot"><span>Where these files live: left in place, in %s. Garrick only reads them.</span>%s</div>'
                 % (E(Path(str(w["files"])).name), act_button(
                     json.dumps({"verb": "stop-using", "zone": w["zone"], "file": w["rel"]}), "Stop using this",
@@ -4907,10 +4956,332 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
                     ' data-confirm="Click again: Garrick puts its record away, and the folder stays as it is"')))
     return ('<article class="sh-work" id="%s" hidden><button type="button" class="sh-link sh-back" data-home>‹ Home</button>'
             '<h1>%s%s</h1><div class="sh-sub">%s%s</div><div class="sh-card sh-ws">%s<dl>%s</dl><div class="sh-acts">%s</div></div>%s'
-            '<h2 class="sh-h">Files <small>%s</small></h2><div class="sh-card sh-ws">%s</div>%s</article>'
+            '<h2 class="sh-h">Files <small>%s</small></h2><div class="sh-card sh-ws">%s</div>%s</article>%s'
             % (E(w["id"]), E(w["name"]), '<span class="sh-tag">Example</span>' if w["example"] else "", where,
                " · %s" % E(head) if head else "", first, "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), v) for k, v in dl),
-               acts, extra, E(head), files, foot))
+               acts, extra, E(head), files, foot, choices))
+
+
+# ---- where a work's files live (#189) -------------------------------------------
+# A piece of work from a folder of the user's says on its page where its files
+# live, with a Change link to the three choices, each with a preview of what
+# it does, what it costs in space and download, and who else it touches, in
+# real sizes. A copy kept shows when it was last refreshed, how many versions
+# it has, the media switch and Refresh now; moved files show where they are,
+# open from the list, and Show them in Finder. A file with earlier versions
+# lists them, each to open or to save as a separate file; none is ever put
+# back over a file. What the buttons do is page_action.py's `files` and
+# `work-file`; WHERE_JS draws the busy screen, its Stop, the media question
+# and the versions list.
+
+def storage_info(ws: Path, key: str, fm: dict, project: Path, folder: Optional[Path], folder_said: str, pid: str) -> dict:
+    """What the page says of where a work's files live: the mode, Garrick's
+    folder for them, its versions and size, the files and their sizes (in
+    the folder, or in Garrick once moved), and what this Mac kept of the last
+    refresh."""
+    F, Y = work_files_mod(), your_work_mod()
+    mode = F.mode(fm)
+    copy = F.files_dir(project)
+    members = None
+    for entry in Y.discovery(ws)["folders"].values():
+        a = (entry.get("answers") or {}).get(pid)
+        if isinstance(a, dict) and a.get("kind") == "names":
+            members = [m for m in a.get("members") or [] if isinstance(m, str)]
+    listed = F.listing(copy) if mode == F.MOVED else (F.listing(folder, members) if folder is not None else {})
+    given = Path(folder_said.rstrip("/")).expanduser()
+    info = {"mode": mode, "files": copy, "has": F.has_copy(project), "media_in": F.media_in(fm),
+            "moved_on": as_date(fm.get(F.MOVED_ON)), "listed": listed, "src": F.sizes(listed),
+            "state": F.state(ws).get(key) or {}, "drive": drive_of(ws, given), "folder": given.name,
+            "versions": 0, "size": 0, "first": None, "history": {}}
+    if info["has"]:
+        info.update(versions=F.history_count(copy), first=F.history_first(copy), size=F.disk_size(copy),
+                    history=F.history_of(copy), copied=F.listing(copy))
+    return info
+
+
+def drive_of(ws: Path, folder: Path) -> str:
+    """The folder the user picked that this one is in, by name: the drive the preview names."""
+    real = os.path.realpath(str(folder))
+    for top, entry in sorted(your_work_mod().discovery(ws)["folders"].items(), key=lambda kv: -len(kv[0])):
+        if real == top or real.startswith(top.rstrip("/") + "/"):
+            return str(entry.get("name") or os.path.basename(top))
+    return folder.parent.name or folder.name
+
+
+def involved_names(w: dict) -> List[str]:
+    """The people the work's first look names, without what each does."""
+    found = re.search(r"\bInvolved: (.+?)\.(?=\s+Answered on |\s*$)", w["where"] or "")
+    if not found:
+        return []
+    names = re.sub(r"\s*\([^)]*\)", "", found.group(1))
+    return [n.strip() for n in re.split(r",|;|\band\b", names) if n.strip()][:4]
+
+
+def said_list(names: List[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] if names else ""
+
+
+def files_req(w: dict, do: str) -> str:
+    """Where these files live's request, in JSON, for a button's data-act."""
+    return json.dumps({"verb": "files", "zone": w["zone"], "file": w["rel"], "do": do})
+
+
+def busy_attr(title: str, para: str, steps: List[str], stop: int, note: str = "") -> str:
+    """What the busy screen shows while a copy, a move or an undo runs: its
+    title and line, its steps, and until which step Stop may end it."""
+    return ' data-busy="%s"' % E(json.dumps({"t": title, "p": para, "s": steps, "stop": stop, "note": note},
+                                             ensure_ascii=False))
+
+
+def copy_button(w: dict, st: dict, label: str = "Keep a copy") -> str:
+    F = work_files_mod()
+    docs = st["src"]["files"] - (0 if st["media_in"] else st["src"]["media"])
+    size = st["src"]["bytes"] - (0 if st["media_in"] else st["src"]["media_bytes"])
+    return act_button(files_req(w, "copy"), label, "Keeping a copy of %s…" % w["name"], "act primary",
+                      busy_attr("Refreshing Garrick's copy" if st["has"] else "Making the first copy",
+                                "Garrick downloads the files from %s and copies them for itself. Nothing in your folder is "
+                                "changed." % st["drive"],
+                                ["Downloading %s, %s" % (F.said_files(docs), F.said_size(size)),
+                                 "Checking each copy against your folder", "Keeping it as %s" % (
+                                     "a new version" if st["has"] else "the first version")], 2,
+                                "Stopping keeps nothing: Garrick deletes the part it has copied."))
+
+
+def move_button(w: dict, st: dict) -> str:
+    F = work_files_mod()
+    n, size = st["src"]["files"], F.said_size(st["src"]["bytes"])
+    return act_button(files_req(w, "move"), "Move %s into Garrick" % F.said_files(n),
+                      "Moving %s into Garrick…" % w["name"], "act primary",
+                      busy_attr("Moving the files into Garrick",
+                                "Nothing leaves your folder until every copy has been checked. Keep Garrick open until it is done.",
+                                ["Copying %s, %s, into Garrick" % (F.said_files(n), size),
+                                 "Checking each copy against its original",
+                                 "Removing the files from the folder %s" % st["folder"]], 2,
+                                "Stopping now leaves every file in your folder, and Garrick deletes what it copied."))
+
+
+def undo_button(w: dict, st: dict, label: str = "Undo the move", cls: str = "act primary") -> str:
+    F = work_files_mod()
+    n = st["src"]["files"]
+    return act_button(files_req(w, "undo"), label, "Putting the files of %s back…" % w["name"], cls,
+                      busy_attr("Putting the files back",
+                                "Every file goes back into the folder %s, and is checked there. A file of the same name "
+                                "already there stays as it is." % st["folder"],
+                                ["Copying %s back into %s, each checked there" % (F.said_files(n), st["folder"]),
+                                 "Saving Garrick's record"], -1)
+                      + ' data-confirm="%s"' % E("Click again: every file goes back into %s" % st["folder"]))
+
+
+def where_line(w: dict, st: dict) -> str:
+    """The line at the foot of a work's page that says where its files live, with Change."""
+    F = work_files_mod()
+    change = '<button type="button" class="sh-link" data-w-open="%s-where">Change</button>' % E(w["id"])
+    if st["mode"] == F.LEFT:
+        old = (" An old copy is kept, with %s, and is no longer refreshed." % versions_said(st["versions"])) if st["has"] else ""
+        return ('<span class="sh-fl">Where these files live: <b>left in place</b>, in %s. Garrick only reads them.%s %s</span>'
+                % (E(st["folder"]), old, change))
+    return '<span class="sh-fl"></span>'
+
+
+def versions_said(n: int) -> str:
+    return "%d version%s" % (n, "" if n == 1 else "s")
+
+
+def when_said(stamp: str, today: dt.date) -> str:
+    try:
+        t = dt.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return ""
+    return work_files_mod().when_said(t, today)
+
+
+def where_card(w: dict, st: dict, today: dt.date) -> str:
+    """Where these files live, for a copy kept or files moved in; and the Moved
+    banner, with Undo the move, until it is dismissed."""
+    F = work_files_mod()
+    change = '<button type="button" class="sh-link" data-w-open="%s-where">Change</button>' % E(w["id"])
+    if st["mode"] == F.COPY:
+        state = st["state"]
+        when = when_said(state.get("refreshed") or "", today)
+        via = {"continue": ", when you continued", "copy": ", when you chose Keep a copy"}.get(state.get("via"), "")
+        last = ("%s%s.%s" % (E(when), via, " " + E(state["changed"]) if state.get("changed") else "")) if when else "Not yet."
+        media = {r: s for r, s in st["listed"].items() if F.is_media(r)}
+        m_n, m_b = len(media), F.said_size(sum(s.st_size for s in media.values()))
+        since = (", since %s" % E(F.ago(st["first"].date(), today))) if st["first"] and st["versions"] > 1 else (
+            ", the first copy" if st["versions"] == 1 else "")
+        switch = ""
+        if m_n or st["media_in"]:
+            on = st["media_in"]
+            switch = ('<dt>Recordings and video</dt><dd><button type="button" class="sh-sw" role="switch" aria-checked="%s" '
+                      'data-media="%s" data-act-on="%s" data-act-off="%s" data-say-on="%s" data-say-off="%s"><i></i>'
+                      '<span>%s</span></button><small>%s</small>'
+                      '<div class="sh-ask2" hidden>Bring in recordings and video? That downloads %s, %s, from %s, and each '
+                      'changed version of them takes that space again.<div class="sh-opts"><button class="act primary" '
+                      'type="button" data-media-yes>Bring them in</button><button class="act" type="button" data-media-no>'
+                      'Cancel</button></div></div></dd>'
+                      % ("true" if on else "false", "on" if on else "off", E(files_req(w, "media-in")),
+                         E(files_req(w, "media-out")), E("Bringing recordings and video into the copy…"),
+                         E("Leaving recordings and video out…"), "In the copy" if on else "Left out",
+                         E("%s, %s, copied with the rest." % (F.said_files(m_n), m_b)) if on else
+                         E("%s, %s, stay only in your folder. Photos, PDFs and documents are in the copy." % (F.said_files(m_n), m_b)),
+                         E(F.said_files(m_n)), E(m_b), E(st["drive"])))
+        return ('<h2 class="sh-h">Where these files live</h2><div class="sh-card sh-where"><p class="sh-lead2"><b>Left in place, '
+                'with a copy kept in Garrick.</b> Your folder is the original. Garrick\'s copy keeps the history of its files. %s</p>'
+                '<dl class="sh-facts"><dt>Last refreshed</dt><dd>%s</dd><dt>Versions</dt><dd>%d%s · %s in all<small>A file that '
+                'has not changed takes no extra space.</small></dd>%s</dl><div class="sh-acts">%s</div></div>'
+                % (change, last, st["versions"], since, E(F.said_size(st["size"])), switch,
+                   act_button(files_req(w, "refresh"), "Refresh now", "Refreshing Garrick's copy of %s…" % w["name"])))
+    if st["mode"] == F.MOVED:
+        n = st["src"]["files"]
+        banner = ('<div class="sh-moved" data-dismiss="%s"><h2 class="sh-h">Moved</h2><div class="sh-card sh-banner"><b>All %s '
+                  'are in Garrick now.</b><p>Each one was copied and checked against its original before any left the folder. '
+                  'The folder %s is empty, and anyone using it no longer sees them.</p><div class="sh-opts">%s<button '
+                  'class="act" type="button" data-dismiss-moved>Dismiss</button></div></div></div>'
+                  % (E(w["key"]), E(F.said_files(n)), E(st["folder"]), undo_button(w, st, cls="act")))
+        finder = act_button(json.dumps({"verb": "work-file", "zone": w["zone"], "file": w["rel"], "do": "finder"}),
+                            "Show them in Finder", "Opening Finder on the files of %s…" % w["name"])
+        return (banner + '<h2 class="sh-h">Where these files live</h2><div class="sh-card sh-where"><p class="sh-lead2"><b>In '
+                'Garrick</b>, moved %sfrom the folder %s. They are on this Mac, and no longer in %s. %s</p><div class="sh-acts">%s'
+                '</div></div>' % ("%s " % E(ago(st["moved_on"], today).lower()) if st["moved_on"] else "",
+                                  E(st["folder"]), E(st["drive"]), change, finder))
+    return ""
+
+
+def file_deco(w: dict, st: dict, today: dt.date):
+    """Each file of a work with a copy or moved in, as its list shows it:
+    moved ones open in their own app; one with earlier versions says how many,
+    and lists them; media left out of a copy says so."""
+    F = work_files_mod()
+    copied = st.get("copied") or {}
+    hist = st["history"]
+
+    def deco(p):
+        name = E(p)
+        if st["mode"] == F.MOVED:
+            name = act_button(json.dumps({"verb": "work-file", "zone": w["zone"], "file": w["rel"], "do": "open", "path": p}),
+                              p, "Opening %s…" % os.path.basename(p), "sh-link sh-open")
+        tail = ""
+        if st["mode"] == F.COPY and F.is_media(p) and not st["media_in"]:
+            tail = ' <span class="sh-tag sh-out">left out of the copy</span>'
+        vs = hist.get(p) or []
+        src, cp = st["listed"].get(p), copied.get(p)
+        # Moved files change in Garrick: one changed since its newest version has that version to go back to.
+        since = st["mode"] == F.MOVED and src is not None and bool(vs) and src.st_mtime > vs[0][1] + 1
+        if len(vs) > 1 or since:
+            items = []
+            for i, (c, t) in enumerate(vs):
+                when = dt.datetime.fromtimestamp(t)
+                note = ""
+                if i == 0 and st["mode"] == F.MOVED and not since:
+                    note = "Same as the file now"
+                elif i == 0 and st["mode"] != F.MOVED and src is not None and cp is not None and F.same(src, cp):
+                    note = "Same as your folder now"
+                if i == len(vs) - 1 and len(vs) > 1:
+                    note = note or "The first copy"
+                items.append({"c": c, "w": F.when_said(when, today), "n": note, "s": F.version_name(p, when, today)})
+            tail += (' <button type="button" class="sh-link sh-vl" data-vers="%s">%s</button>'
+                     % (E(json.dumps({"t": "%s: %s" % (os.path.splitext(os.path.basename(p))[0], versions_said(len(vs))),
+                                      "z": w["zone"], "f": w["rel"], "p": p, "v": items}, ensure_ascii=False)),
+                        versions_said(len(vs))))
+        return name, tail
+    return deco
+
+
+def where_page(w: dict, st: dict) -> str:
+    """The three choices, the current one marked, each with its preview and the one button that carries it out."""
+    F = work_files_mod()
+    mode, n = st["mode"], st["src"]["files"]
+    cur = {F.LEFT: "left", F.COPY: "copy", F.MOVED: "move"}[mode]
+    docs = n - (0 if st["media_in"] else st["src"]["media"])
+    docs_b = st["src"]["bytes"] - (0 if st["media_in"] else st["src"]["media_bytes"])
+    m_n, m_b = st["src"]["media"], F.said_size(st["src"]["media_bytes"])
+    total = F.said_size(st["src"]["bytes"])
+
+    def row(dt_, dd, warn=False):
+        return '<dt>%s</dt><dd%s>%s</dd>' % (dt_, ' class="sh-warn2"' if warn else "", dd)
+
+    def pv(rows, buttons):
+        return '<dl>%s</dl><div class="sh-acts">%s</div>' % ("".join(rows), buttons)
+    who = said_list(involved_names(w))
+    if cur == "left":
+        old = (' An old copy is kept, with %s. %s' % (versions_said(st["versions"]), act_button(
+            files_req(w, "delete-copy"), "Delete the old copy", "Deleting Garrick's old copy…", "sh-link",
+            ' data-confirm="%s"' % E("Click again: the copy and its %s are deleted for good" % versions_said(st["versions"]))))
+               if st["has"] else "")
+        left = '<p class="sh-is">This is how it is now: Garrick reads the folder %s and never changes it.%s</p>' % (E(st["folder"]), old)
+    elif cur == "copy":
+        left = pv([row("What happens", "Garrick stops refreshing its copy and goes back to only reading your folder. You say "
+                                       "what happens to the copy it has."),
+                   row("Space and download", "The copy holds %s, %s. Keep it to look back at them later, or delete it to "
+                                             "free the space." % (versions_said(st["versions"]), E(F.said_size(st["size"])))),
+                   row("Who else is affected", "Nobody. Your folder is not changed.")],
+                  act_button(files_req(w, "keep-copy"), "Leave in place, keep the copy",
+                             "Leaving the files in place…", "act primary")
+                  + act_button(files_req(w, "delete-copy"), "Leave in place, delete the copy",
+                               "Deleting Garrick's copy…", "act",
+                               ' data-confirm="%s"' % E("Click again: the copy and its %s are deleted for good"
+                                                         % versions_said(st["versions"]))))
+    else:
+        left = pv([row("What happens", "The move is undone first. Every file goes back into the folder %s as it is now in "
+                                       "Garrick, changes since the move included, and is checked there. A file of the same "
+                                       "name already in the folder is never replaced: Garrick's goes back beside it, as "
+                                       "“<i>name</i> (from Garrick)”. Then Garrick only reads the folder, and keeps its copy, "
+                                       "with its versions, until you delete it." % E(st["folder"])),
+                   row("Space and download", "Uploads %s, %s, back to %s." % (F.said_files(n), total, E(st["drive"]))),
+                   row("Who else is affected", "Anyone using the folder sees the files again.")],
+                  undo_button(w, st))
+    if cur == "copy":
+        copy = '<p class="sh-is">This is how it is now.%s</p>' % (
+            " It was last refreshed %s." % E(when_said(st["state"].get("refreshed") or "", dt.date.today()).lower())
+            if st["state"].get("refreshed") else "")
+    elif cur == "move":
+        copy = ('<p class="sh-off">The files are in Garrick now, so there is no folder to copy them from. To keep a copy '
+                'instead, choose Leave in place first: that puts the files back.</p>')
+    else:
+        media = (" Recordings and video stay out: %s, %s. You can bring them in later." % (F.said_files(m_n), m_b)
+                 if m_n and not st["media_in"] else "")
+        copy = pv([row("What happens", ("Garrick picks up the copy it already has, with its %s, and refreshes it now. "
+                                        % versions_said(st["versions"]) if st["has"] else
+                                        "Garrick makes a copy of the files for itself. ") +
+                       "Your folder stays the original: you and others work in it as before, and nobody edits Garrick's "
+                       "copy. Each time you continue this work, Garrick first refreshes its copy from your folder and keeps "
+                       "the version from before any change. Claude still reads your folder."),
+                   row("Space and download", "Downloads %s, %s, from %s to this Mac.%s Each new version of a changed file "
+                                             "takes its space again." % (F.said_files(docs), F.said_size(docs_b),
+                                                                         E(st["drive"]), media)),
+                   row("Who else is affected", "Nobody. The folder is not changed, and anyone using it sees it as before.")],
+                  copy_button(w, st))
+    if cur == "move":
+        move = '<p class="sh-is">This is how it is now. The files are in Garrick, on this Mac.</p>'
+    else:
+        move = pv([row("What happens", "Garrick copies every file into Garrick and checks each copy against its original. "
+                                       "Only when all %d match does it remove them from the folder %s, which is left empty. "
+                                       "Nothing is written into the folder. The files are then on this Mac only, not on %s, "
+                                       "and Claude reads them, and may change them, in Garrick. Undo the move puts every file "
+                                       "back.%s" % (n, E(st["folder"]), E(st["drive"]),
+                                                    " Garrick's copy, with its %s, stays as the history of the files."
+                                                    % versions_said(st["versions"]) if st["has"] else "")),
+                   row("Space and download", "Downloads all %s, %s, recordings and video included, and keeps them on this "
+                                             "Mac." % (F.said_files(n), total)),
+                   row("Who else is affected", "<b>Anyone else who uses the folder will no longer see these files.</b> "
+                                               "Garrick reads only names and dates, so it cannot tell who else can open the "
+                                               "folder %s, on %s.%s A link to one of these files that you sent someone "
+                                               "stops working." % (E(st["folder"]), E(st["drive"]),
+                                                                   " %s %s named in this work, and would find it empty."
+                                                                   % (E(who), "is" if len(involved_names(w)) == 1 else "are")
+                                                                   if who else ""), warn=True)],
+                  move_button(w, st))
+    opts = [("left", "Leave in place", "Garrick only reads your folder. Nothing is copied or moved.", left),
+            ("copy", "Keep a copy", "Garrick keeps a copy with the history of your files. Your folder stays the original.", copy),
+            ("move", "Move into Garrick", "The files move out of your folder into Garrick. You can undo it.", move)]
+    body = "".join('<details class="sh-opt%s" name="where-%s"><summary><span class="sh-rd" aria-hidden="true"></span>'
+                   '<span class="sh-ot">%s%s</span><span class="sh-os">%s</span></summary><div class="sh-pv">%s</div></details>'
+                   % (" sh-cur" if o == cur else "", E(w["id"]), t, '<span class="sh-tag">Now</span>' if o == cur else "", E(sub), pvw)
+                   for o, t, sub, pvw in opts)
+    return ('<article class="sh-work sh-wherepage" id="%s-where" hidden data-of="%s"><button type="button" class="sh-link sh-back" '
+            'data-w-open="%s">‹ %s</button><h1>Where these files live</h1><div class="sh-sub">For %s only. Your other work '
+            'stays as it is.</div><div class="sh-card sh-opts3">%s</div></article>'
+            % (E(w["id"]), E(w["id"]), E(w["id"]), E(w["name"]), E(w["name"]), body))
 
 
 def home_settings(layout: str) -> str:
@@ -5075,6 +5446,121 @@ try{sessionStorage.removeItem('garrick-simple-view')}catch(e){}host.postMessage(
 if(window.GarrickSay)GarrickSay(r.value==='simple'?'Garrick opens on the simple home now.':'Garrick opens on the full page now.')}})})();
 """
 
+
+# Where a work's files live (#189), on its page and its page of choices: one
+# choice open at a time; the busy screen while a copy, a move or an undo runs,
+# with what it has got to (`files-progress`, asked of a host that has said it
+# answers it, window.GarrickReadsFiles) and Stop until files start leaving the
+# folder; the media switch, which asks before it brings recordings and video
+# in; Dismiss on the Moved note, kept in this browser; and a file's versions,
+# each to Open or to Save a copy, through the app's Save panel where it has
+# one (window.GarrickSaves) and into Downloads where it has not. Its own
+# script, so an error here leaves the rest of the page working.
+WHERE_CSS = r"""
+.sh-fl{flex:1;min-width:220px}.sh-where{padding:14px 16px}.sh-lead2{margin:0 0 12px;color:var(--ink2)}.sh-lead2 b{color:var(--ink)}
+.sh-facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;margin:0;font-size:13px}.sh-facts dt{color:var(--muted)}
+.sh-facts dd{margin:0;color:var(--ink)}.sh-facts dd small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+.sh-sw{display:inline-flex;align-items:center;gap:8px;border:0;background:none;padding:0;font:inherit;color:var(--ink);cursor:pointer;text-align:left}
+.sh-sw i{flex:none;width:34px;height:20px;border-radius:10px;background:color-mix(in srgb,var(--ink) 18%,transparent);position:relative}
+.sh-sw i::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sh-sw[aria-checked="true"] i{background:var(--good)}.sh-sw[aria-checked="true"] i::after{left:16px}
+.sh-ask2{margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--wash);color:var(--ink2);font-size:13px}
+.sh-banner{padding:14px 16px;border-left:3px solid var(--good)}.sh-banner p{margin:4px 0 10px;color:var(--ink2)}
+.sh-tag.sh-out{color:var(--muted);background:color-mix(in srgb,var(--ink) 6%,transparent)}.sh-vl{font-size:12px;margin-left:6px}
+.sh-open{text-align:left;overflow-wrap:anywhere}
+.sh-opts3 .sh-opt{border-top:1px solid var(--line)}.sh-opts3 .sh-opt:first-child{border-top:0}
+.sh-opt>summary{display:grid;grid-template-columns:20px minmax(0,1fr);gap:2px 10px;padding:14px 16px;cursor:pointer;list-style:none}
+.sh-opt>summary::-webkit-details-marker{display:none}.sh-opt>summary:hover{background:color-mix(in srgb,var(--wash) 50%,transparent)}
+.sh-rd{grid-row:1/span 2;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--muted);margin-top:2px;position:relative}
+.sh-cur .sh-rd{border-color:var(--accent)}.sh-cur .sh-rd::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.sh-ot{font-weight:600}.sh-os{color:var(--ink2);font-size:13px}.sh-pv{padding:0 16px 16px 46px}.sh-pv dl{margin:0}
+.sh-pv dt{font-size:12px;color:var(--muted);margin-top:10px}.sh-pv dd{margin:2px 0 0}.sh-pv dd.sh-warn2{border-left:3px solid var(--warning);padding:2px 0 2px 10px}
+.sh-is,.sh-off{color:var(--ink2);font-size:13px;margin:4px 0 0}
+.sh-busy{padding:34px 22px;text-align:center;margin-top:30px}.sh-busy p{color:var(--ink2);max-width:460px;margin:8px auto 0}
+.sh-steps{list-style:none;padding:0;margin:16px auto 0;max-width:380px;text-align:left;font-size:13px;color:var(--muted)}
+.sh-steps li{padding:3px 0}.sh-steps li.done{color:var(--ink2)}.sh-steps li.done::before{content:"\2713  ";color:var(--good)}
+.sh-steps li.now{color:var(--ink)}.sh-steps li.now::before{content:"\2026  "}.sh-ct{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted);margin-top:14px}
+.sh-busy .sh-opts{justify-content:center;margin-top:18px}.sh-stopnote{font-size:12px;color:var(--muted);margin-top:6px}
+.sh-scrim{position:fixed;inset:0;background:rgba(11,11,11,.32);display:flex;align-items:flex-start;justify-content:center;padding:60px 16px 16px;z-index:40;overflow:auto}
+.sh-dlg{width:min(480px,100%);background:var(--raise);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.35);padding:18px 18px 14px;border:1px solid var(--line)}
+.sh-dlg h3{font-family:var(--display);font-weight:400;font-size:20px;margin:0 0 8px;overflow-wrap:anywhere}.sh-dlg p{margin:0 0 10px;color:var(--ink2)}
+.sh-dlg>.sh-opts{justify-content:flex-end;margin-top:14px}
+.sh-vers{list-style:none;margin:6px 0 0;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sh-vers li{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:9px 12px;border-top:1px solid var(--line);font-size:13px}
+.sh-vers li:first-child{border-top:0}.sh-vw{flex:1;min-width:150px}.sh-vw small{display:block;color:var(--muted);font-size:12px}
+.sh-vers .act,.sh-where .act,.sh-pv .act,.sh-banner .act{font-size:12px;padding:5px 10px;border-radius:8px}
+@media (max-width:560px){.sh-facts{grid-template-columns:minmax(0,1fr);gap:2px}.sh-facts dd{margin-bottom:8px}.sh-pv{padding-left:16px}.sh-scrim{padding-top:24px}}
+"""
+
+WHERE_JS = r"""
+(function(){var body=document.body;if(!body.classList.contains('simple'))return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEY='garrick-files-busy',VIEW='garrick-simple-view';
+function store(s,k,v){try{if(v===undefined)return s.getItem(k);if(v===null)s.removeItem(k);else s.setItem(k,v)}catch(e){return null}}
+function ss(k,v){return store(sessionStorage,k,v)}function ls(k,v){return store(localStorage,k,v)}
+function say(s){if(window.GarrickSay)GarrickSay(s)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function send(q,said){if(!host){say('Do this in the Garrick app: a browser cannot change anything.');return false}
+if(window.GarrickHeld&&GarrickHeld(q))return false;if(!(window.GarrickAct&&GarrickAct(q,said))){host.postMessage({act:q});say(said)}return true}
+function size(n){n=+n||0;return n<1e6?Math.max(1,Math.round(n/1e3))+' KB':n<1e7?(n/1e6).toFixed(1)+' MB':n<1e9?Math.round(n/1e6)+' MB':(n/1e9).toFixed(1)+' GB'}
+/* the busy screen: in place of the page it was asked from, until the reply comes and the page is rebuilt */
+var B=null,timer=null,STEP={copying:0,checking:1,keeping:2,removing:2,'putting back':0,saving:1};
+function paint(){if(!B)return;var a=document.getElementById(B.a);if(!a)return;var box=a.querySelector('.sh-busy');
+if(!box){[].forEach.call(a.children,function(c){if(!c.hidden){c.hidden=true;c.setAttribute('data-busy-hid','')}});
+box=document.createElement('div');box.className='sh-card sh-busy';box.setAttribute('role','status');a.appendChild(box)}
+var p=B.p||{},at=p.phase in STEP?STEP[p.phase]:0,ct='';
+if(p.of)ct=(p.phase==='checking'?'Checking: ':p.phase==='removing'?'Removing: ':'')+p.done+' of '+p.of+' files'+(p.bytes_of&&p.phase!=='checking'&&p.phase!=='removing'?' · '+size(p.bytes)+' of '+size(p.bytes_of):'');
+var stop=B.d.stop>=0&&at<B.d.stop&&!B.stopping;
+box.innerHTML='<div class="sh-big">'+esc(B.d.t)+'</div><p>'+esc(B.d.p)+'</p><ul class="sh-steps">'+B.d.s.map(function(x,i){
+return'<li class="'+(i<at?'done':i===at?'now':'')+'">'+esc(x)+'</li>'}).join('')+'</ul><div class="sh-ct">'+esc(ct)+'</div>'
++(stop?'<div class="sh-opts"><button class="act" type="button" data-files-stop>Stop</button></div><div class="sh-stopnote">'+esc(B.d.note||'')+'</div>':'')}
+function keep(){ss(KEY,B?JSON.stringify(B):null)}
+function poll(){clearInterval(timer);if(!B||!host||!window.GarrickReadsFiles)return;
+timer=setInterval(function(){if(!B){clearInterval(timer);return}host.postMessage({act:{verb:'files-progress',zone:B.q.zone,file:B.q.file}})},800)}
+function end(){B=null;keep();clearInterval(timer);[].forEach.call(document.querySelectorAll('.sh-busy'),function(b){b.remove()});
+[].forEach.call(document.querySelectorAll('[data-busy-hid]'),function(c){c.hidden=false;c.removeAttribute('data-busy-hid')})}
+/* a file's versions: each to open, or to save as a separate file; never put back over one */
+var V=null;
+function versions(b){try{V=JSON.parse(b.dataset.vers)}catch(e){return}var old=document.getElementById('sh-vdlg');if(old)old.remove();
+var sc=document.createElement('div');sc.className='sh-scrim';sc.id='sh-vdlg';
+sc.innerHTML='<div class="sh-dlg" role="dialog" aria-label="Earlier versions"><h3>'+esc(V.t)+'</h3><p>The versions Garrick has kept of this file. '
++'Open one to read it, or save it as a separate file wherever you choose. None is ever put back over a file.</p><ul class="sh-vers">'
++V.v.map(function(v,i){return'<li><span class="sh-vw">'+esc(v.w)+(i===0?'<span class="sh-tag">Newest</span>':'')+(v.n?'<small>'+esc(v.n)+'</small>':'')
++'</span><button class="act" type="button" data-vopen="'+i+'">Open</button><button class="act" type="button" data-vsave="'+i+'">Save a copy</button></li>'}).join('')
++'</ul><div class="sh-opts"><button class="act" type="button" data-vclose>Close</button></div></div>';document.body.appendChild(sc)}
+function vreq(i,d){var v=V.v[+i];return{verb:'work-file',zone:V.z,file:V.f,do:d,path:V.p,version:v.c}}
+document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
+var b=t.closest('button[data-busy]');if(b){if(b.dataset.confirm&&!b.classList.contains('armed'))return;   /* the page's own click arms it first */
+var q,d;try{q=JSON.parse(b.dataset.act);d=JSON.parse(b.dataset.busy)}catch(x){return}e.preventDefault();e.stopPropagation();b.classList.remove('armed');
+if(send(q,b.dataset.say)){var a=b.closest('article');B={q:q,d:d,a:a?a.id:'',t0:Date.now(),p:null};keep();paint();poll()}return}
+if(t.closest('[data-files-stop]')){e.preventDefault();if(B&&host){B.stopping=1;keep();paint();host.postMessage({act:{verb:'files-stop',zone:B.q.zone,file:B.q.file}});say('Stopping…')}return}
+var m=t.closest('button[data-media]');if(m){e.preventDefault();e.stopPropagation();var box=m.parentNode.querySelector('.sh-ask2');
+if(m.dataset.media==='on'){try{send(JSON.parse(m.dataset.actOff),m.dataset.sayOff)}catch(x){}}else if(box)box.hidden=!box.hidden;return}
+var y=t.closest('[data-media-yes]');if(y){e.preventDefault();var sw=y.closest('dd').querySelector('button[data-media]');y.closest('.sh-ask2').hidden=true;
+try{send(JSON.parse(sw.dataset.actOn),sw.dataset.sayOn)}catch(x){}return}
+var n=t.closest('[data-media-no]');if(n){e.preventDefault();n.closest('.sh-ask2').hidden=true;return}
+var vb=t.closest('[data-vers]');if(vb){e.preventDefault();e.stopPropagation();versions(vb);return}
+var dlg=document.getElementById('sh-vdlg');
+if(dlg&&(t===dlg||t.closest('[data-vclose]'))){dlg.remove();return}
+var o=t.closest('[data-vopen]');if(o&&V){e.preventDefault();send(vreq(o.dataset.vopen,'version-open'),'Opening that version, to read…');return}
+var s=t.closest('[data-vsave]');if(s&&V){e.preventDefault();var q=vreq(s.dataset.vsave,'version-save');
+if(host&&window.GarrickSaves){host.postMessage({save:{act:q,name:V.v[+s.dataset.vsave].s}});return}
+send(q,'Saving that version in Downloads…');return}
+var dm=t.closest('[data-dismiss-moved]');if(dm){e.preventDefault();var w=dm.closest('[data-dismiss]');if(w){ls('garrick-moved-'+w.dataset.dismiss,'1');w.hidden=true}
+say('You can still undo the move: Change, then Leave in place.');return}},true);
+/* one choice open at a time, as the sketch has them */
+[].forEach.call(document.querySelectorAll('details.sh-opt'),function(d){d.addEventListener('toggle',function(){if(!d.open)return;
+[].forEach.call(d.parentNode.querySelectorAll('details.sh-opt'),function(x){if(x!==d)x.open=false})})});
+[].forEach.call(document.querySelectorAll('[data-dismiss]'),function(w){if(ls('garrick-moved-'+w.dataset.dismiss)==='1')w.hidden=true});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&q.verb==='files-progress'){if(B){var p=out&&out.progress;if(p){B.p=p;B.miss=0}else if(Date.now()-B.t0>5000&&++B.miss>6)end();if(B){keep();paint()}}return}
+if(q&&q.verb==='files-stop'&&!(out&&out.ok)&&B){B.stopping=0;keep();paint()}
+if(q&&(q.verb==='files'||q.verb==='work-file')){if(q.verb==='files'&&B&&B.q.do===q.do)end();
+if(out&&out.view)ss(VIEW,'work:'+out.view+(out.stopped?'-where':''))}
+if(prev)return prev(q,out)};
+try{B=JSON.parse(ss(KEY)||'null')}catch(e){B=null}
+if(B&&!(Date.now()-B.t0<3600000))B=null;if(B){B.miss=0;paint();poll()}else keep();
+})();
+"""
 
 # --------------------------------------------------------------------------- the page
 
@@ -6778,11 +7264,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + guide_mod().GUIDE_CSS + zone_css(),
+                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

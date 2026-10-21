@@ -449,6 +449,18 @@ describe('activity', () => {
     expect(await working.find({ text: /Where it stands/ })).toBeUndefined()
   })
 
+  test('a prompt that opens with the harness\'s own reminder shows the user\'s words (#187)', async ($, on) => {
+    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
+    await inThread($, on, NOTE)
+    await $.prompt.submit({ text: '<system-reminder>\nThe date is today.\n</system-reminder>\n<system-reminder>Step 2</system-reminder>\n  Fix the **pricing** table\nand more' } as any)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /Fix the pricing table/ })).toBeDefined()
+    expect(await band.find({ text: /system-reminder/ })).toBeUndefined()
+    await $.prompt.submit({ text: '<system-reminder>only this</system-reminder>\n' } as any)
+    const back = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await back.find({ text: /Where it stands/ })).toBeDefined()
+  })
+
   test('before any prompt the band shows the Resume line', async ($, on) => {
     await inThread($, on, NOTE)
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
@@ -457,6 +469,9 @@ describe('activity', () => {
 
   test('steps and prompts in a few words', () => {
     expect(promptLine('\n\n  Open **Acme**: read [[a/b|the note]]\nsecond')).toBe('Open Acme: read the note')
+    expect(promptLine('<system-reminder>\nA reminder.\n</system-reminder>\nOpen **Acme**')).toBe('Open Acme')
+    expect(promptLine('<system-reminder>only</system-reminder>')).toBe('')
+    expect(promptLine('Compare <b>this</b> and that')).toBe(plain('Compare <b>this</b> and that'))
     expect(stepLine({ tool: 'Bash', command: 'npm test', description: 'Run the tests' })).toBe('Run the tests')
     expect(stepLine({ tool: 'Bash', command: 'ls -la\npwd' })).toBe('$ ls -la')
     expect(stepLine({ tool: 'Read', file_path: '/v/a/b.md' })).toBe('Reading b.md')

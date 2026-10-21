@@ -101,8 +101,20 @@ export function wrapPrompt(n: Note): string {
 
 // --- What the session is doing --------------------------------------------
 // The prompt as one line: its first line with text in it, markup stripped.
+// A tag block the harness puts before what the user typed, such as
+// <system-reminder>…</system-reminder>, is never the user's: every such block
+// at the start is skipped (#187), and a prompt that is nothing else is ''.
+const LEADING_TAG = /^\s*<([A-Za-z][\w-]*)(?:\s[^<>]*)?>[\s\S]*?<\/\1\s*>/
+
+export function userText(text: string): string {
+  let rest = text
+  for (let m = LEADING_TAG.exec(rest); m !== null; m = LEADING_TAG.exec(rest)) rest = rest.slice(m[0].length)
+
+  return rest
+}
+
 export function promptLine(text: string): string {
-  const line = text.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
+  const line = userText(text).split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
 
   return plain(line)
 }
@@ -645,6 +657,8 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     const prompt = promptLine(e.text)
     if (prompt !== '') await update($, activity, () => ({ prompt, step: null })).catch(() => undefined)
+    // Nothing but the harness's own blocks: the band goes back to the Resume line, as before any prompt.
+    else if (e.text.trim() !== '') await update($, activity, () => null).catch(() => undefined)
 
     return next(e)
   })

@@ -1115,6 +1115,11 @@ def hooks_elsewhere(repo: Path) -> Optional[Tuple[str, Path]]:
     return value, where
 
 
+# What marks the history of Garrick's copy of a piece of work's files, kept
+# in the project's Files/ folder (#189, the status extra's work_files.py).
+GARRICK_HISTORY = "garrick-history"
+
+
 def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
     """(repository, its project, the project's hub frontmatter) for every git
     repository inside a project: a product's code, a site, a book. Each is
@@ -1127,6 +1132,8 @@ def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
             for d in sorted(dirs):
                 if d in SKIP_DIRS or d.startswith("."):
                     continue
+                if (here / d / ".git" / GARRICK_HISTORY).is_file():
+                    continue            # Garrick's own copy of a work's files (#189): never pushed, no hook to guard it
                 if (here / d / ".git").exists():
                     out.append((here / d, project, pfm))
                 else:

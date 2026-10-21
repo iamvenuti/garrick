@@ -259,6 +259,161 @@ class TestKeepACopy(Stored):
         self.assertEqual([], found)
 
 
+class TestMoveIntoGarrick(Stored):
+    def moved(self):
+        before = manifest(self.drive)
+        out = self.files_act("move")
+        self.before = None
+        return before, out
+
+    def tearDown(self):
+        if self.before is None:
+            self._tmp.cleanup()
+        else:
+            super().tearDown()
+
+    def test_every_file_is_copied_and_checked_then_removed_and_the_folder_kept(self):
+        rec = self.with_media()
+        n = len(F.listing(self.folder))
+        before, out = self.moved()
+        self.assertEqual("Moved. All %d files are in Garrick" % n, out["say"])
+        self.assertTrue(self.folder.is_dir())
+        self.assertEqual({}, F.listing(self.folder))                                        # emptied
+        self.assertTrue((self.folder / "Proofs").is_dir())                                  # and nothing written into it
+        self.assertEqual(sorted(os.listdir(self.folder)), ["Proofs"])
+        self.assertTrue((self.files / rec.name).is_file())                                   # media comes too
+        self.assertIn("storage: moved", self.hub.read_text())
+        self.assertIn("moved: %s" % TODAY.isoformat(), self.hub.read_text())
+        self.assertEqual([self.rule(self.folder)], self.deny())                               # Claude may edit the files
+        self.assertEqual({"Catalogue 2027/Catalogue 2027.md", "Catalogue 2027/.gitignore"}, self.changed())
+        self.assertEqual("", self.git("status", "--porcelain"))
+        for row in files_only(before):
+            rel = row[1].split("Catalogue 2027/", 1)[1] if "Marketing/Catalogue 2027/" in row[1] else None
+            if rel:
+                self.assertEqual(row[2], F.digest(self.files / rel))
+
+    def test_a_copy_that_becomes_a_move_keeps_its_versions(self):
+        self.with_media()                                                                    # out of the copy, in the move
+        self.files_act("copy")
+        self.assertIn(self.rule(self.files), self.deny())
+        self.moved()
+        self.assertEqual("2", self.history("rev-list", "--count", "HEAD").strip())
+        self.assertIn("The first copy", self.history("log", "--format=%s"))
+        self.assertEqual([self.rule(self.folder)], self.deny())                              # the rule on the copy comes off
+        self.assertIn("Catalogue 2027/.claude/settings.json", self.changed())
+
+    def test_nothing_is_removed_until_every_file_is_checked(self):
+        """A copy that does not match its original, found while checking: nothing leaves the folder."""
+        before = manifest(self.drive)
+        real = F.digest
+        calls = []
+
+        def bad(path):
+            calls.append(path)
+            return "0" * 64 if Path(path).name == "Printer quote.pdf" and self.files in Path(path).parents else real(path)
+        with mock.patch.object(F, "digest", bad):
+            with self.assertRaisesRegex(pa.Refused, "did not match its original, so nothing left the folder"):
+                self.files_act("move")
+        self.assertEqual(before, manifest(self.drive))
+        self.assertFalse(self.files.exists())
+        self.assertNotIn("storage:", self.hub.read_text())
+
+    def test_stop_while_checking_leaves_the_folder_and_the_workspace_as_they_were(self):
+        before, head = manifest(self.drive), self.git("rev-parse", "HEAD")
+        flag = self.root / "System" / "generated" / "work-files" / (F.key_hash("Work/" + NOTE) + ".stop")
+        real = F.digest
+
+        def stop(path):
+            flag.write_text("stop")
+            return real(path)
+        with mock.patch.object(F, "digest", stop):
+            out = self.files_act("move")
+        self.assertEqual("Stopped. Every file is still in your folder, and Garrick kept nothing of the move", out["say"])
+        self.assertEqual(before, manifest(self.drive))
+        self.assertFalse(self.files.exists())
+        self.assertEqual(head, self.git("rev-parse", "HEAD"))
+        self.assertEqual("", self.git("status", "--porcelain"))
+
+    def test_stop_is_refused_once_files_start_leaving(self):
+        job = F.Job(self.root, "Work/" + NOTE, "move")
+        job.phase("removing", 5)
+        try:
+            with self.assertRaisesRegex(pa.Refused, "already leaving the folder"):
+                pa.act(self.root, {"verb": "files-stop", "zone": "Work", "file": NOTE})
+            job.phase("checking", 5)
+            self.assertEqual("Stopping: Garrick takes back what it copied",
+                             pa.act(self.root, {"verb": "files-stop", "zone": "Work", "file": NOTE}))
+            with self.assertRaises(F.Stopped):
+                job.check()
+            progress = pa.act(self.root, {"verb": "files-progress", "zone": "Work", "file": NOTE})
+            self.assertEqual("checking", progress["progress"]["phase"])
+        finally:
+            job.end()
+        with self.assertRaisesRegex(pa.Refused, "Nothing is being copied or moved"):
+            pa.act(self.root, {"verb": "files-stop", "zone": "Work", "file": NOTE})
+
+    def test_undo_puts_back_every_file_and_never_overwrites(self):
+        before, _ = self.moved()
+        clash = self.folder / "Printer quote.pdf"
+        clash.write_bytes(b"a new quote, put there by someone else")
+        out = self.files_act("undo")
+        self.assertIn("are back in Catalogue 2027", out["say"])
+        self.assertIn("A file of the same name was in the folder already, so Garrick's went back beside it: "
+                      "Printer quote (from Garrick).pdf", out["say"])
+        self.assertEqual(b"a new quote, put there by someone else", clash.read_bytes())       # two files, never one
+        ours = self.folder / "Printer quote (from Garrick).pdf"
+        self.assertEqual(b"%PDF-1.4 a quote\n", ours.read_bytes())
+        clash.unlink()
+        ours.rename(clash)
+        os.utime(str(clash), ns=(os.stat(str(self.files / "Printer quote.pdf")).st_atime_ns,
+                                 os.stat(str(self.files / "Printer quote.pdf")).st_mtime_ns))
+        self.assertEqual(files_only(before), files_only(manifest(self.drive)))               # every file, as it was
+        self.assertEqual(folders_only(before), folders_only(manifest(self.drive)))
+        self.assertNotIn("storage:", self.hub.read_text())
+        self.assertIn(self.rule(self.files), self.deny())                                   # the old copy out of reach again
+        self.assertEqual("", self.git("status", "--porcelain"))
+
+    def test_moved_files_open_from_the_page_and_finder_shows_only_their_folder(self):
+        self.moved()
+        card = self.card()
+        req = {"verb": "work-file", "zone": "Work", "file": NOTE, "do": "open", "path": "Printer quote.pdf"}
+        self.assertIn(htmllib.escape(json.dumps(req)), card)
+        self.assertIn("Show them in Finder", card)
+        self.assertIn("All 5 files are in Garrick now.", card)
+        self.assertIn("Undo the move", card)
+        pa.act(self.root, req)
+        pa.act(self.root, {"verb": "work-file", "zone": "Work", "file": NOTE, "do": "finder"})
+        self.assertEqual([[str((self.files / "Printer quote.pdf").resolve())], [str(self.files)]], self.opens())
+        with self.assertRaisesRegex(pa.Refused, "not one of this work's"):
+            pa.act(self.root, dict(req, path="../Catalogue 2027.md"))
+
+    def test_a_session_on_moved_work_reads_and_may_edit_them_and_an_edit_can_be_undone(self):
+        self.moved()
+        quote = self.files / "Printer quote.pdf"
+        quote.write_bytes(b"%PDF-1.4 edited in a session\n")                                 # as Claude would
+        pa.act(self.root, {"verb": "continue", "zone": "Work", "file": NOTE})
+        prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
+        dirs = [prime[i + 1] for i, a in enumerate(prime) if a == "--add-dir"]
+        self.assertEqual(str(self.files), dirs[0])
+        self.assertNotIn("--settings", prime)
+        self.assertNotIn(self.rule(self.files), self.deny())
+        versions = F.history_of(self.files)["Printer quote.pdf"]
+        self.assertEqual(2, len(versions))
+        self.assertEqual(b"%PDF-1.4 a quote\n", F.history_blob(self.files, versions[1][0], "Printer quote.pdf"))
+        self.assertIn("2 versions", self.card())
+
+    def test_stop_using_this_puts_the_files_back_first_and_keeps_the_copy(self):
+        before, _ = self.moved()
+        said = pa.act(self.root, {"verb": "stop-using", "zone": "Work", "file": NOTE})
+        self.assertIn("Catalogue 2027 is put away. All 5 files are back in Catalogue 2027 first", said)
+        self.assertEqual(files_only(before), files_only(manifest(self.drive)))
+        away = self.work / "archive" / "Catalogue 2027"
+        self.assertTrue((away / "Files" / ".git" / F.HISTORY_MARK).is_file())             # recoverable, nothing deleted
+        self.assertEqual("", self.git("status", "--porcelain"))
+        pa.act(self.root, {"verb": "bring-back", "zone": "Work", "project": "Catalogue 2027"})
+        self.assertTrue((self.files / ".git").is_dir())
+
+
 class TestThePage(Stored):
     def test_left_in_place_says_so_with_change_and_the_three_choices(self):
         card = self.card()
@@ -300,6 +455,21 @@ class TestThePage(Stored):
         page = self.card(where=True)
         self.assertIn("Leave in place, keep the copy", page)
         self.assertIn("Leave in place, delete the copy", page)
+
+    def test_your_work_and_needs_you_are_the_same_wherever_the_files_live(self):
+        def home():
+            html = self.page()
+            return html.split('id="tab-home"', 1)[1].split("</section>", 1)[0]
+        left = home()
+        self.files_act("copy")
+        self.assertEqual(left.count("Catalogue 2027"), home().count("Catalogue 2027"))
+        self.files_act("move")
+        self.before = None
+        moved = home()
+        self.assertEqual(left.count("Catalogue 2027"), moved.count("Catalogue 2027"))
+        self.assertIn("is this your next step?", moved)
+        self.files_act("undo")
+        self.before = manifest(self.drive)
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is not installed")
@@ -351,6 +521,17 @@ class TestThePageScript(Stored):
         self.assertEqual([{"act": q}], self.drive_page(*steps)["posted"])
         opened = self.drive_page({"do": "click", "sel": "button[data-vers]"}, {"do": "click", "sel": "button[data-vopen]"})
         self.assertEqual("version-open", opened["posted"][0]["act"]["do"])
+
+
+class TestTheApp(unittest.TestCase):
+    def test_the_app_answers_save_and_reads_progress_without_a_toast(self):
+        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn('if let save = body["save"] as? [String: Any] { return saveVersion(save) }', swift)
+        self.assertIn("NSSavePanel()", swift)
+        self.assertIn('"files-progress"', swift[swift.index("func reading("):][:300])
+        self.assertIn("window.GarrickReadsFiles=true;window.GarrickSaves=true;", swift)
+        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn('"files-progress"', plugin[plugin.index("reading(request) {"):][:300])
 
 
 if __name__ == "__main__":

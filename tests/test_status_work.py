@@ -611,11 +611,11 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
-        self.assertIn('request["verb"] as? String == "operations"', swift)     # and it neither toasts nor rebuilds for it
+        self.assertIn('["operations", "files-progress"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
         plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('"dom-ready"', plugin)
-        self.assertIn('window.GarrickReads=true;window.GarrickReady&&window.GarrickReady()', plugin)
-        self.assertIn('request.verb === "operations"', plugin)
+        self.assertIn('window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()', plugin)
+        self.assertIn('["operations", "files-progress"].includes(request.verb)', plugin)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")

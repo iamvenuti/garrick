@@ -1580,8 +1580,15 @@ document.addEventListener('keydown',function(e){if(e.key!=='/'||e.metaKey||e.ctr
 if(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||'')||(t.closest&&t.closest('dialog')))return;
 if(document.body.dataset.tab==='guide')return;var c=box.closest('.card'),sec=box.closest('section.tab');if(!c||c.hidden||!sec)return;
 e.preventDefault();if(sec.hidden&&window.StatusTab)StatusTab(sec.id.slice(4));if(!c.open)c.open=true;box.focus();if(box.select)box.select()});
+/* a rename from the page (#184): found by its new name at once, and again on a reload before the rebuild */
+function renamed(q){if(!q||q.verb!=='rename'||!q.to)return;(D.items||[]).forEach(function(it){if(it.z!==q.zone)return;
+if(q.thread?(it.k==='t'&&it.p===q.project&&it.n===q.thread):(it.k==='p'&&it.n===q.project)){it.n=q.to;delete it.sp}
+if(!q.thread&&it.p===q.project){it.p=q.to;delete it.psp}
+if(it.c){if(it.c.n===(q.thread||q.project))it.c.n=q.to;if(!q.thread&&it.c.p===q.project)it.c.p=q.to}
+it._own=words([it.n,it.sp].join(' '));it._all=it._own.concat(words([it.k==='p'?'':it.p,it.psp,it.z].join(' ')))})}
+if(window.GarrickRedo)renamed(window.GarrickRedo);
 /* drawn again once Park or Wake has moved a row, so a match says what it now is */
-var prev=window.GarrickActed;window.GarrickActed=function(q,out){var r=prev?prev(q,out):undefined;if(box.value)render();return r};
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(out&&out.ok)renamed(q);var r=prev?prev(q,out):undefined;if(box.value)render();return r};
 var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;render()}
 })();
 """ % {"max": FIND_MAX}
@@ -1978,6 +1985,7 @@ var w=null;try{w=JSON.parse(localStorage.getItem('garrick-expect')||'null')}catc
 var S={parked:[],live:[]};try{S=JSON.parse(document.getElementById('state-data').textContent)}catch(e){}
 var i=w.x.indexOf(':'),want=w.x.slice(0,i),key=w.x.slice(i+1),now;
 if(want==='parked'||want==='active')now=(S.parked||[]).indexOf(key)>=0?'parked':'active';
+else if(want==='named')now=(S.notes||[]).indexOf(key)>=0?'named':'none';     /* a rename (#184): the page has the new note */
 /* live: or none: with no folder (Start up, Shut down) asks about every folder */
 else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?'live':'none';
 if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
@@ -6415,6 +6423,57 @@ if(window.GarrickRedo)moved(window.GarrickRedo);
 """
 
 
+# A rename from the page lands at once (#184), as Park and Wake do: when the
+# host says it was done, every row of the thread, or of the project and its
+# threads, takes the new name, its link and its card's paths (the note it
+# opens, the folder, what Park, Open in Claude, Rename…, Delete… and the desk
+# act on), and moves to its place by name; the hover card is closed, so the
+# next one shows the new name. The Find box follows (FIND_JS), and RELOAD_JS
+# keeps the request beside what it waits for, `named:<zone>/<note>`, so a
+# reload before the rebuild renames the rows again.
+RENAME_JS = r"""
+(function(){var R=window.ThreadRows||{bind:function(){},chev:function(){},close:function(){}};
+function cardOf(r){try{return JSON.parse(r.dataset.card)}catch(e){return null}}
+/* a path as Python's urllib.parse.quote writes it into the links the page holds */
+function pq(s){return encodeURIComponent(s).replace(/[!'()*]/g,function(c){return'%'+c.charCodeAt(0).toString(16).toUpperCase()}).replace(/%2F/g,'/')}
+function bare(p){return p.replace(/\.md$/,'')}
+function link(u,from,to){if(!u)return u;var a=[[pq(bare(from)),pq(bare(to))],[pq(from),pq(to)]];
+for(var i=0;i<a.length;i++){var k=u.length-a[i][0].length;if(k>=0&&u.slice(k)===a[i][0])return u.slice(0,k)+a[i][1]}return u}
+function relOf(c){return c.kl==='project'?c.n+'/'+c.n+'.md':((c.oc||c.pa||[])[1]||'')}
+function nameOf(el){var a=el.querySelector('.t>a');return a?a.textContent.toLowerCase():''}
+function place(el){var box=el.parentNode;if(!box)return;var kind=el.classList.contains('tunit')?'tunit':'thread',n=nameOf(el);
+var after=[].filter.call(box.children,function(x){return x!==el&&x.classList.contains(kind)&&nameOf(x)>n})[0]||
+[].filter.call(box.children,function(x){return x.matches('details.parked')})[0]||null;box.insertBefore(el,after)}
+/* the new paths of a row's note: a thread's own folder and note, or anything under the project */
+function moveRel(rel,q){var P=q.project,N=q.to;if(q.thread){var T=q.thread;
+return rel===P+'/Threads/'+T+'/'+T+'.md'?P+'/Threads/'+N+'/'+N+'.md':rel}
+if(rel===P+'/'+P+'.md')return N+'/'+N+'.md';return rel.indexOf(P+'/')===0?N+'/'+rel.slice(P.length+1):rel}
+function moveDir(f,from,to){if(!f)return f;var a=from.replace(/\/[^\/]*$/,''),b=to.replace(/\/[^\/]*$/,'');
+return f.length>=a.length&&f.slice(f.length-a.length)===a?f.slice(0,f.length-a.length)+b:f}
+function renamed(q){if(!q||q.verb!=='rename'||!q.to)return false;var hit=false,moved=[];
+[].forEach.call(document.querySelectorAll('.tview .thread[data-card]'),function(r){var c=cardOf(r);if(!c||c.z!==q.zone)return;
+var mine=q.thread?c.kl==='thread'&&c.p===q.project&&c.n===q.thread:(c.kl==='project'&&c.n===q.project)||c.p===q.project;
+if(!mine){if(q.thread&&c.kl==='project'&&c.n===q.project&&c.mg&&c.mg[5]){c.mg[5]=c.mg[5].map(function(t){return t===q.thread?q.to:t}).sort();r.dataset.card=JSON.stringify(c)}return}
+hit=true;var old=relOf(c),rel=moveRel(old,q),was=q.thread||q.project,own=c.n===was;
+if(own){c.n=q.to;delete c.sp}if(c.w)c.w=c.w===was?q.to:c.w.split(was).join(q.to);
+if(!q.thread&&c.p===q.project)c.p=q.to;
+c.u=link(c.u,old,rel);c.f=moveDir(c.f,old,rel);['pa','oc'].forEach(function(k){if(c[k]&&c[k][1]===old)c[k][1]=rel});
+if(c.pp&&c.pp[1]===q.project)c.pp[1]=q.to;if(c.mg){if(q.thread){if(c.mg[2]===q.thread)c.mg[2]=q.to}else c.mg[1]=q.to}
+if(c.dk){if(q.thread){if(c.dk[2]===q.thread)c.dk[2]=q.to}else c.dk[1]=q.to}
+r.dataset.card=JSON.stringify(c);var a=r.querySelector('.t>a');if(a){if(own)a.textContent=q.to;a.setAttribute('href',c.u||'')}
+var sm=r.querySelector('.t>small');if(sm&&!q.thread&&sm.textContent===q.project)sm.textContent=q.to;
+moved.push(r.classList.contains('sub')?r:(r.closest('.tunit')||r))});
+if(!hit)return false;R.close();moved.forEach(place);return true}
+window.GarrickRenamed=renamed;
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(out&&out.ok&&renamed(q)&&window.GarrickExpect){var rel=q.thread?q.project+'/Threads/'+q.to+'/'+q.to+'.md':q.to+'/'+q.to+'.md';
+GarrickExpect('named:'+q.zone+'/'+rel);try{var w=JSON.parse(localStorage.getItem('garrick-expect')||'null');if(w){w.q=q;localStorage.setItem('garrick-expect',JSON.stringify(w))}}catch(e){}}
+if(prev)return prev(q,out)};
+if(window.GarrickRedo&&window.GarrickRedo.verb==='rename')renamed(window.GarrickRedo);
+})();
+"""
+
+
 # Where each card sits and which are hidden: a view preference like the theme
 # and the folds, kept in the browser and nowhere else.
 #
@@ -7239,7 +7298,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
     state = {"parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
                               | {"%s/%s/%s.md" % (zone, p, p) for zone, z in T.items() for p in z.get("held", ())}),
-             "live": sorted(str(f) for f in folders if session_in(S, f))}
+             "live": sorted(str(f) for f in folders if session_in(S, f)),
+             # every live and parked note by its path, for a rename from the page (#184)
+             "notes": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["rows"] + z["parked"]}
+                             | {"%s/%s/%s.md" % (r["zone"], r["project"], r["project"]) for z in T.values()
+                                for r in z["rows"] + z["parked"] if r["hub"]})}
     menu += '<script type="application/json" id="state-data">%s</script>' % script_json(state)
     menu += '<script type="application/json" id="manage-data">%s</script>' % script_json(manage_data(T, workspace_context(ws), acting))
     menu += '<script type="application/json" id="find-data">%s</script>' % script_json(find_data(T, link, ZS, cmux, now.date()))
@@ -7263,7 +7326,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # FIND_JS after it, so its results are drawn again once a row has moved,
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
                MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

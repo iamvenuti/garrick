@@ -5651,6 +5651,9 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .pchev .chev{width:13px;height:13px}.pchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 /* a project with no chevron keeps its room, so every name starts in one column */
 .tunit>.thread:not(.proj)>.t{padding-left:16px}
+.thread:not(.proj)>.t{display:flex;flex-wrap:wrap;align-items:center;column-gap:6px}.thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0;max-width:none}
+.thread:not(.proj)>.t>.live{flex:none}.thread:not(.proj)>.t>.tchips{flex:none;display:inline-flex;align-items:center;gap:4px}
+.thread:not(.proj)>.t>small{flex:0 0 100%;min-width:0}.tchips .chip{margin:0}
 .thread .t .subn{font-size:11.5px}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:12.5px}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
@@ -6994,12 +6997,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         days = (now.date() - r["updated"]).days if r["updated"] else None
         k = not parked and bool(r.get("urgent"))
         # The party tags are the card's, not the row's: under a name they read as part of it.
-        # Under the name, at most the two chips that say something is owed or
-        # broken (#179), beside an unwrapped checkpoint's; the lists they open
-        # sit at the foot of the row, shut until a click.
+        # On the name's line, at its right, at most the two chips that say
+        # something is owed or broken (#179), beside an unwrapped checkpoint's
+        # (#186): the name gives way to its ellipsis before they do. The lists
+        # they open sit at the foot of the row, shut until a click. The text
+        # under a name, its project's, keeps its own line.
         chips = "" if parked else checkpoint_chip(r) + todo_chip(r, now.date()) + check_chip(r)
         pops = "" if parked else todo_pop(r, now.date(), acting) + check_pop(r, names[(r["zone"], r["project"], r["thread"])])
-        under = "" if sub or r["thread"] == r["project"] else E(r["project"]) + chips     # a project that is its own thread says it once
+        under = "" if sub or r["thread"] == r["project"] else E(r["project"])     # a project that is its own thread says it once
         bar = '<span class="mu"></span>' if parked else \
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
@@ -7010,7 +7015,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
                    E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
-                   ("<small>%s</small>" % under if under else (chips and "<small>%s</small>" % chips)),
+                   ('<span class="tchips">%s</span>' % chips if chips else "") + ("<small>%s</small>" % under if under else ""),
                    bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "", pops)), k
 
     def project_card(zone, project, items, days):

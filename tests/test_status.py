@@ -654,6 +654,21 @@ class TestOpensOnTheWork(StatusCase):
             self.assertNotIn("no next action", row)
         self.assertNotIn("tnext", status.CSS + status.HOME_CSS + status.TVIEW_CSS)
 
+    def test_the_chip_sits_on_the_names_line_not_under_it(self):
+        # #186: at the name's right, so a row with open actions takes one line; text under a name keeps its own.
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
+                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
+        html = self.page()
+        for name in ("Pricing", "Market Sizing"):
+            head = re.search(r'<div class="t">.*?</div>', self.row(html, name), re.S).group(0)
+            self.assertRegex(head, r'</a>(?:<span class="live[^>]*></span>)?<span class="tchips"><button type="button" '
+                                   r'class="chip tchip todo', name)
+            self.assertNotRegex(head, r"<small>[^<]*<button", name)
+        css = status.CSS
+        self.assertIn(".thread:not(.proj)>.t>.tchips{flex:none", css)          # never squeezed: the name's ellipsis goes first
+        self.assertIn(".thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0", css)
+        self.assertIn(".thread:not(.proj)>.t>small{flex:0 0 100%", css)        # text under the name stays below it
+
     def test_two_open_lines_neither_late_show_a_green_todo_2(self):
         later = self.now.date() + dt.timedelta(days=5)
         self.actions("[[Pricing]]: send the renewal floor to Dana 📅 %s" % later, "[[Pricing]]: book the call with Dana")

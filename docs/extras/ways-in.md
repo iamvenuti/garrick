@@ -47,7 +47,7 @@ If the connector can't give you the raw message, ask for a `.md` file per mail i
 
 **What it is for.** It keeps your mail between you and your mail provider. A connector gives your assistant's vendor standing access to your whole mailbox, and the assistant reads each mail as it saves it. The script needs no such access and no assistant: it runs on its own, fetches only the one folder or label you point it at, and makes no decisions about what it saves. Your assistant then sees only the mail you routed to that folder, and only when you ask it to file it. That reduces what the vendor learns but doesn't remove it, because filing a mail means the assistant reads it. Being plain code, the script also can't be steered by instructions hidden in a mail, as an assistant can be.
 
-**Which accounts it works with.** It signs in to IMAP with a password. Gmail and Google Workspace accept an app password, unless a Workspace administrator has turned app passwords off, as do iCloud Mail, Fastmail and most other IMAP providers. Microsoft accounts don't work: Microsoft 365 work and school accounts, and Outlook.com, Hotmail and Live addresses, accept only OAuth sign-in for IMAP, which the script doesn't support. For those, use a mail rule or Save As (below), or your assistant's connector.
+**Which accounts it works with.** It signs in to IMAP with a password. Gmail and Google Workspace accept an app password, unless a Workspace administrator has turned app passwords off, as do iCloud Mail, Fastmail and most other IMAP providers. Microsoft accounts don't work: Microsoft 365 work and school accounts, and Outlook.com, Hotmail and Live addresses, accept only OAuth sign-in for IMAP, which the script doesn't support. For those, use a mail rule or Save As (below), or your assistant's connector. A provider with no IMAP server of its own, only a bridge app on your Mac, works too: see [a mailbox served by a local bridge](#a-mailbox-served-by-a-local-bridge).
 
 1. **Store the password in the Keychain**, once. With Gmail, turn on two-step verification and create an app password first.
 
@@ -68,7 +68,7 @@ If the connector can't give you the raw message, ask for a `.md` file per mail i
    }
    ```
 
-   `mailbox` is a folder, or on Gmail a label. Optional keys: `"mark_read": true` to mark each saved message read, `"copy_to": "Garrick/Fetched"` to copy it to another folder (a second label, on Gmail), `"search"` for an IMAP search other than `ALL`, and `"state"` for where it keeps the list of messages already saved (by default beside the config, as `work-mail.state.json`). One config per zone. `"reading": true` marks a mailbox kept for newsletters and reports: each message is saved as `reading-<name>.eml`, intake treats it as something to read, and the reading sweep in the [jobs extra](scheduled-jobs.md) files it into Knowledge each night, or skips it when it is too thin to keep. Mail from a party's domain is never filed unattended: it waits for you.
+   `mailbox` is a folder, or on Gmail a label. Optional keys: `"mark_read": true` to mark each saved message read, `"copy_to": "Garrick/Fetched"` to copy it to another folder (a second label, on Gmail), `"search"` for an IMAP search other than `ALL`, `"state"` for where it keeps the list of messages already saved (by default beside the config, as `work-mail.state.json`), and `"starttls"` and `"cafile"` for a mailbox served by a local bridge (below). One config per zone. `"reading": true` marks a mailbox kept for newsletters and reports: each message is saved as `reading-<name>.eml`, intake treats it as something to read, and the reading sweep in the [jobs extra](scheduled-jobs.md) files it into Knowledge each night, or skips it when it is too thin to keep. Mail from a party's domain is never filed unattended: it waits for you.
 
 **One address for every zone.** Instead of an address, a label and a config per zone, you can forward everything to one, and let intake settle the zone when it files. Make the workspace's own `Inbox/` once (`mkdir ~/Garrick/Inbox`; its contents are never committed), and point a config's `"inbox"` at it (`/Users/<you>/Garrick/Inbox`). For each mail there, intake proposes the zone its parties belong to, and asks in one line when they do not settle it: no party on it (mail from personal webmail, or only your own addresses), or parties from two zones. Once you confirm, it moves the mail to that zone's inbox and files it as any other, with the same wall check. A two-address setup:
 
@@ -86,6 +86,30 @@ The trade-off: the zone is chosen when the mail is filed, not when it is forward
    A rerun saves only what is new, so it is safe to run as often as you like. To run it every ten minutes, use a launchd job as in [scheduled jobs](scheduled-jobs.md), with every path spelled out in full.
 
 To sort mail into the label in the first place, a Gmail filter works well, for example on mail sent to one of your plus addresses (below).
+
+#### A mailbox served by a local bridge
+
+Some providers have no public IMAP server. They offer a bridge app instead, which runs on your Mac and serves the mailbox as IMAP on `127.0.0.1` (Proton Mail Bridge is the common example). The bridge usually expects STARTTLS on a port of its own, and signs with a certificate of its own that nothing trusts yet. Two config keys cover that:
+
+1. **Export the bridge's certificate** once, as a PEM file, from the bridge's settings, for example to `~/.config/garrick/bridge-cert.pem`.
+
+2. **Point the config at the bridge**:
+
+   ```json
+   {
+     "server": "127.0.0.1",
+     "port": 1143,
+     "starttls": true,
+     "cafile": "/Users/sam/.config/garrick/bridge-cert.pem",
+     "user": "sam@example.com",
+     "mailbox": "Garrick/Work",
+     "inbox": "/Users/sam/Garrick/Zones/Work/Inbox"
+   }
+   ```
+
+   `server` and `port` are the IMAP address and port the bridge shows. `"starttls": true` opens a plain connection and upgrades it to TLS before signing in; leave it out if the bridge says its IMAP uses SSL. `cafile` is trusted in addition to the default certificate store, never instead of it, and the server's certificate is always checked: there is no setting that turns the check off. A `cafile` that isn't there is refused before anything connects. The password to store in the Keychain is the one the bridge shows, which is often not your account's own.
+
+3. **Keep the bridge running** whenever the fetch runs, including from a scheduled job. If it isn't, the run fails and says the bridge wasn't reachable. Nothing is lost: the next run saves whatever the last one missed.
 
 ### A mail rule, or Save As
 

@@ -177,7 +177,7 @@ Tests the workspace against every rule a machine can check:
 - a hub that does not link one of its threads, or lists a finished one outside `## Finished`, and a thread-first project with a folder outside its threads (warnings);
 - deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);
 - a deliverable of an anonymous project that names another party of its zone, one of their people, or a name its hub keeps out, Word, Excel and PowerPoint files included (a warning);
-- a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere, or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
+- a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere (a file in code checked out inside the project counts as there, and a path under `System/generated/` is not checked), or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
 - in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, the example action the list was started with still there under real ones, an Inbox that grew by more than twenty in a week, a ticked line the zone's history never held open, which is a record of work done or an outcome written onto the tick, or a line longer than 200 characters as Obsidian shows it (warnings; a zone with no history of its list is not asked about ticks);
 - a link from one zone into another (an error), a note that writes the full path of a cloud-synced folder, and a link to a page name both wikis hold that does not say which (warnings);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
@@ -224,7 +224,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 }
 ```
 
-- `parent-links`: zones where every note in a project, other than its hub, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
+- `parent-links`: zones where every note in a project, other than its hub and its `Deliverables/published.md`, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
 - `note-links`: zones where hub and thread notes name another note as a wikilink, never as a path in backticks, which draws no link in the graph.
 
 [Nurturing the context](#nurturing-the-context) fixes two of these on a yes: a path in backticks that leads to exactly one live note becomes `[[<path>]]`, and a note inside a thread's folder gets `parent: "[[<Thread>]]"`. A note at the project's own level could belong to the hub or to any thread, so it waits for you, as does anything under `Deliverables/` or `Sources/`.

@@ -20,14 +20,20 @@ The config is a small JSON file:
       "inbox": "/Users/sam/Garrick/Zones/Work/Inbox"
     }
 
-Optional keys: "port" (993), "search" (an IMAP search, default "ALL"),
-"mark_read" (false), "copy_to" (a mailbox to copy each saved message to; on
-Gmail that adds a label), "keychain_service" ("garrick-imap"), "reading"
-(false; true for a mailbox kept for newsletters and reports, whose messages
-are saved as `reading-<name>.eml`, for intake to treat as something to read
-and the reading sweep in the jobs extra to file into Knowledge), and "state"
-(where the list of saved messages is kept; default: beside the config, as
-<config name>.state.json).
+Optional keys: "port" (993, or 143 with "starttls"), "search" (an IMAP search,
+default "ALL"), "mark_read" (false), "copy_to" (a mailbox to copy each saved
+message to; on Gmail that adds a label), "keychain_service" ("garrick-imap"),
+"reading" (false; true for a mailbox kept for newsletters and reports, whose
+messages are saved as `reading-<name>.eml`, for intake to treat as something to
+read and the reading sweep in the jobs extra to file into Knowledge), and
+"state" (where the list of saved messages is kept; default: beside the config,
+as <config name>.state.json).
+
+For a mailbox served by a bridge app on this machine, as on 127.0.0.1:
+"starttls" (false; true opens a plain connection and upgrades it with
+STARTTLS before the login) and "cafile" (a PEM file holding a certificate to
+trust as well as the default store, such as the one the bridge exports). The
+server's certificate is always verified: there is no option to turn that off.
 
 The password comes from the macOS Keychain, and nowhere else: never from an
 argument, the config or a file. Store it once:
@@ -50,6 +56,7 @@ import imaplib
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 from email.utils import parsedate_to_datetime
@@ -57,7 +64,9 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 DEFAULTS = {"port": 993, "search": "ALL", "mark_read": False, "copy_to": "", "keychain_service": "garrick-imap",
-            "reading": False}
+            "reading": False, "starttls": False, "cafile": ""}
+STARTTLS_PORT = 143             # the default port when "starttls" is on
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}    # a bridge on this machine
 READING_PREFIX = "reading-"     # what intake and the reading sweep know an address kept for reading by
 REQUIRED = ("server", "user", "mailbox", "inbox")
 KNOWN = set(REQUIRED) | set(DEFAULTS) | {"state"}
@@ -97,6 +106,14 @@ def load_config(path: Path) -> dict:
         raise FetchError("%s is not a zone's Inbox folder, Zones/<Zone>/Inbox, or the workspace's Inbox, that exists."
                          % inbox)
     cfg["inbox"] = inbox
+    if cfg["starttls"] and "port" not in raw:
+        cfg["port"] = STARTTLS_PORT
+    if cfg["cafile"]:
+        cafile = Path(str(cfg["cafile"])).expanduser()
+        if not cafile.is_file():
+            raise FetchError("%s names a cafile, %s, that does not exist. Export the certificate to that path, or "
+                             "take the key out." % (path, cafile))
+        cfg["cafile"] = cafile
     cfg["state"] = Path(str(cfg.get("state") or Path(path).expanduser().with_suffix(".state.json"))).expanduser()
     return cfg
 
@@ -136,6 +153,57 @@ def keychain_password(service: str, account: str, run: Callable = subprocess.run
     return res.stdout.rstrip("\n")
 
 
+# --------------------------------------------------------------------------- the connection
+
+
+def ssl_context(cfg: dict) -> ssl.SSLContext:
+    """The default store, checking the certificate and the host name, plus the
+    certificate in "cafile" when the config names one. Never less than that."""
+    context = ssl.create_default_context()
+    if cfg.get("cafile"):
+        try:
+            context.load_verify_locations(cafile=str(cfg["cafile"]))
+        except (OSError, ssl.SSLError) as exc:
+            raise FetchError("Could not read %s as a PEM certificate: %s" % (cfg["cafile"], exc))
+    return context
+
+
+def _unreachable(cfg: dict, exc: Exception) -> FetchError:
+    where = "%s port %s" % (cfg["server"], cfg["port"])
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return FetchError("The certificate offered at %s did not verify: %s. If it is a bridge's own certificate, "
+                          "export it and name the file in \"cafile\"." % (where, exc))
+    if str(cfg["server"]).lower() in LOOPBACK:
+        return FetchError("Could not reach the bridge at %s: %s. Start the bridge, check its port, and run again."
+                          % (where, exc))
+    return FetchError("Could not reach %s: %s" % (where, exc))
+
+
+def connect(cfg: dict, imap_factory: Optional[Callable] = None):
+    """An IMAP connection, verified, ready for the login: implicit TLS, or with
+    "starttls" a plain connection upgraded before anything else is sent."""
+    context = ssl_context(cfg)
+    starttls = bool(cfg.get("starttls"))
+    factory = imap_factory or (imaplib.IMAP4 if starttls else imaplib.IMAP4_SSL)
+    try:
+        if not starttls:
+            return factory(cfg["server"], int(cfg["port"]), ssl_context=context)
+        imap = factory(cfg["server"], int(cfg["port"]))
+    except (OSError, imaplib.IMAP4.error) as exc:
+        raise _unreachable(cfg, exc)
+    try:
+        imap.starttls(ssl_context=context)
+    except (OSError, imaplib.IMAP4.error) as exc:
+        try:
+            imap.shutdown()
+        except Exception:
+            pass
+        if isinstance(exc, imaplib.IMAP4.error):
+            raise FetchError("%s did not upgrade the connection with STARTTLS: %s" % (cfg["server"], exc))
+        raise _unreachable(cfg, exc)
+    return imap
+
+
 # --------------------------------------------------------------------------- fetching
 
 
@@ -166,17 +234,14 @@ def file_name(data: bytes, uid: int) -> str:
     return "%s-%s-%d.eml" % (day, words or "mail", uid)
 
 
-def fetch(cfg: dict, imap_factory: Callable = imaplib.IMAP4_SSL, password: Optional[Callable[[], str]] = None,
+def fetch(cfg: dict, imap_factory: Optional[Callable] = None, password: Optional[Callable[[], str]] = None,
           log: Callable[[str], None] = print) -> List[Path]:
     """Save every message in the mailbox not saved before. Returns the new files."""
     get_password = password or (lambda: keychain_password(cfg["keychain_service"], cfg["user"]))
     state_path: Path = cfg["state"]
     state = load_state(state_path)
     box = state.setdefault(cfg["mailbox"], {"uidvalidity": "", "uids": [], "message_ids": []})
-    try:
-        imap = imap_factory(cfg["server"], int(cfg["port"]))
-    except (OSError, imaplib.IMAP4.error) as exc:
-        raise FetchError("Could not reach %s: %s" % (cfg["server"], exc))
+    imap = connect(cfg, imap_factory)
     saved: List[Path] = []
     try:
         try:

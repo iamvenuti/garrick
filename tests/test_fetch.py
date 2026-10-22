@@ -18,6 +18,7 @@ import unittest
 from email.message import EmailMessage
 from email import policy
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -52,18 +53,32 @@ def message(n, subject="Pallet forecast", msg_id=True):
 
 
 class FakeIMAP:
-    """Just enough of imaplib.IMAP4_SSL: one mailbox, UIDs, flags and copies."""
+    """Just enough of imaplib.IMAP4_SSL, or of imaplib.IMAP4 with STARTTLS: one mailbox, UIDs, flags and copies."""
 
-    def __init__(self, messages, validity=b"7", password=PASSWORD):
+    def __init__(self, messages, validity=b"7", password=PASSWORD, starttls_error=None):
         self.messages = dict(messages)  # uid -> bytes
         self.validity, self.password = validity, password
         self.flags, self.copies, self.calls = {}, [], []
         self.readonly = None
         self.logged_out = False
+        self.contexts = []  # each SSL context handed over, on connecting or on STARTTLS
+        self.starttls_error = starttls_error
 
-    def __call__(self, host, port):  # used as the factory
+    def __call__(self, host, port, ssl_context=None):  # used as the factory
         self.calls.append(("connect", host, port))
+        if ssl_context is not None:
+            self.contexts.append(ssl_context)
         return self
+
+    def starttls(self, ssl_context=None):
+        self.calls.append(("starttls",))
+        if self.starttls_error:
+            raise self.starttls_error
+        self.contexts.append(ssl_context)
+        return "OK", [b"Begin TLS negotiation now"]
+
+    def shutdown(self):
+        self.calls.append(("shutdown",))
 
     def login(self, user, password):
         self.calls.append(("login", user))
@@ -178,6 +193,109 @@ class TestFetch(FetchCase):
         with self.assertRaises(imap_fetch.FetchError):
             self.fetch(FakeIMAP({1: message(1)}, password="something else"))
         self.assertEqual([], self.waiting())
+
+
+class TestBridge(FetchCase):
+    """A mailbox served by a bridge app on this machine: STARTTLS on its own port,
+    and a certificate of its own to trust. Verification is never switched off."""
+
+    def setUp(self):
+        super().setUp()
+        self.cafile = self.base / "config" / "bridge-cert.pem"
+        self.cafile.write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8")  # read only by a fake context
+
+    def test_implicit_tls_by_default_and_verified(self):
+        server = FakeIMAP({3: message(3)})
+        self.fetch(server)
+        self.assertEqual(("connect", "imap.example.invalid", 993), server.calls[0])
+        self.assertNotIn(("starttls",), server.calls)
+        (context,) = server.contexts
+        self.assertEqual(imap_fetch.ssl.CERT_REQUIRED, context.verify_mode)
+        self.assertTrue(context.check_hostname)
+
+    def test_starttls_upgrades_the_connection_before_login(self):
+        self.write_config(server="127.0.0.1", port=1143, starttls=True)
+        server = FakeIMAP({3: message(3)})
+        self.assertEqual(1, len(self.fetch(server)))
+        names = [c[0] for c in server.calls]
+        self.assertEqual(["connect", "starttls", "login"], names[:3])
+        self.assertEqual(("connect", "127.0.0.1", 1143), server.calls[0])
+        (context,) = server.contexts  # the plain connection got none
+        self.assertEqual(imap_fetch.ssl.CERT_REQUIRED, context.verify_mode)
+        self.assertTrue(context.check_hostname)
+
+    def test_starttls_port_defaults_to_143(self):
+        self.write_config(starttls=True)
+        self.assertEqual(143, imap_fetch.load_config(self.config_path)["port"])
+        self.write_config()
+        self.assertEqual(993, imap_fetch.load_config(self.config_path)["port"])
+
+    def test_cafile_is_passed_to_the_ssl_context(self):
+        self.write_config(server="127.0.0.1", port=1143, starttls=True, cafile=str(self.cafile))
+        loaded = []
+
+        class Context:
+            verify_mode, check_hostname = imap_fetch.ssl.CERT_REQUIRED, True
+
+            def load_verify_locations(self, cafile=None, capath=None, cadata=None):
+                loaded.append(cafile)
+
+        server = FakeIMAP({3: message(3)})
+        with mock.patch.object(imap_fetch.ssl, "create_default_context", return_value=Context()) as made:
+            self.fetch(server)
+        made.assert_called_once_with()  # the default store, with nothing turned off
+        self.assertEqual([str(self.cafile)], loaded)
+        self.assertIsInstance(server.contexts[0], Context)
+
+    def test_a_cafile_that_is_not_a_certificate_is_refused(self):
+        self.write_config(cafile=str(self.cafile))
+        with self.assertRaises(imap_fetch.FetchError) as caught:
+            self.fetch(FakeIMAP({3: message(3)}))
+        self.assertIn("PEM certificate", str(caught.exception))
+        self.assertEqual([], self.waiting())
+
+    def test_a_missing_cafile_is_refused(self):
+        missing = self.base / "config" / "no-such-cert.pem"
+        self.write_config(cafile=str(missing))
+        with self.assertRaises(imap_fetch.FetchError) as caught:
+            imap_fetch.load_config(self.config_path)
+        self.assertIn("cafile", str(caught.exception))
+        self.assertIn(str(missing), str(caught.exception))
+
+    def test_no_option_turns_verification_off(self):
+        for key in ("insecure", "verify", "ssl_verify", "check_hostname"):
+            self.write_config(**{key: False})
+            with self.assertRaises(imap_fetch.FetchError, msg=key):
+                imap_fetch.load_config(self.config_path)
+
+    def test_a_bridge_that_is_not_running_says_so(self):
+        self.write_config(server="127.0.0.1", port=1143, starttls=True)
+
+        def refused(host, port, ssl_context=None):
+            raise ConnectionRefusedError(61, "Connection refused")
+
+        with self.assertRaises(imap_fetch.FetchError) as caught:
+            self.fetch(refused)
+        self.assertIn("Could not reach the bridge at 127.0.0.1 port 1143", str(caught.exception))
+        self.assertEqual([], self.waiting())
+
+    def test_a_server_without_starttls_is_refused_before_login(self):
+        self.write_config(server="127.0.0.1", port=1143, starttls=True)
+        server = FakeIMAP({3: message(3)}, starttls_error=imap_fetch.imaplib.IMAP4.error(
+            "STARTTLS extension not supported by server."))
+        with self.assertRaises(imap_fetch.FetchError) as caught:
+            self.fetch(server)
+        self.assertIn("STARTTLS", str(caught.exception))
+        self.assertNotIn("login", [c[0] for c in server.calls])
+
+    def test_a_certificate_that_does_not_verify_names_cafile(self):
+        self.write_config(server="127.0.0.1", port=1143, starttls=True)
+        server = FakeIMAP({3: message(3)}, starttls_error=imap_fetch.ssl.SSLCertVerificationError(
+            1, "certificate verify failed: self-signed certificate"))
+        with self.assertRaises(imap_fetch.FetchError) as caught:
+            self.fetch(server)
+        self.assertIn('"cafile"', str(caught.exception))
+        self.assertNotIn("login", [c[0] for c in server.calls])
 
 
 class TestPasswordAndConfig(FetchCase):

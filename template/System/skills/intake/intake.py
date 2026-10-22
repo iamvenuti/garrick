@@ -15,7 +15,7 @@ wall.
     python3 intake.py parse --file FILE                     one item as JSON: headers, text, attachments, suggested parties
     python3 intake.py file-conversation --file FILE --parties a,b [--title "..."] [--date YYYY-MM-DD]
     python3 intake.py file-reading --file FILE [--title "..."] [--slug SLUG]
-    python3 intake.py file-to-project --file FILE --project PATH --parties a,b [--name NAME]
+    python3 intake.py file-to-project --file FILE --project PATH --parties a,b [--name NAME] [--as-material]
     python3 intake.py extract-attachment --mail RAW --project PATH (--name NAME | --index N) [--save-as NAME]
     python3 intake.py learn --domain DOMAIN --party TAG     mail from DOMAIN suggests TAG from now on
 
@@ -58,6 +58,7 @@ from garrick_lib import (  # noqa: E402
     strip_recipients,
     parties_for_domain,
     split_domains,
+    stamp_parties,
     strip_tag,
     walled,
     workspace_root,
@@ -667,7 +668,8 @@ def _safe_name(name: str) -> str:
     return name
 
 
-def file_to_project(root: Path, path: Path, project: Optional[str], parties: List[str], name: str = "") -> Path:
+def file_to_project(root: Path, path: Path, project: Optional[str], parties: List[str], name: str = "",
+                    as_material: bool = False) -> Path:
     """Move a dropped file from a zone's Inbox into the named project's `Sources/`.
 
     The destination is only ever the one given. Refuses without a project, a
@@ -675,6 +677,11 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     mail (a mail is recorded as a conversation first, and only its attachment
     goes to the project), audio, a name already taken, and a symbolic link
     between the workspace and the destination. Returns the new path.
+
+    With `as_material`, a mail the user said is material and not a
+    conversation is saved whole, after the same checks. A `.eml` gets one
+    header first, `X-Garrick-Parties`, so the walls can read its parties
+    without a Meetings page. The flag changes nothing for any other item.
     """
     path, where, zone, kind, _ = _item(root, path)
     folder, pzone, ptags = resolve_project(root, project)
@@ -682,9 +689,10 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
         raise Refusal(FIRST_ZONE % path.name)
     if where != "zone":
         raise Refusal("%s is in the Meetings inbox, which holds conversations, never project material." % path.name)
-    if kind == "mail":
+    if kind == "mail" and not as_material:
         raise Refusal("%s is a mail. File it as a conversation first (file-conversation), then save its attachment "
-                      "with extract-attachment." % path.name)
+                      "with extract-attachment. Only when the user said the mail itself is material for the project, "
+                      "not a conversation, pass --as-material." % path.name)
     if kind == "transcript":
         raise Refusal("%s is a transcript, which is a conversation: it goes to Meetings." % path.name)
     if kind == "unreadable":
@@ -702,7 +710,11 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
     if dest.exists():
         raise Refusal("%s already exists; pass --name for a different one." % _rel(root, dest))
     with filing(root):
-        move_new(root, folder, path, dest)
+        if kind == "mail" and path.suffix.lower() == ".eml":
+            write_new(root, folder, dest, stamp_parties(path.read_bytes(), tags))
+            path.unlink()
+        else:
+            move_new(root, folder, path, dest)
     return dest
 
 
@@ -873,6 +885,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     t.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
     t.add_argument("--parties", required=True, help="comma-separated tags: whose material this is")
     t.add_argument("--name", default="", help="file name in Sources/ (default: as dropped)")
+    t.add_argument("--as-material", action="store_true",
+                   help="a mail the user said is material, not a conversation: save the mail itself")
     x = sub.add_parser("extract-attachment", help="save a filed mail's attachment into a project's Sources/")
     x.add_argument("--mail", required=True, help="the filed mail: its slug, or Wikis/Meetings/raw/<slug>.eml")
     x.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
@@ -912,7 +926,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today, args.kind)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-to-project":
-            print(rel(file_to_project(root, Path(args.file), args.project, _tags(args.parties), args.name)))
+            print(rel(file_to_project(root, Path(args.file), args.project, _tags(args.parties), args.name,
+                                      args.as_material)))
         elif args.command == "extract-attachment":
             how, dest = extract_attachment(root, args.mail, args.project, args.name, args.index, args.save_as)
             print("%s\t%s" % (how, rel(dest)))

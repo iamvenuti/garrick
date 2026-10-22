@@ -239,12 +239,12 @@ def rel(ws: Workspace, path: Path) -> str:
 # which the status page's Todo card reads a zone through as well.
 
 
-def walk_files(top: Path, skip: Optional[set] = None) -> Iterable[Path]:
-    """Every file under `top`, skipping SKIP_DIRS, nested repositories, and
-    the files and folders in `skip` (see ignored)."""
+def walk_files(top: Path, skip: Optional[set] = None, nested: bool = False) -> Iterable[Path]:
+    """Every file under `top`, skipping SKIP_DIRS, nested repositories unless
+    `nested` is set, and the files and folders in `skip` (see ignored)."""
     for dirpath, dirnames, filenames in os.walk(top):
         here = Path(dirpath)
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not nested_repo(here / d)
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and (nested or not nested_repo(here / d))
                              and not (skip and here / d in skip))
         for name in sorted(filenames):
             if not (skip and here / name in skip):
@@ -1610,8 +1610,10 @@ def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: Li
     """The `backticked` paths on one line that are not there. Placeholders,
     commands, web addresses, globs, Office parts and anything on another
     machine are not paths, and a line that says its file sits on a shared drive
-    is left alone: the check does not read one. `inside` caches the project's
-    own files, listed on the first path not found. The Resume here block and
+    is left alone: the check does not read one. Nor is anything under
+    System/generated/, which a tool writes only in some states. `inside` caches
+    the project's own files, nested repositories included, listed on the first
+    path not found. The Resume here block and
     the checkpoint beside it are read the same way, which is why this is one
     function and not two."""
     out = []
@@ -1621,15 +1623,18 @@ def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: Li
                 or COMMAND_RE.match(path) or OFFICE_PART_RE.match(path) or not PATHLIKE_RE.match(path)
                 or "/" not in path.rstrip("/")):
             continue
+        if is_generated(ws, Path(path).expanduser() if path.startswith(("~", "/")) else ws.root / path):
+            continue  # the tools' own, there or not as their state says
         if path.startswith(("~", "/")):
             found = Path(path).expanduser().exists()
         else:
             found = any((b / path).exists() for b in bases)
             if not found:
                 # Relative to a folder the line names elsewhere: any file in
-                # the project whose path ends the same way.
+                # the project whose path ends the same way, code checked out
+                # inside it too, since this only asks whether the file exists.
                 if inside[0] is None:
-                    inside[0] = ["/" + f.relative_to(project).as_posix() for f in walk_files(project)]
+                    inside[0] = ["/" + f.relative_to(project).as_posix() for f in walk_files(project, nested=True)]
                 tail = "/" + path.strip("./").rstrip("/")
                 found = any(f.endswith(tail) or (path.endswith("/") and tail + "/" in f) for f in inside[0])
         if not found and (shared or SHARE_RE.search(line)):

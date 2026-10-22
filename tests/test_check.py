@@ -568,6 +568,32 @@ class TestResume(CheckCase):
         self.assertClean("resume")
         self.assertClean("projects")
 
+    def test_a_file_in_a_nested_repository_is_found(self):
+        # Code checked out inside the project is somebody else's files to
+        # every check that reads notes, but a path into it still exists (#168).
+        code = self.acme / "Repo"
+        write(code / "docs" / "extras" / "status-page.md", "# Status page\n")
+        (code / ".git").mkdir()
+        self.resume("`extras/status-page.md`")
+        self.assertClean("resume")
+
+    def test_a_nested_repository_still_skips_installed_packages(self):
+        code = self.acme / "Repo"
+        write(code / "node_modules" / "left-pad" / "index.js", "module.exports = 1;\n")
+        (code / ".git").mkdir()
+        self.resume("`left-pad/index.js`")
+        self.assertFinds("resume", "warning", "`left-pad/index.js`, which is not there")
+
+    def test_a_generated_file_is_not_checked(self):
+        # interrupted.json exists only while a thread is held.
+        self.resume("`System/generated/interrupted.json` and `%s/System/generated/status.html`" % self.root)
+        self.assertClean("resume")
+
+    def test_a_path_that_exists_nowhere_is_still_reported(self):
+        (self.acme / "Repo" / ".git").mkdir(parents=True)
+        self.resume("`extras/gone.md`")
+        self.assertFinds("resume", "warning", "`extras/gone.md`, which is not there")
+
     def test_only_the_resume_block(self):
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text() + "\n---\n\n**2 March 2026.** Drafted `Deliverables/old draft.md`, since replaced.\n")

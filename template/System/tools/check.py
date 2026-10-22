@@ -104,6 +104,7 @@ from garrick_lib import (  # noqa: E402
     say_version,
     spoken_clash,
     spoken_of,
+    stamped_parties,
     strip_recipients,
     strip_tag,
     walled,
@@ -3366,7 +3367,8 @@ def project_of(ws: Workspace, path: Path) -> Optional[Tuple[Path, dict]]:
 # into a project's Sources/ is an attachment. A file in Sources/ with the same
 # bytes as an attachment came from that mail, so the mail must be filed with a
 # finished page, and its parties must not be walled from the project's. The
-# same holds for a whole mail saved into Sources/.
+# same holds for a whole mail saved into Sources/, unless intake saved it there
+# as material: then its parties are in its own X-Garrick-Parties header.
 # ---------------------------------------------------------------------------
 
 MIN_ATTACHMENT_BYTES = 32  # below this, identical bytes prove nothing
@@ -3425,6 +3427,20 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
     """Findings for one file in a project's Sources/, from its bytes."""
     is_mail = path.suffix.lower() == ".eml"
     if not is_mail and len(data) < MIN_ATTACHMENT_BYTES:
+        return []
+    stamped = stamped_parties(data) if is_mail else []
+    if stamped:  # saved as material: no Meetings page, its parties in the mail
+        r = rel(ws, path)
+        if not ptags:
+            return [Finding(ERROR, "walls", r,
+                            "is a mail saved as material, but the project has no party to check the walls against",
+                            "A file in %s is a mail, before the project has a party" % project.name)]
+        hits = sorted((a, b) for a in ptags for b in stamped if walled(ws.context, a, b))
+        if hits:
+            a, b = hits[0]
+            return [Finding(ERROR, "walls", r,
+                            "is a mail saved as material for %s; a wall stands between %s and %s" % (b, a, b),
+                            "A file in %s is a mail with %s" % (project.name, party_name(ws, b)))]
         return []
     recs = mail_index(ws).get(("mail" if is_mail else "attachment",) + _digest(data), [])
     if is_mail:

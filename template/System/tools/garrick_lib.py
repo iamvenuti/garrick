@@ -44,6 +44,7 @@ functions below keep their signatures:
     table_row(cells) -> str
     parse_mail(path) -> dict
     mail_attachments(data) -> [(name, type, bytes)]
+    stamp_parties(data, tags) -> bytes; stamped_parties(data) -> [tag]
     parties_for_domain(context, domain) -> [tag]
     is_webmail(domain) -> bool
 """
@@ -52,6 +53,7 @@ from __future__ import annotations
 
 import datetime
 import email
+import email.parser
 import email.policy
 import errno
 import hashlib
@@ -2621,6 +2623,29 @@ def mail_attachments(data: bytes) -> List[Tuple[str, str, bytes]]:
     the order the message lists them. Nothing is written anywhere."""
     msg = email.message_from_bytes(data, policy=email.policy.default)
     return [(name, ctype, payload) for _, name, ctype, payload in _attachment_parts(msg)]
+
+
+# A mail saved whole into a project's Sources/ as material, not a conversation,
+# has no Meetings page to carry its parties, so it carries them itself.
+MATERIAL_HEADER = "X-Garrick-Parties"
+
+
+def stamp_parties(data: bytes, tags: Iterable[str]) -> bytes:
+    """A saved `.eml` with one header line added at the top, naming the parties
+    it was filed for: `X-Garrick-Parties: acme, birch`. Nothing else changes."""
+    first = data[:data.find(b"\n") + 1]
+    eol = b"\r\n" if first.endswith(b"\r\n") else b"\n"
+    return ("%s: %s" % (MATERIAL_HEADER, ", ".join(tags))).encode("utf-8") + eol + data
+
+
+def stamped_parties(data: bytes) -> List[str]:
+    """The party tags a mail saved as material names in its first
+    `X-Garrick-Parties` header, or [] when it has none."""
+    try:
+        value = email.parser.BytesHeaderParser().parsebytes(data).get(MATERIAL_HEADER)
+    except Exception:  # an unreadable message names nobody
+        return []
+    return [t for t in (strip_tag(x) for x in re.split(r"[,\s]+", str(value or ""))) if t]
 
 
 def _parse_eml(data: bytes) -> dict:

@@ -699,7 +699,102 @@ class TestFileToProject(MailCase):
         self.assertEqual("Zones/Work/Acme Review/Sources/Rates.csv", r.stdout.strip())
 
 
-QUOTES = b"maker,part,unit_price_eur\nKeld Seals,seal kit,4.10\nAnsel Gaskets,seal kit,3.85\n"
+class TestMailAsMaterial(MailCase):
+    """A mail the Meetings wiki will not hold, which the user said is material:
+    saved whole into the project's Sources/, after the same checks."""
+
+    def setUp(self):
+        super().setUp()
+        self.data = eml(subject="Pallet forecast", plain=SECRET + "\n")
+
+    def test_a_mail_is_still_refused_by_default(self):
+        mail = self.drop("forecast.eml", self.data)
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, mail, "Zones/Work/Acme Review", ["acme"])
+        self.assertIn("file-conversation", str(caught.exception))
+        self.assertIn("--as-material", str(caught.exception))
+        self.assertTrue(mail.exists())
+        self.assertFalse((self.work / "Acme Review" / "Sources" / "forecast.eml").exists())
+
+    def test_saves_the_mail_itself_after_the_checks(self):
+        mail = self.drop("forecast.eml", self.data)
+        dest = intake.file_to_project(self.root, mail, "Zones/Work/Acme Review", ["acme"], as_material=True)
+        self.assertEqual(self.work / "Acme Review" / "Sources" / "forecast.eml", dest)
+        self.assertFalse(mail.exists())
+        saved = dest.read_bytes()
+        self.assertTrue(saved.startswith(b"X-Garrick-Parties: acme\n"), saved[:60])
+        self.assertEqual(self.data, saved.split(b"\n", 1)[1])  # nothing else changed
+        self.assertEqual(["acme"], lib.stamped_parties(saved))
+        self.assertEqual(lib.parse_mail_bytes(self.data)["subject"], lib.parse_mail_bytes(saved)["subject"])
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
+
+    def test_a_mail_saved_as_text_moves_unchanged(self):
+        text = "From: Dana Whitlock <dana.whitlock@acmecorp.example>\nSubject: Pallet forecast\n\n%s\n" % SECRET
+        mail = self.drop("forecast.md", text)
+        dest = intake.file_to_project(self.root, mail, "Zones/Work/Acme Review", ["acme"], as_material=True)
+        self.assertEqual(text, dest.read_text())
+
+    def test_a_walled_project_still_refuses_with_the_standard_sentence(self):
+        mail = self.drop("forecast.eml", self.data)
+        with self.assertRaises(intake.Refusal) as caught:
+            intake.file_to_project(self.root, mail, "Zones/Work/Birch Entry", ["acme"], as_material=True)
+        self.assertEqual(intake.WALL_REFUSAL, str(caught.exception))
+        for word in ("acme", "birch", "dana", "pallet", "tilbury"):
+            self.assertNotIn(word, str(caught.exception).lower())
+        self.assertTrue(mail.exists())
+        self.assertFalse((self.work / "Birch Entry" / "Sources").exists())
+
+    def test_the_other_checks_still_hold(self):
+        mail = self.drop("forecast.eml", self.data)
+        for project, parties in (("Zones/Work/Acme Review", []), ("Zones/Work/Acme Review", ["cedar"]),
+                                 ("Zones/Work/Nowhere", ["acme"]), (None, ["acme"])):
+            with self.assertRaises(intake.Refusal, msg=project):
+                intake.file_to_project(self.root, mail, project, parties, as_material=True)
+        personal = write(self.root / "Zones" / "Personal" / "House" / "House.md",
+                         "---\ntitle: House\ntype: project\nzone: Personal\nparty: acme\n---\n")
+        with self.assertRaises(intake.Refusal):  # another zone: zones never mix
+            intake.file_to_project(self.root, mail, personal.parent, ["acme"], as_material=True)
+        loose = self.root / "Inbox" / "loose.eml"
+        loose.parent.mkdir(parents=True, exist_ok=True)
+        loose.write_bytes(self.data)
+        with self.assertRaises(intake.Refusal):  # its zone is settled first
+            intake.file_to_project(self.root, loose, "Zones/Work/Acme Review", ["acme"], as_material=True)
+        call = self.drop("call.vtt", "WEBVTT\n")
+        with self.assertRaises(intake.Refusal):  # a transcript is a conversation, flag or not
+            intake.file_to_project(self.root, call, "Zones/Work/Acme Review", ["acme"], as_material=True)
+        write(self.work / "Acme Review" / "Sources" / "forecast.eml", "older\n")
+        with self.assertRaises(intake.Refusal):  # never overwrites
+            intake.file_to_project(self.root, mail, "Zones/Work/Acme Review", ["acme"], as_material=True)
+        self.assertTrue(mail.exists())
+
+    def test_cli(self):
+        mail = self.drop("forecast.eml", self.data)
+        r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Work/Acme Review",
+                       "--parties", "acme")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("--as-material", r.stderr)
+        r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Work/Birch Entry",
+                       "--parties", "acme", "--as-material")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("A wall holds some material back from this project", r.stderr)
+        self.assertNotIn("acme", r.stderr.lower())
+        r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Work/Acme Review",
+                       "--parties", "acme", "--as-material")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual("Zones/Work/Acme Review/Sources/forecast.eml", r.stdout.strip())
+
+    def test_the_check_reads_the_parties_it_carries(self):
+        birch = self.work / "Birch Entry" / "Sources"
+        birch.mkdir(parents=True, exist_ok=True)
+        (birch / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["acme"]))  # moved across by hand
+        found = [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")]
+        self.assertEqual([("walls", "error")], [(f.check, f.severity) for f in found])
+        self.assertNotIn("Tilbury", check.report_text(found, self.root))
+        (birch / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["birch"]))
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
+
+
+QUOTES =b"maker,part,unit_price_eur\nKeld Seals,seal kit,4.10\nAnsel Gaskets,seal kit,3.85\n"
 
 
 class TestExtractAttachment(MailCase):

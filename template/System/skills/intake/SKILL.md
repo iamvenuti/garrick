@@ -93,6 +93,17 @@ folder that was checked. A link that stays inside that folder is fine.
    Can't tell: ask, in one line. "Is the Freight Ledger mail something to
    read, or a conversation?"
 
+   **A mail the Meetings wiki will not hold.** The wiki's own rules, in
+   `Wikis/Meetings/AGENTS.local.md`, may keep some mail out under an
+   *Exclusions* section, such as personal mail or mail in a language the
+   wiki is not kept in, and the `meetings` skill defers to them. Read that
+   section before filing a mail as a conversation. When it keeps the mail
+   out, offer the project route in the one-line question instead: "The
+   wiki keeps personal mail out. Is the gallery invitation material for
+   House Move, or does it stay in the Inbox?" Only the user's answer makes
+   the mail material; then it is filed whole, as step 7 says. No answer,
+   or not material: leave it in the Inbox and say why.
+
 5. **Zone and parties.** The zone is the Inbox it sits in. An item in the
    workspace's own `Inbox/` has none yet: `parse` gives `suggested_zone`,
    the zone its parties point to, or `ask` with why it cannot tell (no party
@@ -163,6 +174,16 @@ folder that was checked. A link that stays inside that folder is fine.
      file into the project's `Sources/`, and refuses a mail, a project in
      another zone, a walled project, and a name already there (pass `--name`
      for another).
+   - **A mail that is itself material**, only when the user said so (step
+     4), the same command with `--as-material`:
+     ```sh
+     python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" --parties <tag> --as-material
+     ```
+     It runs the same zone, party and wall checks and saves the mail whole
+     into `Sources/`. A `.eml` gets one header added at the top,
+     `X-Garrick-Parties`, naming the parties given, so the check can still
+     read them with no Meetings page; nothing else in it changes. Never pass
+     the flag to get round the refusal for a mail that is a conversation.
 
    **When a command refuses because of a wall, stop.** Leave the item where
    it is, and say only the sentence the rule gives: "A wall holds some
@@ -220,8 +241,9 @@ aloud; a domain said as its name; dates as a day and a date.
   connector) is outside it.
 - **It never guesses the kind, the zone, a party or a project.** Unsure, it
   asks one short question. It never guesses across a wall.
-- **It never puts a mail itself into a project.** The mail is a
-  conversation, in Meetings; only its attachment goes to `Sources/`.
+- **It never puts a mail itself into a project** unless the user said the
+  mail is material and not a conversation. Otherwise the mail is a
+  conversation, in Meetings, and only its attachment goes to `Sources/`.
 - **It never gives a Knowledge page parties, a party or a zone.** Knowledge
   carries nobody's confidence; that is why it may be used anywhere.
 - **It never edits a raw record**, and never commits anything from an Inbox.

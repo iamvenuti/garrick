@@ -12,10 +12,12 @@ Core never talks to a mail provider and holds no credentials. Everything on this
 | What | Where you put it | Where it ends up |
 |---|---|---|
 | A recording | Its transcript (`.txt`, `.md` or `.vtt`) in `Wikis/Meetings/raw/inbox/` | Always a conversation, in Meetings |
-| Mail | `Zones/<Zone>/Inbox/`, as a `.eml` file, or saved as `.txt` or `.md` | A conversation in Meetings; something to read in Knowledge; or, for an attachment a project needs, that project's `Sources/`, with the mail itself kept in Meetings |
+| Mail | `Zones/<Zone>/Inbox/`, as a `.eml` file, or saved as `.txt` or `.md` | A conversation in Meetings; something to read in Knowledge; or, for an attachment a project needs, that project's `Sources/`, with the mail itself kept in Meetings. A mail you say is itself material for a project goes whole into its `Sources/` |
 | Any other file | `Zones/<Zone>/Inbox/`: a PDF, a document, a spreadsheet, an article | Something to read in Knowledge, or material for a project in its `Sources/` |
 
 The zone is the inbox you put it in, or, with one address for every zone (below), the zone its parties point to, which you confirm. Parties come from the mail domains in the Parties table of `System/context.md`, confirmed by you when they are unclear. Before anything goes into a project, the assistant is instructed to check the declared walls and refuse material from the other side. The [rules and commit checks have limits](../principles.md#what-the-check-covers); review filed material before using it. When it can't tell what something is, whose it is or which project it's for, it asks in one short line. Nothing in an inbox is ever committed.
+
+A mail is not saved into a project on its own: `intake.py file-to-project` refuses one, because a mail is a conversation first. Some mail never reaches the Meetings wiki, though, when the wiki's own rules keep it out, under an *Exclusions* section in `Wikis/Meetings/AGENTS.local.md`: personal mail, say, or mail in a language the wiki is not kept in. For such a mail the assistant asks, in the same one line, whether it is material for a project instead. If you say it is, `file-to-project --as-material` saves the mail itself into that project's `Sources/`, after the same zone, party and wall checks as any other file. A `.eml` saved that way gets one header at the top, `X-Garrick-Parties`, naming its parties, so the check can still test the walls without a Meetings page. The code never reads the exclusions and never decides that a mail is material: only your answer does.
 
 Recordings have their own page: [a meeting recorder](meeting-recorder.md). The rest of this page is about mail.
 

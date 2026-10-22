@@ -303,6 +303,100 @@ class RegistryTest(Base):
         self.assertEqual(["mechanical"], [k.name for k in nurture.ranked() if k.unattended])
 
 
+class LinkRulesTest(Base):
+    """The two rules for notes the graph cannot place, with `parent-links`
+    and `note-links` switched on for Work: a note path written as code
+    becomes a wikilink when it leads to exactly one live note, and a note in a
+    thread's folder with no `parent:` gets its thread's."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"parent-links": ["Work"], "note-links": ["Work"]}))
+        hub = self.acme / "Acme Review.md"
+        hub.write_text(hub.read_text().replace("\nThe rates are in `Deliverables/Rate card.md`.\n", ""))
+        threads = self.acme / "Threads"
+        self.bench = write(threads / "Pricing" / "Benchmarks.md", "# Benchmarks\n")
+        self.routes = write(threads / "Freight" / "Routes.md",
+                            "---\ntitle: Routes\n---\n\n# Routes\n\nRates from `Pricing/Benchmarks.md`.\n\n"
+                            "```\n`Pricing/Benchmarks.md`\n```\n")
+        brief = '---\nparent: "[[%s]]"\n---\n# Brief\n'
+        write(threads / "Pricing" / "Brief.md", brief % "Pricing")
+        write(self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Brief.md", brief % "Market Sizing")
+        self.pricing.write_text(self.pricing.read_text() + "\nSee `Brief.md`.\n")             # two notes: a question
+        self.ledger = write(threads / "Pricing" / "Deliverables" / "published.md",
+                            "| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n")
+        self.source = write(threads / "Pricing" / "Sources" / "Tender notes.md", "# Tender notes, as received\n")
+        git(self.work, "add", "-A", "--", ".", ":!Scratch.md", ":!Birch Entry/Birch Entry.md")
+        git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "notes")
+
+    def mechanical(self, items):
+        return {(i["path"].split("Acme Review/", 1)[-1], i["fix"]["op"]): i["fix"] for i in items if i["kind"] == "mechanical"}
+
+    def test_each_rule_takes_only_the_one_right_answer(self):
+        _, out = self.run_tool("list")
+        fixes = self.mechanical(out["items"])
+        self.assertEqual("Pricing", fixes[("Threads/Pricing/Benchmarks.md", "parent")]["thread"])
+        self.assertEqual("Freight", fixes[("Threads/Freight/Routes.md", "parent")]["thread"])
+        self.assertEqual("Pricing/Benchmarks.md", fixes[("Threads/Freight/Routes.md", "codelink")]["ref"])
+        self.assertEqual({"Threads/Pricing/Benchmarks.md", "Threads/Freight/Routes.md"},
+                         {path for path, op in fixes if op in ("parent", "codelink")})
+        judged = {i["path"].split("Acme Review/", 1)[-1] for i in out["items"] if i["kind"] == "judgment"}
+        for left in ("Notes.md",                                  # the project's own level: the hub's, or a thread's
+                     "Threads/Pricing/Pricing.md",                # a thread note: its parent is the hub; and Brief.md is two notes
+                     "Threads/Pricing/Sources/Tender notes.md",   # as received
+                     "Deliverables/Rate card.md"):
+            self.assertIn(left, judged)
+        self.assertFalse([i for i in out["items"] if i["path"].endswith("Pricing/Deliverables/published.md")
+                          and i["kind"] == "mechanical"])
+        said = [i["line"] for i in out["items"] if i["kind"] == "mechanical" and i["fix"]["op"] in ("parent", "codelink")]
+        self.assertIn('Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md: add parent: "[[Pricing]]"', said)
+        self.assertIn("Zones/Work/Acme Review/Threads/Freight/Routes.md: `Pricing/Benchmarks.md` becomes "
+                      "[[Pricing/Benchmarks.md]]", said)
+
+    def test_one_yes_applies_them_in_one_commit_of_only_the_files_they_touch(self):
+        ledger, source = self.ledger.read_text(), self.source.read_text()
+        before = len(self.log(self.work))
+        code, out = self.run_tool("fix", "--yes")
+        self.assertEqual(0, code, out)
+        self.assertEqual(before + 1, len(self.log(self.work)))
+        changed = set(git(self.work, "show", "--no-renames", "--name-only", "--format=", "HEAD").split("\n")) - {""}
+        self.assertIn("Acme Review/Threads/Pricing/Benchmarks.md", changed)
+        self.assertIn("Acme Review/Threads/Freight/Routes.md", changed)
+        self.assertNotIn("Acme Review/Threads/Pricing/Deliverables/published.md", changed)
+        self.assertEqual('---\nparent: "[[Pricing]]"\n---\n# Benchmarks\n', self.bench.read_text())
+        self.assertEqual('---\ntitle: Routes\nparent: "[[Freight]]"\n---\n\n# Routes\n\nRates from [[Pricing/Benchmarks.md]].\n\n'
+                         "```\n`Pricing/Benchmarks.md`\n```\n", self.routes.read_text())   # a fenced block stays as written
+        self.assertEqual((ledger, source), (self.ledger.read_text(), self.source.read_text()))
+        self.assertIn("See `Brief.md`.", self.pricing.read_text())
+        subject = git(self.work, "log", "-1", "--format=%s")
+        self.assertIn("2 parent links", subject)
+        self.assertIn("1 path made a link", subject)
+        self.assertEqual(2, len(git(self.work, "status", "--porcelain").strip().splitlines()))  # the other session's two
+        _, out = self.run_tool("list")
+        self.assertFalse([i for i in out["items"] if i["path"].endswith(("Benchmarks.md", "Routes.md"))])
+
+    def test_a_note_with_changes_not_committed_is_held(self):
+        self.bench.write_text("# Benchmarks\n\nA row the other session is adding.\n")
+        code, out = self.run_tool("fix", "--yes")
+        self.assertEqual(0, code)
+        held = self.by_path(out["held"], "Pricing/Benchmarks.md")
+        self.assertIn("changes not committed", held[0]["held"])
+        self.assertEqual("# Benchmarks\n\nA row the other session is adding.\n", self.bench.read_text())
+        self.assertIn('parent: "[[Freight]]"', self.routes.read_text())
+
+    def test_a_thread_name_another_note_shares_is_a_question(self):
+        write(self.wikis / "Knowledge" / "wiki" / "concepts" / "freight.md", "# Freight\n")
+        _, out = self.run_tool("list")
+        self.assertNotIn(("Threads/Freight/Routes.md", "parent"), self.mechanical(out["items"]))
+        self.assertIn(("Threads/Pricing/Benchmarks.md", "parent"), self.mechanical(out["items"]))
+
+    def test_the_night_applies_them_too(self):
+        code, out = self.run_tool("nightly")
+        self.assertEqual(0, code, out)
+        self.assertEqual({"codelink", "parent"}, {i["fix"]["op"] for i in out["fixed"]} & {"codelink", "parent"})
+        self.assertIn("parent link", out["digest"])
+
+
 class CorrectionTest(Base):
     """A correction the user gives enters Nurture as one finding, and goes in
     through correct.py's own find and apply: one implementation, two callers."""

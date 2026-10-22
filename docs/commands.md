@@ -226,6 +226,8 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 
 - `parent-links`: zones where every note in a project, other than its hub, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
 - `note-links`: zones where hub and thread notes name another note as a wikilink, never as a path in backticks, which draws no link in the graph.
+
+[Nurturing the context](#nurturing-the-context) fixes two of these on a yes: a path in backticks that leads to exactly one live note becomes `[[<path>]]`, and a note inside a thread's folder gets `parent: "[[<Thread>]]"`. A note at the project's own level could belong to the hub or to any thread, so it waits for you, as does anything under `Deliverables/` or `Sources/`.
 - `todo-labels`: zones where every open action in `Todo.md` opens with its thread's link.
 - `word-budgets`: the most words the root `AGENTS.md` (`root`) and the others (`other`) may hold; 800 and 1000 otherwise. Each `AGENTS.local.md` has the same budget as the `AGENTS.md` beside it, counted on its own.
 - `retired-skills`: a skill you retired, and the one that does its job now. The check reports the old one if its folder comes back, a link to it stays, or an instruction still names it.
@@ -247,7 +249,7 @@ The check reports and changes nothing, so its warnings pile up until nobody read
 
 | Kind | Examples | What happens |
 |---|---|---|
-| Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`) | Listed, then applied on one yes, one commit per repository |
+| Mechanical | a link broken by a rename, with exactly one candidate in the repository's history; a deliverable without its date prefix, dated from the commit that added it; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note in its zone, made a wikilink; a note inside `Threads/<Thread>/` with no `parent:`, given `parent: "[[<Thread>]]"` | Listed, then applied on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome | One line each: a proposed answer and a question. Never a guess across a wall |
 | Correction | a value written down wrong, which you correct as you go: "that's wrong, it's acmecorp.example" | Every live copy listed as one finding, then corrected on one yes, one commit per repository |
 | Wall | a project file that names, links or quotes a party across a wall | The file and the wall, never the material; taken out only on your yes |

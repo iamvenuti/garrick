@@ -34,7 +34,7 @@ own: a new kind of problem gets a check in `check.py` first.
 
 | Kind | Examples | What this skill does |
 |---|---|---|
-| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`) | Lists them, and applies them all on one yes, one commit per repository |
+| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
@@ -43,7 +43,10 @@ own: a new kind of problem gets a check in `check.py` first.
 
 A fix the tool could make but holds back, because the file has changes not
 committed, a date sits inside a name, or no repository could undo it, stays
-in the report with its reason, as judgment.
+in the report with its reason, as judgment. So does a path written as code
+that leads to no note or to several, and a note with no `parent:` at the
+project's own level, under a `Deliverables/` or `Sources/` folder, or in a
+thread whose name another note shares.
 
 ## Nurture: "nurture X"
 

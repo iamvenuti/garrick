@@ -8,7 +8,8 @@ every finding of `check.py`, `wiki_lint.py` for both wikis and the drift
 `drift.py` last saved, sorts them into their kinds and applies the
 mechanical ones: a link broken by a rename with exactly one candidate, a
 deliverable without its date prefix, a thread missing from its hub's list, a
-status synonym. One commit per repository, of the files it changed and no
+status synonym, a note path written as code that leads to exactly one live
+note, a thread's note with no `parent:`. One commit per repository, of the files it changed and no
 other, by name, so whatever another session has not committed stays out of
 it; a file with changes not committed is not touched at all, and waits in
 the report. Each commit goes through the repository's wall check, and one it

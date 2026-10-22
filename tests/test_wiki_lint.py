@@ -46,6 +46,32 @@ class WikiLintTest(unittest.TestCase):
         self.assertEqual(["wiki/sources/lonely"], found["orphans"])        # listed in the index, linked from no page
         self.assertEqual([{"target": "Gone Concept", "linked_from": ["wiki/sources/a"]}], found["missing"])
 
+    def test_a_file_beside_a_page_is_not_a_missing_page(self):
+        write(self.k / "wiki" / "presentations" / "acme.md", "# Acme\n\nSee [[acme.html]].\n\n![[acme.png]]\n")
+        write(self.k / "wiki" / "presentations" / "acme.html", "<html></html>")
+        write(self.k / "wiki" / "presentations" / "acme.png", "PNG")
+        write(self.k / "wiki" / "concepts" / "y.md", "# Y\n\nThe deck: [[../presentations/acme.html|deck]].\n")
+        found = wiki_lint.lint(self.k)
+        self.assertEqual(["Gone Concept"], [m["target"] for m in found["missing"]])
+        (self.k / "wiki" / "presentations" / "acme.png").unlink()
+        found = wiki_lint.lint(self.k)
+        self.assertEqual([{"target": "acme.png", "linked_from": ["wiki/presentations/acme"]}],
+                         [m for m in found["missing"] if m["target"] != "Gone Concept"])
+
+    def test_other_files_resolve_as_obsidian_finds_them_and_are_not_pages(self):
+        before = wiki_lint.lint(self.k)
+        write(self.k / "wiki" / "presentations" / "birch.html", "<html></html>")
+        write(self.k / "wiki" / "presentations" / "birch.archify.json", "{}")
+        write(self.k / "wiki" / "presentations" / "map.png", "PNG")
+        write(self.k / "wiki" / "sources" / "map.png", "PNG")
+        write(self.k / "wiki" / "concepts" / "y.md",
+              "# Y\n\n[[wiki/presentations/birch.html]], [[presentations/birch.html]], [[birch.archify.json]],\n"
+              "[[../../raw/a.pdf]], [[map.png]] and [[gone.png]].\n")
+        found = wiki_lint.lint(self.k)
+        self.assertEqual(["Gone Concept", "gone.png", "map.png"], sorted(m["target"] for m in found["missing"]))
+        self.assertEqual(before["pages"] + 1, found["pages"])                # a file that is not a page is not counted
+        self.assertEqual(sorted(before["orphans"] + ["wiki/concepts/y"]), found["orphans"])   # nor does linking one
+
     def test_it_changes_nothing_and_speaks_plainly(self):
         before = sorted((p, p.read_bytes()) for p in self.k.rglob("*") if p.is_file())
         out = io.StringIO()

@@ -111,6 +111,21 @@ zone's repository, as the skills would:
                 (GARRICK_HEADLESS=1), so it applies only the mechanical kind,
                 commits in the zone and puts the note back when the wall
                 check refuses; under the zone's lock
+    files       where a piece of work's files live (#189), from its page:
+                {"zone", "file", "do"}, do one of copy, refresh, media-in,
+                media-out, move, undo, keep-copy, delete-copy. A copy and
+                moved files are kept in the project's Files/ folder, with a
+                history of their own (work_files.py, beside this file); the
+                hub's `storage:`, the project's .gitignore and its Claude
+                settings are committed by name, and put back if refused. A
+                copy or a move that Stop ends, or that fails, leaves nothing
+                behind, and nothing leaves the user's folder until every file
+                is copied and checked
+    files-stop  Stop, while a copy or a move is still copying and checking
+    files-progress  how far one has got; it only reads
+    work-file   a moved file opened, the work's Files/ folder in Finder, or
+                an earlier version opened to read or saved as a separate file:
+                {"zone", "file", "do", "path"?, "version"?, "to"?}
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -215,7 +230,8 @@ sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
          "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
-         "discover", "suggestion", "start", "stop-using", "bring-back")
+         "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
+         "work-file")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -228,7 +244,7 @@ ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart",
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
           "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
-          "do", "id", "answer", "suggested")       # never "token"
+          "do", "id", "answer", "suggested", "path", "version")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1741,6 +1757,7 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if not check:
             commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
                        made, {}, wall=wall_refusal(ws))
+            return first_line(said)
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
@@ -1761,8 +1778,9 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         hub_rel = hub.relative_to(zone).as_posix()
         paths = [t for t in touched if not (held and t == hub_rel)]
         commit_new(zone, paths, "%s: new thread %s" % (project, name), made, before, wall=wall_refusal(ws))
+        said = first_line(said)
         if held and hub_rel in touched:
-            said += ("\nThe hub's line for it is not committed yet: %s had other changes not committed, so it is "
+            said += (" The hub's line for it is not committed yet: %s had other changes not committed, so it is "
                      "left for the next wrap." % hub.name)
         return said
     if verb == "undo":
@@ -1773,16 +1791,91 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
     if verb == "rename":
-        said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
-        if not check:               # its place on the interruption stack follows it
-            rename_in_stack(ws, z, field(req, "project"), thread, field(req, "to"))
-        return said
+        if check:
+            return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
     if confirm:
         project = field(req, "project")
         drop_from_stack(ws, z, "%s/Threads/%s" % (project, thread) if thread else project)
+        # One line, with the commit the page's Undo reverts; scaffold.py's undo command and memory hint are
+        # for a terminal, and Undo on the page is the way back here.
+        found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
+        return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def first_line(said: str) -> str:
+    """What the page says of scaffold.py's report: its first line, which says what was done. The rest is for a
+    terminal: what to commit by hand, a spoken form to ask for, a memory pointer, a flag to rebuild with."""
+    return (said.strip().splitlines() or [""])[0].strip()
+
+
+def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list) -> dict:
+    """A rename from the page, finished here rather than left to the user
+    (#184): scaffold.py renames and commits in the zone; then the old name,
+    which it adds to System/context.md as a heard name, is committed there
+    by name in the workspace's own repository, unless that file held other
+    changes not committed, which are never filed under this commit (#183);
+    the move is kept for the effort history (effort.py's moved.json), so the
+    page's Time and Cost follow the new name; and its place on the
+    interruption stack follows it. One line, and the zone's commit for Undo."""
+    old = thread or project
+    context = ws / "System" / "context.md"
+    root_repo = (ws / ".git").exists()
+    held = root_repo and context.is_file() and uncommitted(ws, context)
+    before = context.read_bytes() if context.is_file() else None
+    said = scaffold(ws, "rename", *which, "--to", to)
+    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    made = head.strip() if code == 0 else ""
+    rename_in_stack(ws, zone.name, project, thread, to)
+    rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
+    rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
+    note = ""
+    try:
+        keep_move(ws, rel_old, rel_new)
+    except OSError:
+        note += " The page's time and cost for it start afresh under the new name."
+    added = context.is_file() and context.read_bytes() != before
+    if added and root_repo and not held:
+        try:
+            commit(ws, context, before or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
+                   wall=wall_refusal(ws))
+        except Refused as e:
+            note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
+    elif added and held:
+        note += (" Its old name is added as a heard one in System/context.md, which had other changes not committed, "
+                 "so it is left for you to commit.")
+    if "Links written [[" in said:
+        note += " Links that name only %s were left alone: another note in %s has that name too." % (old, zone.name)
+    return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
+
+
+def keep_move(ws: Path, old: str, new: str) -> None:
+    """A folder renamed from the page, kept for the effort history in
+    System/generated/moved.json, never committed: {"<old>": "<new>"}, each
+    path from the workspace's root. effort.py reads it beside any `--moved`
+    the page is built with; a move of a folder already moved follows on."""
+    path = ws.joinpath(*EFFORT_MOVED)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    data = {o: (new if n == old else n) for o, n in data.items() if isinstance(o, str) and isinstance(n, str)}
+    if old != new:
+        data[old] = new
+    data.pop(new, None)                     # renamed back: its own name again
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".moved-", dir=str(path.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    os.replace(tmp, str(path))
+
+
+# effort.py's MOVED, beside this file: where the moves made from the page are kept for it.
+EFFORT_MOVED = ("System", "generated", "moved.json")
 
 
 def touched_paths(said: str) -> tuple:
@@ -2229,14 +2322,36 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
     folder = work_folder(zone, parts)
     files, own = files_folder(ws, zone, parts)
     add_dirs, guard = [], None
+    # Where its files live (#189): a copy kept is refreshed from the folder first, and Claude still reads the
+    # folder; moved files are read, and may be edited, in Garrick, with a version kept first so an edit can be undone.
+    F, hub = work_files_lib(), zone / parts[0] / (parts[0] + ".md")
+    w = stored_work(ws, req) if (name == parts[0] and hub.is_file() and hub_value(hub, Y.DISCOVERED)
+                                 and hub_value(hub, "folder")) else None
+    moved, walked, refreshed = bool(w and w["mode"] == F.MOVED), files, ""
+    if w and w["mode"] == F.COPY:
+        try:
+            with files_lock(w):
+                refreshed = "Garrick refreshed its copy first. " + refresh_copy(ws, w, now or dt.datetime.now(), "continue")["said"]
+        except Refused as e:
+            refreshed = str(e).rstrip(".") + "."
     with zone_lock(zone):
-        if not own:
+        extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
+        extracts = [ws / extracts] if extracts and (ws / extracts).is_dir() else []
+        if moved:
+            storage_rules(w, True)              # committed below, with Garrick's own record of the work
+            try:
+                F.history_keep(w["files"], "Kept before Claude opened it")
+            except F.Refused:
+                pass
+            add_dirs, walked = [w["files"]] + extracts, w["files"]
+        elif not own:
             read_only_rule(folder, files)       # committed below, with Garrick's own record of the work
-            extracts = (Y.first_looks(ws).get(key) or {}).get("extracts")
-            add_dirs = [files] + ([ws / extracts] if extracts and (ws / extracts).is_dir() else [])
-            guard = Y.settings_arg(str(files))
-            if len(add_dirs) > 1:               # where the text of its Office files is: in the hidden brief, never the
-                brief = "%s %s" % (brief, Y.EXTRACTS_SAID % add_dirs[1])     # message the user sees as theirs
+            if w:
+                storage_rules(w, False)         # and Garrick's copy kept out of reach too, while there is one
+            add_dirs = [files] + extracts
+            guard = deny_arg(w, False) if w else Y.settings_arg(str(files))
+        if len(add_dirs) > 1:                   # where the text of its Office files is: in the hidden brief, never the
+            brief = "%s %s" % (brief, Y.EXTRACTS_SAID % add_dirs[1])     # message the user sees as theirs
         unsaved = commit_record(zone, note, parts, folder, name, wall=wall_refusal(ws))
     kept = H.session_for(ws, key)
     resume = not suggested and H.fresh(kept, now) and kept.get("folder") == str(folder)
@@ -2258,12 +2373,14 @@ def continue_work(ws: Path, req: dict, now: Optional[dt.datetime] = None) -> str
         raise Refused(str(e))
     except H.HandOffError as e:
         raise Refused(str(e))
-    H.keep_session(ws, key, sid, folder, H.walk(files, project=own), primed=not resume, now=now)
+    H.keep_session(ws, key, sid, folder, H.walk(walked, project=own and not moved), primed=not resume, now=now)
     if suggested:
         Y.keep_first_look(ws, key, used=True)
         said = "Opened %s in Claude, with your request already asked" % name
     else:
         said = "Opened %s in Claude%s" % (name, "" if resume else ". It already knows where it stands")
+    if refreshed:
+        said = "%s. %s" % (said, refreshed.rstrip("."))
     if unsaved and unsaved == wall_refusal(ws):     # the rule's sentence ends the reply, and nothing is added to it
         return "%s. Garrick's record of it is not committed. %s" % (said, unsaved)
     return said + ("; Garrick's record of it is not committed: %s" % unsaved if unsaved else "")
@@ -2675,6 +2792,16 @@ def stop_using(ws: Path, req: dict, today: dt.date) -> str:
     dest = zone / Y.ARCHIVE / parts[0]
     if dest.exists():
         raise Refused("a piece of work called %s is already put away; bring it back or rename this one first" % parts[0])
+    F, hub = work_files_lib(), project / (parts[0] + ".md")
+    back, kept = "", F.has_copy(project)
+    if hub_value(hub, F.STORAGE) == F.MOVED:
+        # Moved files go back into the folder first, as Undo the move puts them (#189); Garrick's copy of them
+        # is put away with the record, recoverably.
+        w = stored_work(ws, req)
+        with files_lock(w):
+            n, renamed = put_moved_back(ws, w)
+        back = "All %s are back in %s first" % (F.said_files(n), w["given"].name) + (
+            ". " + renamed_said(renamed) if renamed else "")
     with zone_lock(zone):
         if uncommitted(zone, project):
             raise Refused("%s has changes not saved yet. Continue it once, or wrap it, then stop using it" % name)
@@ -2685,7 +2812,9 @@ def stop_using(ws: Path, req: dict, today: dt.date) -> str:
         os.rename(str(project), str(dest))
         commit_new(zone, [parts[0], "%s/%s" % (Y.ARCHIVE, parts[0])], ("%s: put away, its folder left as it was" % name)[:200],
                    [], {hub: before}, ((dest, project),), wall=wall_refusal(ws))
-    return "%s is put away. Its folder is as it was" % name
+    if back:
+        return "%s is put away. %s. Garrick's copy of them is put away with it" % (name, back)
+    return "%s is put away. Its folder is as it was%s" % (name, ", and Garrick's copy is put away with it" if kept else "")
 
 
 def bring_back(ws: Path, req: dict) -> str:
@@ -2709,6 +2838,526 @@ def bring_back(ws: Path, req: dict) -> str:
                    [], {hub: before}, ((dest, src),), wall=wall_refusal(ws))
     return "%s is back, where it stood" % name
 # ---- end of your own work ----------------------------------------------------------
+
+
+# ---- where a work's files live (#189): left in place, a copy kept, or moved in ----
+# A piece of work from a folder of the user's has its files left in place
+# (#182), and its page offers two more choices: Keep a copy, which Garrick
+# refreshes one way from the folder, and Move into Garrick, which copies and
+# checks every file before any is removed from the folder. Both keep the files
+# in the project's own Files/ folder, with a small history of its own that the
+# zone ignores (work_files.py, beside this file). The hub says which, in
+# `storage:`, committed by name with the project's .gitignore and the Claude
+# settings of the folder its sessions start in: Edit denied in the user's
+# folder always, and in Garrick's copy too until the files are moved, when
+# Claude may edit them like any file of the work. A copy or a move holds a
+# lock of its own on the work, and the zone's only while its record commits;
+# it says how far it has got in System/generated/work-files/, where Stop
+# finds it, and Stop ends it, leaving nothing behind, until files start
+# leaving the folder.
+_WF = None
+FILES_DO = ("copy", "refresh", "media-in", "media-out", "move", "undo", "keep-copy", "delete-copy")
+WORK_FILE_DO = ("open", "finder", "version-open", "version-save")
+OPEN_TOOL = "/usr/bin/open"
+PATH_MAX = 1024
+
+
+def work_files_lib():
+    """work_files.py, beside this file: where a piece of work's files live."""
+    global _WF
+    if _WF is None:
+        spec = importlib.util.spec_from_file_location("garrick_work_files", str(HERE / "work_files.py"))
+        _WF = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_WF)
+    return _WF
+
+
+def stored_work(ws: Path, req: dict) -> dict:
+    """A piece of work from a folder of the user's, as the storage verbs need
+    it: its zone, note, name and key, its project and hub, the user's folder
+    (`folder`, None when it is not there now, and `given`, where it was),
+    the files of it that belong to the work (`members`, None for all), where
+    its files live now (`mode`), and Garrick's own folder for them (`files`)."""
+    Y, F = your_work(), work_files_lib()
+    zone, note, parts, _ = resume_note(ws, req)
+    name = work_name(zone, parts)
+    project = zone / parts[0]
+    hub = project / (parts[0] + ".md")
+    given = hub_value(hub, "folder") if hub.is_file() else ""
+    if not given or not hub_value(hub, Y.DISCOVERED):
+        raise Refused("%s keeps its files in Garrick, not in a folder of yours" % name)
+    if name != parts[0]:
+        raise Refused("%s is one of several threads; where files live is chosen for a piece of work that is one" % name)
+    raw = Path(given).expanduser()
+    raw = raw if raw.is_absolute() else ws / raw
+    members = None
+    pid = hub_value(hub, Y.DISCOVERED)
+    for entry in Y.discovery(ws)["folders"].values():
+        a = (entry.get("answers") or {}).get(pid)
+        if isinstance(a, dict) and a.get("kind") == "names":
+            members = [m for m in a.get("members") or [] if isinstance(m, str)]
+    fm = {k: hub_value(hub, k) for k in (F.STORAGE, F.MEDIA_KEY, F.MOVED_ON)}
+    return {"zone": zone, "note": note, "parts": parts, "name": name, "project": project, "hub": hub,
+            "key": "%s/%s" % (zone.name, note.relative_to(zone).as_posix()), "given": raw,
+            "folder": raw if raw.is_dir() else None, "members": members, "mode": F.mode(fm), "media": F.media_in(fm),
+            "files": F.files_dir(project), "session": work_folder(zone, parts)}
+
+
+def files_lock(w: dict):
+    """One copy, move, undo or refresh at a time on a piece of work."""
+    return held("work-files-%s.lock" % work_files_lib().key_hash(w["key"]), wait=2,
+                busy="Garrick is already busy with the files of %s" % w["name"])
+
+
+def storage_rules(w: dict, moved: bool, copy: Optional[bool] = None):
+    """The Claude settings of the folder the work's sessions start in, for
+    where its files live: Edit denied in the user's folder, always, and in
+    Garrick's copy of them (Files/) while there is one and the files are not
+    moved in; once they are, the rule on the copy comes off, so Claude may
+    edit them. `copy` says whether there is a copy, when it is about to be
+    made or deleted. Everything else in the file stays. (the file, the bytes
+    it held before or None) when it changed; None when it already said so."""
+    Y = your_work()
+    path = w["session"].joinpath(*Y.CLAUDE_SETTINGS)
+    try:
+        before = path.read_bytes()
+    except FileNotFoundError:
+        before = None
+    try:
+        data = json.loads(before.decode("utf-8")) if before and before.strip() else {}
+        perms = data.setdefault("permissions", {}) if isinstance(data, dict) else None
+        deny = perms.setdefault("deny", []) if isinstance(perms, dict) else None
+    except ValueError:
+        deny = None
+    if not isinstance(deny, list):
+        raise Refused("this work's Claude settings are not JSON Garrick can add to, so nothing was changed")
+    copy_rule = copy_rule_of(w)
+    want_copy = not moved and ((w["files"] / ".git").is_dir() if copy is None else copy)
+    kept = [r for r in deny if r != copy_rule or want_copy]
+    kept += [r for r in Y.read_only_rules(str(w["given"])) if r not in kept]
+    if want_copy and copy_rule not in kept:
+        kept.append(copy_rule)
+    if kept == deny:
+        return None
+    perms["deny"] = kept
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path, before
+
+
+def copy_rule_of(w: dict) -> str:
+    return "Edit(/%s/**)" % os.path.realpath(str(w["files"])).rstrip("/")
+
+
+def deny_arg(w: dict, moved: bool) -> str:
+    """The same rules as the JSON `--settings` takes, for a headless call."""
+    rules = your_work().read_only_rules(str(w["given"]))
+    if not moved and (w["files"] / ".git").is_dir():
+        rules.append(copy_rule_of(w))
+    return json.dumps({"permissions": {"deny": rules}}, ensure_ascii=False)
+
+
+def commit_storage(ws: Path, w: dict, values: dict, drop: tuple, moved: bool, message: str,
+                   copy: Optional[bool] = None) -> None:
+    """Garrick's record of where the work's files live, committed by name in
+    one commit: the hub's keys, the project's .gitignore, and the Claude
+    settings of the folder its sessions start in (storage_rules()). Only what
+    changed; all of it put back if the commit is refused."""
+    F = work_files_lib()
+    with zone_lock(w["zone"]):
+        hub_before = w["hub"].read_bytes()
+        hub_text = set_front(hub_before.decode("utf-8"), values, drop=drop)
+        files = []
+        if hub_text.encode("utf-8") != hub_before:
+            w["hub"].write_text(hub_text, encoding="utf-8")
+            files.append((w["hub"], hub_before))
+        ignore = w["project"] / ".gitignore"
+        before = ignore.read_bytes() if ignore.is_file() else None
+        text = F.ignore_text(before.decode("utf-8", "replace") if before is not None else None)
+        if text is not None:
+            ignore.write_text(text, encoding="utf-8")
+            files.append((ignore, before))
+        try:
+            rule = storage_rules(w, moved, copy)
+        except Refused:
+            for f, b in files:
+                f.unlink() if b is None else f.write_bytes(b)
+            raise
+        if rule is not None:
+            files.append(rule)
+        if files:
+            commit_all(w["zone"], files, ("%s: %s" % (w["name"], message))[:200], wall=wall_refusal(ws))
+
+
+def let_go(w: dict, new: bool) -> None:
+    """What a copy or a move made, taken back: a new copy deleted, one that
+    was there before put back to its last version."""
+    F = work_files_lib()
+    if new:
+        shutil.rmtree(str(w["files"]), ignore_errors=True)
+    else:
+        F.history_back(w["files"])
+
+
+def storage(ws: Path, req: dict, today: dt.date, now: Optional[dt.datetime] = None) -> dict:
+    """Where these files live, from the work's page: {"zone", "file", "do"}.
+
+        copy         Keep a copy: made, or an old one picked up, and refreshed
+        refresh      Refresh now
+        media-in     recordings and video brought into the copy, and out again
+        media-out
+        move         Move into Garrick
+        undo         Undo the move: every file back, never over one
+        keep-copy    back to left in place from a copy, keeping it
+        delete-copy  back to left in place, the copy deleted; or an old copy deleted
+    """
+    F = work_files_lib()
+    do = req.get("do")
+    if do not in FILES_DO:
+        raise Refused("not something Garrick does with a work's files: %r" % (do,))
+    w = stored_work(ws, req)
+    now = now or dt.datetime.now()
+    with files_lock(w):
+        if do == "copy":
+            return keep_a_copy(ws, w, now)
+        if do == "refresh":
+            return refresh_now(ws, w, now)
+        if do in ("media-in", "media-out"):
+            return switch_media(ws, w, do == "media-in", now)
+        if do == "move":
+            return move_in(ws, w, today)
+        if do == "undo":
+            return undo_move(ws, w)
+        if do == "keep-copy":
+            if w["mode"] != F.COPY:
+                raise Refused("%s has no copy being refreshed" % w["name"])
+            commit_storage(ws, w, {}, (F.STORAGE, F.MEDIA_KEY), False, "files left in place, Garrick's copy kept")
+            return {"say": "Garrick only reads your folder again. Its copy is kept, and no longer refreshed",
+                    "view": your_work().work_id(w["name"], w["key"])}
+        return delete_copy(ws, w)
+
+
+def view_of(w: dict) -> str:
+    return your_work().work_id(w["name"], w["key"])
+
+
+def keep_a_copy(ws: Path, w: dict, now: dt.datetime) -> dict:
+    F = work_files_lib()
+    if w["mode"] == F.MOVED:
+        raise Refused("The files are in Garrick now, so there is no folder to copy them from. Undo the move first")
+    if w["mode"] == F.COPY:
+        raise Refused("Garrick keeps a copy of %s already; Refresh now brings it up to your folder" % w["name"])
+    if w["folder"] is None:
+        raise Refused("the folder %s is not there now, so there is nothing to copy" % w["given"].name)
+    new = not F.has_copy(w["project"])
+    job = F.Job(ws, w["key"], "copy")
+    try:
+        done = F.refresh(w["folder"], w["members"], w["files"], w["media"], job,
+                         "The first copy" if new else "Refreshed when the copy was picked up again")
+        commit_storage(ws, w, {F.STORAGE: F.COPY}, (F.MOVED_ON,), False, "a copy of its files kept in Garrick")
+    except F.Stopped:
+        let_go(w, new)
+        return {"say": "Stopped. Garrick kept nothing, and your folder is as it was", "view": view_of(w), "stopped": True}
+    except Refused:
+        let_go(w, new)
+        raise
+    except (F.Refused, OSError) as e:
+        let_go(w, new)
+        raise Refused("%s, so Garrick kept nothing. Your folder is as it was" % (
+            e.strerror if isinstance(e, OSError) and e.strerror else e))
+    finally:
+        job.end()
+    # The first copy changed nothing: it copied the files. A copy picked up again was refreshed, and says what changed.
+    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via="copy" if new else "pickup", first=new,
+                 changed=F.copied_said(done) if new else F.changed_said(done))
+    return {"say": ("Garrick keeps a copy now. Your folder is as it was" if new else
+                    "Garrick's copy is refreshed and kept again. Your folder is as it was"), "view": view_of(w)}
+
+
+def refresh_copy(ws: Path, w: dict, now: dt.datetime, via: str) -> dict:
+    """The copy brought up to the folder, as Refresh now and Continue do it."""
+    F = work_files_lib()
+    if w["folder"] is None:
+        raise Refused("the folder %s is not there now, so Garrick's copy was not refreshed" % w["given"].name)
+    job = F.Job(ws, w["key"], "refresh")
+    try:
+        done = F.refresh(w["folder"], w["members"], w["files"], w["media"], job)
+    except F.Stopped:
+        F.history_back(w["files"])
+        raise Refused("Stopped. Garrick's copy is as it was")
+    except (F.Refused, OSError) as e:
+        F.history_back(w["files"])
+        raise Refused("Garrick's copy was not refreshed: %s" % (e.strerror if isinstance(e, OSError) and e.strerror else e))
+    finally:
+        job.end()
+    said = F.changed_said(done)
+    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via=via, changed=said, first=False)
+    return {"done": done, "said": said}
+
+
+def refresh_now(ws: Path, w: dict, now: dt.datetime) -> dict:
+    F = work_files_lib()
+    if w["mode"] != F.COPY:
+        raise Refused("Garrick keeps no copy of %s to refresh" % w["name"])
+    said = refresh_copy(ws, w, now, "refresh")["said"]
+    return {"say": "Refreshed Garrick's copy. %s Your folder is as it was" % said, "view": view_of(w)}
+
+
+def switch_media(ws: Path, w: dict, on: bool, now: dt.datetime) -> dict:
+    """Recordings and video brought into the copy, or left out from now on;
+    the versions already kept stay. The switch is the hub's, committed first,
+    then the copy follows it."""
+    F = work_files_lib()
+    if w["mode"] != F.COPY:
+        raise Refused("Garrick keeps no copy of %s" % w["name"])
+    if on == w["media"]:
+        raise Refused("Recordings and video are %s already" % ("in the copy" if on else "left out"))
+    commit_storage(ws, w, {F.MEDIA_KEY: F.MEDIA_IN} if on else {}, () if on else (F.MEDIA_KEY,), False,
+                   "recordings and video %s its copy" % ("brought into" if on else "left out of"))
+    w = dict(w, media=on)
+    try:
+        refresh_copy(ws, w, now, "media")
+    except Refused as e:
+        return {"say": "The switch is %s. %s; the next refresh tries again" % ("on" if on else "off", str(e).rstrip(".")),
+                "view": view_of(w)}
+    if not on:
+        return {"say": "Recordings and video are left out from now on. The versions already kept stay", "view": view_of(w)}
+    got = F.sizes({r: s for r, s in F.listing(w["files"]).items() if F.is_media(r)})
+    return {"say": "Recordings and video are in Garrick's copy now: %s, %s" % (F.said_files(got["files"]),
+                                                                          F.said_size(got["bytes"])), "view": view_of(w)}
+
+
+def move_in(ws: Path, w: dict, today: dt.date) -> dict:
+    """Move into Garrick: every file copied into the work's Files/ folder and
+    checked against its original, a version kept, the record committed, and
+    only then each file removed from the folder, if it is still as it was
+    checked. The folder itself stays, empty, so Undo has somewhere to go, and
+    nothing is written into it."""
+    F = work_files_lib()
+    if w["mode"] == F.MOVED:
+        raise Refused("The files of %s are in Garrick already" % w["name"])
+    if w["folder"] is None:
+        raise Refused("the folder %s is not there now, so there is nothing to move" % w["given"].name)
+    new = not F.has_copy(w["project"])
+    job = F.Job(ws, w["key"], "move")
+    try:
+        try:
+            files = F.move_in(w["folder"], w["members"], w["files"], job)
+        except F.Stopped:
+            let_go(w, new)
+            return {"say": "Stopped. Every file is still in your folder, and Garrick kept nothing of the move",
+                    "view": view_of(w), "stopped": True}
+        except (F.Refused, OSError) as e:
+            let_go(w, new)
+            raise Refused("%s. Every file is still in your folder" % (
+                e.strerror if isinstance(e, OSError) and e.strerror else str(e)).rstrip("."))
+        try:
+            commit_storage(ws, w, {F.STORAGE: F.MOVED, F.MOVED_ON: today.isoformat()}, (F.MEDIA_KEY,), True,
+                           "its files moved into Garrick")
+        except Refused:
+            if new:
+                shutil.rmtree(str(w["files"]), ignore_errors=True)
+            else:
+                F.history_drop_last(w["files"])
+            raise
+        stayed = F.remove_moved(w["folder"], files, job)
+    finally:
+        job.end()
+    F.keep_state(ws, w["key"], moved=today.isoformat(), stayed=stayed, renamed=[])
+    said = "Moved. All %s are in Garrick" % F.said_files(len(files)) if not stayed else \
+        "Moved, but %s stayed in the folder, because %s changed or could not be removed there: %s. Garrick has %s as " \
+        "%s were checked" % (F.said_files(len(stayed)), "it" if len(stayed) == 1 else "they",
+                             ", ".join(os.path.basename(r) for r in stayed[:3]), "it" if len(stayed) == 1 else "them",
+                             "it was" if len(stayed) == 1 else "they were")
+    return {"say": said, "view": view_of(w)}
+
+
+def put_moved_back(ws: Path, w: dict) -> tuple:
+    """Every file of a moved work back in its folder, checked there, and the
+    record back to left in place: (the files put back, the ones renamed)."""
+    F = work_files_lib()
+    job = F.Job(ws, w["key"], "undo")
+    try:
+        n = len(F.listing(w["files"]))
+        try:
+            renamed = F.put_back(w["files"], w["given"], job)
+        except (F.Refused, OSError) as e:
+            raise Refused("%s. The files are still in Garrick; Undo the move again to put the rest back" % (
+                e.strerror if isinstance(e, OSError) and e.strerror else str(e)).rstrip("."))
+        job.phase("saving")
+        commit_storage(ws, w, {}, (F.STORAGE, F.MOVED_ON, F.MEDIA_KEY), False, "its files put back in the folder")
+    finally:
+        job.end()
+    F.keep_state(ws, w["key"], renamed=[b for _, b in renamed], moved="", stayed=[])
+    return n, renamed
+
+
+def renamed_said(renamed: list) -> str:
+    """Which files Undo put back beside one of the same name, in a sentence; "" for none."""
+    if not renamed:
+        return ""
+    n = len(renamed)
+    return ("%s of the same name %s in the folder already, so Garrick's went back beside %s: %s" % (
+        "A file" if n == 1 else "%d files" % n, "was" if n == 1 else "were", "it" if n == 1 else "them",
+        ", ".join(os.path.basename(b) for _, b in renamed[:3]) + (" and %d more" % (n - 3) if n > 3 else "")))
+
+
+def undo_said(w: dict, n: int, renamed: list) -> str:
+    said = "All %s are back in %s. Garrick only reads them again, and keeps its copy, with its versions, until you " \
+           "delete it" % (work_files_lib().said_files(n), w["given"].name)
+    return said + (". " + renamed_said(renamed) if renamed else "")
+
+
+def undo_move(ws: Path, w: dict) -> dict:
+    F = work_files_lib()
+    if w["mode"] != F.MOVED:
+        raise Refused("The files of %s are not in Garrick, so there is nothing to undo" % w["name"])
+    n, renamed = put_moved_back(ws, w)
+    return {"say": undo_said(w, n, renamed), "view": view_of(w)}
+
+
+def delete_copy(ws: Path, w: dict) -> dict:
+    """The copy deleted, with every version: from a copy kept, back to left in
+    place; from left in place, the old copy. Never once the files are moved.
+    The record is committed first, the rule on the copy with it; then the
+    copy goes."""
+    F = work_files_lib()
+    if w["mode"] == F.MOVED:
+        raise Refused("The files of %s are in Garrick; Undo the move puts them back first" % w["name"])
+    if not F.has_copy(w["project"]):
+        raise Refused("Garrick keeps no copy of %s" % w["name"])
+    versions = F.history_count(w["files"])
+    commit_storage(ws, w, {}, (F.STORAGE, F.MEDIA_KEY), False, "Garrick's copy of its files deleted", copy=False)
+    shutil.rmtree(str(w["files"]))
+    F.keep_state(ws, w["key"], refreshed="", changed="")
+    return {"say": "Garrick's copy is deleted, with its %s. Your folder is as it was" % (
+        "version" if versions == 1 else "%d versions" % versions), "view": view_of(w)}
+
+
+def files_stop(ws: Path, req: dict) -> str:
+    """Stop, on the page while files are copied and checked: the job ends and
+    leaves nothing behind. Refused once files start leaving the folder."""
+    F = work_files_lib()
+    w = stored_work(ws, req)
+    said = F.ask_stop(ws, w["key"])
+    if said == "stopping":
+        return "Stopping: Garrick takes back what it copied"
+    if said == "late":
+        raise Refused("Files are already leaving the folder, so the move goes on to the end. Undo the move puts them back")
+    raise Refused("Nothing is being copied or moved for %s now" % w["name"])
+
+
+def files_progress(ws: Path, req: dict) -> dict:
+    """How far a copy, a move or an undo has got, for the page to show. Only reads."""
+    w = stored_work(ws, req)
+    p = work_files_lib().progress(ws, w["key"])
+    return {"say": "", "progress": {k: p.get(k) for k in ("kind", "phase", "done", "of", "bytes", "bytes_of")} if p else None}
+
+
+def opener() -> str:
+    """macOS's `open`, which opens a file in the app the Mac uses for it, and a
+    folder in Finder; GARRICK_OPEN for a test."""
+    tool = os.environ.get("GARRICK_OPEN") or OPEN_TOOL
+    if not os.path.isfile(tool):
+        raise Refused("Garrick opens files only on a Mac")
+    return tool
+
+
+def open_path(path: Path) -> None:
+    try:
+        r = subprocess.run([opener(), str(path)], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Refused("%s did not open: %s" % (path.name, e))
+    if r.returncode != 0:
+        said = (r.stderr or r.stdout).strip().splitlines()
+        raise Refused("%s did not open%s" % (path.name, ": " + said[-1] if said else ""))
+
+
+def in_files(w: dict, rel) -> Path:
+    """A file of Garrick's copy or of the moved files, by its path from Files/, never outside it."""
+    if not isinstance(rel, str) or not rel or len(rel) > PATH_MAX or "\n" in rel:
+        raise Refused("no file named")
+    base = w["files"].resolve()
+    p = (base / rel).resolve()
+    if base not in p.parents or ".git" in p.relative_to(base).parts:
+        raise Refused("that file is not one of this work's")
+    return p
+
+
+def work_file(ws: Path, req: dict, today: dt.date) -> str:
+    """A work's own file from its page: {"zone", "file", "do", "path"?,
+    "version"?, "to"?}. Moved files open in their own app, and Show in Finder
+    opens the work's Files/ folder, never one above it. An earlier version, of
+    a copy or of moved files, opens to read, from a file of its own, or is
+    saved as a separate file where the user chooses (`to`, from the app's
+    Save panel), or in Downloads. A version is never put back over a file."""
+    F = work_files_lib()
+    do = req.get("do")
+    if do not in WORK_FILE_DO:
+        raise Refused("not something Garrick does with a work's file: %r" % (do,))
+    w = stored_work(ws, req)
+    if do == "finder":
+        if w["mode"] != F.MOVED or not w["files"].is_dir():
+            raise Refused("The files of %s are not in Garrick" % w["name"])
+        open_path(w["files"])
+        return "Showed the files of %s in Finder" % w["name"]
+    if do == "open":
+        if w["mode"] != F.MOVED:
+            raise Refused("The files of %s are in your folder; open them there" % w["name"])
+        p = in_files(w, req.get("path"))
+        if not p.is_file():
+            raise Refused("%s is not in Garrick now; the page rebuilds" % os.path.basename(str(req.get("path"))))
+        open_path(p)
+        return "Opened %s" % p.name
+    rel = req.get("path")
+    in_files(w, rel)                                # a path inside the copy, never outside it
+    version = req.get("version")
+    if not isinstance(version, str):
+        raise Refused("no version named")
+    if not (w["files"] / ".git").is_dir():
+        raise Refused("Garrick keeps no copy of %s" % w["name"])
+    data = F.history_blob(w["files"], version, rel)
+    stamp = next((t for c, t in F.history_of(w["files"]).get(rel, []) if c == version), None)
+    name = F.version_name(rel, dt.datetime.fromtimestamp(stamp) if stamp else dt.datetime.now(), today)
+    if do == "version-open":
+        box = ws.joinpath(*F.VERSIONS)
+        for old in box.glob("*/") if box.is_dir() else []:
+            if time.time() - old.stat().st_mtime > 86400:
+                shutil.rmtree(str(old), ignore_errors=True)
+        dest = box / version[:12] / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest.chmod(0o644)
+        dest.write_bytes(data)
+        dest.chmod(0o444)                           # to read: a change belongs in the file itself
+        open_path(dest)
+        return "Opened %s, to read. Nothing was changed" % name
+    to = req.get("to")
+    if to is None:
+        downloads = Path(os.path.expanduser("~")) / "Downloads"
+        if not downloads.is_dir():
+            raise Refused("there is no Downloads folder to save it in")
+        dest = downloads / name
+        n = 2
+        while dest.exists():
+            stem, ext = os.path.splitext(name)
+            dest = downloads / ("%s %d%s" % (stem, n, ext))
+            n += 1
+    else:
+        if not isinstance(to, str) or not os.path.isabs(to) or "\n" in to or len(to) > PATH_MAX:
+            raise Refused("not a place to save it")
+        dest = Path(to)
+        real = os.path.realpath(str(dest.parent))
+        for keep in [w["given"]] + ([] if w["mode"] == F.MOVED else [w["files"]]):
+            k = os.path.realpath(str(keep))
+            if real == k or real.startswith(k + os.sep):
+                raise Refused("Save it somewhere outside %s: Garrick never writes there" % (
+                    "your folder %s" % w["given"].name if keep == w["given"] else "Garrick's copy"))
+        if not dest.parent.is_dir():
+            raise Refused("the folder to save it in is not there")
+    dest.write_bytes(data)
+    return "Saved %s in %s. Nothing else was changed" % (dest.name, dest.parent.name)
+# ---- end of where a work's files live -----------------------------------------------
 
 
 def fix_finding(ws: Path, req: dict) -> str:
@@ -2797,6 +3446,14 @@ def act(ws: Path, req, today=None, now=None):
         return stop_using(ws, req, today or dt.date.today())
     if req["verb"] == "bring-back":
         return bring_back(ws, req)
+    if req["verb"] == "files":
+        return storage(ws, req, today or dt.date.today(), now)
+    if req["verb"] == "files-stop":
+        return files_stop(ws, req)
+    if req["verb"] == "files-progress":
+        return files_progress(ws, req)
+    if req["verb"] == "work-file":
+        return work_file(ws, req, today or dt.date.today())
     if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)

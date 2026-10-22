@@ -285,7 +285,7 @@ def shapes(text, line0=1):
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
          "rename", "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start",
-         "stop-using", "bring-back")
+         "stop-using", "bring-back", "files")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
@@ -327,6 +327,11 @@ SHAPES = {
     "renameReq: 'suggestion'": {"suggestion": ("zone", "party", "owner")},
     "ownReq: 'answer'": {"answer": ()},
     "homeReq: 'settings'": {"settings": ()},
+    # WHERE_JS (#189): how far a copy or a move has got, which only reads; Stop; and a version opened or saved,
+    # `to` added by the Mac app's Save panel
+    "poll: 'files-progress'": {"files-progress": ()},
+    "vreq: 'files-stop'": {"files-stop": ()},
+    "vreq: 'work-file'": {"work-file": ("to",)},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",),
@@ -336,7 +341,9 @@ PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("
              '"fix"': ("fix",),
              # your own work (#182): a suggestion's Yes and Not, Start, Stop using this and Bring it back
              '"suggestion"': ("suggestion",), '"start"': ("start",), '"stop-using"': ("stop-using",),
-             '"bring-back"': ("bring-back",)}
+             '"bring-back"': ("bring-back",),
+             # where a work's files live (#189): Keep a copy, a move and the rest; a moved file opened, Finder
+             '"files"': ("files",), '"work-file"': ("work-file",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
@@ -347,7 +354,8 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "NOTIFY_JS": {"nact: 'settings'"},
-           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"}}
+           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
+           "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"}}
 
 
 class TestWhatThePageSends(unittest.TestCase):

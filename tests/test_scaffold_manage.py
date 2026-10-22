@@ -599,13 +599,15 @@ class TestFromThePage(ManageCase):
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
     def test_rename_delete_and_undo(self):
-        self.assertIn("Renamed the thread Pricing to Renewal",
-                      self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal"))
+        out = self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal")
+        self.assertEqual({"say": "Renamed Pricing to Renewal.", "commit": self.git("rev-parse", "--short", "HEAD").stdout.strip()},
+                         out)
         listed = self.act(verb="delete", zone="Work", project="Acme", thread="Freight")
         self.assertIn("Nothing was deleted", listed)
         said = self.act(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
         commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
-        self.assertIn(commit, said)
+        self.assertEqual(commit, said["commit"])                           # what the page's Undo reverts
+        self.assertEqual("Deleted Acme, Freight in commit %s" % commit, said["say"])     # one line, no terminal advice
         self.assertIn("Undone", self.act(verb="undo", zone="Work", commit=commit))
         self.assertTrue(self.freight.is_file())
         for bad in ({"verb": "undo", "zone": "Work", "commit": "HEAD~1"},
@@ -722,6 +724,58 @@ class TestFromThePage(ManageCase):
         root = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=str(self.root),
                               capture_output=True, text=True, env=self.env).stdout
         self.assertNotIn("interrupted.json", root)
+
+
+class TestARenameFromThePageFinishes(ManageCase):
+    """A rename from the page says one line and does what scaffold.py's
+    report leaves to whoever ran it in a terminal (#184): the heard name it
+    adds to System/context.md is committed by name in the workspace's own
+    repository, and the move is kept for the effort history."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+
+    def act(self, **req):
+        return pa.act(self.root, req)
+
+    def root_git(self, *args):
+        return subprocess.run(["git"] + list(args), cwd=str(self.root), capture_output=True, text=True, env=self.env).stdout
+
+    def moved(self):
+        return json.loads((self.root / "System" / "generated" / "moved.json").read_text())
+
+    def test_a_project_renamed_commits_its_heard_name_and_keeps_the_move(self):
+        if not (self.root / ".git").exists():
+            self.skipTest("this workspace has no repository of its own")
+        out = self.act(verb="rename", zone="Work", project="Acme", to="Apex")
+        self.assertEqual("Renamed Acme to Apex.", out["say"])
+        self.assertIn("| acme | Apex |", (self.root / "System" / "context.md").read_text())
+        self.assertEqual(["System/context.md"], self.root_git("show", "--name-only", "--format=", "HEAD").split())
+        self.assertNotIn("context.md", self.root_git("status", "--porcelain"))
+        self.assertEqual({"Zones/Work/Acme": "Zones/Work/Apex"}, self.moved())
+        self.act(verb="rename", zone="Work", project="Apex", thread="Pricing", to="Renewal")
+        self.assertEqual({"Zones/Work/Acme": "Zones/Work/Apex", "Zones/Work/Apex/Threads/Pricing": "Zones/Work/Apex/Threads/Renewal"},
+                         self.moved())
+        self.act(verb="rename", zone="Work", project="Apex", to="Summit")
+        self.assertEqual("Zones/Work/Summit", self.moved()["Zones/Work/Acme"])                # a second move follows on
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_effort_t", str(pa.HERE / "effort.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual("Zones/Work/Summit", mod.kept_moves(self.root)["Zones/Work/Acme"])
+
+    def test_a_context_with_other_changes_is_left_for_its_own_commit(self):
+        if not (self.root / ".git").exists():
+            self.skipTest("this workspace has no repository of its own")
+        context = self.root / "System" / "context.md"
+        context.write_text(context.read_text() + "\nA line another session has not committed.\n")
+        head = self.root_git("rev-parse", "HEAD")
+        out = self.act(verb="rename", zone="Work", project="Acme", to="Apex")
+        self.assertTrue(out["say"].startswith("Renamed Acme to Apex. Its old name is added as a heard one in "
+                                              "System/context.md, which had other changes not committed"), out["say"])
+        self.assertEqual(head, self.root_git("rev-parse", "HEAD"))
+        self.assertIn("A line another session has not committed.", context.read_text())
 
 
 class TestParkBothWays(ManageCase):

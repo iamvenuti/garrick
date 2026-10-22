@@ -17,7 +17,9 @@ project's *unassigned* share, never a guess. A session started above the
 zones is placed by the files it wrote, and stays outside the zones when it
 wrote none. A folder renamed or moved since (`--moved`, a project renamed, a
 wiki moved) counts under its new name, and a folder the whole workspace used
-to live in (`--also`) counts as the workspace.
+to live in (`--also`) counts as the workspace. A project or thread renamed
+from the status page is kept in System/generated/moved.json (MOVED), never
+committed, and counts as if it had been given with `--moved`.
 
 **What is counted.** Interactive sessions only: a headless run (`claude -p`,
 which is how the jobs extra calls the assistant) is already in the jobs
@@ -54,6 +56,10 @@ sys.dont_write_bytecode = True
 
 IDLE = 300                  # seconds: a longer gap between messages is idle time, not work
 STORE = "effort.jsonl"
+# The folders renamed from the status page (#184): {"<old>": "<new>"}, each from
+# the workspace's root, written by page_action.py. A `--moved` given for the
+# same old folder wins.
+MOVED = ("System", "generated", "moved.json")
 
 # List prices in dollars per million tokens: input, output, cache read. A cache
 # write costs 1.25 times the input price for five minutes and twice for an
@@ -215,6 +221,15 @@ def inside(path: str, roots: Roots) -> Optional[Tuple[str, ...]]:
     return None
 
 
+def kept_moves(ws: Path) -> Dict[str, str]:
+    """The folders renamed from the status page, as `--moved` would give them."""
+    try:
+        data = json.loads(Path(ws).joinpath(*MOVED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {o: n for o, n in data.items() if isinstance(o, str) and isinstance(n, str)} if isinstance(data, dict) else {}
+
+
 def roots_for(ws: Path, also: Iterable[Path] = (), moved: Optional[Dict[str, str]] = None) -> Roots:
     """The workspace, the folders it used to live in, and each moved folder.
     A moved folder named relatively is taken under each of the others."""
@@ -346,7 +361,7 @@ def ledger(ws: Path, store: Optional[Path] = None, also: Iterable[Path] = (), da
     read as if they were it; `moved` maps an old folder, absolute or relative
     to the workspace, to where it is now, relative to the workspace."""
     now = now or dt.datetime.now()
-    roots = roots_for(ws, also, moved)
+    roots = roots_for(ws, also, dict(kept_moves(ws), **(moved or {})))
     since = now - dt.timedelta(days=days) if days else None
     fresh = tally(sessions(roots, since, folder), roots, single_threads(ws))
     return merged(fresh, read_store(store))

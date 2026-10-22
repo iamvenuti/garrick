@@ -1195,6 +1195,108 @@ class TestParkLandsAtOnce(StatusCase):
         self.assertIn("if (queue) this.again = true;", plugin)
 
 
+# RENAME_JS (#184), with PARK_JS before it and FIND_JS after, as the page
+# runs them: the requests with page_action.py's replies, then every row as its
+# card and its link say it, the order of each list, and what Find finds.
+RENAME_HARNESS = r"""
+const vm = require("vm");
+const [html, js, steps, redo, expect, find] = JSON.parse(process.argv[1]);
+""" + DOM + r"""
+const doc = new El("#document");
+parse(html, doc);
+const store = {};
+if (expect) store["garrick-expect"] = JSON.stringify(expect);
+const ctx = { JSON, String, Array, Object, RegExp,
+  localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+  sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  document: { querySelectorAll: (s) => doc.querySelectorAll(s), querySelector: (s) => doc.querySelector(s), createElement: (t) => new El(t),
+              getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null, addEventListener: () => {} } };
+ctx.window = ctx;
+ctx.ThreadRows = { bind: () => {}, chev: () => {}, close: () => { ctx.closed = (ctx.closed || 0) + 1; } };
+ctx.GarrickRedo = redo || undefined;
+ctx.GarrickExpect = (x) => { store["garrick-expect"] = JSON.stringify({ x: x, until: 9e15 }); };
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+steps.forEach(([q, out]) => ctx.window.GarrickActed(q, out));
+const rows = doc.querySelectorAll(".tview .thread[data-card]").map((r) => {
+  const c = JSON.parse(r.dataset.card), a = r.querySelector(".t>a");
+  return { n: c.n, p: c.p, u: c.u, f: c.f, pa: c.pa, oc: c.oc, mg: c.mg, dk: c.dk, w: c.w, text: a && a.textContent, href: a && a.getAttribute("href") };
+});
+const order = doc.querySelectorAll(".subthreads").map((b) => b.querySelectorAll(":scope>.thread").map((r) => JSON.parse(r.dataset.card).n));
+const units = doc.querySelectorAll(".tview details.zone").map((z) => z.children.filter((c) => c.classList.contains("tunit"))
+  .map((u) => JSON.parse(u.querySelector(".thread").dataset.card).n));
+process.stdout.write(JSON.stringify({ rows, order, units, closed: ctx.closed || 0, find: find ? ctx.GarrickFind.find(find) : null,
+                                      expect: store["garrick-expect"] ? JSON.parse(store["garrick-expect"]) : null }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestRenameLandsAtOnce(StatusCase):
+    """A rename from the page renames the row in place, everything a later
+    click reads from it included, and the rebuild confirms it (#184)."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Renewal" / "Renewal.md",
+              thread_note("Acme Review", "Renewal", "acme"))
+
+    def run_js(self, *steps, redo=None, expect=None, find=None):
+        import subprocess
+        html = self.page(show_graph=False)
+        js = status.PARK_JS + status.RENAME_JS + status.FIND_JS
+        done = subprocess.run(["node", "-e", RENAME_HARNESS, json.dumps([html, js, [list(s) for s in steps], redo, expect, find])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    OK = {"ok": True, "say": "Renamed"}
+    THREAD = {"verb": "rename", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "to": "Zebra Rates"}
+    PROJECT = {"verb": "rename", "zone": "Work", "project": "Acme Review", "to": "Zulu Review"}
+
+    def row(self, out, name):
+        return [r for r in out["rows"] if r["n"] == name][0]
+
+    def test_a_thread_takes_its_new_name_paths_and_place_at_once(self):
+        before = self.row(self.run_js(), "Pricing")
+        out = self.run_js((self.THREAD, self.OK), find="zebra")
+        r = self.row(out, "Zebra Rates")
+        self.assertEqual("Zebra Rates", r["text"])
+        self.assertEqual(r["u"], r["href"])
+        self.assertEqual(before["u"].replace("Threads/Pricing/Pricing", "Threads/Zebra%20Rates/Zebra%20Rates"), r["u"])
+        self.assertEqual(["Work", "Acme Review/Threads/Zebra Rates/Zebra Rates.md"], r["oc"])
+        self.assertEqual(["Work", "Acme Review/Threads/Zebra Rates/Zebra Rates.md"], r["pa"])
+        self.assertEqual(["Work", "Acme Review", "Zebra Rates"], r["mg"][:3])        # Rename… and Delete… act on the new name
+        self.assertEqual(["Renewal", "Zebra Rates"], out["order"][0])                  # its place by name
+        self.assertNotIn("Pricing", [x["n"] for x in out["rows"]])
+        self.assertEqual(1, out["closed"])
+        self.assertEqual(["Zebra Rates"], [h["n"] for h in out["find"]])
+        self.assertEqual({"x": "named:Work/Acme Review/Threads/Zebra Rates/Zebra Rates.md", "until": 9e15, "q": self.THREAD},
+                         out["expect"])
+
+    def test_a_project_takes_its_threads_with_it(self):
+        out = self.run_js((self.PROJECT, self.OK), find="zulu")
+        head = self.row(out, "Zulu Review")
+        self.assertEqual("Zulu Review", head["text"])
+        self.assertEqual(["Work", "Zulu Review"], head["mg"][:2])
+        renewal = self.row(out, "Renewal")
+        self.assertEqual("Zulu Review", renewal["p"])
+        self.assertEqual(["Work", "Zulu Review/Threads/Renewal/Renewal.md"], renewal["oc"])
+        self.assertIn("Zulu%20Review/Threads/Renewal/Renewal", renewal["u"])
+        self.assertEqual(["Birch Entry", "Zulu Review"], out["units"][1])            # its place by name now
+        self.assertTrue(out["find"])
+
+    def test_a_refusal_changes_nothing_and_a_reload_before_the_rebuild_renames_again(self):
+        before = self.run_js()
+        self.assertEqual(before["rows"], self.run_js((self.THREAD, {"ok": False, "say": "refused"}))["rows"])
+        again = self.run_js(redo=self.THREAD, find="zebra")
+        self.assertEqual("Zebra Rates", self.row(again, "Zebra Rates")["text"])
+        self.assertEqual(["Zebra Rates"], [h["n"] for h in again["find"]])
+        self.assertIn("else if(want==='named')now=(S.notes||[]).indexOf(key)>=0?'named':'none';", status.RELOAD_JS)
+        state = json.loads(re.search(r'<script type="application/json" id="state-data">(.*?)</script>',
+                                     self.page(show_graph=False), re.S).group(1))
+        self.assertIn("Work/Acme Review/Threads/Pricing/Pricing.md", state["notes"])
+
+
 SETTINGS_HARNESS = r"""
 const vm = require("vm");
 const [js, app, steps] = JSON.parse(process.argv[1]);

@@ -260,7 +260,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(16, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the simple home's, the menu's, the Guide's, the graph's
+        self.assertEqual(17, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the simple home's, where a work's files live's, the menu's, the Guide's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -653,6 +653,32 @@ class TestOpensOnTheWork(StatusCase):
             self.assertNotIn("tnext", row)
             self.assertNotIn("no next action", row)
         self.assertNotIn("tnext", status.CSS + status.HOME_CSS + status.TVIEW_CSS)
+
+    def test_the_legend_reads_as_a_line_of_text_beside_its_swatch(self):
+        # From 0.36.0 (#179): every text node and <code> of an entry was a flex item of its own, so the
+        # sentence wrapped into narrow columns. An entry is its swatch and one run of text.
+        legend = re.search(r'<div class="legend mu">(.*?)</div>', self.page(), re.S).group(1)
+        entries = re.findall(r'<span><i[^>]*></i>(<span class="lt">.*?</span>)</span>', legend)
+        self.assertEqual(2, len(entries), legend)
+        self.assertIn("A red <code>todo</code>: an open action is overdue", entries[0])
+        self.assertEqual("", re.sub(r'<span><i[^>]*></i><span class="lt">.*?</span></span>', "", legend))   # nothing loose
+        self.assertIn(".legend>span{display:inline-flex", status.CSS)
+        self.assertNotIn(".legend span{display:inline-flex", status.CSS)                 # not the text's own span
+
+    def test_the_chip_sits_on_the_names_line_not_under_it(self):
+        # #186: at the name's right, so a row with open actions takes one line; text under a name keeps its own.
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
+                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
+        html = self.page()
+        for name in ("Pricing", "Market Sizing"):
+            head = re.search(r'<div class="t">.*?</div>', self.row(html, name), re.S).group(0)
+            self.assertRegex(head, r'</a>(?:<span class="live[^>]*></span>)?<span class="tchips"><button type="button" '
+                                   r'class="chip tchip todo', name)
+            self.assertNotRegex(head, r"<small>[^<]*<button", name)
+        css = status.CSS
+        self.assertIn(".thread:not(.proj)>.t>.tchips{flex:none", css)          # never squeezed: the name's ellipsis goes first
+        self.assertIn(".thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0", css)
+        self.assertIn(".thread:not(.proj)>.t>small{flex:0 0 100%", css)        # text under the name stays below it
 
     def test_two_open_lines_neither_late_show_a_green_todo_2(self):
         later = self.now.date() + dt.timedelta(days=5)

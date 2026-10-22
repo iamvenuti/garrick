@@ -18,6 +18,8 @@
 //     the app macOS uses for it;
 //   - Add your own work opens macOS's folder picker, which grants the app
 //     access to the folder picked, and hands it to page_action.py (#182);
+//   - Save a copy, on an earlier version of a work's file, opens macOS's
+//     Save panel and hands the place chosen to page_action.py (#189);
 //   - an icon in the menu bar listing the live
 //     threads of the zone the graph shows, each opening a session, with a red
 //     dot when the Status tab has one, and Keep awake: for a time, until
@@ -661,6 +663,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
 		if body["pick"] as? String == "folder" { return pickFolder() }
+		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
 		// A Copy button's own text. A launch carries the phrase too, for an app
 		// built before 0.28.0; here the launcher owns the clipboard and says
@@ -702,6 +705,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.toast("Looking through \(folder.lastPathComponent): names and dates only, and nothing in it is changed.",
 			           alsoNotify: false)
 			self.act(["verb": "discover", "folder": folder.path])
+		}
+	}
+
+	// Save a copy, on an earlier version of a work's file (#189): macOS's own
+	// Save panel, as a sheet on the window, on Downloads, with the name the
+	// page gives it ("Launch brief, 3 days ago.docx"). The place chosen goes
+	// to page_action.py's `work-file`, which writes the version there as a
+	// file of its own and refuses the user's folder and Garrick's copy. Nothing
+	// is ever put back over the file itself.
+	func saveVersion(_ save: [String: Any]) {
+		guard var request = save["act"] as? [String: Any] else { return }
+		let panel = NSSavePanel()
+		panel.canCreateDirectories = true
+		panel.nameFieldStringValue = save["name"] as? String ?? "Earlier version"
+		panel.message = "Save this version as a separate file. The file in the work is not changed."
+		panel.prompt = "Save"
+		panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/Downloads", isDirectory: true)
+		panel.beginSheetModal(for: window) { [weak self] response in
+			guard let self, response == .OK, let url = panel.url else { return }
+			request["to"] = url.path
+			self.act(request)
 		}
 	}
 
@@ -918,10 +942,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
-	// The page asking what is running (page_action.py's "operations") only reads:
+	// The page asking what is running (page_action.py's "operations"), or how
+	// far a copy or a move of a work's files has got ("files-progress"), only reads:
 	// the reply goes to the page, with no toast and no rebuild, or asking would
 	// rebuild the page it asks from.
-	func reading(_ request: [String: Any]) -> Bool { request["verb"] as? String == "operations" }
+	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress"].contains(request["verb"] as? String ?? "") }
 
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
@@ -992,12 +1017,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}()
 
 	// GarrickReads tells the page this app answers a request that only reads, so
-	// it may ask what is running (page_action.py's "operations"). An app without
+	// it may ask what is running (page_action.py's "operations"); GarrickReadsFiles,
+	// that it answers how far a copy or a move has got (#189), and GarrickSaves,
+	// that Save a copy opens its Save panel. An app without
 	// it is never asked, and the page works as it did before the record. It is
 	// set at document start, before the page's own scripts run.
 	func appScript() -> WKUserScript {
 		WKUserScript(source: """
-			window.GarrickApp=\(appJSON());window.GarrickReads=true;
+			window.GarrickApp=\(appJSON());window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickSaves=true;
 			(function(i){var r=document.documentElement;r.classList.add('appicons');
 			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
 			window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:{line:e.lineno||0,

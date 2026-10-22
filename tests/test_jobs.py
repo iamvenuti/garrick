@@ -289,6 +289,14 @@ class ProfileTest(unittest.TestCase):
         for key in ("StandardOutPath", "StandardErrorPath"):
             self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/whats-open.launchd.log", plist[key])
 
+    def test_every_shipped_plist_is_well_formed(self):
+        # launchd loads a plist whose comment holds `--`, but a strict XML parser refuses it.
+        plists = sorted((REPO / "extras").rglob("*.plist"))
+        self.assertGreater(len(plists), 1)
+        for path in plists:
+            with self.subTest(plist=str(path.relative_to(REPO))):
+                self.assertIn("Label", plistlib.loads(path.read_bytes()))
+
 
 class RunTest(FakeAssistants):
     def test_claude_prints_only_the_answer_and_logs_the_call(self):

@@ -8,7 +8,8 @@ every finding of `check.py`, `wiki_lint.py` for both wikis and the drift
 `drift.py` last saved, sorts them into their kinds and applies the
 mechanical ones: a link broken by a rename with exactly one candidate, a
 deliverable without its date prefix, a thread missing from its hub's list, a
-status synonym. One commit per repository, of the files it changed and no
+status synonym, a note path written as code that leads to exactly one live
+note, a thread's note with no `parent:`. One commit per repository, of the files it changed and no
 other, by name, so whatever another session has not committed stays out of
 it; a file with changes not committed is not touched at all, and waits in
 the report. Each commit goes through the repository's wall check, and one it
@@ -19,7 +20,7 @@ with nobody watching: they wait in the day's report,
 With --digest, one line goes through System/tools/notifications.py as the
 *Todo summary* event, the morning digest's, saying what was fixed first and
 then what waits, in counts: never a file's content. Nothing to fix and
-nothing waiting sends nothing.
+nothing waiting sends nothing; a copy only behind the share is not waiting.
 
 No assistant is called. Run it through job.py, so it has a log, a lock and a
 watchdog:
@@ -91,7 +92,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     for f in out.get("failed", []):
         print("did not run: %s" % f, file=sys.stderr)
     print(said)
-    if args.digest and (out.get("fixed") or out.get("items") or out.get("refused")):
+    waits = out.get("waiting", len(out.get("items") or []))      # a nurture.py older than `waiting` counts every item
+    if args.digest and (out.get("fixed") or waits or out.get("refused")):
         send_digest(said)
     return out["code"]
 

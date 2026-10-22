@@ -83,11 +83,44 @@ class DriftTest(unittest.TestCase):
         (self.share / "Acme" / "Terms.docx").write_bytes(docx(provider=True, swap=True, saved_by="Dana"))
         self.assertEqual("same", self.one()["state"])
 
-    def test_an_edit_is(self):
+    def test_an_edit_on_the_share_puts_a_share_row_behind_and_a_here_row_adrift(self):
         (self.share / "Acme" / "Terms.docx").write_bytes(docx("Pallet terms, version three.", provider=True))
+        found = self.one()
+        self.assertEqual("behind", found["state"])                              # what the ledger expects
+        self.assertIn("the project's copy is behind the share", found["say"])
+        self.assertIn("word/document.xml", found["say"])
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            self.assertEqual(0, drift.main(["--root", str(self.root)]))         # behind alone is nothing to look at
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("| Dana | share |", "| Dana | here |"))
         found = self.one()
         self.assertEqual("drifted", found["state"])
         self.assertIn("word/document.xml", found["say"])
+        self.assertNotIn("behind", found["say"])
+        with mock.patch("builtins.print"):
+            self.assertEqual(1, drift.main(["--root", str(self.root)]))
+
+    def test_a_share_row_behind_is_listed_apart_from_a_here_row_that_drifted(self):
+        (self.share / "Acme" / "Terms.docx").write_bytes(docx("Dana's wording."))
+        (self.acme / "Deliverables" / "261001 - Rates.csv").write_bytes(b"rates")
+        (self.share / "Acme" / "Rates.csv").write_bytes(b"rates, edited")
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("| 2026-10-01 |", "| 2026-10-02 | `261001 - Rates.csv` | `Rates.csv` | Dana | here |\n"
+                                                     "| 2026-10-01 |", 1))
+        self.assertEqual([("261001 - Rates.csv", "drifted"), ("260930 - Terms.docx", "behind")],
+                         [(f["file"], f["state"]) for f in drift.survey(self.root)])
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            self.assertEqual(1, drift.main(["--root", str(self.root)]))
+        lines = out.getvalue().splitlines()
+        self.assertEqual(2, len(lines))
+        self.assertIn("Rates.csv: drifted", lines[0])
+        self.assertIn("Terms.docx: behind (the project's copy is behind the share:", lines[1])
+
+    def test_an_empty_copy_is_a_fault_whichever_copy_counts(self):
+        (self.share / "Acme" / "Terms.docx").write_bytes(b"")
+        self.assertEqual("drifted", self.one()["state"])
 
     def test_online_only_encrypted_and_missing(self):
         target = self.share / "Acme" / "Terms.docx"
@@ -153,7 +186,7 @@ class DriftTest(unittest.TestCase):
         ledger.write_text(ledger.read_text().replace("| Dana | share |", "| Dana | Share, Dana edits the wording there |"))
         (self.share / "Acme" / "Terms.docx").write_bytes(docx("Dana's wording."))
         found = self.one()
-        self.assertEqual(("drifted", "share"), (found["state"], found["authoritative"]))
+        self.assertEqual(("behind", "share"), (found["state"], found["authoritative"]))
         ledger.write_text(ledger.read_text().replace("| Share, Dana", "| shared by Dana"))
         self.assertEqual("unread", drift.survey(self.root)[0]["state"])           # a first word that is neither
 
@@ -231,11 +264,12 @@ class DriftTest(unittest.TestCase):
         import status
         self.assertIn("Acme Review: Terms (1).docx is a copy a sync conflict left on the share", status.drifted(self.root))
 
-    def test_the_status_page_lists_what_drifted(self):
+    def test_the_status_page_lists_what_drifted_and_not_what_is_behind(self):
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
         import status
         write(self.root / "System" / "generated" / "drift.json",
               json.dumps({"files": [{"project": "Acme Review", "file": "260930 - Terms.docx", "state": "drifted"},
+                                    {"project": "Acme Review", "file": "261001 - Rates.csv", "state": "behind"},
                                     {"project": "Acme Review", "file": "x", "state": "same"}]}))
         self.assertEqual(["Acme Review: 260930 - Terms.docx has drifted from its shared copy"], status.drifted(self.root))
 

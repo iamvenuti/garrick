@@ -568,6 +568,32 @@ class TestResume(CheckCase):
         self.assertClean("resume")
         self.assertClean("projects")
 
+    def test_a_file_in_a_nested_repository_is_found(self):
+        # Code checked out inside the project is somebody else's files to
+        # every check that reads notes, but a path into it still exists (#168).
+        code = self.acme / "Repo"
+        write(code / "docs" / "extras" / "status-page.md", "# Status page\n")
+        (code / ".git").mkdir()
+        self.resume("`extras/status-page.md`")
+        self.assertClean("resume")
+
+    def test_a_nested_repository_still_skips_installed_packages(self):
+        code = self.acme / "Repo"
+        write(code / "node_modules" / "left-pad" / "index.js", "module.exports = 1;\n")
+        (code / ".git").mkdir()
+        self.resume("`left-pad/index.js`")
+        self.assertFinds("resume", "warning", "`left-pad/index.js`, which is not there")
+
+    def test_a_generated_file_is_not_checked(self):
+        # interrupted.json exists only while a thread is held.
+        self.resume("`System/generated/interrupted.json` and `%s/System/generated/status.html`" % self.root)
+        self.assertClean("resume")
+
+    def test_a_path_that_exists_nowhere_is_still_reported(self):
+        (self.acme / "Repo" / ".git").mkdir(parents=True)
+        self.resume("`extras/gone.md`")
+        self.assertFinds("resume", "warning", "`extras/gone.md`, which is not there")
+
     def test_only_the_resume_block(self):
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text() + "\n---\n\n**2 March 2026.** Drafted `Deliverables/old draft.md`, since replaced.\n")
@@ -641,6 +667,34 @@ class TestDeliverables(CheckCase):
         write(self.acme / "Deliverables" / "Pricing memo final.md", "x")
         write(self.acme / "Deliverables" / "261345 - Bad date.md", "x")
         self.assertEqual(2, len(self.assertFinds("deliverables", "warning", "creation date")))
+
+
+class TestParentLinks(CheckCase):
+    """The ledger of what a project published is a table for drift.py, and
+    its folder already says whose it is: it is not asked for `parent:` (#169)."""
+
+    LEDGER = "| Date | File | Destination | Copy |\n|---|---|---|---|\n"
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"parent-links": ["Work"]}))
+
+    def missing(self):
+        return sorted(f.path for f in self.findings("links") if "no `parent:`" in f.message)
+
+    def test_a_ledger_needs_no_parent(self):
+        write(self.acme / "Deliverables" / "published.md", self.LEDGER)
+        write(self.acme / "Threads" / "Pricing" / "Deliverables" / "published.md", self.LEDGER)
+        self.assertEqual([], [p for p in self.missing() if p.endswith("published.md")])
+
+    def test_a_note_beside_the_ledger_is_still_asked(self):
+        write(self.acme / "Deliverables" / "published.md", self.LEDGER)
+        write(self.acme / "Deliverables" / "260301 - Pricing memo.md", "# Pricing memo\n")
+        write(self.acme / "Threads" / "Pricing" / "published.md", self.LEDGER)
+        missing = self.missing()
+        self.assertIn("Zones/Work/Acme Review/Deliverables/260301 - Pricing memo.md", missing)
+        self.assertIn("Zones/Work/Acme Review/Threads/Pricing/published.md", missing)
+        self.assertNotIn("Zones/Work/Acme Review/Deliverables/published.md", missing)
 
 
 class TestMeetings(CheckCase):

@@ -1445,7 +1445,7 @@ var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename')){var m=/(?:commit )([0-9a-f]{7,40})/.exec(out.say||'');
+if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename')){var m=out.commit?[0,out.commit]:/commit ([0-9a-f]{7,40})/.exec(out.say||'');   /* the reply's commit (#184), or the one it names */
 try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
 if(prev)return prev(q,out)};
 function offer(){var u=null;try{u=JSON.parse(localStorage.getItem('garrick-undo')||'null')}catch(e){}if(!u||!act||!u.commit||u.until<Date.now())return;

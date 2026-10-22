@@ -1757,6 +1757,7 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         if not check:
             commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
                        made, {}, wall=wall_refusal(ws))
+            return first_line(said)
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
@@ -1777,8 +1778,9 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         hub_rel = hub.relative_to(zone).as_posix()
         paths = [t for t in touched if not (held and t == hub_rel)]
         commit_new(zone, paths, "%s: new thread %s" % (project, name), made, before, wall=wall_refusal(ws))
+        said = first_line(said)
         if held and hub_rel in touched:
-            said += ("\nThe hub's line for it is not committed yet: %s had other changes not committed, so it is "
+            said += (" The hub's line for it is not committed yet: %s had other changes not committed, so it is "
                      "left for the next wrap." % hub.name)
         return said
     if verb == "undo":
@@ -1789,16 +1791,91 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
     if verb == "rename":
-        said = scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
-        if not check:               # its place on the interruption stack follows it
-            rename_in_stack(ws, z, field(req, "project"), thread, field(req, "to"))
-        return said
+        if check:
+            return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
+        return renamed_here(ws, zone, field(req, "project"), thread, field(req, "to"), which)
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
     if confirm:
         project = field(req, "project")
         drop_from_stack(ws, z, "%s/Threads/%s" % (project, thread) if thread else project)
+        # One line, with the commit the page's Undo reverts; scaffold.py's undo command and memory hint are
+        # for a terminal, and Undo on the page is the way back here.
+        found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
+        return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def first_line(said: str) -> str:
+    """What the page says of scaffold.py's report: its first line, which says what was done. The rest is for a
+    terminal: what to commit by hand, a spoken form to ask for, a memory pointer, a flag to rebuild with."""
+    return (said.strip().splitlines() or [""])[0].strip()
+
+
+def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: str, which: list) -> dict:
+    """A rename from the page, finished here rather than left to the user
+    (#184): scaffold.py renames and commits in the zone; then the old name,
+    which it adds to System/context.md as a heard name, is committed there
+    by name in the workspace's own repository, unless that file held other
+    changes not committed, which are never filed under this commit (#183);
+    the move is kept for the effort history (effort.py's moved.json), so the
+    page's Time and Cost follow the new name; and its place on the
+    interruption stack follows it. One line, and the zone's commit for Undo."""
+    old = thread or project
+    context = ws / "System" / "context.md"
+    root_repo = (ws / ".git").exists()
+    held = root_repo and context.is_file() and uncommitted(ws, context)
+    before = context.read_bytes() if context.is_file() else None
+    said = scaffold(ws, "rename", *which, "--to", to)
+    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    made = head.strip() if code == 0 else ""
+    rename_in_stack(ws, zone.name, project, thread, to)
+    rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
+    rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
+    note = ""
+    try:
+        keep_move(ws, rel_old, rel_new)
+    except OSError:
+        note += " The page's time and cost for it start afresh under the new name."
+    added = context.is_file() and context.read_bytes() != before
+    if added and root_repo and not held:
+        try:
+            commit(ws, context, before or b"", ("Heard name %s for %s, renamed in %s" % (old, to, zone.name))[:200],
+                   wall=wall_refusal(ws))
+        except Refused as e:
+            note += " Its old name is not kept as a heard one: %s." % str(e).rstrip(".")
+    elif added and held:
+        note += (" Its old name is added as a heard one in System/context.md, which had other changes not committed, "
+                 "so it is left for you to commit.")
+    if "Links written [[" in said:
+        note += " Links that name only %s were left alone: another note in %s has that name too." % (old, zone.name)
+    return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
+
+
+def keep_move(ws: Path, old: str, new: str) -> None:
+    """A folder renamed from the page, kept for the effort history in
+    System/generated/moved.json, never committed: {"<old>": "<new>"}, each
+    path from the workspace's root. effort.py reads it beside any `--moved`
+    the page is built with; a move of a folder already moved follows on."""
+    path = ws.joinpath(*EFFORT_MOVED)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    data = {o: (new if n == old else n) for o, n in data.items() if isinstance(o, str) and isinstance(n, str)}
+    if old != new:
+        data[old] = new
+    data.pop(new, None)                     # renamed back: its own name again
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".moved-", dir=str(path.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    os.replace(tmp, str(path))
+
+
+# effort.py's MOVED, beside this file: where the moves made from the page are kept for it.
+EFFORT_MOVED = ("System", "generated", "moved.json")
 
 
 def touched_paths(said: str) -> tuple:

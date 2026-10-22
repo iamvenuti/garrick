@@ -53,9 +53,20 @@ as unchecked. An Office file saved with a password, or one a
 rights-management service encrypted in place (neither a zip nor a password
 file), is reported apart, as encrypted.
 
+A `share` row whose copies differ is not drift: the ledger said colleagues
+edit it there, so the project's copy is a snapshot that falls behind on
+every save. It is reported as `behind`, listed after the rest, and leaves
+the exit code alone. A `here` row whose copies differ is `drifted`, since
+someone edited a copy nobody was meant to edit. An Office copy that is
+empty, or does not open, is `drifted` whichever copy counts: that is a
+fault, not a colleague's save.
+
 macOS keeps a scheduled job out of ~/Library/CloudStorage, so this runs
 from a session or the app, never from launchd. It changes nothing but
 System/generated/drift.json, and only with --save.
+
+Exit codes: 0; 1 when a copy drifted or is missing, a row does not read, or
+a sync left a conflict copy; 2 outside a workspace.
 
 Standard library only, Python 3.9 or later.
 """
@@ -92,6 +103,7 @@ HEADER = re.compile(r"^\|\s*Date\s*\|", re.I)
 RULE = re.compile(r"^\|[\s:|-]+\|$")
 SAVED = ("System", "generated", "drift.json")
 HISTORY_WORDS = ("withdrawn", "replaced", "sent")
+ATTENTION = ("drifted", "missing", "unread", "conflict")     # the states that exit 1; behind is what a share row expects
 
 
 # --------------------------------------------------------------------------- the ledger
@@ -218,8 +230,10 @@ def office_form(data: bytes) -> Dict[str, object]:
     return out
 
 
-def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
-    """(state, what differs): same, drifted, unchecked, missing, encrypted."""
+def compare(ours: Path, theirs: Path, share: bool = False) -> Tuple[str, str]:
+    """(state, what differs): same, drifted, behind, unchecked, missing,
+    encrypted. With `share`, the shared copy is the one that counts, so a
+    copy whose content differs is behind rather than drifted."""
     if not ours.is_file():
         return "missing", "the project's copy, %s, is not there" % ours.name
     if not theirs.exists():
@@ -233,7 +247,7 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
     if a == b:
         return "same", ""
     if ours.suffix.lower() not in OFFICE:
-        return "drifted", "the bytes differ"
+        return differs(share, "the bytes differ")
     if b.startswith(OLE) or a.startswith(OLE):
         return "encrypted", "one copy is saved with a password, so its content cannot be compared"
     if not a or not b:
@@ -248,8 +262,15 @@ def compare(ours: Path, theirs: Path) -> Tuple[str, str]:
     if fa == fb:
         return "same", ""
     parts = sorted(set(fa) ^ set(fb)) + sorted(k for k in set(fa) & set(fb) if fa[k] != fb[k])
-    return "drifted", "%s differ%s" % (", ".join(parts[:4]) + (" and %d more" % (len(parts) - 4) if len(parts) > 4 else ""),
-                                      "s" if len(parts) == 1 else "")
+    return differs(share, "%s differ%s" % (", ".join(parts[:4]) + (" and %d more" % (len(parts) - 4) if len(parts) > 4 else ""),
+                                          "s" if len(parts) == 1 else ""))
+
+
+def differs(share: bool, what: str) -> Tuple[str, str]:
+    """Two copies whose content differs: behind when the shared copy is the
+    one that counts, as the ledger expects after a colleague's save;
+    drifted otherwise."""
+    return ("behind", "the project's copy is behind the share: " + what) if share else ("drifted", what)
 
 
 # --------------------------------------------------------------------------- the workspace
@@ -337,7 +358,7 @@ def survey(root: Path) -> List[dict]:
             else:
                 if row["destination"].endswith(("/", ":")) or theirs.is_dir():
                     theirs = theirs / Path(row["file"]).name    # a folder: the copy there keeps the file's name
-                state, say = compare(ours, theirs)
+                state, say = compare(ours, theirs, share=row["authoritative"] == "share")
                 top = theirs.parent if ":" in row["destination"] else hub_shared
                 watched.setdefault(top, where)
                 published.setdefault(theirs.parent, where)
@@ -370,14 +391,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         if not found:
             print("No project has published anything yet.")
-        for f in found:
+        for f in sorted(found, key=lambda f: f["state"] == "behind"):    # what the ledger expects, after the rest
             if f["state"] in HISTORY_WORDS:
                 continue                                 # the record of what left, not something to look at
             print("%s, %s: %s%s%s" % (f["zone"], f["project"] + (", " + f["thread"] if f.get("thread") else ""),
                                       f["file"] or "published.md",
                                       ": " + f["state"] if f["state"] != "same" else ": the same",
                                       " (%s)" % f["say"] if f["say"] else ""))
-    return 1 if any(f["state"] in ("drifted", "missing", "unread", "conflict") for f in found) else 0
+    return 1 if any(f["state"] in ATTENTION for f in found) else 0
 
 
 if __name__ == "__main__":

@@ -252,6 +252,8 @@ def workspace_lib(ws: Optional[Path]):
 
 
 DRIFT = ("System", "generated", "drift.json")
+# `behind`, a copy the share's colleagues have moved on from, is what the
+# ledger expects of a `share` row, so the page leaves it out: Nurture lists it.
 DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missing, here or on the share",
              "unread": "has a row in published.md that does not read",
              "conflict": "is a copy a sync conflict left on the share"}

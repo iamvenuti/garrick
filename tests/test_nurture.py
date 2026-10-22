@@ -298,7 +298,7 @@ class RegistryTest(Base):
         doc = nurture.__doc__
         for word in ("register()", "unattended", "claim(ctx, item)", "gather(ctx)", "apply(ctx, item,"):
             self.assertIn(word, doc)
-        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment"],
+        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment", "behind"],
                          [k.name for k in nurture.ranked()])
         self.assertEqual(["mechanical"], [k.name for k in nurture.ranked() if k.unattended])
 
@@ -512,6 +512,31 @@ class NightlyTest(Base):
         drift = [i for i in out["items"] if i["source"] == "drift"]
         self.assertEqual(1, len(drift))
         self.assertEqual("judgment", drift[0]["kind"])
+
+    def test_a_copy_behind_the_share_is_listed_apart_and_never_in_the_morning_line(self):
+        write(self.root / "System" / "generated" / "drift.json", json.dumps({"checked": "2026-10-16T22:00:00", "files": [
+            {"zone": "Work", "project": "Acme Review", "file": "260301 - Pricing memo.md", "state": "drifted",
+             "authoritative": "here", "say": "the bytes differ"},
+            {"zone": "Work", "project": "Acme Review", "file": "260302 - Terms.docx", "state": "behind",
+             "authoritative": "share", "say": "the project's copy is behind the share: word/document.xml differs"}]}))
+        _, out = self.run_tool("nightly")
+        drift = {i["check"]: i for i in out["items"] if i["source"] == "drift"}
+        self.assertEqual(("judgment", "behind"), (drift["drifted"]["kind"], drift["behind"]["kind"]))
+        self.assertEqual("A published file's copy here is behind the share", drift["behind"]["ear"])
+        self.assertEqual(1, out["kinds"]["behind"])
+        self.assertNotIn("behind", out["digest"])
+        report = (self.root / out["report"]).read_text()
+        judged, behind = report.split("Judgment, ", 1)[1].split("Behind the share, 1: ", 1)
+        self.assertIn("260301 - Pricing memo.md", judged)
+        self.assertNotIn("260302 - Terms.docx", judged)
+        self.assertIn("260302 - Terms.docx: behind (the project's copy is behind the share", behind)
+        # A night that finds only a copy behind the share leaves nothing waiting, so the job sends nothing.
+        write(self.root / "System" / "generated" / "drift.json", json.dumps({"files": [
+            {"zone": "Work", "project": "Acme Review", "file": "260302 - Terms.docx", "state": "behind"}]}))
+        with mock.patch.object(nurture, "SOURCES", [nurture.from_drift]):
+            _, out = self.run_tool("nightly")
+        self.assertEqual((0, ["behind"]), (out["waiting"], [i["kind"] for i in out["items"]]))
+        self.assertEqual("Nothing needed fixing overnight.", out["digest"])
 
     def test_a_workspace_without_the_tool_is_refused(self):
         os.remove(str(self.root / "System" / "tools" / "nurture.py"))

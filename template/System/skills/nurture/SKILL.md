@@ -39,6 +39,7 @@ own: a new kind of problem gets a check in `check.py` first.
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
+| Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
 
 A fix the tool could make but holds back, because the file has changes not
 committed, a date sits inside a name, or no repository could undo it, stays
@@ -87,6 +88,9 @@ in the report with its reason, as judgment.
    "Skip" leaves it in the report. Never guess.
 6. **Judgment.** Name each with the page to open, and change nothing,
    unless the user answers one with the right value: that is a correction.
+   **Behind the share** comes after it, apart: the shared copy is the one
+   that counts, so say how many and which files, and fix nothing. Never
+   call one drift.
 7. **The report.** The tool wrote `System/generated/nurture/<date>.md`:
    what was fixed, what was asked and answered, and what is left. Say where
    it is.

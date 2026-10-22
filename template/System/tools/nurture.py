@@ -37,6 +37,12 @@ resolves a spoken name to a path, and asks when it could be two.
   without crossing a wall. The skill asks; this changes none of them.
 - *judgment*: everything else. Reported, with the page to open.
 
+**Behind the share** is listed apart, after them all: a published file whose
+ledger row ends in `share`, and whose copy here differs from the shared one,
+which is what the ledger expects once a colleague saves there. Nothing is
+fixed; it is low urgency, and the morning digest leaves it out. `drift.py`
+names it `behind`, and the drift source hands it straight to its kind.
+
 **A fifth kind, the correction**, is never found: a person gives it. When the
 user answers a finding, or says outright, "that's wrong, it's Y", `correct`
 takes the two values and makes one finding of every live copy that
@@ -68,7 +74,10 @@ its name, its heading, the rank it claims findings at (lower first, the
 judgment kind last as the catch-all), `claim(ctx, item)` that says whether a
 finding is its own and fills in what the kind needs, and optionally
 `gather(ctx)` for findings from a tool of its own, `apply(ctx, item,
-journal)` for a fix, and `unattended` when the nightly run may apply it. To
+journal)` for a fix, `unattended` when the nightly run may apply it, and
+`quiet` when the morning digest leaves it out. A kind ranked after the
+judgment kind claims nothing, since the catch-all claims first: a source or
+a `gather` names it on the finding, as the drift source does for `behind`. To
 add one, write its Kind and register it in the *Kinds* section below, or in
 a module of its own imported where that section ends: sorting, holding,
 applying, committing, rolling back, the report and the digest all read the
@@ -213,6 +222,7 @@ class Kind:
     gather: Optional[Callable[[Ctx], List[Item]]] = None
     apply: Optional[Callable[[Ctx, Item, "Journal"], str]] = None
     unattended: bool = False                          # the nightly run may apply it
+    quiet: bool = False                               # low urgency: listed last, never in the morning digest
     say: Callable[[Item], str] = lambda item: "%s: %s" % (item.path, item.message)
 
 
@@ -292,6 +302,7 @@ def from_wiki_lint(ctx: Ctx) -> List[Item]:
 
 
 DRIFT_STATES = ("drifted", "missing", "conflict")
+BEHIND = "behind"           # a share row whose copy here is behind the share: its own kind, not drift
 
 
 def from_drift(ctx: Ctx) -> List[Item]:
@@ -306,14 +317,16 @@ def from_drift(ctx: Ctx) -> List[Item]:
         files = run_tool(ctx, "drift.py", "--json") or []
     out = []
     for f in files if isinstance(files, list) else []:
-        if not isinstance(f, dict) or f.get("state") not in DRIFT_STATES:
+        if not isinstance(f, dict) or f.get("state") not in DRIFT_STATES + (BEHIND,):
             continue
         base = "Zones/%s/%s" % (f.get("zone", ""), f.get("project", ""))
         if f.get("thread"):
             base += "/Threads/%s" % f["thread"]
+        behind = f["state"] == BEHIND
         out.append(Item("drift", f["state"], base + "/Deliverables/published.md",
                         "%s: %s%s" % (f.get("file") or "published.md", f["state"], " (%s)" % f["say"] if f.get("say") else ""),
-                        "A published file has drifted from its shared copy"))
+                        "A published file's copy here is behind the share" if behind
+                        else "A published file has drifted from its shared copy", kind=BEHIND if behind else ""))
     return out
 
 
@@ -991,6 +1004,19 @@ def say_judgment(item: Item) -> str:
 register(Kind("judgment", "Judgment", 1000, lambda ctx, item: True, what="reported, with the page to open",
               say=say_judgment))
 
+
+# ---------------------------------------------------------------------------
+# Behind the share: low urgency, after everything else
+# ---------------------------------------------------------------------------
+#
+# A `share` row says colleagues edit the file on the share, so the copy here
+# is a snapshot, and it falls behind on every save there. That is what the
+# ledger predicts, not drift. Ranked after judgment, it claims nothing: the
+# drift source names it on the finding.
+
+register(Kind(BEHIND, "Behind the share", 1100, lambda ctx, item: False,
+              what="the shared copy is the one that counts, so nothing to fix", quiet=True, say=say_judgment))
+
 # A kind in a module of its own is imported here, after the four, so it can
 # call register() and take its rank among them.
 
@@ -1283,7 +1309,8 @@ def say_text(items: List[Item], scopes: List[str]) -> str:
 
 SPOKEN = {"wall": ("one wall", "%d walls"), "mechanical": ("one fix ready", "%d fixes ready"),
           "correction": ("one correction", "%d corrections"),
-          "attribution": ("one question", "%d questions"), "judgment": ("one thing to read", "%d things to read")}
+          "attribution": ("one question", "%d questions"), "judgment": ("one thing to read", "%d things to read"),
+          BEHIND: ("one copy behind the share", "%d copies behind the share")}
 
 
 def say_ear(items: List[Item], scopes: List[str]) -> str:
@@ -1305,15 +1332,22 @@ def plural(n: int, word: str) -> str:
     return "%d %s%s" % (n, word, "" if n == 1 else "es" if word.endswith(("x", "s")) else "s")
 
 
+def waiting(done: dict, items: List[Item]) -> Dict[str, int]:
+    """{kind: how many} of what a run left for a person, but the quiet kinds:
+    a pass lists them, the morning line does not."""
+    fixed_ids = {id(i) for i in done["fixed"]}
+    waits: Dict[str, int] = {}
+    for i in items:
+        if id(i) not in fixed_ids and not (i.kind in KINDS and KINDS[i.kind].quiet):
+            waits[i.kind] = waits.get(i.kind, 0) + 1
+    return waits
+
+
 def digest(ctx: Ctx, done: dict, items: List[Item]) -> str:
     """One line for the morning: what was fixed first, then what waits."""
     fixed = done["fixed"]
     when = " overnight" if ctx.headless else ""
-    fixed_ids = {id(i) for i in fixed}
-    left = [i for i in items if id(i) not in fixed_ids]
-    waits = {}
-    for i in left:
-        waits[i.kind] = waits.get(i.kind, 0) + 1
+    waits = waiting(done, items)
     if fixed:
         repos = {}
         for i in fixed:
@@ -1411,7 +1445,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                "items": [item_json(i) for i in items], "failed": ctx.failed}
         if done is not None:
             out.update({"fixed": [item_json(i) for i in done["fixed"]], "held": [item_json(i) for i in done["held"]],
-                        "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items)})
+                        "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items),
+                        "waiting": sum(waiting(done, items).values())})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif a.ear:
         print(say_ear(items, scopes) if done is None else digest(ctx, done, items))

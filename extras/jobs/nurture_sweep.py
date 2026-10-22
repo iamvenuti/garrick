@@ -19,7 +19,7 @@ with nobody watching: they wait in the day's report,
 With --digest, one line goes through System/tools/notifications.py as the
 *Todo summary* event, the morning digest's, saying what was fixed first and
 then what waits, in counts: never a file's content. Nothing to fix and
-nothing waiting sends nothing.
+nothing waiting sends nothing; a copy only behind the share is not waiting.
 
 No assistant is called. Run it through job.py, so it has a log, a lock and a
 watchdog:
@@ -91,7 +91,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     for f in out.get("failed", []):
         print("did not run: %s" % f, file=sys.stderr)
     print(said)
-    if args.digest and (out.get("fixed") or out.get("items") or out.get("refused")):
+    waits = out.get("waiting", len(out.get("items") or []))      # a nurture.py older than `waiting` counts every item
+    if args.digest and (out.get("fixed") or waits or out.get("refused")):
         send_digest(said)
     return out["code"]
 

@@ -17,9 +17,10 @@
   Settings › Notifications; GARRICK_NOTIFY or GARRICK_NOTIFY_CMD added to
   EnvironmentVariables override that for this job alone. See
   docs/extras/scheduled-jobs.md for the other variables.
-  --digest below sends each zone's morning summary as the Todo summary
-  notice, to wherever Settings › Notifications sends it; remove it for none.
-  Add a second zone with another pair of --zone lines.
+  The digest argument below sends each zone's morning summary as the Todo
+  summary notice, to wherever Settings › Notifications sends it; remove it
+  for none. Add a second zone with another pair of lines: the zone argument
+  and the zone's name.
   Whatever job.py cannot write to its own log, such as the error from a path
   left wrong, goes to todo-sweep.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.

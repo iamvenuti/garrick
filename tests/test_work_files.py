@@ -462,6 +462,24 @@ class TestThePage(Stored):
         self.assertRegex(card, r"<dt>Last refreshed</dt><dd>Today, \d\d:\d\d, when you chose Keep a copy: 5 files copied\.</dd>")
         self.assertNotIn("had changed", card)
 
+    def test_a_file_changed_in_the_folder_is_changed_not_new(self):
+        """Before any Continue, a file that moved lately counted as new; the copy's history says it was there."""
+        note = self.note()
+        note.write_text(re.sub(r"(?m)^updated: .*$", "updated: %s" % (TODAY - dt.timedelta(days=5)).isoformat(),
+                               note.read_text(), count=1))
+        self.git("commit", "-q", "-am", "an older note")
+        self.files_act("copy")
+        plan = self.folder / "Catalogue 2027 page plan.xlsx"
+        plan.write_bytes(plan.read_bytes() + b"more")
+        self.before = manifest(self.drive)
+        card = self.card()
+        self.assertIn('Catalogue 2027 page plan.xlsx <span class="sh-tag">changed</span>', card)     # in the folder, not refreshed yet
+        self.files_act("refresh")
+        card = self.card()
+        self.assertIn('Catalogue 2027 page plan.xlsx <span class="sh-tag">changed</span>', card)
+        self.assertNotIn('<span class="sh-tag">new</span>', card)
+        self.assertIn("1 changed since it last moved", card)
+
     def test_your_work_and_needs_you_are_the_same_wherever_the_files_live(self):
         def home():
             html = self.page()

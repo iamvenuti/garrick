@@ -4848,6 +4848,7 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date, deco=None) -> Tupl
         cut = time.mktime(moved.timetuple()) + 86400 if moved else None
         diff = {"new": sorted(p for p, (m, _) in now.items() if cut and m >= cut), "changed": [], "missing": []}
         said_since = "since it last moved" if moved else ""
+        diff = kept_by_copy(w.get("store"), diff, now, cut)
     marks = {p: "new" for p in diff["new"]}
     marks.update({p: "changed" for p in diff["changed"]})
     ordered = sorted(now, key=lambda p: (-now[p][0], p.casefold()))       # most recent first; new and changed say so
@@ -4861,6 +4862,35 @@ def work_files(w: dict, kept: Optional[dict], today: dt.date, deco=None) -> Tupl
     head = ("%s %s" % (", ".join(parts), said_since)).strip() if parts else ("nothing new " + said_since).strip() if said_since else ""
     body = '<ul class="sh-files">%s</ul>' % items if items else '<p class="muted">No files yet.</p>'
     return head, body
+
+
+def kept_by_copy(st: Optional[dict], diff: dict, now: Dict[str, list], cut: Optional[float]) -> dict:
+    """Before a work's first Continue nothing says what a file was, so one
+    that moved lately counts as new. With a copy kept, or files moved in, the
+    copy's history does (#189): a file its first version already held is not
+    new, and is changed when it has a later version, or, while the copy is
+    kept, when the folder's file is no longer the copy's. A file the history
+    never held, such as a recording left out, keeps the plain rule."""
+    if not st or not st.get("history") or not st.get("first"):
+        return diff
+    F, first = work_files_mod(), st["first"].timestamp() + 1
+    copied, listed = st.get("copied") or {}, st.get("listed") or {}
+    new, changed = [], []
+    for p in sorted(now):
+        vs = st["history"].get(p) or []
+        if not vs:
+            if p in diff["new"]:
+                new.append(p)
+            continue
+        if vs[-1][1] > first:                   # first kept later than the first copy: a file added since
+            if cut and vs[-1][1] >= cut:
+                new.append(p)
+            continue
+        differs = (st["mode"] == F.COPY and p in listed and p in copied and not F.same(listed[p], copied[p])
+                   or st["mode"] == F.MOVED and now[p][0] > vs[0][1] + 1)       # moved, and changed since its last version
+        if len(vs) > 1 and (not cut or vs[0][1] >= cut) or differs:
+            changed.append(p)
+    return dict(diff, new=new, changed=changed)
 
 
 def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:

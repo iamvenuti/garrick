@@ -224,7 +224,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 }
 ```
 
-- `parent-links`: zones where every note in a project, other than its hub, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
+- `parent-links`: zones where every note in a project, other than its hub and its `Deliverables/published.md`, carries `parent:`, a link to its thread note or hub, so Obsidian's graph attaches it to the project.
 - `note-links`: zones where hub and thread notes name another note as a wikilink, never as a path in backticks, which draws no link in the graph.
 - `todo-labels`: zones where every open action in `Todo.md` opens with its thread's link.
 - `word-budgets`: the most words the root `AGENTS.md` (`root`) and the others (`other`) may hold; 800 and 1000 otherwise. Each `AGENTS.local.md` has the same budget as the `AGENTS.md` beside it, counted on its own.

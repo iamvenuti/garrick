@@ -669,6 +669,34 @@ class TestDeliverables(CheckCase):
         self.assertEqual(2, len(self.assertFinds("deliverables", "warning", "creation date")))
 
 
+class TestParentLinks(CheckCase):
+    """The ledger of what a project published is a table for drift.py, and
+    its folder already says whose it is: it is not asked for `parent:` (#169)."""
+
+    LEDGER = "| Date | File | Destination | Copy |\n|---|---|---|---|\n"
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"parent-links": ["Work"]}))
+
+    def missing(self):
+        return sorted(f.path for f in self.findings("links") if "no `parent:`" in f.message)
+
+    def test_a_ledger_needs_no_parent(self):
+        write(self.acme / "Deliverables" / "published.md", self.LEDGER)
+        write(self.acme / "Threads" / "Pricing" / "Deliverables" / "published.md", self.LEDGER)
+        self.assertEqual([], [p for p in self.missing() if p.endswith("published.md")])
+
+    def test_a_note_beside_the_ledger_is_still_asked(self):
+        write(self.acme / "Deliverables" / "published.md", self.LEDGER)
+        write(self.acme / "Deliverables" / "260301 - Pricing memo.md", "# Pricing memo\n")
+        write(self.acme / "Threads" / "Pricing" / "published.md", self.LEDGER)
+        missing = self.missing()
+        self.assertIn("Zones/Work/Acme Review/Deliverables/260301 - Pricing memo.md", missing)
+        self.assertIn("Zones/Work/Acme Review/Threads/Pricing/published.md", missing)
+        self.assertNotIn("Zones/Work/Acme Review/Deliverables/published.md", missing)
+
+
 class TestMeetings(CheckCase):
     def test_pass(self):
         self.assertClean("meetings")

@@ -2365,9 +2365,12 @@ PARENT_RE = re.compile(r'^parent:\s*["\']?\[\[([^\]|#]+)', re.M)
 
 
 def parent_links(ws: Workspace, zone: Path) -> List[Finding]:
-    """Every live note in a project, other than its hub, carries `parent:`, a
-    link to its thread note or hub that leads to a live note, so the graph
-    attaches it to its project whatever its prose says."""
+    """Every live note in a project, other than its hub and the ledger of
+    what it published, carries `parent:`, a link to its thread note or hub
+    that leads to a live note, so the graph attaches it to its project
+    whatever its prose says. The ledger, `Deliverables/published.md` in the
+    project or in a thread of a thread-first one, is a table for drift.py, and
+    its folder already says whose it is."""
     out = []
     notes = zone_notes(ws, zone)
     stems = {p.stem for p, _ in notes}
@@ -2375,6 +2378,8 @@ def parent_links(ws: Workspace, zone: Path) -> List[Finding]:
         parts = path.relative_to(zone).parts
         if len(parts) < 2 or not (zone / parts[0] / (parts[0] + ".md")).is_file() or path == zone / parts[0] / (parts[0] + ".md"):
             continue  # loose in the zone, outside any project, or the hub itself
+        if parts[-2:] == ("Deliverables", "published.md") and (len(parts) == 3 or len(parts) == 5 and parts[1] == "Threads"):
+            continue  # the ledger of what was published
         m = PARENT_RE.search(parse_frontmatter_block(text))
         if not m:
             out.append(Finding(WARNING, "links", rel(ws, path), "no `parent:`, a link to its thread note or hub",

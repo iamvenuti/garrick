@@ -3067,7 +3067,9 @@ def keep_a_copy(ws: Path, w: dict, now: dt.datetime) -> dict:
             e.strerror if isinstance(e, OSError) and e.strerror else e))
     finally:
         job.end()
-    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via="copy", changed=F.changed_said(done))
+    # The first copy changed nothing: it copied the files. A copy picked up again was refreshed, and says what changed.
+    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via="copy" if new else "pickup", first=new,
+                 changed=F.copied_said(done) if new else F.changed_said(done))
     return {"say": ("Garrick keeps a copy now. Your folder is as it was" if new else
                     "Garrick's copy is refreshed and kept again. Your folder is as it was"), "view": view_of(w)}
 
@@ -3089,7 +3091,7 @@ def refresh_copy(ws: Path, w: dict, now: dt.datetime, via: str) -> dict:
     finally:
         job.end()
     said = F.changed_said(done)
-    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via=via, changed=said)
+    F.keep_state(ws, w["key"], refreshed=now.isoformat(timespec="seconds"), via=via, changed=said, first=False)
     return {"done": done, "said": said}
 
 

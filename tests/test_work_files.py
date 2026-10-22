@@ -456,6 +456,12 @@ class TestThePage(Stored):
         self.assertIn("Leave in place, keep the copy", page)
         self.assertIn("Leave in place, delete the copy", page)
 
+    def test_the_first_copy_says_what_it_copied(self):
+        self.files_act("copy")
+        card = self.card()
+        self.assertRegex(card, r"<dt>Last refreshed</dt><dd>Today, \d\d:\d\d, when you chose Keep a copy: 5 files copied\.</dd>")
+        self.assertNotIn("had changed", card)
+
     def test_your_work_and_needs_you_are_the_same_wherever_the_files_live(self):
         def home():
             html = self.page()

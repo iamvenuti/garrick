@@ -5111,8 +5111,12 @@ def where_card(w: dict, st: dict, today: dt.date) -> str:
     if st["mode"] == F.COPY:
         state = st["state"]
         when = when_said(state.get("refreshed") or "", today)
-        via = {"continue": ", when you continued", "copy": ", when you chose Keep a copy"}.get(state.get("via"), "")
-        last = ("%s%s.%s" % (E(when), via, " " + E(state["changed"]) if state.get("changed") else "")) if when else "Not yet."
+        via = {"continue": ", when you continued", "copy": ", when you chose Keep a copy",
+               "pickup": ", when you chose Keep a copy again"}.get(state.get("via"), "")
+        # The first copy says what it copied, after a colon; a refresh says what had changed, in a sentence of its own.
+        said = E(state.get("changed") or "")
+        last = (("%s%s: %s" % (E(when), via, said[:1].lower() + said[1:]) if state.get("first") and said else
+                 "%s%s.%s" % (E(when), via, " " + said if said else "")) if when else "Not yet.")
         media = {r: s for r, s in st["listed"].items() if F.is_media(r)}
         m_n, m_b = len(media), F.said_size(sum(s.st_size for s in media.values()))
         since = (", since %s" % E(F.ago(st["first"].date(), today))) if st["first"] and st["versions"] > 1 else (

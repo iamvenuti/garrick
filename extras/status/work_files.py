@@ -683,6 +683,11 @@ def keep_state(ws: Path, key: str, **values) -> None:
     os.replace(tmp, str(path))
 
 
+def copied_said(done: dict) -> str:
+    """What the first copy did: it copied the files, and nothing had changed."""
+    return "%s copied." % said_files(len(done["added"]) + len(done["changed"]))
+
+
 def changed_said(done: dict) -> str:
     """What a refresh found, in one sentence."""
     n = len(done["changed"]) + len(done["added"]) + len(done["removed"])

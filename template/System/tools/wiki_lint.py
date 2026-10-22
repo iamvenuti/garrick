@@ -14,7 +14,11 @@ and writes the report.
 An orphan is a page under wiki/ that links to no other page and that no
 other page links to; the index and the log do not count, since they list
 everything. A missing page is a link target no file answers, with the
-pages that link to it. Links into raw/ are checked against raw/.
+pages that link to it. Links into raw/ are checked against raw/. A link to
+any other kind of file, such as a diagram exported beside the page that shows
+it, is found as Obsidian finds it: from the linking page's folder, from the
+wiki's top, or by its name when only one file has it. Such a file is not a
+page, so it counts toward no orphan.
 
 Standard library only, Python 3.9 or later.
 """
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -58,10 +63,13 @@ def lint(wiki: Path) -> dict:
     by_stem: Dict[str, List[str]] = {}
     for key in files:
         by_stem.setdefault(key.rsplit("/", 1)[-1].lower(), []).append(key)
+    others = {p.relative_to(wiki).as_posix() for p in top.rglob("*")
+              if p.is_file() and p.suffix != ".md"
+              and not any(part.startswith(".") for part in p.relative_to(top).parts)}
 
     lists = {"wiki/" + n for n in LISTS}
 
-    def resolve(target: str) -> Optional[str]:
+    def resolve(target: str, here: str) -> Optional[str]:
         t = target.strip().rstrip("\\").strip()          # a table writes [[a\|b]]: the backslash is not the name's
         for prefix in ("Wikis/%s/" % wiki.name, "%s/" % wiki.name):
             if t.startswith(prefix):
@@ -78,7 +86,22 @@ def lint(wiki: Path) -> dict:
         if hits:
             return hits[0]
         hits = by_stem.get(t.rsplit("/", 1)[-1].lower(), [])
-        return hits[0] if hits else None
+        if hits:
+            return hits[0]
+        return other(t, here) if posixpath.splitext(t)[1] else None
+
+    def other(t: str, here: str) -> Optional[str]:
+        """A file that is not a page, such as `diagram.html` or an embedded
+        `diagram.png`: from the linking page's folder, `../` included, then
+        from the wiki's top, then by name when only one file has it."""
+        near = posixpath.normpath(posixpath.join(here, t))
+        if near in others or near in raws:
+            return near
+        for prefix in ("wiki/", ""):
+            if prefix + t in others:
+                return prefix + t
+        hits = [k for k in others if k.lower().endswith("/" + t.lower())]
+        return hits[0] if len(hits) == 1 else None
 
     out_links: Dict[str, Set[str]] = {k: set() for k in files}
     in_links: Dict[str, Set[str]] = {k: set() for k in files}
@@ -91,7 +114,7 @@ def lint(wiki: Path) -> dict:
             target = m.group(1).strip()
             if not target or "://" in target:
                 continue
-            found = resolve(target)
+            found = resolve(target, path.parent.relative_to(wiki).as_posix())
             if found is None:
                 missing.setdefault(target, set()).add(key)
             elif found in files and found != key and key in files:

@@ -5617,7 +5617,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .strip{display:flex;gap:2px}.strip i{width:11px;height:18px;border-radius:3px;background:var(--none);flex:none}
 .strip i.good{background:var(--good)}.strip i.warning{background:var(--warning)}.strip i.critical{background:var(--critical)}.strip i:hover,.strip i:focus{outline:2px solid var(--ink)}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);white-space:nowrap}.status svg{width:14px;height:14px;flex:none}
-.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;color:var(--muted);font-size:12px}.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;color:var(--muted);font-size:12px}.legend>span{display:inline-flex;align-items:center;gap:6px}.legend>span>i{flex:none}.legend .lt{min-width:0}
 .legend i{width:10px;height:10px;border-radius:2px;background:var(--none)}.legend i.good{background:var(--good)}.legend i.warning{background:var(--warning)}.legend i.critical{background:var(--critical)}
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
@@ -7105,9 +7105,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
                  % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
-    legend = ('<div class="legend mu"><span><i class="critical"></i>A red <code>todo</code>: an open action is overdue, or a <code>#waiting</code> '
-              'chase date has come. <code>check</code>: an error the page can explain and fix</span>'
-              '<span><i style="background:var(--base)"></i>Days since the note moved, toward sixty: a figure, not a fault</span></div>')
+    # Each entry is its swatch and one run of text: the text, `code` and all, in a span of its own, so the
+    # flex row lays out two items and the sentence wraps as a sentence, never as a column per word.
+    legend = ('<div class="legend mu"><span><i class="critical"></i><span class="lt">A red <code>todo</code>: an open action is '
+              'overdue, or a <code>#waiting</code> chase date has come. <code>check</code>: an error the page can explain and '
+              'fix</span></span><span><i style="background:var(--base)"></i><span class="lt">Days since the note moved, toward '
+              'sixty: a figure, not a fault</span></span></div>')
     # The search box leads the row, New project and New thread follow it, and
     # what it finds takes the columns' place while a query is in it (#140).
     new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'

@@ -15,6 +15,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- The Threads card's legend reads as one line of text beside each swatch again (from 0.36.0, [#179](https://github.com/iamvenuti/garrick/issues/179)). Each entry was a flex row, so every run of text and every `<code>` in it, *todo*, *#waiting* and *check*, was a flex item of its own, and the sentence wrapped into narrow columns. Now each entry is its swatch and one span of text.
 - The Garrick band shows what you typed as the last prompt, not `<system-reminder>`, when the harness puts a reminder before your words ([#187](https://github.com/iamvenuti/garrick/issues/187)). `promptLine()` took the first line with anything in it, which in Claude's desktop app was often the opening tag of a block the harness adds. Now every tag block at the start of the text is skipped, and a prompt that is nothing else puts the band back on the Resume line, as before any prompt.
 
 ## [0.37.0] - 2026-10-20

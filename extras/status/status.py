@@ -93,7 +93,7 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 sys.dont_write_bytecode = True
 
@@ -1016,6 +1016,101 @@ def nurture_fix(ws: Path, f: dict) -> Optional[str]:
         return None
     said = said[len(item.path) + 2:] if said.startswith(item.path + ": ") else said
     return said[:1].upper() + said[1:] + "."
+
+
+# Context debt (#69), beside the check's findings: what Nurture left, weighed
+# by kind, as the workspace's own nurture.py keeps it in each day's record.
+# The page reads the records through that module and runs nothing. No record
+# of the whole workspace yet, or a nurture.py older than the debt, shows
+# nothing: a zero would look measured.
+DEBT_DAYS = 30
+DEBT_SCOPES = 3        # the scopes named under the chart, heaviest first
+
+
+def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], Callable[[str], Tuple[str, str]]]:
+    """(day, debt) for the last DEBT_DAYS days that have a record of the
+    whole workspace, oldest first, and how nurture.py names a scope and the
+    request that nurtures it; [] without a record, or without a nurture.py
+    that keeps them."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not callable(getattr(N, "debt_history", None)) or not callable(getattr(N, "scope_said", None)):
+        return [], lambda scope: (scope, "")
+    try:
+        return [(d, x) for d, x in N.debt_history(ws, today, DEBT_DAYS) if isinstance(x, dict)], N.scope_said
+    except Exception:
+        return [], N.scope_said
+
+
+def debt_chart(history: List[Tuple[dt.date, dict]], today: dt.date, threshold: float) -> str:
+    """The last DEBT_DAYS days as a small line, one point a day that has a
+    record, broken where a day has none, against the threshold, dashed. In
+    the page's own tokens, so it reads in light and dark."""
+    w, h, pad = 300.0, 56.0, 5.0
+    top = max([x["total"] for _, x in history] + [threshold, 1]) * 1.1
+    first = today - dt.timedelta(days=DEBT_DAYS - 1)
+    at = lambda d: pad + (d - first).days / (DEBT_DAYS - 1) * (w - 2 * pad)
+    y = lambda v: h - pad - v / top * (h - 2 * pad)
+    runs, run, last = [], [], None
+    for d, x in history:
+        if last is not None and (d - last).days != 1:
+            runs.append(run)
+            run = []
+        run.append((at(d), y(x["total"])))
+        last = d
+    runs.append(run)
+    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % p for p in r) for r in runs if len(r) > 1)
+    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % p for p in r),
+                                                                          r[-1][0], h - pad) for r in runs if len(r) > 1)
+    # A dot is a line of no length with round ends, so it stays round however the chart is stretched.
+    dots = "".join('<line class="dd%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>'
+                   % (" now" if i == len(history) - 1 else "", at(d), at(d), y(x["total"]), y(x["total"]),
+                      E("%s · %s" % (d.strftime("%a %d %b"), x["total"]))) for i, (d, x) in enumerate(history))
+    bar = '<line class="dt" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (pad, w - pad, y(threshold), y(threshold))
+    said = "Context debt, last %d days: %s on %s, %s on %s, against a threshold of %s" % (
+        DEBT_DAYS, history[0][1]["total"], history[0][0].strftime("%d %b"), history[-1][1]["total"],
+        history[-1][0].strftime("%d %b"), threshold)
+    return ('<svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">%s%s%s%s</svg>'
+            '<div class="dticks"><span>%s</span><span>today</span></div>'
+            % (w, h, E(said), areas, bar, lines, dots, E(first.strftime("%d %b").lstrip("0"))))
+
+
+def debt_block(ws: Path, today: dt.date) -> str:
+    """The figure, its trend over the last DEBT_DAYS days and the scopes
+    carrying most of it, for the Checks card; "" with no record."""
+    history, said = debt_history(ws, today)
+    if not history:
+        return ""
+    day, debt = history[-1]
+    total, threshold = debt["total"], debt.get("threshold", 40)
+    scopes = debt.get("scopes") or {}
+    heavy = sorted(scopes, key=lambda sc: (-sum(scopes[sc].values()), sc))[:DEBT_SCOPES]
+    named = " · ".join("%s %s" % (E(said(sc)[0]), E(str(debt_points(sum(scopes[sc].values()))))) for sc in heavy)
+    over = total > threshold
+    when = "" if day == today else " as of %s" % day.strftime("%a %d %b")
+    ask = ('<span class="dask">Say &#8220;%s&#8221;.</span>' % E(said(heavy[0])[1])) if heavy and said(heavy[0])[1] else ""
+    return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
+            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p></div>'
+            % (E(str(total)), E(when), " late" if over else "",
+               E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
+               "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
+               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", ask))
+
+
+def debt_points(n):
+    return int(n) if float(n).is_integer() else round(n, 2)
+
+
+DEBT_CSS = r"""
+/* Context debt, on the Checks card: the figure, a line over thirty days against the threshold, dashed, and the scopes carrying most */
+.debt{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line)}.dhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.dfig{font:600 28px/1 var(--display);letter-spacing:-.01em}.dlbl{color:var(--ink2);font-size:12.5px}
+.dchart{display:block;width:100%;height:56px;margin:8px 0 2px;overflow:visible}
+.dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+.dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
+.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dask{color:var(--ink2)}
+"""
 
 
 def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
@@ -7173,7 +7268,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             lis = "".join('<li>%s<span>%s: %s</span></li>' % (ICON["critical" if f.get("severity") == "error" else "warning"], E(f.get("path", "")), E(f.get("message", ""))) for f in fs)
             body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
                      % (" open" if errs else "", CHEV, E(C["titles"].get(name, name)), counts, lis))
-    checks_card = card("checks", "Checks", "check.py --quick, run as the page was built", body)
+    checks_card = card("checks", "Checks", "check.py --quick, run as the page was built", debt_block(ws, now.date()) + body)
 
     # ---- open actions and inboxes
     tb = ""
@@ -7375,7 +7470,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

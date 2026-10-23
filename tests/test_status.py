@@ -2401,5 +2401,70 @@ class TestCheckChipFix(StatusCase):
             page_action.act(self.root, req)
 
 
+
+class TestContextDebt(StatusCase):
+    """#69: the context debt beside the check's findings, read from the
+    records nurture.py keeps, with nothing run."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.folder = self.root / "System" / "generated" / "nurture"
+
+    def record(self, back, total, scopes=None, whole=True):
+        day = self.now.date() - dt.timedelta(days=back)
+        scopes = scopes or {"Wikis/Meetings": {"attribution": total}}
+        kinds = {}
+        for ks in scopes.values():
+            for k, v in ks.items():
+                kinds[k] = kinds.get(k, 0) + v
+        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
+            "total": total, "kinds": kinds, "scopes": scopes, "whole": whole, "threshold": 40}}))
+
+    def block(self, html):
+        start = html.index('<div class="debt" id="debt">')
+        return html[start:html.index("</p></div>", start)]
+
+    def test_nothing_without_a_record(self):
+        html = self.page()
+        self.assertNotIn('id="debt"', html)
+        self.record(0, 12, whole=False)                     # a scoped run's part is not the workspace's debt
+        self.assertNotIn('id="debt"', self.page())
+
+    def test_the_figure_its_trend_and_the_scopes_carrying_most(self):
+        for back, total in ((40, 3), (6, 18), (5, 20), (3, 30), (2, 35), (1, 40)):
+            self.record(back, total)
+        self.record(0, 42, {"Wikis/Meetings": {"attribution": 25}, "Zones/Work": {"wall": 10, "judgment": 2},
+                            "System": {"judgment": 5}})
+        b = self.block(self.page())
+        self.assertIn('<span class="dfig">42</span><span class="dlbl">context debt</span>', b)
+        self.assertIn('<span class="chip late"', b)
+        self.assertIn(">over 40</span>", b)
+        self.assertEqual(2, b.count('<polyline class="dl"'))               # broken where a day has no record
+        self.assertEqual(6, b.count('class="dd'))                          # thirty days: the one 40 days back left out
+        self.assertEqual(1, b.count('class="dd now"'))
+        self.assertIn('class="dt"', b)                                     # the threshold, dashed
+        self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
+        self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
+        self.assertIn("Say &#8220;nurture the meetings&#8221;.", b)
+        for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
+            self.fail("a fixed colour in the chart: %s" % colour)
+        self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
+
+    def test_under_the_threshold_and_an_older_day(self):
+        self.record(2, 9, {"Zones/Work": {"judgment": 9}})
+        b = self.block(self.page())
+        self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
+        self.assertIn('<span class="chip"', b)
+        self.assertIn(">under 40</span>", b)
+        self.assertIn("Say &#8220;nurture Work&#8221;.", b)
+        self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
+
+    def test_left_out_without_a_nurture_that_keeps_it(self):
+        self.record(0, 42)
+        with mock.patch.object(status, "nurture_lib", lambda ws: None):
+            self.assertNotIn('id="debt"', self.page())
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -369,10 +370,24 @@ class ApplyTest(Base):
         self.apply()
         dana = self.text(self.page("wiki/people/dana-whitlock.md"))
         earlier = dana.split("## Earlier", 1)[1]
-        self.assertIn("- [[dormant/wiki/sources/260401-acme-review|Acme review]], 2026-04-01", earlier)
-        self.assertIn("- [[archive/wiki/sources/250101-acme-old|Acme old]], 2025-01-01", earlier)
+        self.assertIn("- [[dormant/wiki/sources/260401-acme-review|meeting of 2026-04-01]]", earlier)
+        self.assertIn("- [[archive/wiki/sources/250101-acme-old|meeting of 2025-01-01]]", earlier)
+        self.assertNotIn("Acme review", dana)                            # the title says what was discussed
         self.assertNotIn("Birch", dana)
         self.assertTrue(self.page("dormant/wiki/sources/260312-birch-kickoff.md").exists())
+
+    def test_a_fade_leaves_no_person_page_warning(self):
+        title = "Acme freight terms, the volume rebate and the penalty clause for late delivery"
+        write(self.page("wiki/sources/260403-acme-freight-terms.md"), meeting(title, "2026-04-03"))
+        self.commit_all()
+        self.propose()
+        self.apply()
+        self.assertIn("|meeting of 2026-04-03]]", self.text(self.page("wiki/people/dana-whitlock.md")))
+        r = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--json"],
+                           capture_output=True, text=True)
+        people = [f for f in json.loads(r.stdout)["findings"]
+                  if f["check"] == "people" and "repeats" in f["message"]]
+        self.assertEqual([], people)
 
     def test_obsidian_leaves_the_grades_out_and_keeps_the_users_filters(self):
         self.propose()

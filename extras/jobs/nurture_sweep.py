@@ -21,6 +21,10 @@ With --digest, one line goes through System/tools/notifications.py as the
 *Todo summary* event, the morning digest's, saying what was fixed first and
 then what waits, in counts: never a file's content. Nothing to fix and
 nothing waiting sends nothing; a copy only behind the share is not waiting.
+Pages that would fade add a second line, once a wiki's count reaches the
+setting's minimum ("41 meeting pages would go dormant and 9 to the archive.
+Say "fade the meetings"."), and that line alone is worth sending. Nothing
+fades overnight: a fade waits for a yes on its written proposal.
 
 No assistant is called. Run it through job.py, so it has a log, a lock and a
 watchdog:
@@ -93,7 +97,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("did not run: %s" % f, file=sys.stderr)
     print(said)
     waits = out.get("waiting", len(out.get("items") or []))      # a nurture.py older than `waiting` counts every item
-    if args.digest and (out.get("fixed") or waits or out.get("refused")):
+    if args.digest and (out.get("fixed") or waits or out.get("refused") or out.get("fade")):
         send_digest(said)
     return out["code"]
 

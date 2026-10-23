@@ -15,7 +15,8 @@ them all, in the places a session reads as fact:
 - System/context.md;
 - every hub and thread note, in the zones and in System/;
 - each zone's Todo.md;
-- the pages of both wikis, under `wiki/`.
+- the pages of both wikis, under `wiki/`, and the faded ones under `dormant/wiki/`
+  and `archive/wiki/`, since a page can come back into use.
 
 It lists every hit by file and line, and changes nothing. With `--apply`,
 the user's one yes, it puts NEW in place of OLD in each of them, then commits
@@ -26,7 +27,8 @@ commit, and a refusal is reported: the files stay changed, uncommitted.
 Live files show only the current value: no "was OLD" is written anywhere.
 Git holds the old one.
 
-Raw records are never edited. A raw record under a wiki's `raw/` that holds
+Raw records are never edited. A raw record under a wiki's `raw/` (or a faded
+one, under `dormant/raw/` or `archive/raw/`) that holds
 OLD is listed, and the wiki pages that rest on it (those that link to it or
 name its path) get `superseded:` in their frontmatter and one line at the
 end, saying that their record holds a value corrected since, and the right
@@ -209,17 +211,18 @@ def places(root: Path, memory: Optional[List[Path]] = None) -> List[Tuple[str, P
         if hub.is_file() and parse_frontmatter_text(_read(hub) or "").get("type") == "project":
             out.extend(_notes(folder))
     for wiki in _visible(root / "Wikis"):
-        pages = wiki / "wiki"
-        if pages.is_dir():
-            out.extend(("wiki", p) for p in sorted(pages.rglob("*.md"))
-                       if p.is_file() and not any(x.startswith(".") for x in p.relative_to(pages).parts))
-        raw = wiki / "raw"
-        if raw.is_dir():
-            for p in sorted(raw.rglob("*")):
-                parts = p.relative_to(raw).parts
-                if (p.is_file() and p.suffix.lower() in RAW_TEXT and parts[0] != "inbox"
-                        and not any(x.startswith(".") for x in parts)):
-                    out.append(("raw", p))
+        for grade in grades(wiki):
+            pages = grade / "wiki"
+            if pages.is_dir():
+                out.extend(("wiki", p) for p in sorted(pages.rglob("*.md"))
+                           if p.is_file() and not any(x.startswith(".") for x in p.relative_to(pages).parts))
+            raw = grade / "raw"
+            if raw.is_dir():
+                for p in sorted(raw.rglob("*")):
+                    parts = p.relative_to(raw).parts
+                    if (p.is_file() and p.suffix.lower() in RAW_TEXT and parts[0] != "inbox"
+                            and not any(x.startswith(".") for x in parts)):
+                        out.append(("raw", p))
     seen, unique = set(), []
     for kind, path in out:
         key = path.resolve()
@@ -229,15 +232,25 @@ def places(root: Path, memory: Optional[List[Path]] = None) -> List[Tuple[str, P
     return unique
 
 
+def grades(wiki: Path) -> List[Path]:
+    """Where a wiki keeps its pages and records: itself, for the working ones,
+    then `dormant/` and `archive/`, each with its own `wiki/` and `raw/`."""
+    return [wiki] + [wiki / g for g in ("dormant", "archive") if (wiki / g).is_dir()]
+
+
 def resting_on(root: Path, raw: Path) -> List[Path]:
-    """The wiki pages that rest on a raw record: the pages of its wiki that link
-    to it, or name its path, with or without the extension."""
+    """The wiki pages that rest on a raw record: the pages of its wiki, working
+    or faded, that link to it or name its path, with or without the extension.
+    A faded page keeps the links it was written with, so the record's path is
+    read from below its grade folder."""
     wiki = next((p for p in raw.parents if p.parent == root / "Wikis"), None)
-    if wiki is None or not (wiki / "wiki").is_dir():
+    if wiki is None:
         return []
-    name = raw.relative_to(wiki).with_suffix("").as_posix()
+    grade = next((g for g in grades(wiki)[1:] if g in raw.parents), wiki)
+    name = raw.relative_to(grade).with_suffix("").as_posix()
     mark = re.compile(r"(?<![\w-])%s(?:%s)?(?![\w-])" % (re.escape(name), re.escape(raw.suffix)))
-    return [p for p in sorted((wiki / "wiki").rglob("*.md")) if mark.search(_read(p) or "")]
+    return [p for g in grades(wiki) if (g / "wiki").is_dir()
+            for p in sorted((g / "wiki").rglob("*.md")) if mark.search(_read(p) or "")]
 
 
 def repo_of(path: Path) -> Optional[Path]:

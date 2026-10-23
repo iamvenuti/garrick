@@ -11,8 +11,13 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
       wiki/
         sources/        one page per meeting, and one per mail
         people/         one page per person met
-        index.md        every page, newest first
+        index.md        every working page, newest first
+        index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
+      dormant/          pages faded out of working memory, and their raw records,
+        wiki/ raw/        at the same paths below
+      archive/          pages faded further, in no index; read only when asked
+        wiki/ raw/
 
 ## A meeting page
 
@@ -81,4 +86,5 @@ Then one sentence: who they are, and which party. Nothing learned in a meeting, 
 - **`zone` and `parties` are required**, on a meeting page and a mail page alike. They are what the walls read. A page missing either is unfinished, and no project may use it until it is filled in. When the transcript or the addresses do not make them obvious, ask.
 - **Raw is the record.** Never edit a file in `raw/`. Correct the summary, not the source.
 - **Quote, do not smooth.** Where the exact words matter (a commitment, a number, a refusal), quote them from the transcript.
+- **Pages fade, and nothing is deleted.** A page leaves working memory by age, kind and use, into `dormant/` and later `archive/`, its raw record with it, and every link into it follows: `System/tools/fade.py` proposes it, and only a yes moves it. A page keeps its frontmatter wherever it goes, so its zone and parties hold there as here. `pinned: true` keeps a page working for good; `superseded:` (a link to what replaces it, or a short reason) keeps it out of working memory, and it never comes back by use. A person page never moves: what faded is listed under its `## Earlier`.
 - **One page per person**, linked from every meeting they were in. It says who they are and which party they belong to. No status, and nothing learned in any one meeting: a person page is read on both sides of every wall.

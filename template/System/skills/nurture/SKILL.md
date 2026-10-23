@@ -7,7 +7,10 @@ description: >
   it, and report the rest. Use when the user says "nurture the context",
   "nurture Work", "nurture Acme", "nurture the meetings", "nurture the
   library", or "what needs nurturing", and when, during one, the user corrects a
-  value written down. The jobs extra can apply the mechanical kind nightly.
+  value written down. Also graded oblivion, old pages fading out of working
+  memory: "fade the meetings", "fade the library", "what would fade", and
+  "keep X" for a wiki page. The jobs extra can apply the mechanical kind
+  nightly; nothing ever fades overnight.
 ---
 
 # Context Nurture
@@ -28,6 +31,9 @@ own: a new kind of problem gets a check in `check.py` first.
 | What it reads | `check.py --json`, `wiki_lint.py --json` for each wiki, `drift.py --json` |
 | A correction | `System/tools/correct.py`, the `threads` skill's own, which `nurture.py correct` calls |
 | Each day's report | `System/generated/nurture/<YYYY-MM-DD>.md`, never committed |
+| What would fade, and why | `System/tools/fade.py`; its proposal in `System/generated/fade/<Wiki>.md` |
+| The judgment the numbers can't hold | `System/retention.md`, and `System/retention.local.md`, which wins |
+| How fast each kind fades | `"memory"` in `System/garrick-settings.json`: `python3 System/tools/fade.py settings` prints it |
 | Parties, Walls, People, Aliases | `System/context.md` |
 
 ## The kinds
@@ -40,6 +46,7 @@ own: a new kind of problem gets a check in `check.py` first.
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
+| Fading | meeting pages or reading old enough to leave working memory, or a faded page linked again | Says how many, per wiki, and what to say: "fade the meetings". Nothing moves without a written proposal and a yes on it; see *Fading* below |
 
 A fix the tool could make but holds back, because the file has changes not
 committed, a date sits inside a name, or no repository could undo it, stays
@@ -142,6 +149,93 @@ value is found and replaced one way only.
 A correction never runs overnight: it needs a person to say the right value,
 and `correct --yes` is refused with nobody watching.
 
+## Fading: "fade the meetings", "fade the library", "what would fade"
+
+Graded oblivion. Both wikis only grow, and every routing, briefing and
+search starts by reading their index, so last week's call ends up read
+through a year of calls nobody will ask about again. Pages fade instead, by
+age, kind and use, and stay findable. Nothing is deleted.
+
+| Grade | Where | Who reads it |
+|---|---|---|
+| Working | `wiki/...`, listed in `wiki/index.md` | every routing, briefing and search |
+| Dormant | `dormant/wiki/...`, listed in `wiki/index-dormant.md` with its date and why | a search that reaches back, and says so |
+| Archived | `archive/wiki/...`, in no index | only "search the archive", or a question about a past year |
+
+Age counts from the page's own `date:` or `published:`, never from the file.
+A page linked from a live thread, a live project's notes or an open action
+in a `Todo.md`, or carrying `pinned: true`, never fades. A page carrying
+`superseded:` fades whatever links it, and never wakes. Person, entity and
+concept pages never move: each keeps a short `## Earlier` section listing
+what faded.
+
+1. **The wiki.** "Fade the meetings" is Meetings, "fade the library" is
+   Knowledge, "what would fade" is both. Nothing else fades.
+2. **Read the judgment first**: `System/retention.md`, then
+   `System/retention.local.md`, which wins.
+3. **Propose**, which moves nothing:
+   ```sh
+   python3 System/tools/fade.py propose --wiki Meetings
+   ```
+   It writes `System/generated/fade/Meetings.md`: what would go dormant, be
+   archived or wake, grouped by grade and kind, each with why, and its
+   derived copies: the pages that go with it, the notes and ticked actions
+   whose links are pointed at its new path, what stays as written, and the
+   person and entity pages that list it under Earlier. A page superseded
+   and still linked from a live note is named apart, since a link somewhere
+   still points at the old version.
+4. **Weigh it against the judgment.** Read the titles, and any page the
+   retention files speak to. A page they say to keep, propose again with
+   `--leave "<page>"`, once for each, and say why. Never leave out a page the
+   numbers move without a reason from those files or from the user.
+5. **The first fade on a wiki only proposes.** When the tool says it is the
+   first, stop there: say how many would move, that nothing has moved, and
+   where the list is. The user reads it, and changes `retention.local.md` or
+   the settings where it is wrong. The tool keeps the command that applies
+   it only in the written proposal. A later "yes", or "apply the fade", runs
+   that command as the proposal gives it.
+6. **Any later fade** asks once: "Forty meeting pages would go dormant and
+   nine to the archive. Fade them?" On a yes:
+   ```sh
+   python3 System/tools/fade.py apply --wiki Meetings --id <id>
+   ```
+   It moves only what that written proposal listed and still qualifies, one
+   commit per repository, the wiki's first, and points every link at the new
+   path. A page whose note another session is changing is held, with why.
+   Relay the commits and anything held.
+7. **Write the Earlier lines.** For each person or entity page the apply
+   added lines to, write two lines at the top of its `## Earlier` section,
+   above the list: what the relationship was over those pages, in a
+   sentence or two, from those pages alone. On a person page, only what any
+   reader may see: who they met and when, never a figure or a position,
+   since a person page is read on both sides of every wall. Commit it in the
+   Wikis repository.
+
+Spoken: "Forty meeting pages would go dormant and nine to the archive.
+Nothing has moved; the list is in the proposal." After a yes: "Done, in two
+commits. Two pages were held: another session is changing a note that
+links them."
+
+### Keep: "keep X"
+
+For a page the user wants in working memory for good:
+
+```sh
+python3 System/tools/fade.py keep --page "<page>"
+```
+
+It writes `pinned: true` and commits it. A page that has faded is then
+proposed to wake, on its own: ask once, "It's in the archive. Bring it
+back?", and apply on a yes. "Keep" is the word, never "wake", "back",
+"open" or "restore": those are thread and desk commands.
+
+### Waking
+
+A dormant page linked again, from a live thread, a live project's notes, an
+open action, or a working page that links it afresh, is proposed to wake
+with the next fade, and moves back on the same yes. An archived page wakes
+only on "keep". A page carrying `superseded:` never wakes, whatever links it.
+
 ## Overnight
 
 The jobs extra's nightly run, `nurture_sweep.py`, applies the mechanical
@@ -150,7 +244,10 @@ findings, and corrections, never change headless. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file
 another session has changes in, since another session may have uncommitted
 work in the same repository. Its line in the morning digest says what was fixed first, then
-what waits. When the user asks what changed overnight, read the day's report.
+what waits. Pages that would fade add a line of their own, once a wiki's
+count reaches the setting's minimum: "41 meeting pages would go dormant and
+9 to the archive. Say "fade the meetings"." Nothing fades overnight. When
+the user asks what changed overnight, read the day's report.
 
 ## Listening mode
 
@@ -171,3 +268,7 @@ name.
 - **It never commits two repositories together**, never stages what it did
   not change, and never pushes.
 - **It keeps no score.** It counts findings by kind, and weighs none.
+- **It never fades a page on its own**, and never without a written
+  proposal the user could read. It never deletes a page, never edits a raw
+  record, and never moves a page anywhere but its own wiki's `dormant/` or
+  `archive/`.

@@ -9,7 +9,7 @@ All four stages work under one rule: [one memory, walled use](principles.md#one-
 | [Take in](#take-in) | Everything lands in an inbox and is filed by who it came from | The inboxes, the `intake` skill, the two wikis' `raw/` folders, the Parties table |
 | [Keep true](#keep-true) | What the workspace holds stays correct, and says where it came from | Learned entries and their origin, `correct.py`, `check.py`, `wiki_lint.py`, `drift.py`, Nurture, the wrap |
 | [Use within walls](#use-within-walls) | The right context reaches the task, and a confidence stays on its own side | The Resume here block, question routing, briefs, the wall check at use and at commit |
-| [Let fade](#let-fade) | What nobody uses steps back, and can be brought back | The todo sweep's archive, park and finish, memory pointers deleted with their thread; graded oblivion is planned |
+| [Let fade](#let-fade) | What nobody uses steps back, and can be brought back | The todo sweep's archive, park and finish, memory pointers deleted with their thread, and graded oblivion in the wikis, `fade.py` |
 
 ## Take in
 
@@ -46,13 +46,10 @@ This stage gets the right part of the record to the task in front of you, and ke
 
 What nobody uses any more should stop getting in the way, without being lost. Nothing in this stage deletes anything: what steps back can be brought back, and git keeps it all.
 
-What ships today:
-
 - **Actions.** A line ticked before today moves from the zone's `Todo.md` to its `archive/`, at every wrap and at the nightly sweep. A line nobody triaged moves to the expired archive after `todo-expire-days`, 14 unless the [check settings](commands.md#check-settings) say otherwise.
 - **Threads.** "Park X" sets a thread aside. It keeps its note and its Resume here block, drops out of "what's open", and comes back with "wake X". "Finish X" marks it `done`, turns its block into an outcome and lists it under the hub's `## Finished`. See [Status](concepts.md#status).
 - **Memory.** The assistant's pointer to a thread is deleted when the thread finishes.
-
-**Planned: graded oblivion** ([#108](https://github.com/iamvenuti/garrick/issues/108)). Old meetings and reading will fade out of the wikis' working memory by age, kind and use. A page will move from working to dormant to archived, in folders inside its own wiki. Dormant and archived pages leave the index and default search, and stay searchable when you ask. A page can always be woken, and the wall check still reads it. On a workspace's first run, fading only proposes: nothing moves until you have read the list and said yes. Until it ships, the wikis keep every page in front.
+- **The wikis: graded oblivion** ([#108](https://github.com/iamvenuti/garrick/issues/108)). Old meetings and reading fade out of working memory by age, kind and use. A page moves from working to dormant to archived, in folders inside its own wiki, its raw record with it, and every link into it follows. Both leave the index and Obsidian's default search. A question reaches dormant pages only when working pages fall short, and says so; archived ones are read when you ask. A page a live thread, a live project or an open action links, or one marked `pinned: true`, never fades, and a dormant page linked again comes back unless it is marked `superseded:`. The wall check still reads every page. "Fade the meetings" writes the list and moves nothing; on a wiki's first fade it stops there, and a later yes moves exactly that list. Nothing fades overnight. See [Fading](commands.md#fading).
 
 ## What runs on its own, and what waits for you
 

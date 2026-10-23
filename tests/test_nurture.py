@@ -126,7 +126,7 @@ class ClassificationTest(Base):
         self.assertIn("Which zone", asked["question"])
         self.assertEqual("zone Work, from its parties", asked["proposal"])
         for item in items:
-            self.assertIn(item["kind"], ("wall", "mechanical", "attribution", "judgment"))
+            self.assertIn(item["kind"], ("wall", "mechanical", "attribution", "judgment", "fade"))
         self.assertEqual(sum(out["kinds"].values()), len(items))
 
     def test_the_mechanical_fixes_say_exactly_what_they_change(self):
@@ -298,7 +298,7 @@ class RegistryTest(Base):
         doc = nurture.__doc__
         for word in ("register()", "unattended", "claim(ctx, item)", "gather(ctx)", "apply(ctx, item,"):
             self.assertIn(word, doc)
-        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment", "behind"],
+        self.assertEqual(["wall", "mechanical", "correction", "attribution", "judgment", "behind", "fade"],
                          [k.name for k in nurture.ranked()])
         self.assertEqual(["mechanical"], [k.name for k in nurture.ranked() if k.unattended])
 
@@ -629,8 +629,24 @@ class NightlyTest(Base):
             {"zone": "Work", "project": "Acme Review", "file": "260302 - Terms.docx", "state": "behind"}]}))
         with mock.patch.object(nurture, "SOURCES", [nurture.from_drift]):
             _, out = self.run_tool("nightly")
-        self.assertEqual((0, ["behind"]), (out["waiting"], [i["kind"] for i in out["items"]]))
+        self.assertEqual((0, ["behind"]), (out["waiting"], [i["kind"] for i in out["items"] if i["kind"] != "fade"]))
         self.assertEqual("Nothing needed fixing overnight.", out["digest"])
+
+    def test_pages_that_would_fade_get_a_line_of_their_own_and_never_move(self):
+        _, out = self.run_tool("nightly")
+        fading = [i for i in out["items"] if i["kind"] == "fade"]
+        self.assertEqual(["Wikis/Meetings/wiki"], [i["path"] for i in fading])
+        self.assertEqual("", out["fade"])                    # fewer than the setting's ten
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"nightly": {"min": 2}}}))
+        _, out = self.run_tool("nightly")
+        self.assertRegex(out["fade"], r'^\d+ meeting pages would go dormant\. Say "fade the meetings"\.$')
+        self.assertTrue(out["digest"].endswith("\n" + out["fade"]))
+        self.assertEqual(0, out["kinds"]["fade"] - 1)
+        self.assertTrue((self.wikis / "Meetings" / "wiki" / "sources" / "260312-birch-kickoff.md").exists())
+        self.assertFalse((self.wikis / "Meetings" / "dormant").exists())
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"nightly": {"on": False, "min": 2}}}))
+        _, out = self.run_tool("nightly")
+        self.assertEqual("", out["fade"])
 
     def test_a_workspace_without_the_tool_is_refused(self):
         os.remove(str(self.root / "System" / "tools" / "nurture.py"))

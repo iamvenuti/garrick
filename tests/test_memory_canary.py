@@ -343,6 +343,35 @@ class CorrectCase(unittest.TestCase):
                 and WRONG in p.read_text(encoding="utf-8")]
 
 
+class TestCorrectFaded(CorrectCase):
+    """A page that has faded can come back into use, so a correction reaches it
+    as it reaches a working one, and its record stays as it is."""
+
+    def setUp(self):
+        super().setUp()
+        self.raw = self.meetings / "dormant" / "raw" / "260402-old-forecast.eml"
+        self.page = self.meetings / "dormant" / "wiki" / "sources" / "260402-old-forecast.md"
+        write(self.raw, mail(False, "Old address: dana.whitlock@%s.\n\n" % WRONG).decode())
+        write(self.page, "---\ntitle: Old forecast\ntype: email\ndate: 2026-04-02\nzone: Work\nparties: [acme]\n"
+              "raw: \"[[raw/260402-old-forecast]]\"\n---\n\n# Old forecast\n\nMail went to dana.whitlock@%s.\n" % WRONG)
+        git(self.root / "Wikis", "add", "-A")
+        git(self.root / "Wikis", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "faded")
+
+    def test_a_dormant_page_is_found_and_its_record_named(self):
+        hits = correct.find_hits(self.root, WRONG, RIGHT)
+        self.assertIn(self.page, [h.path for h in hits if h.kind == "wiki"])
+        raw = [h for h in hits if h.kind == "raw" and h.path == self.raw]
+        self.assertEqual([self.page], raw[0].pages)
+
+    def test_after_a_correction_the_dormant_page_holds_only_the_right_value(self):
+        before = self.raw.read_bytes()
+        correct.apply(self.root, WRONG, RIGHT, today=TODAY)
+        text = self.page.read_text(encoding="utf-8")
+        self.assertNotIn(WRONG, text)
+        self.assertIn(RIGHT, lib.parse_frontmatter_text(text)["superseded"])
+        self.assertEqual(before, self.raw.read_bytes())
+
+
 class TestCorrect(CorrectCase):
     def test_the_listing_finds_every_kind_and_changes_nothing(self):
         hits = correct.find_hits(self.root, WRONG, RIGHT)

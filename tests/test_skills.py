@@ -204,6 +204,28 @@ class SkillsTest(unittest.TestCase):
         for needle in ('**"wrap it"** for the thread in hand', '**"Wake X"** or **"unpark X"**'):
             self.assertIn(needle, rules, needle)
 
+    def test_fading_has_words_of_its_own(self):
+        """Fading is said "fade the meetings", "fade the library", "what would
+        fade", and a page is kept with "keep X": never "wake", "back", "open",
+        "park" or "restore", which are thread and desk commands."""
+        phrases = triggers(SKILLS / "nurture")
+        for phrase in ("fade the meetings", "fade the library", "what would fade", "keep x"):
+            self.assertIn(phrase, phrases, phrase)
+        text = (SKILLS / "nurture" / "SKILL.md").read_text(encoding="utf-8")
+        fading = flat(section(text, '## Fading: "fade the meetings", "fade the library", "what would fade"'))
+        for needle in ("python3 System/tools/fade.py propose --wiki Meetings",
+                       "python3 System/tools/fade.py apply --wiki Meetings --id <id>",
+                       "**The first fade on a wiki only proposes.**", "`System/retention.local.md`, which wins",
+                       '"Keep" is the word, never "wake", "back", "open" or "restore"'):
+            self.assertIn(needle, fading, needle)
+        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        self.assertIn('**"Fade the meetings"**, **"fade the library"** or **"what would fade"**', rules)
+        self.assertIn('**"Keep X"** keeps a wiki page in working memory for good', rules)
+        for skill in ("meetings", "knowledge"):
+            said = flat((SKILLS / skill / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("search the archive", said, skill)
+            self.assertIn("python3 System/tools/fade.py settings", said, skill)
+
     def test_a_new_zone_goes_through_the_scaffold(self):
         """A zone is made as the installer makes one, by the scaffold script, once the
         name and what it holds are given; the interview hands over to it."""

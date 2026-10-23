@@ -36,6 +36,7 @@ All paths are relative to the workspace root.
 | Concept pages, one per idea | `Wikis/Knowledge/wiki/concepts/` |
 | Entity pages, one per organisation or product | `Wikis/Knowledge/wiki/entities/` |
 | Every page, newest first | `Wikis/Knowledge/wiki/index.md` |
+| Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Knowledge/dormant/wiki/`, `Wikis/Knowledge/archive/wiki/` |
 | One line per ingest, newest first | `Wikis/Knowledge/wiki/log.md` |
 | Schema (wins over this file) | `Wikis/Knowledge/AGENTS.md` |
 
@@ -240,6 +241,16 @@ Then one or two sentences saying what it is, and:
    undifferentiated answer.
 5. **Confidence**: if every source behind an answer is `low`, or the sources
    disagree, say that plainly rather than picking a side.
+6. **Older reading.** Old reading fades out of working memory, as the
+   `nurture` skill's *Fading* says. Answer from the working pages first.
+   When they hold nothing, and the setting reaches that far (`"reach"` in
+   `python3 System/tools/fade.py settings`, `dormant` unless changed), look
+   in `wiki/index-dormant.md` and the pages it lists, and say so: "From
+   older reading: ...". The archive, `archive/wiki/`, only when asked
+   ("search the archive", "what did the library say about this in 2025"),
+   and an answer from it says so, with the source's date. An entity or
+   concept page lists what faded from it under `## Earlier`. A source page
+   carrying `superseded:` is never cited as current: name what replaced it.
 
 Spoken: the answer first, then its source, in one or two sentences. "Only one
 piece on failover resilience: Fictus Cloud's own report, claiming an 80%

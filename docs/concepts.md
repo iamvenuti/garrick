@@ -112,7 +112,15 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 ### `raw/`
 
-Each wiki keeps the record as it arrived in `raw/`, such as a transcript, a mail or a frozen copy of a page, and writes its pages in `wiki/`. Nothing in `raw/` is edited, and the check reports a raw record changed after it was filed.
+Each wiki keeps the record as it arrived in `raw/`, such as a transcript, a mail or a frozen copy of a page, and writes its pages in `wiki/`. Nothing in `raw/` is edited, and the check reports a raw record changed after it was filed. A page that fades takes its raw record with it, renamed and unchanged.
+
+### Fading
+
+Old pages leave working memory by age, kind and use, and stay findable: *working* pages are in `wiki/` and its index; *dormant* ones in `dormant/wiki/`, listed in `wiki/index-dormant.md`, read when a search reaches back and says so; *archived* ones in `archive/wiki/`, read only when you ask. A page a live thread, a live project or an open action links, or one carrying `pinned: true`, never fades; one carrying `superseded:` never comes back by use. "Fade the meetings" writes the list and moves nothing, and a yes moves exactly that list, rewriting every link so nothing breaks. Nothing is deleted. See [Fading](commands.md#fading).
+
+### `System/retention.md`
+
+The judgment about what to keep that the months in the settings can't hold, in plain words: "a meeting where a decision was taken outlives one that only exchanged updates". Garrick's, replaced by each update; yours goes in `System/retention.local.md`, which wins.
 
 ## What comes in
 

@@ -4,15 +4,19 @@
 
 [![Tests](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml/badge.svg)](https://github.com/iamvenuti/garrick/actions/workflows/tests.yml) [![MIT licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE) ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg) ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 
-**Leave a thread, jump to another. Come back to the next action.**
+**Leave any piece of work. Come back to the next action.**
 
-Garrick keeps your place in every line of work you run with Claude or Codex, in plain files you own.
+Garrick keeps track of where each piece of your work stands. It reads what comes in, keeps it up to date, and lets finished work step aside, so Claude picks up where you stopped.
 
-Your assistant's memory remembers the project. It can't tell you which thread is waiting, what comes next, or what was only in your head when you stopped. Garrick can: every thread has one resume point, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
+Your assistant remembers your projects. It can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
 
-The Garrick App shows where every thread stands and opens any of them in one move, in the Claude or Codex app or in a cmux tab of its own. When some of the work comes from people whose confidences you hold, the agent gets rules for the walls you declare between them, with a check before every commit.
+The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer.
 
-Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. The record is plain Markdown in folders on your Mac, and updates keep your edits.
+Behind the home, Garrick keeps a record of each piece of work. It files what comes in, such as mail, transcripts and documents, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
+
+When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and a check runs before every commit.
+
+Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
 
 https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 

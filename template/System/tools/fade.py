@@ -339,8 +339,10 @@ def tags(value) -> List[str]:
     return [strip_tag(str(v)) for v in values if str(v).strip()]
 
 
-def scan_wiki(root: Path, wiki: str) -> List[Page]:
-    """Every page of a wiki, at each grade, but the lists and the lint reports."""
+def scan_wiki(root: Path, wiki: str, texts: Optional[Dict[str, str]] = None) -> List[Page]:
+    """Every page of a wiki, at each grade, but the lists and the lint
+    reports. `texts`, when given, keeps what was read, so the link scan reads
+    no page twice."""
     top = wiki_top(root, wiki)
     source_type = knowledge_schema(root)[0]["source"]["type"] if wiki == "Knowledge" else ""
     pages = []
@@ -355,9 +357,12 @@ def scan_wiki(root: Path, wiki: str) -> List[Page]:
             if inner[0] == "lint" or (len(inner) == 1 and inner[0] in LISTS):
                 continue
             try:
-                fm = parse_frontmatter_text(path.read_text(encoding="utf-8", errors="replace"))
+                text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
+            if texts is not None:
+                texts[place(wiki, grade, sub)] = text
+            fm = parse_frontmatter_text(text)
             ptype = str(fm.get("type") or "").strip().lower()
             page = Page(place(wiki, grade, sub), wiki, grade, sub, str(fm.get("title") or path.stem), ptype,
                         updated=str(fm.get("updated") or fm.get("created") or fm.get("date") or ""))
@@ -541,16 +546,19 @@ class Where:
         return "project"
 
 
-def scan_links(root: Path, links: Links, pages: Dict[str, Page], where: Where) -> Dict[str, List[Ref]]:
+def scan_links(root: Path, links: Links, pages: Dict[str, Page], where: Where,
+               texts: Optional[Dict[str, str]] = None) -> Dict[str, List[Ref]]:
     """{page or raw path: every link into it}, from every note in both wikis
     and every zone, raw records aside."""
     raws = {p.raw for p in pages.values() if p.raw}
     refs: Dict[str, List[Ref]] = {}
     for src in links.notes:
-        try:
-            text = (root / src).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        text = (texts or {}).get(src)
+        if text is None:
+            try:
+                text = (root / src).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
         if "[[" not in text and "obsidian://" not in text:
             continue
         kind = where.of(src)
@@ -636,10 +644,11 @@ def plan(root: Path, memory: Optional[dict] = None, today: Optional[datetime.dat
     s = memory if memory is not None else settings(root)
     today = today or datetime.date.today()
     wikis = [w for w in wikis if wiki_top(root, w).is_dir()]
-    every = {w: scan_wiki(root, w) for w in WIKIS if wiki_top(root, w).is_dir()}
+    texts: Dict[str, str] = {}
+    every = {w: scan_wiki(root, w, texts) for w in WIKIS if wiki_top(root, w).is_dir()}
     pages = {p.path: p for ps in every.values() for p in ps}
     links = Links(root)
-    refs = scan_links(root, links, pages, Where(root, pages))
+    refs = scan_links(root, links, pages, Where(root, pages), texts)
     leave = {normal(root, x) for x in leave}
     only = {normal(root, x) for x in only}
     out = Plans(refs)

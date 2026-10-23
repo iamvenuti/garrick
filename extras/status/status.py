@@ -79,6 +79,7 @@ later. Not installed by install.py.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import html
@@ -3631,7 +3632,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
             '<div class="setcol">%s</div></div></dialog>'
             % (home_settings(layout) + launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
-               + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws),
+               + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws) + memory_settings(ws),
                notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file())
                + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
@@ -6178,11 +6179,12 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, each only when it changed,
+/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed,
    or, with `all` (a test of a channel, NOTIFY_JS), a request whatever changed. null when there is nothing. */
-function sdReq(all){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed());if(!(lpChanged||zChanged||n||w||all))return null;
+function sdReq(all){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
+if(!(lpChanged||zChanged||n||w||m||all))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
-if(w){q['while-you-wait']=W.request();W.saved()}
+if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
 lpChanged=zChanged=false;if(n)N.saved();return q}
 window.GarrickSettingsReq=sdReq;
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
@@ -6483,6 +6485,209 @@ window.GarrickWait={changed:function(){return changed},request:request,saved:fun
 })();
 """
 # ---- end of Settings › While you wait ---------------------------------------------
+
+
+# ---- Settings › Memory (#108) -----------------------------------------------------
+# One block, kept apart from the rest of Settings: how pages fade out of the
+# wikis' working memory, and what that would do now. System/tools/fade.py, the
+# workspace's own, owns the keys, their defaults and the counting; this block
+# draws what its settings() returns, kinds and all, and asks its counts() what
+# the form would do, through page_action.py's `memory-preview`, which only
+# reads, so a change can be judged before it is saved. Settings closing sends
+# the form as `memory` with the rest (JS's sdReq asks window.GarrickMemory),
+# and nothing moves until a pass is asked for. Without fade.py, or when it
+# fails, the section is left out or says why, and the page builds as before.
+_FADE: Dict[Path, object] = {}
+MEMORY_WIKIS = ("Meetings", "Knowledge")
+MEMORY_PINS = (("thread", "A live thread links it"), ("project", "A project's own notes link it"),
+               ("todo", "An open action in a Todo list names it"), ("pinned", "Its frontmatter says pinned: true"))
+MEMORY_MONTHS = (1, 240)          # what the form offers; fade.py and page_action.py have the last word
+MEMORY_MIN = (1, 1000)
+
+
+@contextlib.contextmanager
+def tools_path(ws: Path):
+    """The workspace's System/tools/ first on the path while fade.py is
+    loaded or asked, as it would be run there; the path and the modules it
+    imported put back after, so nothing of one workspace stays for another."""
+    path, before = list(sys.path), set(sys.modules)
+    sys.path.insert(0, str(ws / "System" / "tools"))
+    try:
+        yield
+    finally:
+        sys.path[:] = path
+        for k in set(sys.modules) - before:
+            sys.modules.pop(k, None)
+
+
+def fade_lib(ws: Path):
+    """The workspace's own System/tools/fade.py, loaded once per workspace,
+    as nurture_lib() loads nurture.py; None when there is none, it does not
+    load, or it lacks settings() and counts()."""
+    if ws not in _FADE:
+        lib, src = None, ws / "System" / "tools" / "fade.py"
+        if src.is_file():
+            name = "garrick_status_fade"
+            try:
+                with tools_path(ws):
+                    spec = importlib.util.spec_from_file_location(name, str(src))
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules[name] = mod             # its dataclasses look their module up by name
+                    spec.loader.exec_module(mod)
+                if callable(getattr(mod, "settings", None)) and callable(getattr(mod, "counts", None)):
+                    lib = mod
+            except Exception:
+                lib = None
+        _FADE[ws] = lib
+    return _FADE[ws]
+
+
+def memory_said(c: dict) -> Tuple[str, str]:
+    """A wiki's grades, and what the next pass would move, in words. MEMORY_JS
+    says them the same way when the counts come back for unsaved values."""
+    if not c.get("on", True):
+        grades = "%d working · %d dormant · %d archived" % (c.get("working", 0), c.get("dormant", 0), c.get("archived", 0))
+        return grades, "Off: nothing fades"
+    moves = [(c.get("to_dormant", 0), "to dormant"), (c.get("to_archive", 0), "to the archive"), (c.get("to_wake", 0), "woken")]
+    said = ", ".join("%d %s" % (n, w) for n, w in moves if n)
+    return ("%d working · %d dormant · %d archived" % (c.get("working", 0), c.get("dormant", 0), c.get("archived", 0)),
+            "Next pass: " + (said or "nothing moves"))
+
+
+def memory_list(values) -> str:
+    return ", ".join(str(v) for v in values) if isinstance(values, list) else ""
+
+
+def memory_settings(ws: Path) -> str:
+    """Settings › Memory: on or off per wiki; per kind, its types and domains
+    and the months to dormant and to archived; what pins a page; whether use
+    wakes one; how far search reaches unasked; the nightly line and its
+    smallest count; where the archive lives, as a fact; and beside them, per
+    wiki, the pages in each grade and what the next pass would move. In the
+    app only, as the other sections that save are."""
+    lib = fade_lib(ws)
+    if lib is None:
+        return ""
+    head = set_head("Memory", "memory") + help_text("memory", (
+        'How pages fade out of the wikis&#39; working memory, so a question about last week does not start by reading a '
+        'year of calls. A page goes dormant once it is older than its kind&#39;s months: it leaves the wiki&#39;s index and is '
+        'read only when a search reaches for it. Later it moves to the archive, read only when you ask for it. Nothing is '
+        'deleted, and nothing moves until a pass asks you and you say yes: &#8220;what would fade&#8221;, then &#8220;fade the '
+        'meetings&#8221;. Saved in <code>%s</code> under <code>"memory"</code>, when you close Settings.' % E(prefs().FILE)))
+    try:
+        with tools_path(ws):
+            cfg = lib.settings(ws)
+            grades = lib.counts(ws)
+        wikis, kinds, pins = cfg["wikis"], cfg["kinds"], cfg["pins"]
+    except Exception as e:
+        return ('<section class="setsec apponly" id="memory-settings">%s<p class="hint">Memory cannot be set here: '
+                '<code>System/tools/fade.py</code> did not give its settings (%s). The rest of Settings works as before.</p></section>'
+                % (head, E(type(e).__name__)))
+    box = lambda attr, on, label: '<input type="checkbox" %s%s aria-label="%s">' % (attr, " checked" if on else "", E(label))
+    num = lambda attr, value, low, high, label, off=False: (
+        '<input type="number" %s min="%d" max="%d" value="%s" aria-label="%s"%s>'
+        % (attr, low, high, E(str(value)), E(label), " disabled" if off else ""))
+    rows = "".join(
+        '<div class="launcher-row"><label class="launcher-choice">%s <span>%s pages fade<small>%s</small></span></label></div>'
+        % (box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), w,
+           "Old calls and mail leave the index, then go to its archive" if w == "Meetings"
+           else "Old reading leaves the index, then goes to its archive") for w in MEMORY_WIKIS)
+    kind_rows = ""
+    for name, k in kinds.items():
+        never = k.get("archived") is None
+        dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
+        kind_rows += (
+            '<fieldset class="mkind" data-mkind="%s" data-mwiki="%s"><legend>%s <small>%s</small></legend>'
+            '<div class="mmonths"><label>Dormant after %s months</label>'
+            '<label>Archived after %s months</label><label class="mnever">%s never</label></div>'
+            '<label class="mlist">Types <input type="text" data-mk="types" value="%s" placeholder="none" aria-label="%s types"></label>'
+            '<label class="mlist">Domains <input type="text" data-mk="domains" value="%s" placeholder="none" aria-label="%s domains"></label>'
+            '</fieldset>'
+            % (E(name), E(str(k.get("wiki", ""))), E(name), E(str(k.get("wiki", ""))),
+               num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
+               num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
+                   "%s: months to archived" % name, never),
+               box('data-mk="never"', never, "%s: never archived" % name),
+               E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("domains"))), E(name)))
+    pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
+                       for key, said in MEMORY_PINS)
+    nightly = cfg.get("nightly") or {}
+    reach = cfg.get("reach", "dormant")
+    prev = "".join('<li data-mw="%s"><b>%s</b> <span data-mc="grades">%s</span><span class="mnext" data-mc="next">%s</span></li>'
+                   % ((E(w), E(w)) + tuple(E(x) for x in memory_said(grades.get(w) or {}))) for w in MEMORY_WIKIS if w in grades)
+    return ('<section class="setsec apponly" id="memory-settings">%s%s'
+            '<h4 class="nsub">Months since a page was new, by kind</h4><div class="mkinds">%s</div>'
+            '<p class="hint">A kind takes the pages whose <code>type</code> or domain it lists; the lists are separated by commas.</p>'
+            '<h4 class="nsub">What keeps a page working</h4><div class="mpins">%s</div>'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>Use wakes a dormant page'
+            '<small>Opened, quoted or linked again in a session, it is working again</small></span></label></div>'
+            '<div class="launcher-row"><span class="mreach">Search reaches, unasked, <select id="m-reach" aria-label="How far search reaches unasked">'
+            '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select></span></div>'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>A line in the nightly digest'
+            '<small>What would fade, once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div>'
+            '<p class="hint mwhere">Faded pages stay in their wiki: dormant ones in its <code>dormant/</code> folder, archived ones in its '
+            '<code>archive/</code> folder, each beside its raw file. Git keeps every move, so any of them can be undone.</p>'
+            '<h4 class="nsub">What these would do now</h4><ul class="mgrades" id="m-prev" aria-live="polite">%s</ul>'
+            '<p class="hint" id="m-prevsaid">As saved.</p></section>'
+            % (head, rows, kind_rows, pin_rows, box('id="m-wake"', cfg.get("wake", True) is not False, "Use wakes a dormant page"),
+               " selected" if reach == "working" else "", " selected" if reach != "working" else "",
+               box('id="m-night"', nightly.get("on", True) is not False, "A line in the nightly digest"),
+               num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line"),
+               prev))
+
+
+MEMORY_CSS = r"""
+/* Settings › Memory: the wikis' switches, a box per kind with its months and lists, the pins, then what they would do now */
+#memory-settings input[type=number]{font:inherit;font-size:12.5px;width:56px;padding:2px 5px;color:var(--ink);background:var(--surface);
+border:1px solid var(--line);border-radius:7px}#memory-settings input[type=number]:disabled{opacity:.45}
+#memory-settings input[type=text],#memory-settings select{font:inherit;font-size:12.5px;padding:2px 6px;color:var(--ink);background:var(--surface);
+border:1px solid var(--line);border-radius:7px;min-width:0}
+#memory-settings input[type=checkbox]{accent-color:var(--accent)}
+.mkinds{display:flex;flex-direction:column;gap:8px;margin:0 0 4px}.mkind{border:1px solid var(--line);border-radius:9px;padding:6px 10px 8px;margin:0;min-width:0}
+.mkind legend{font-size:12.5px;font-weight:600;padding:0 4px}.mkind legend small{font-weight:400;color:var(--muted)}
+.mmonths{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink2);margin:0 0 6px}.mmonths label{display:flex;align-items:center;gap:5px}
+.mlist{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);margin-top:4px}.mlist input{flex:1}
+.mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.mreach,.mafter{font-size:12.5px;color:var(--ink2)}.mwhere{margin:6px 0}
+.mgrades{list-style:none;margin:0;padding:0}.mgrades li{display:flex;flex-wrap:wrap;gap:2px 8px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.mgrades span{color:var(--ink2)}.mgrades .mnext{flex-basis:100%;color:var(--ink)}
+"""
+
+# Read back into the shape fade.py keeps. A number out of range is brought into
+# range here, and a kind's archive months never come before its dormant ones,
+# so nothing the form can hold is refused when Settings closes. In a host that
+# answers `memory-preview` (window.GarrickReadsMemory), a change is counted
+# again from the unsaved values; elsewhere the counts are the saved ones.
+MEMORY_JS = r"""
+(function(){var sec=document.getElementById('memory-settings');if(!sec||!sec.querySelector('#m-prev'))return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,changed=false,timer=null,said=document.getElementById('m-prevsaid');
+function n(e){var v=parseInt(e.value,10);if(isNaN(v))v=parseInt(e.defaultValue,10);return Math.max(+e.min,Math.min(+e.max,v))}
+function list(e){return e.value.split(',').map(function(x){return x.trim()}).filter(function(x){return x})}
+function request(){var m={wikis:{},kinds:{},pins:{},wake:document.getElementById('m-wake').checked,reach:document.getElementById('m-reach').value,
+nightly:{on:document.getElementById('m-night').checked,min:n(document.getElementById('m-min'))}};
+sec.querySelectorAll('[data-mwikion]').forEach(function(c){m.wikis[c.dataset.mwikion]=c.checked});
+sec.querySelectorAll('[data-mpin]').forEach(function(c){m.pins[c.dataset.mpin]=c.checked});
+sec.querySelectorAll('.mkind').forEach(function(f){var q=function(k){return f.querySelector('[data-mk="'+k+'"]')},d=n(q('dormant'));
+m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(q('types')),domains:list(q('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
+return m}
+function line(c){var g=(c.working||0)+' working · '+(c.dormant||0)+' dormant · '+(c.archived||0)+' archived';if(c.on===false)return[g,'Off: nothing fades'];
+var mv=[[c.to_dormant,'to dormant'],[c.to_archive,'to the archive'],[c.to_wake,'woken']].filter(function(x){return x[0]}).map(function(x){return x[0]+' '+x[1]});
+return[g,'Next pass: '+(mv.join(', ')||'nothing moves')]}
+function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(li){var c=counts[li.dataset.mw];if(!c)return;var t=line(c);
+li.querySelector('[data-mc="grades"]').textContent=t[0];li.querySelector('[data-mc="next"]').textContent=t[1]})}
+function ask(){if(!host||!window.GarrickReadsMemory){said.textContent='As saved. Closing Settings saves the change, and the page counts again.';return}
+said.textContent='Counting…';clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
+function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
+a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
+sec.addEventListener('change',function(){changed=true;sync();ask()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],input[type=text]')){changed=true;ask()}});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
+if(out&&out.ok&&out.counts){paint(out.counts);said.textContent='With these changes, not saved yet.'}else said.textContent=(out&&out.say)||'Could not count.';return}
+if(prev)return prev(q,out)};
+window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){changed=false}};
+})();
+"""
+# ---- end of Settings › Memory -----------------------------------------------------
 
 
 # Park and Wake land on the threads list at once, with no wait for the
@@ -7466,11 +7671,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after all three. The Guide's pages come last of all, after every
     # script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

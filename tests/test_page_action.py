@@ -611,6 +611,82 @@ class TestWaitSettings(ActionCase):
         self.assertIn("- [x] [[Pricing]]: Send the revised terms", (self.work / "Todo.md").read_text())
 
 
+class TestMemorySettings(ActionCase):
+    """Settings › Memory (#108): checked here against fade.py's shape, kept
+    under "memory" beside the rest, and counted from unsaved values without
+    a thing written. A stand-in fade.py, as the page's own tests use."""
+
+    MEMORY = {"wikis": {"Meetings": True, "Knowledge": False},
+              "kinds": {"meetings": {"wiki": "Meetings", "types": ["meeting", " email ", "", "meeting"], "domains": [],
+                                     "dormant": 4, "archived": 12},
+                        "contracts": {"wiki": "Knowledge", "types": ["contract"], "domains": ["acme.example"],
+                                      "dormant": 24, "archived": None}},
+              "pins": {"thread": True, "project": False, "todo": True, "pinned": True},
+              "wake": True, "reach": "working", "nightly": {"on": False, "min": 25}}
+
+    def setUp(self):
+        super().setUp()
+        fixtures.write_fade_stub(self.root)
+
+    def path(self):
+        return self.root / "System" / "garrick-settings.json"
+
+    def test_saved_checked_and_beside_the_rest(self):
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
+        self.assertEqual("Settings saved", self.act(verb="settings", memory=self.MEMORY))
+        saved = json.loads(self.path().read_text())
+        self.assertEqual("cmux", saved["default"])                                   # the rest stays
+        self.assertEqual(["meeting", "email"], saved["memory"]["kinds"]["meetings"]["types"])   # trimmed, once each
+        self.assertIsNone(saved["memory"]["kinds"]["contracts"]["archived"])
+        self.assertEqual({"on": False, "min": 25}, saved["memory"]["nightly"])
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())      # nothing in a zone moved
+
+    def test_refused_with_the_reason(self):
+        kind = self.MEMORY["kinds"]["meetings"]
+        for memory in ("on", {"colour": "Teal"}, {"wikis": {"Library": True}}, {"wikis": {"Meetings": "yes"}},
+                       {"kinds": {"meetings": dict(kind, wiki="Mail")}}, {"kinds": {"meetings": dict(kind, dormant=0)}},
+                       {"kinds": {"meetings": dict(kind, dormant=True)}}, {"kinds": {"meetings": dict(kind, archived=2)}},
+                       {"kinds": {"meetings": {k: v for k, v in kind.items() if k != "archived"}}},
+                       {"kinds": {"meetings": dict(kind, types="meeting")}}, {"kinds": {"meetings": dict(kind, size=3)}},
+                       {"kinds": {"": kind}}, {"pins": {"starred": True}}, {"wake": 1}, {"reach": "archive"},
+                       {"nightly": {"min": 0}}, {"nightly": {"on": "yes"}}, {"nightly": {"when": "06:00"}}):
+            with self.assertRaises(pa.Refused, msg=memory):
+                self.act(verb="settings", memory=memory)
+        self.assertFalse(self.path().exists())
+
+    def test_refused_without_fade(self):
+        os.remove(str(self.root / "System" / "tools" / "fade.py"))
+        pa._FADE.pop(self.root, None)
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="settings", memory=self.MEMORY)
+        self.assertIn("System/tools/fade.py", str(said.exception))
+        with self.assertRaises(pa.Refused):
+            self.act(verb="memory-preview", memory={})
+        self.assertFalse(self.path().exists())
+
+    def test_a_preview_counts_unsaved_values_and_writes_nothing(self):
+        out = self.act(verb="memory-preview", memory={})
+        self.assertEqual(4, out["counts"]["Meetings"]["to_dormant"])                # the saved, here the defaults: 24 // 6
+        out = self.act(verb="memory-preview", memory=self.MEMORY)
+        self.assertEqual(6, out["counts"]["Meetings"]["to_dormant"])                # 24 // 4, unsaved
+        self.assertEqual(4, out["counts"]["Meetings"]["to_archive"])                # 48 // 12
+        self.assertFalse(out["counts"]["Knowledge"]["on"])
+        self.assertEqual(0, out["counts"]["Knowledge"]["to_dormant"])
+        self.assertFalse(self.path().exists())
+        with self.assertRaises(pa.Refused):
+            self.act(verb="memory-preview", memory={"reach": "everywhere"})
+        with self.assertRaises(pa.Refused):                                          # only `memory`, as declared
+            self.act(verb="memory-preview", memory={}, path="Wikis/Meetings")
+
+    def test_through_the_script_as_a_host_sends_it(self):
+        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
+                              input=json.dumps({"verb": "memory-preview", "memory": {"wake": False}}), timeout=60)
+        reply = json.loads(done.stdout)
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(0, reply["counts"]["Meetings"]["to_wake"])
+        self.assertFalse(self.path().exists())
+
+
 class TestZoneSettings(ActionCase):
     """Settings › Zones (#67): a colour and an icon per zone, beside the launchers."""
 

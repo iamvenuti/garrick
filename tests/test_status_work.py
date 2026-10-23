@@ -587,9 +587,10 @@ class TestWorkOnThePage(StatusCase):
     def test_the_zone_verbs_are_the_ones_page_action_locks(self):
         # back, stack and unstack touch only the interruption stack, never a zone's git.
         # Ask something and the example's links act on no one zone (#175).
-        # Stop, how far a copy or a move has got, and a work's own file opened (#189) take no zone's lock either.
+        # Stop, how far a copy or a move has got, and a work's own file opened (#189) take no zone's lock either,
+        # nor what Settings › Memory would do (#108), which only reads.
         unzoned = {"run", "settings", "check-name", "back", "stack", "unstack", "ask-desktop", "example", "discover",
-                   "files-stop", "files-progress", "work-file"}
+                   "files-stop", "files-progress", "work-file", "memory-preview"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 
@@ -611,11 +612,13 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
-        self.assertIn('["operations", "files-progress"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
+        self.assertIn('["operations", "files-progress", "memory-preview"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
+        self.assertIn("window.GarrickReadsMemory=true;", swift)
         plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('"dom-ready"', plugin)
         self.assertIn('window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()', plugin)
-        self.assertIn('["operations", "files-progress"].includes(request.verb)', plugin)
+        self.assertIn('["operations", "files-progress", "memory-preview"].includes(request.verb)', plugin)
+        self.assertIn("window.GarrickReadsMemory=true;", plugin)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")

@@ -84,7 +84,13 @@ zone's repository, as the skills would:
                 a failure is said in words of this file's own.
                 Settings › While you wait: {"while-you-wait": {...}},
                 checked by System/tools/next_up.py. Settings › Home:
-                {"home": "simple"} or "full", the page Garrick opens on
+                {"home": "simple"} or "full", the page Garrick opens on.
+                Settings › Memory: {"memory": {...}}, how pages fade out
+                of the wikis (#108), checked here against the shape
+                System/tools/fade.py keeps; saving moves no page
+    memory-preview  what Settings › Memory's unsaved values would do now:
+                {"memory": {...}}; System/tools/fade.py's counts() for
+                them, per wiki, as "counts". It only reads
     answer      a Needs you question answered by one of its options (#175):
                 {"zone", "file", "label"}; the work's Next action becomes
                 what the option leads to, with a dated entry, the question
@@ -231,7 +237,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
          "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
-         "work-file")
+         "work-file", "memory-preview")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -1410,6 +1416,135 @@ def next_up_lib(ws: Path):
     return _NEXT_UP[key]
 
 
+# Settings › Memory (#108). System/tools/fade.py, the workspace's own, owns
+# graded oblivion: its settings() keeps what is saved merged over its
+# defaults, and counts() says what a set of them would do now. What the page
+# sends is checked here against the shape fade.py keeps, so a malformed form
+# is refused by name before anything is written or counted; the months and
+# their order are judged here too, and fade.py may judge more.
+_FADE = {}
+MEMORY_WIKIS = ("Meetings", "Knowledge")
+MEMORY_PINS = ("thread", "project", "todo", "pinned")
+MEMORY_REACH = ("working", "dormant")
+MEMORY_MONTHS = (1, 240)
+MEMORY_MIN = (1, 1000)
+MEMORY_WORDS = 60          # the longest type or domain a kind may list, and a kind's name
+
+
+@contextlib.contextmanager
+def tools_path(ws: Path):
+    """The workspace's System/tools/ first on the path while fade.py is
+    loaded or asked; the path and the modules it imported put back after."""
+    path, before = list(sys.path), set(sys.modules)
+    sys.path.insert(0, str(ws / "System" / "tools"))
+    try:
+        yield
+    finally:
+        sys.path[:] = path
+        for k in set(sys.modules) - before:
+            sys.modules.pop(k, None)
+
+
+def fade_lib(ws: Path):
+    """The workspace's own System/tools/fade.py, or None: never one beside
+    this extra, since what it counts is that workspace's pages."""
+    key = Path(ws)
+    if key not in _FADE:
+        found, src = None, key / "System" / "tools" / "fade.py"
+        if src.is_file():
+            name = "garrick_page_fade"
+            try:
+                with tools_path(key):
+                    spec = importlib.util.spec_from_file_location(name, str(src))
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules[name] = mod
+                    spec.loader.exec_module(mod)
+                if callable(getattr(mod, "settings", None)) and callable(getattr(mod, "counts", None)):
+                    found = mod
+            except Exception:
+                found = None
+        _FADE[key] = found
+    return _FADE[key]
+
+
+def clean_memory(value) -> dict:
+    """Settings › Memory as the page sends it, checked: the keys fade.py
+    keeps and nothing else, each of its shape. Refused with the reason."""
+    if not isinstance(value, dict):
+        raise Refused("Memory's settings are not an object")
+    known = ("wikis", "kinds", "pins", "wake", "reach", "nightly")
+    unknown = sorted(set(value) - set(known))
+    if unknown:
+        raise Refused("Memory has no setting called %s" % ", ".join(repr(k) for k in unknown))
+    flag = lambda v: isinstance(v, bool)
+    count = lambda v, low, high: isinstance(v, int) and not isinstance(v, bool) and low <= v <= high
+    out = {}
+    if "wikis" in value:
+        w = value["wikis"]
+        if not isinstance(w, dict) or set(w) - set(MEMORY_WIKIS) or not all(flag(v) for v in w.values()):
+            raise Refused("which wikis fade is Meetings and Knowledge, each on or off")
+        out["wikis"] = dict(w)
+    if "kinds" in value:
+        kinds = value["kinds"]
+        if not isinstance(kinds, dict):
+            raise Refused("Memory's kinds are not an object")
+        out["kinds"] = {}
+        for name, k in kinds.items():
+            if not isinstance(name, str) or not name.strip() or len(name) > MEMORY_WORDS:
+                raise Refused("a kind needs a name of at most %d characters" % MEMORY_WORDS)
+            if not isinstance(k, dict) or set(k) - {"wiki", "types", "domains", "dormant", "archived"}:
+                raise Refused("the kind %s takes wiki, types, domains, dormant and archived" % name)
+            if k.get("wiki") not in MEMORY_WIKIS:
+                raise Refused("the kind %s belongs to Meetings or Knowledge" % name)
+            if not count(k.get("dormant"), *MEMORY_MONTHS):
+                raise Refused("the kind %s goes dormant after %d to %d months" % ((name,) + MEMORY_MONTHS))
+            if "archived" not in k or not (k["archived"] is None or count(k["archived"], *MEMORY_MONTHS)):
+                raise Refused("the kind %s is archived after %d to %d months, or never" % ((name,) + MEMORY_MONTHS))
+            if k["archived"] is not None and k["archived"] < k["dormant"]:
+                raise Refused("the kind %s cannot be archived before it goes dormant" % name)
+            lists = {}
+            for key in ("types", "domains"):
+                got = k.get(key, [])
+                if not isinstance(got, list) or not all(isinstance(x, str) and len(x.strip()) <= MEMORY_WORDS for x in got):
+                    raise Refused("the kind %s lists its %s as words" % (name, key))
+                lists[key] = list(dict.fromkeys(x.strip() for x in got if x.strip()))
+            out["kinds"][name] = {"wiki": k["wiki"], "types": lists["types"], "domains": lists["domains"],
+                                  "dormant": k["dormant"], "archived": k["archived"]}
+    if "pins" in value:
+        pins = value["pins"]
+        if not isinstance(pins, dict) or set(pins) - set(MEMORY_PINS) or not all(flag(v) for v in pins.values()):
+            raise Refused("what pins a page is %s, each on or off" % ", ".join(MEMORY_PINS))
+        out["pins"] = dict(pins)
+    if "wake" in value:
+        if not flag(value["wake"]):
+            raise Refused("whether use wakes a page is on or off")
+        out["wake"] = value["wake"]
+    if "reach" in value:
+        if value["reach"] not in MEMORY_REACH:
+            raise Refused("search reaches working pages, or working and dormant ones")
+        out["reach"] = value["reach"]
+    if "nightly" in value:
+        night = value["nightly"]
+        if not isinstance(night, dict) or set(night) - {"on", "min"} or ("on" in night and not flag(night["on"])) \
+                or ("min" in night and not count(night["min"], *MEMORY_MIN)):
+            raise Refused("the nightly line is on or off, from %d to %d pages" % MEMORY_MIN)
+        out["nightly"] = dict(night)
+    return out
+
+
+def memory_preview(ws: Path, req: dict) -> dict:
+    """What Settings › Memory's unsaved values would do now: fade.py's counts
+    for them, merged over what is saved, a key at a time. Reads only."""
+    lib = fade_lib(ws)
+    if lib is None:
+        raise Refused("cannot find System/tools/fade.py; update Garrick")
+    chosen = clean_memory(req.get("memory") if "memory" in req else {})
+    with tools_path(ws):
+        memory = dict(lib.settings(ws), **chosen)
+        counts = lib.counts(ws, memory=memory)
+    return {"say": "Counted", "counts": counts}
+
+
 def save_settings(ws: Path, req: dict) -> str:
     """Settings, kept in one file so every viewer of the page agrees, and the
     cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
@@ -1422,7 +1557,7 @@ def save_settings(ws: Path, req: dict) -> str:
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175)."""
     notifying = {"notifications", "test", "token", "find-chat"} & set(req)
-    if not ({"launchers", "zones", "while-you-wait", "home"} | notifying) & set(req):
+    if not ({"launchers", "zones", "while-you-wait", "home", "memory"} | notifying) & set(req):
         raise Refused("nothing to save")
     new = {}
     if "home" in req:
@@ -1470,6 +1605,10 @@ def save_settings(ws: Path, req: dict) -> str:
             new[wait.KEY] = wait.clean(req["while-you-wait"])
         except ValueError as e:
             raise Refused(str(e))
+    if "memory" in req:
+        if fade_lib(ws) is None:
+            raise Refused("cannot find System/tools/fade.py; update Garrick")
+        new["memory"] = clean_memory(req["memory"])
     keep = prefs()
     keep.migrate(ws)             # a choice an older Garrick left in System/generated/ comes first
     was = keep.read(ws).get("zones")
@@ -3411,6 +3550,8 @@ def act(ws: Path, req, today=None, now=None):
         return run_job(req)
     if req["verb"] == "settings":
         return save_settings(ws, req)
+    if req["verb"] == "memory-preview":
+        return memory_preview(ws, req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "interrupt":

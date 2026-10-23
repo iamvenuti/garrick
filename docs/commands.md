@@ -220,7 +220,9 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "todo-expire-days": {"Work": 14, "Personal": 30},
   "todo-inbox-order": "thread",
   "todo-chase-days": 0,
-  "memory": "~/.claude/projects/-Users-sam-Garrick/memory"
+  "memory": "~/.claude/projects/-Users-sam-Garrick/memory",
+  "nurture-weights": {"judgment": 2},
+  "nurture-threshold": 60
 }
 ```
 
@@ -238,6 +240,9 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
 - `memory`: the folder where your assistant keeps a memory of its own, or a list of them: absolute, from your home (`~/`), or from the workspace. Garrick does not guess where a harness keeps it. For Claude Code it is the `memory` folder under `~/.claude/projects/`, in the folder named for the workspace's path with each `/` written `-`. Without it, the check reads no memory, and `correct.py` searches none. Every Markdown file in it is an entry, but for an index the harness keeps beside them (`MEMORY.md`, `index.md` or `README.md`).
+
+- `nurture-weights`: what each kind of finding weighs in the [context debt](#context-debt), by kind: `wall` 10, `attribution` 5, `correction` 5, `judgment` 1 and `mechanical` 1 otherwise; a copy behind the share and a page that would fade weigh 0, and a kind not named weighs 1. Name only the kinds you want to change. A weight that is not a number of zero or more is left as shipped.
+- `nurture-threshold`: the context debt above which the nightly digest says so; 40 otherwise.
 
 The check reports a settings file that does not read, a key it does not know, a zone it names that does not exist, and a memory folder that is not there.
 
@@ -270,6 +275,10 @@ A scope is a path from the workspace's top: a zone, a project, a thread, or `Wik
 A correction is the one kind no check finds: you give it, answering a finding or saying it outright during a pass. `nurture.py correct` hands it to the same tool as [Correcting a value](#correcting-a-value), so it finds and fixes every copy the same way, and records the copies, the commits and your yes in the day's report. With a scope, a copy in a file across a wall from it, or in one whose parties can't be told, is left out and left alone: the run says the sentence the rules give for a wall, once, and nothing else about it, no file, party or count. A copy in a file another session has changes in is held.
 
 With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other kinds changes until you are there, and a correction never runs at night.
+
+### Context debt
+
+Each finding a run leaves weighs by its kind, and the sum is the workspace's *context debt*: a wall 10, an attribution question or a correction 5, a judgment finding or a mechanical fix not yet made 1, and a copy behind the share nothing. A mechanical finding stops counting once it is fixed. The weights were set from Nurture's runs on a working workspace, and `nurture-weights` and `nurture-threshold` in the [check settings](#check-settings) change them. Each day's record, `System/generated/nurture/<YYYY-MM-DD>.json`, keeps the debt by kind and by scope, a zone, a wiki or System, so its trend can be read back without running anything: the [status page](extras/status-page.md) shows it on its Checks card, with its last 30 days and the scopes carrying most. A run of the whole workspace measures it; a scoped run, "nurture Work", replaces only its own scope's part of what stood before. When the debt is over the threshold, 40 unless you set another, or has kept rising for a week, the nightly job's morning digest adds one line, such as `Context debt 42, up from 18 last week, mostly attribution in the Meetings wiki. Say "nurture the meetings".` A wall is in the digest whatever the total.
 
 ## Correcting a value
 

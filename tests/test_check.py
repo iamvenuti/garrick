@@ -15,6 +15,7 @@ from fixtures import (
     HAVE_GIT,
     build_workspace,
     commit_all,
+    git,
     git_init,
     meeting_page,
     project_hub,
@@ -774,6 +775,57 @@ class TestWalls(CheckCase):
         self.assertIn("1 error, 0 warnings.", buf.getvalue())
 
 
+class TestFadedPages(CheckCase):
+    """A page that faded lives under its wiki's dormant/ or archive/, its raw
+    file beside it. The walls read it as they read a working page; nothing
+    else reports on it, and a link into it still lands."""
+
+    def fade(self, grade, wiki="Meetings", page="wiki/sources/260312-birch-kickoff.md"):
+        wiki = self.root / "Wikis" / wiki
+        moved = wiki / grade / page
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        (wiki / page).rename(moved)
+        return moved
+
+    def test_a_link_across_a_wall_is_refused_whatever_the_grade(self):
+        for grade in ("dormant", "archive"):
+            with self.subTest(grade=grade):
+                moved = self.fade(grade)
+                for link in ("[[260312-birch-kickoff]]", "[[%s/wiki/sources/260312-birch-kickoff]]" % grade,
+                             "[[Wikis/Meetings/%s/wiki/sources/260312-birch-kickoff|the call]]" % grade):
+                    write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "Their pricing: %s.\n" % link)
+                    self.assertFinds("walls", "error", "links %s, a meeting with birch" % link,
+                                     "Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md")
+                moved.rename(self.meetings / "wiki" / "sources" / moved.name)
+
+    def test_wording_from_a_faded_record_across_a_wall_is_refused(self):
+        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
+        page = self.fade("dormant")
+        page.write_text(meeting_page("Work", "[birch]", "Birch kick-off").replace(
+            "type: meeting", 'type: meeting\nraw: "[[dormant/raw/260312-birch-kickoff]]"'))
+        write(self.meetings / "dormant" / "raw" / "260312-birch-kickoff.txt", "%s.\n" % quote)
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
+        self.assertFinds("walls", "error", "repeats wording from meeting 260312-birch-kickoff")
+
+    def test_nothing_else_reports_on_a_faded_page(self):
+        write(self.meetings / "dormant" / "wiki" / "sources" / "old call.md", meeting_page(zone=None, parties="[cedar]"))
+        write(self.meetings / "archive" / "wiki" / "sources" / "260101-old.md",
+              meeting_page(parties="[acme, birch]").replace("date: 2026-03-10", "date: 2026-03-10\ncreated: 1 March"))
+        knowledge = self.root / "Wikis" / "Knowledge"
+        write(knowledge / "archive" / "wiki" / "concepts" / "old.md", "---\ntitle: Old\ncreated: 1 March\n---\n\n# Old\n")
+        write(knowledge / "dormant" / "raw" / "notes.md", "---\nzone: Work\n---\n\nFrozen notes.\n")
+        self.assertClean("meetings")
+        self.assertClean("knowledge")
+        self.assertClean("links")
+
+    def test_a_link_into_a_faded_page_still_lands(self):
+        self.fade("dormant", page="wiki/sources/260310-acme-kickoff.md")
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\n| | |\n|---|---|\n| Live artifact | [[260310-acme-kickoff]] |\n")
+        self.assertClean("resume")
+        self.assertClean("walls")
+
+
 class TestKnowledge(CheckCase):
     def test_pass(self):
         self.assertClean("knowledge")
@@ -823,6 +875,69 @@ class TestRaw(CheckCase):
         self.record.unlink()
         commit_all(self.meetings, "remove")
         self.assertFinds("raw", "error", "deleted")
+
+    def test_a_rename_alone_is_not_a_change(self):
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        self.assertClean("raw")                                 # staged, not yet committed
+        commit_all(self.meetings, "name corrected")
+        self.assertClean("raw")
+
+    def test_a_rename_with_an_edit_is_reported_under_the_new_name(self):
+        self.record.write_text("".join("Dana: line %d of the call.\n" % n for n in range(1, 11)))
+        commit_all(self.meetings, "full transcript")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        renamed = self.meetings / "raw" / "260310-acme-kick-off.txt"
+        renamed.write_text(renamed.read_text().replace("line 5", "line five"))
+        commit_all(self.meetings, "name corrected, and a line")
+        hits = self.assertFinds("raw", "error", "edited")
+        self.assertEqual(["Wikis/Meetings/raw/260310-acme-kick-off.txt"], [f.path for f in hits])
+
+    def test_an_earlier_edit_follows_the_record_when_it_moves(self):
+        self.record.write_text("Dana: we start Tuesday.\n")
+        commit_all(self.meetings, "tidy")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        commit_all(self.meetings, "name corrected")
+        hits = self.assertFinds("raw", "error", "edited")
+        self.assertEqual(["Wikis/Meetings/raw/260310-acme-kick-off.txt"], [f.path for f in hits])
+
+    def test_filed_out_of_the_inbox_is_not_a_change(self):
+        write(self.meetings / "raw" / "inbox" / "call.txt", "".join("line %d\n" % n for n in range(10)))
+        commit_all(self.meetings, "dropped in")
+        git(self.meetings, "mv", "raw/inbox/call.txt", "raw/260320-acme-call.txt")
+        filed = self.meetings / "raw" / "260320-acme-call.txt"
+        filed.write_text(filed.read_text().replace("line 5", "line five"))
+        commit_all(self.meetings, "filed")
+        self.assertClean("raw")
+
+    def test_a_record_fades_and_wakes_with_its_page(self):
+        for grade in ("dormant", "archive"):
+            (self.meetings / grade / "raw").mkdir(parents=True, exist_ok=True)
+            moved = "%s/raw/260310-acme-kickoff.txt" % grade
+            git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", moved)
+            self.assertClean("raw")                             # staged across the folders
+            commit_all(self.meetings, "faded to " + grade)
+            self.assertClean("raw")
+            git(self.meetings, "mv", moved, "raw/260310-acme-kickoff.txt")
+            commit_all(self.meetings, "woken")
+            self.assertClean("raw")
+
+    def test_a_faded_record_stays_protected(self):
+        (self.meetings / "dormant" / "raw").mkdir(parents=True)
+        (self.meetings / "archive" / "raw").mkdir(parents=True)
+        nested = write(self.meetings / "raw" / "2026" / "03" / "260311-acme-follow-up.txt", "Dana: Tuesday.\n")
+        commit_all(self.meetings, "file")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "dormant/raw/260310-acme-kickoff.txt")
+        (self.meetings / "archive" / "raw" / "2026" / "03").mkdir(parents=True)
+        git(self.meetings, "mv", "raw/2026/03/260311-acme-follow-up.txt", "archive/raw/2026/03/260311-acme-follow-up.txt")
+        commit_all(self.meetings, "faded")
+        self.assertFalse(nested.exists())
+        (self.meetings / "dormant" / "raw" / "260310-acme-kickoff.txt").write_text("Dana: we start Tuesday.\n")
+        (self.meetings / "archive" / "raw" / "2026" / "03" / "260311-acme-follow-up.txt").unlink()
+        self.assertFinds("raw", "error", "edited", "Wikis/Meetings/dormant/raw/260310-acme-kickoff.txt")
+        self.assertFinds("raw", "error", "deleted", "Wikis/Meetings/archive/raw/2026/03/260311-acme-follow-up.txt")
+        commit_all(self.meetings, "tidied")
+        self.assertFinds("raw", "error", "edited", "Wikis/Meetings/dormant/raw/260310-acme-kickoff.txt")
+        self.assertFinds("raw", "error", "deleted", "Wikis/Meetings/archive/raw/2026/03/260311-acme-follow-up.txt")
 
     def test_not_a_repo_is_skipped(self):
         shutil.rmtree(self.meetings / ".git")

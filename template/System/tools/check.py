@@ -414,6 +414,26 @@ def party_name(ws: Workspace, tag: str) -> str:
     return entry["party"] if entry and entry.get("party") else tag
 
 
+# Where a wiki keeps the pages that faded, each in the same layout as the wiki
+# itself (`dormant/wiki/...`, `dormant/raw/...`): dormant, listed only in
+# `wiki/index-dormant.md`, and archived, in no index. Neither is working
+# memory, so no check reports on them but two: the walls read them as they read
+# a working page, and their raw records stay protected (check_raw). A link into
+# one still lands.
+FADED = ("dormant", "archive")
+# Where a wiki keeps its raw records: beside its working pages, and beside the
+# pages that faded. A record moves between them with its page, as a git
+# rename, and stays protected wherever it lands (check_raw).
+RAW_HOMES = ("raw",) + tuple(grade + "/raw" for grade in FADED)
+
+
+def is_faded(ws: Workspace, path: Path) -> bool:
+    """A page or record of a wiki that faded: anywhere under its dormant/ or
+    archive/ folder."""
+    parts = Path(rel(ws, path)).parts
+    return len(parts) > 3 and parts[0] == "Wikis" and parts[2] in FADED
+
+
 GENERATED = ("System", "generated")
 
 
@@ -661,11 +681,19 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         for path in walk_files(wikis):
             if path.suffix.lower() == ".md":
                 ws.wiki_files.append(path)
-    sources = wikis / "Meetings" / "wiki" / "sources"
-    if sources.is_dir():
-        for page in sorted(sources.rglob("*.md")):
-            ws.meetings[page] = note_frontmatter(ws, page)
+    # The meeting pages that faded too: a project must not use one across a
+    # wall any more than a working one. Only the walls read them (is_faded).
+    for sources in meeting_sources(root):
+        if sources.is_dir():
+            for page in sorted(sources.rglob("*.md")):
+                ws.meetings[page] = note_frontmatter(ws, page)
     return ws
+
+
+def meeting_sources(root: Path) -> List[Path]:
+    """The folders that hold meeting pages: the working one, then the faded."""
+    meetings = root / "Wikis" / "Meetings"
+    return [meetings / "wiki" / "sources"] + [meetings / grade / "wiki" / "sources" for grade in FADED]
 
 
 # ---------------------------------------------------------------------------
@@ -2336,7 +2364,8 @@ def wiki_name_links(ws: Workspace) -> List[Finding]:
                                "A name both wikis hold has no registry note"))
     index = PathIndex(ws, [p for v in both.values() for p in v])
     names = {name for _, name in both}
-    others = [p for p in ws.wiki_files if "raw" not in Path(rel(ws, p)).parts[:3] and p != registry / "index.md"]
+    others = [p for p in ws.wiki_files if "raw" not in Path(rel(ws, p)).parts[:3] and p != registry / "index.md"
+              and not is_faded(ws, p)]
     others += [ws.root / p for p in ROOT_INSTRUCTIONS + ROOT_LOCALS if (ws.root / p).is_file()]
     others += [p for project, _ in ws.projects if in_system(ws, project)
                for p in live_files(project) if p.suffix.lower() == ".md"]
@@ -2449,8 +2478,8 @@ def check_splits(ws: Workspace) -> List[Finding]:
     out = []
     by_raw: Dict[Path, List[Path]] = {}
     for page, fm in ws.meetings.items():
-        if not any(fm.get(k) for k in RAW_FIELDS):
-            continue                                  # only pages that name their record
+        if not any(fm.get(k) for k in RAW_FIELDS) or is_faded(ws, page):
+            continue                                  # only working pages that name their record
         for raw in meeting_raws(ws, page, fm):
             by_raw.setdefault(raw, []).append(page)
     for raw, pages in sorted(by_raw.items()):
@@ -2473,6 +2502,8 @@ def check_meetings(ws: Workspace) -> List[Finding]:
     out = check_splits(ws)
     zone_names = {z.name for z in ws.zones} | set(ws.context["zones"])
     for page, fm in ws.meetings.items():
+        if is_faded(ws, page):
+            continue                                  # read by the walls only
         r = rel(ws, page)
         zone = fm.get("zone")
         tags = [strip_tag(t) for t in as_list(fm.get("parties"))]
@@ -2894,21 +2925,29 @@ def shared_link(ws: Workspace, source: Path) -> Callable[[str], bool]:
 RAW_FIELDS = ("raw", "transcript")
 
 
+def raw_homes(ws: Workspace) -> List[Path]:
+    """The Meetings wiki's raw folders: raw/, and the one beside each grade
+    of faded pages, where a record goes with its page."""
+    meetings = ws.root / "Wikis" / "Meetings"
+    return [meetings / home for home in RAW_HOMES]
+
+
 def raw_records(ws: Workspace) -> Dict[str, List[Path]]:
-    """Every file under the Meetings raw/, at any depth, by stem; raw/inbox/
-    is not filed yet. In staged mode, a record deleted from disk but still
-    in git counts too."""
+    """Every file under the Meetings raw/, and under the raw folders of its
+    faded pages, at any depth, by stem; raw/inbox/ is not filed yet. In staged
+    mode, a record deleted from disk but still in git counts too."""
     if ws.raw_records is not None:
         return ws.raw_records
-    raw = ws.root / "Wikis" / "Meetings" / "raw"
-    inbox = raw / "inbox"
+    homes = raw_homes(ws)
+    inbox = homes[0] / "inbox"
     found = set()
-    if raw.is_dir():
-        for folder, dirs, files in os.walk(raw):
-            here = Path(folder)
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != inbox)
-            found |= {here / f for f in files if not f.startswith(".")}
-    found |= {p for p in ws.git_view if raw in p.parents and inbox not in p.parents and p != inbox}
+    for raw in homes:
+        if raw.is_dir():
+            for folder, dirs, files in os.walk(raw):
+                here = Path(folder)
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != inbox)
+                found |= {here / f for f in files if not f.startswith(".")}
+        found |= {p for p in ws.git_view if raw in p.parents and inbox not in p.parents and p != inbox}
     index: Dict[str, List[Path]] = {}
     for p in sorted(found):
         index.setdefault(p.stem, []).append(p)
@@ -2918,25 +2957,38 @@ def raw_records(ws: Workspace) -> Dict[str, List[Path]]:
 
 def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
     """The raw records behind a meeting page. A `raw` (or `transcript`) link
-    with a path names one record exactly, at any depth under raw/, with or
-    without its extension. A bare name, and the page's own slug, find the
-    records of that name directly in raw/, and only when there are none
-    there, in its subfolders: a record in a subfolder is never claimed by a
-    page whose link names another."""
-    raw = ws.root / "Wikis" / "Meetings" / "raw"
+    with a path names one record exactly, at any depth under raw/, or under
+    the raw folder of a grade of faded pages (`dormant/raw/`), with or without
+    its extension. A bare name, and the page's own slug, find the records of
+    that name directly in a raw folder, and only when there are none there,
+    in its subfolders: a record in a subfolder is never claimed by a page
+    whose link names another."""
+    homes = raw_homes(ws)
     index = raw_records(ws)
     found, stems = set(), set()
     linked = False
+
+    def under(p: Path) -> str:
+        """`p`'s path inside the raw folder that holds it."""
+        return next(p.relative_to(h).as_posix() for h in homes if h in p.parents)
+
     for key in RAW_FIELDS:
         for value in as_list(fm.get(key)):
             target = value.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip()
             if not target:
                 continue
             linked = True
-            tail = target.split("raw/", 1)[1] if target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")) else target
-            if "/" in tail or target.startswith(("raw/", "Meetings/raw/", "Wikis/Meetings/raw/")):
-                exact = {p for p in index.get(Path(tail).stem, []) if p.relative_to(raw).as_posix() in
-                         (tail, Path(tail).with_suffix("").as_posix()) or p.relative_to(raw).with_suffix("").as_posix() == tail}
+            inside = target
+            for prefix in ("Wikis/Meetings/", "Meetings/"):
+                if inside.startswith(prefix):
+                    inside = inside[len(prefix):]
+                    break
+            home = next((h for h in RAW_HOMES if inside.startswith(h + "/")), None)
+            pathed = home is not None or target.startswith(("Meetings/raw/", "Wikis/Meetings/raw/"))
+            tail = inside[len(home) + 1:] if home else target
+            if "/" in tail or pathed:
+                exact = {p for p in index.get(Path(tail).stem, []) if under(p) in
+                         (tail, Path(tail).with_suffix("").as_posix()) or Path(under(p)).with_suffix("").as_posix() == tail}
                 found |= exact
                 if not exact and "/" not in tail:
                     stems.add(Path(tail).stem)
@@ -2946,7 +2998,7 @@ def meeting_raws(ws: Workspace, page: Path, fm: dict) -> List[Path]:
         stems.add(page.stem)
     for stem in stems:
         candidates = index.get(stem, [])
-        top = [p for p in candidates if p.parent == raw]
+        top = [p for p in candidates if p.parent in homes]
         found |= set(top or candidates)
     return sorted(found)
 
@@ -3623,9 +3675,9 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     is refused: which party the commit is written for must not depend on an
     edit it leaves out."""
     ws.git_view = git_view(ws, committing)
-    sources = ws.root / "Wikis" / "Meetings" / "wiki" / "sources"
+    folders = meeting_sources(ws.root)
     for path, text in sorted(ws.git_view.items()):
-        if sources in path.parents and path.suffix.lower() == ".md":
+        if any(f in path.parents for f in folders) and path.suffix.lower() == ".md":
             then = parse_frontmatter_text(text)
             if path not in ws.meetings:
                 if not path.exists():
@@ -3864,7 +3916,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
         return out
     kfiles = PathIndex(ws, walk_files(kroot))
     mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
-    raw = kroot / "raw"
+    raws = [kroot / home for home in RAW_HOMES]
     beyond = None
     schema, problems = knowledge_schema(ws.root)
     for problem in problems:
@@ -3879,7 +3931,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
         if suffix not in TEXT_SUFFIXES and suffix != ".eml":
             continue
         text = read_text(path) or ""
-        if raw not in path.parents and suffix != ".eml":
+        if not any(raw in path.parents for raw in raws) and suffix != ".eml":
             fm = {}
             if suffix == ".md":  # read once; a page too big to scan still has its fields read
                 fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
@@ -3905,7 +3957,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "Take the field out, or file the item in Meetings if it is a conversation"
                                    % " and ".join("`%s`" % k for k in carried),
                                    "A Knowledge page carries parties"))
-            for problem in bad_dates(fm):
+            for problem in ([] if is_faded(ws, path) else bad_dates(fm)):
                 out.append(Finding(ERROR, "knowledge", rel(ws, path), problem,
                                    "A Knowledge page has a date in the wrong form"))
             for written, target in extract_links(text):
@@ -3997,12 +4049,6 @@ def _git(args: List[str], cwd: Path) -> Optional[str]:
     except (OSError, subprocess.SubprocessError):
         return None
     return res.stdout if res.returncode == 0 else None
-
-
-# Where a wiki keeps its raw records: beside its working pages, and beside the
-# pages that faded, dormant or archived. A record moves between them with its
-# page, as a git rename, and stays protected wherever it lands.
-RAW_HOMES = ("raw", "dormant/raw", "archive/raw")
 
 
 def name_status(data: str) -> Iterable[Tuple[Optional[str], str, str, Optional[str]]]:

@@ -507,6 +507,29 @@ class TestProjectFiles(QuoteCase):
         self.assertNoLeak(found, *BRIEF_WORDS)
 
 
+class TestFadedMeetings(GapCase):
+    """A meeting page that faded, dormant or archived, still holds its parties
+    against every commit."""
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_link_to_a_faded_meeting(self):
+        for grade in ("dormant", "archive"):
+            moved = self.meetings / grade / "wiki" / "sources" / "260312-birch-kickoff.md"
+            moved.parent.mkdir(parents=True)
+            (self.meetings / "wiki" / "sources" / moved.name).rename(moved)
+            real_repo(self.work)
+            note = self.acme / "Threads" / "Pricing" / "Notes.md"
+            with mock.patch.dict(os.environ, NO_USER_GIT):
+                commit_all(self.work, "start")
+                write(note, "See [[%s/wiki/sources/260312-birch-kickoff|the call]].\n" % grade)
+                git(self.work, "add", "-A")
+                found = check.run_checks(self.root, staged=self.work)
+            self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
+                             [(f.severity, f.path) for f in found], grade)
+            self.assertIn("a meeting with birch", found[0].message)
+            moved.rename(self.meetings / "wiki" / "sources" / moved.name)
+
+
 class TestPersonPages(GapCase):
     """A person page says who someone is and which party: read on both sides of every wall."""
 

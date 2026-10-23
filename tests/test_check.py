@@ -775,6 +775,57 @@ class TestWalls(CheckCase):
         self.assertIn("1 error, 0 warnings.", buf.getvalue())
 
 
+class TestFadedPages(CheckCase):
+    """A page that faded lives under its wiki's dormant/ or archive/, its raw
+    file beside it. The walls read it as they read a working page; nothing
+    else reports on it, and a link into it still lands."""
+
+    def fade(self, grade, wiki="Meetings", page="wiki/sources/260312-birch-kickoff.md"):
+        wiki = self.root / "Wikis" / wiki
+        moved = wiki / grade / page
+        moved.parent.mkdir(parents=True, exist_ok=True)
+        (wiki / page).rename(moved)
+        return moved
+
+    def test_a_link_across_a_wall_is_refused_whatever_the_grade(self):
+        for grade in ("dormant", "archive"):
+            with self.subTest(grade=grade):
+                moved = self.fade(grade)
+                for link in ("[[260312-birch-kickoff]]", "[[%s/wiki/sources/260312-birch-kickoff]]" % grade,
+                             "[[Wikis/Meetings/%s/wiki/sources/260312-birch-kickoff|the call]]" % grade):
+                    write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "Their pricing: %s.\n" % link)
+                    self.assertFinds("walls", "error", "links %s, a meeting with birch" % link,
+                                     "Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md")
+                moved.rename(self.meetings / "wiki" / "sources" / moved.name)
+
+    def test_wording_from_a_faded_record_across_a_wall_is_refused(self):
+        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
+        page = self.fade("dormant")
+        page.write_text(meeting_page("Work", "[birch]", "Birch kick-off").replace(
+            "type: meeting", 'type: meeting\nraw: "[[dormant/raw/260312-birch-kickoff]]"'))
+        write(self.meetings / "dormant" / "raw" / "260312-birch-kickoff.txt", "%s.\n" % quote)
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
+        self.assertFinds("walls", "error", "repeats wording from meeting 260312-birch-kickoff")
+
+    def test_nothing_else_reports_on_a_faded_page(self):
+        write(self.meetings / "dormant" / "wiki" / "sources" / "old call.md", meeting_page(zone=None, parties="[cedar]"))
+        write(self.meetings / "archive" / "wiki" / "sources" / "260101-old.md",
+              meeting_page(parties="[acme, birch]").replace("date: 2026-03-10", "date: 2026-03-10\ncreated: 1 March"))
+        knowledge = self.root / "Wikis" / "Knowledge"
+        write(knowledge / "archive" / "wiki" / "concepts" / "old.md", "---\ntitle: Old\ncreated: 1 March\n---\n\n# Old\n")
+        write(knowledge / "dormant" / "raw" / "notes.md", "---\nzone: Work\n---\n\nFrozen notes.\n")
+        self.assertClean("meetings")
+        self.assertClean("knowledge")
+        self.assertClean("links")
+
+    def test_a_link_into_a_faded_page_still_lands(self):
+        self.fade("dormant", page="wiki/sources/260310-acme-kickoff.md")
+        note = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text() + "\n| | |\n|---|---|\n| Live artifact | [[260310-acme-kickoff]] |\n")
+        self.assertClean("resume")
+        self.assertClean("walls")
+
+
 class TestKnowledge(CheckCase):
     def test_pass(self):
         self.assertClean("knowledge")

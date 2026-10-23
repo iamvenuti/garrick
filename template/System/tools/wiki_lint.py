@@ -20,6 +20,14 @@ it, is found as Obsidian finds it: from the linking page's folder, from the
 wiki's top, or by its name when only one file has it. Such a file is not a
 page, so it counts toward no orphan.
 
+A page that faded lives under dormant/ or archive/, as `dormant/wiki/...`
+with its raw file at `dormant/raw/...`; the dormant ones are listed in
+`wiki/index-dormant.md`, a list like the index. Faded pages are not working
+pages: none is counted, an orphan, or read for its links. A link into one
+still lands, written with its path or by its name when no working page has
+that name, so it is not a missing page; like a link to a file, it counts
+toward no orphan.
+
 Standard library only, Python 3.9 or later.
 """
 
@@ -40,7 +48,8 @@ sys.path.insert(0, str(HERE))
 from garrick_lib import workspace_root  # noqa: E402
 
 LINK = re.compile(r"!?\[\[([^\[\]|#\n]+)(?:#[^\[\]|\n]*)?(?:\|[^\[\]\n]*)?\]\]")
-LISTS = {"index", "log"}
+LISTS = {"index", "log", "index-dormant"}
+FADED = ("dormant", "archive")
 
 
 def pages(wiki: Path) -> List[Path]:
@@ -52,20 +61,36 @@ def pages(wiki: Path) -> List[Path]:
                   and not (p.parent == top and p.stem in LISTS))
 
 
+def visible(folder: Path) -> List[Path]:
+    """Every file under `folder` but hidden ones; none when it is not there."""
+    return [p for p in folder.rglob("*") if p.is_file()
+            and not any(part.startswith(".") for part in p.relative_to(folder).parts)] if folder.is_dir() else []
+
+
 def lint(wiki: Path) -> dict:
     top = wiki / "wiki"
     all_pages = pages(wiki)
     files = {p.relative_to(wiki).with_suffix("").as_posix(): p for p in all_pages}
-    raws = {p.relative_to(wiki).with_suffix("").as_posix() for p in (wiki / "raw").rglob("*") if p.is_file()} \
-        if (wiki / "raw").is_dir() else set()
-    raws |= {p.relative_to(wiki).as_posix() for p in (wiki / "raw").rglob("*") if p.is_file()} \
-        if (wiki / "raw").is_dir() else set()
+    raws: Set[str] = set()
+    for raw in [wiki / "raw"] + [wiki / grade / "raw" for grade in FADED]:
+        for p in visible(raw):
+            raws |= {p.relative_to(wiki).with_suffix("").as_posix(), p.relative_to(wiki).as_posix()}
     by_stem: Dict[str, List[str]] = {}
     for key in files:
         by_stem.setdefault(key.rsplit("/", 1)[-1].lower(), []).append(key)
-    others = {p.relative_to(wiki).as_posix() for p in top.rglob("*")
-              if p.is_file() and p.suffix != ".md"
-              and not any(part.startswith(".") for part in p.relative_to(top).parts)}
+    others = {p.relative_to(wiki).as_posix() for p in visible(top) if p.suffix != ".md"}
+    # What faded, where a link may still land: pages, and the other files beside them.
+    faded: Set[str] = set()
+    faded_others: Set[str] = set()
+    for grade in FADED:
+        for p in visible(wiki / grade / "wiki"):
+            if p.suffix == ".md":
+                faded.add(p.relative_to(wiki).with_suffix("").as_posix())
+            else:
+                faded_others.add(p.relative_to(wiki).as_posix())
+    faded_by_stem: Dict[str, List[str]] = {}
+    for key in sorted(faded):
+        faded_by_stem.setdefault(key.rsplit("/", 1)[-1].lower(), []).append(key)
 
     lists = {"wiki/" + n for n in LISTS}
 
@@ -77,8 +102,10 @@ def lint(wiki: Path) -> dict:
         t = t[:-3] if t.endswith(".md") else t
         if t in lists or t in LISTS:
             return t
-        if t in files or t in raws or t.startswith("raw/"):
-            return t if (t in files or t in raws) else None
+        if t in files or t in raws or t in faded or t in faded_others:
+            return t
+        if t.startswith(("raw/",) + tuple("%s/%s/" % (g, kind) for g in FADED for kind in ("wiki", "raw"))):
+            return None
         for prefix in ("wiki/", ""):
             if prefix + t in files:
                 return prefix + t
@@ -88,6 +115,10 @@ def lint(wiki: Path) -> dict:
         hits = by_stem.get(t.rsplit("/", 1)[-1].lower(), [])
         if hits:
             return hits[0]
+        # A page that faded, when no working page answers the link.
+        hits = sorted(k for k in faded if k.endswith("/" + t)) or faded_by_stem.get(t.rsplit("/", 1)[-1].lower(), [])
+        if hits:
+            return hits[0]
         return other(t, here) if posixpath.splitext(t)[1] else None
 
     def other(t: str, here: str) -> Optional[str]:
@@ -95,13 +126,16 @@ def lint(wiki: Path) -> dict:
         `diagram.png`: from the linking page's folder, `../` included, then
         from the wiki's top, then by name when only one file has it."""
         near = posixpath.normpath(posixpath.join(here, t))
-        if near in others or near in raws:
+        if near in others or near in raws or near in faded_others:
             return near
         for prefix in ("wiki/", ""):
-            if prefix + t in others:
+            if prefix + t in others or prefix + t in faded_others:
                 return prefix + t
-        hits = [k for k in others if k.lower().endswith("/" + t.lower())]
-        return hits[0] if len(hits) == 1 else None
+        for pool in (others, faded_others):          # a working file first, then one that faded with its page
+            hits = [k for k in pool if k.lower().endswith("/" + t.lower())]
+            if hits:
+                return hits[0] if len(hits) == 1 else None
+        return None
 
     out_links: Dict[str, Set[str]] = {k: set() for k in files}
     in_links: Dict[str, Set[str]] = {k: set() for k in files}

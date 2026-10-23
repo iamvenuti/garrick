@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **`check.py` and `wiki_lint.py` know where faded pages live** ([#108](https://github.com/iamvenuti/garrick/issues/108)). A page that fades moves to its wiki's `dormant/wiki/...` or `archive/wiki/...`, its raw file to `dormant/raw/...` or `archive/raw/...`, and the dormant ones are listed in `wiki/index-dormant.md`. The walls read those pages as they read working ones: a project file that links to a dormant or archived meeting page across a wall, or repeats eight words from it or from its raw record, is still refused, by the full check and by the commit hook; until now a page moved by hand into `archive/` dropped out of the wall check. Moving a raw record into `dormant/raw/` or `archive/raw/`, or back, with its content unchanged, is no change to it, and a record there stays protected: an edit or a deletion is reported as in `raw/`. Nothing else reports on a faded page: no meeting-page, Knowledge-date, ambiguous-link or lint finding, and `wiki_lint.py` counts none as a page or an orphan, nor `index-dormant.md`. A link into a faded page still lands, written with its path or by its name when no working page has that name, so it is not a missing page; like a link to a file, it counts toward no orphan.
+
 ### Fixed
 
 - `check.py` no longer reports a raw record that was only renamed as deleted ([#198](https://github.com/iamvenuti/garrick/issues/198)). The raw-records check read git's history with rename detection off, so correcting a misheard name in a record's file name showed as a deletion, and the only way to clear it was a `raw-accepted` entry. A rename that keeps the content byte for byte is now no change, committed or staged; a rename that also changes the content is reported as edited, under the new name, and an earlier change follows the record to its new name. A record deleted outright is still an error, and a record filed out of `raw/inbox/` is still its first commit.

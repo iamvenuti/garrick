@@ -1,6 +1,6 @@
 # Concepts
 
-The words Garrick uses, and what each one means. The rules, the skills and the other pages use them as defined here. For how the parts fit together, see [Architecture](architecture.md); for which protections are code and which are rules, see [What is enforced, and what is asked](enforced.md).
+The words Garrick uses, and what each one means. The rules, the skills and the other pages use them as defined here. For how the parts fit together, see [Architecture](architecture.md); for which protections are code and which are rules, see [What is enforced, and what is asked](enforced.md); for how what the workspace holds is taken in, kept true, used and let fade, see [How Garrick keeps context](context.md).
 
 ## The repository and your workspace
 

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **One page on how Garrick keeps context** ([#197](https://github.com/iamvenuti/garrick/issues/197)). What the assistant knows was described across a dozen pages, and none said how they fit together. `docs/context.md` follows it through four stages: take in, keep true, use within walls and let fade. It names the file or tool at each one, links to the page with the detail, and says what runs on its own and what waits for you. Graded oblivion ([#108](https://github.com/iamvenuti/garrick/issues/108)) is described as planned. Architecture, Concepts and the README link to it, and the Guide lists it under *Understand*.
+
 ## [0.39.0] - 2026-10-22
 
 ### Added

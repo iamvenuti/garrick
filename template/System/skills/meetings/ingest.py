@@ -220,7 +220,6 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
     if not title.strip():
         raise Refusal("A meeting needs a title, even a short one, to name the file.")
     raw_dir = meetings / "raw"
-    sources_dir = meetings / "wiki" / "sources"
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
     refuse_if_filed(root, inbox_path)

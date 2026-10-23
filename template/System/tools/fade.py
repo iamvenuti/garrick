@@ -108,7 +108,6 @@ if str(HERE) not in sys.path:
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
     knowledge_schema,
-    load_context,
     parse_frontmatter_text,
     read_settings,
     strip_tag,
@@ -127,7 +126,6 @@ FIXED_FOLDERS = ("people", "entities", "concepts")
 FIXED_TYPES = ("person", "entity", "concept")
 MAIL_EXTS = (".eml", ".msg", ".mbox")
 PROPOSALS = ("System", "generated", "fade")
-RETENTION = "System/retention.md"
 RETENTION_LOCAL = "System/retention.local.md"
 SETTINGS_KEY = "memory"
 EXIT_REFUSED = 1

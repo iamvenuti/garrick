@@ -3625,15 +3625,15 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
     # Two columns where the window is wide enough, so every section fits in
     # about one window height: what you choose on the left, Notifications
-    # (the longest) and Garrick on the right, with Reset view at the foot of
-    # it, level with the left's end.
+    # (the longest), Memory and Garrick on the right, with Reset view at the
+    # foot of it, level with the left's end.
     return ('<dialog id="settings" class="settings" aria-labelledby="settings-title">'
             '<button class="sclose" type="button" id="close-settings" title="Close" aria-label="Close Settings">&#215;</button>'
             '<h2 id="settings-title" tabindex="-1" autofocus>Settings</h2><div class="setcols"><div class="setcol">%s</div>'
             '<div class="setcol">%s</div></div></dialog>'
             % (home_settings(layout) + launcher_choices(installed, bool(mac_app("Obsidian"))) + (follow_settings() if graph else "")
-               + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws) + memory_settings(ws),
-               notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file())
+               + zone_settings(list(zones), styles or {}) + menu_settings() + wait_settings(ws),
+               notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file()) + memory_settings(ws)
                + about_garrick(installed_version(ws), notes) + preview_section(preview_flags(ws)) + VIEW))
 
 
@@ -6562,7 +6562,7 @@ def memory_settings(ws: Path) -> str:
     """Settings › Memory: on or off per wiki; per kind, its types and domains
     and the months to dormant and to archived; what pins a page; whether use
     wakes one; how far search reaches unasked; the nightly line and its
-    smallest count; where the archive lives, as a fact; and beside them, per
+    smallest count; where the archive lives, as a fact; and above them, per
     wiki, the pages in each grade and what the next pass would move. In the
     app only, as the other sections that save are."""
     lib = fade_lib(ws)
@@ -6616,6 +6616,8 @@ def memory_settings(ws: Path) -> str:
     prev = "".join('<li data-mw="%s"><b>%s</b> <span data-mc="grades">%s</span><span class="mnext" data-mc="next">%s</span></li>'
                    % ((E(w), E(w)) + tuple(E(x) for x in memory_said(grades.get(w) or {}))) for w in MEMORY_WIKIS if w in grades)
     return ('<section class="setsec apponly" id="memory-settings">%s%s'
+            '<h4 class="nsub">What these would do now</h4><ul class="mgrades" id="m-prev" aria-live="polite">%s</ul>'
+            '<p class="hint" id="m-prevsaid">As saved.</p>'
             '<h4 class="nsub">Months since a page was new, by kind</h4><div class="mkinds">%s</div>'
             '<p class="hint">A kind takes the pages whose <code>type</code> or domain it lists; the lists are separated by commas.</p>'
             '<h4 class="nsub">What keeps a page working</h4><div class="mpins">%s</div>'
@@ -6626,14 +6628,11 @@ def memory_settings(ws: Path) -> str:
             '<div class="launcher-row"><label class="launcher-choice">%s <span>A line in the nightly digest'
             '<small>What would fade, once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div>'
             '<p class="hint mwhere">Faded pages stay in their wiki: dormant ones in its <code>dormant/</code> folder, archived ones in its '
-            '<code>archive/</code> folder, each beside its raw file. Git keeps every move, so any of them can be undone.</p>'
-            '<h4 class="nsub">What these would do now</h4><ul class="mgrades" id="m-prev" aria-live="polite">%s</ul>'
-            '<p class="hint" id="m-prevsaid">As saved.</p></section>'
-            % (head, rows, kind_rows, pin_rows, box('id="m-wake"', cfg.get("wake", True) is not False, "Use wakes a dormant page"),
+            '<code>archive/</code> folder, each beside its raw file. Git keeps every move, so any of them can be undone.</p></section>'
+            % (head, rows, prev, kind_rows, pin_rows, box('id="m-wake"', cfg.get("wake", True) is not False, "Use wakes a dormant page"),
                " selected" if reach == "working" else "", " selected" if reach != "working" else "",
                box('id="m-night"', nightly.get("on", True) is not False, "A line in the nightly digest"),
-               num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line"),
-               prev))
+               num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")))
 
 
 MEMORY_CSS = r"""
@@ -6646,9 +6645,10 @@ border:1px solid var(--line);border-radius:7px;min-width:0}
 .mkinds{display:flex;flex-direction:column;gap:8px;margin:0 0 4px}.mkind{border:1px solid var(--line);border-radius:9px;padding:6px 10px 8px;margin:0;min-width:0}
 .mkind legend{font-size:12.5px;font-weight:600;padding:0 4px}.mkind legend small{font-weight:400;color:var(--muted)}
 .mmonths{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink2);margin:0 0 6px}.mmonths label{display:flex;align-items:center;gap:5px}
-.mlist{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);margin-top:4px}.mlist input{flex:1}
+.mlist{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);margin-top:4px}.mlist input{flex:1 1 0;width:0;min-width:0}
 .mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:12.5px}
-.mreach,.mafter{font-size:12.5px;color:var(--ink2)}.mwhere{margin:6px 0}
+.mreach,.mafter{font-size:12.5px;color:var(--ink2)}.mreach{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.mreach select{max-width:100%}
+.mafter{white-space:nowrap}.mwhere{margin:6px 0}#memory-settings{min-width:0;overflow-wrap:anywhere}
 .mgrades{list-style:none;margin:0;padding:0}.mgrades li{display:flex;flex-wrap:wrap;gap:2px 8px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12.5px}
 .mgrades span{color:var(--ink2)}.mgrades .mnext{flex-basis:100%;color:var(--ink)}
 """

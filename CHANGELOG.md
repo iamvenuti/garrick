@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **One page on how Garrick keeps context** ([#197](https://github.com/iamvenuti/garrick/issues/197)). What the assistant knows was described across a dozen pages, and none said how they fit together. `docs/context.md` follows it through four stages: take in, keep true, use within walls and let fade. It names the file or tool at each one, links to the page with the detail, and says what runs on its own and what waits for you. Graded oblivion ([#108](https://github.com/iamvenuti/garrick/issues/108)) is described as planned. Architecture, Concepts and the README link to it, and the Guide lists it under *Understand*.
+
 ### Changed
 
 - **`check.py` and `wiki_lint.py` know where faded pages live** ([#108](https://github.com/iamvenuti/garrick/issues/108)). A page that fades moves to its wiki's `dormant/wiki/...` or `archive/wiki/...`, its raw file to `dormant/raw/...` or `archive/raw/...`, and the dormant ones are listed in `wiki/index-dormant.md`. The walls read those pages as they read working ones: a project file that links to a dormant or archived meeting page across a wall, or repeats eight words from it or from its raw record, is still refused, by the full check and by the commit hook; until now a page moved by hand into `archive/` dropped out of the wall check. Moving a raw record into `dormant/raw/` or `archive/raw/`, or back, with its content unchanged, is no change to it, and a record there stays protected: an edit or a deletion is reported as in `raw/`. Nothing else reports on a faded page: no meeting-page, Knowledge-date, ambiguous-link or lint finding, and `wiki_lint.py` counts none as a page or an orphan, nor `index-dormant.md`. A link into a faded page still lands, written with its path or by its name when no working page has that name, so it is not a missing page; like a link to a file, it counts toward no orphan.

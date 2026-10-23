@@ -43,7 +43,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 ## What Garrick keeps for you
 
 - **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving, “hold this” when you're interrupted, and “open [thread]” or “back” when you return.
-- **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read.
+- **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read. [How Garrick keeps context](docs/context.md) shows how a conversation, a correction and an old page are each handled.
 - **Declared information boundaries.** You choose which pairs of parties must be kept apart. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links and names from across a wall, and wording copied from a walled meeting, its transcript or another party's project files.
 - **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.
 - **Short, speakable requests.** Use your app's voice features or dictation. Garrick supplies the naming and reply conventions; the app supplies the microphone and voice connection.
@@ -100,7 +100,7 @@ Early, for macOS, and built from one person's working week. See the [changelog](
 - [Desktop first steps](docs/first-steps.md) and [terminal setup](docs/terminal-setup.md).
 - [Your first useful session](docs/first-session.md) and [guided setup](docs/guided-session.md).
 - [Command reference](docs/commands.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
-- [Concepts](docs/concepts.md), the words Garrick uses; [architecture](docs/architecture.md), how the parts fit together; and [what is enforced, and what is asked](docs/enforced.md).
+- [Concepts](docs/concepts.md), the words Garrick uses; [architecture](docs/architecture.md), how the parts fit together; [how Garrick keeps context](docs/context.md); and [what is enforced, and what is asked](docs/enforced.md).
 - [Updating to a newer Garrick](docs/updating.md), keeping what you changed.
 - [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (open it in a browser from your downloaded copy, which holds its images).
 

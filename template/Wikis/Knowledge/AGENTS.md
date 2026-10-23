@@ -10,8 +10,13 @@ Published material you study: reports, papers, articles, vendor documents. None 
         sources/        one page per item read
         concepts/       one page per idea, built up across sources
         entities/       one page per organisation or product
-        index.md        every page, newest first
+        index.md        every working page, newest first
+        index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
+      dormant/          pages faded out of working memory, and their raw files,
+        wiki/ raw/        at the same paths below
+      archive/          pages faded further, in no index; read only when asked
+        wiki/ raw/
 
 ## A source page
 
@@ -35,4 +40,5 @@ A wiki that grew its own layout declares it in `schema.json` beside this file, a
 - **Freeze first.** Save a web page or document into `raw/` before summarising it, so the source cannot change under you.
 - **Attribute claims.** A vendor's claim is written as the vendor's claim, never as fact.
 - **Nothing from a meeting comes in here.** Conversations belong in Meetings, where the walls can see them.
+- **Reading fades, and nothing is deleted.** A source page leaves working memory by age and kind, into `dormant/` and later `archive/`, and its raw file moves with it, never sooner, so its link to its source always resolves: `System/tools/fade.py` proposes it, and only a yes moves it. `pinned: true` keeps a page working for good; `superseded:` keeps it out of working memory. Concept and entity pages never move: what faded is listed under their `## Earlier`.
 - **No page carries `party`, `parties` or a `zone`.** What is here is published and usable anywhere. A newsletter that arrived by mail belongs here, its saved message in `raw/`; a party writing to you does not.

@@ -37,6 +37,7 @@ All paths are relative to the workspace root.
 | Meeting or mail page | `Wikis/Meetings/wiki/sources/<YYMMDD-slug>.md` |
 | Person page | `Wikis/Meetings/wiki/people/<slug>.md` |
 | Index | `Wikis/Meetings/wiki/index.md` |
+| Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Meetings/dormant/wiki/`, `Wikis/Meetings/archive/wiki/` |
 | Log | `Wikis/Meetings/wiki/log.md` |
 | Parties (with their mail domains), Walls, People, Aliases | `System/context.md` |
 | A zone's open actions | `Zones/<Zone>/Todo.md` |
@@ -362,7 +363,8 @@ project behind it offers nothing.
    say plainly that no wall was applied, because there was no project to
    check it against.
 3. **Gather.** Every page in `wiki/sources/` whose `parties` include X's tag
-   (or the person's party), newest first. When the user names one
+   (or the person's party), newest first; then, as *Older notes* says, the
+   dormant ones, said as older notes. When the user names one
    conversation ("the call I just filed"), that page alone. Then what is
    still open, from the `Todo.md` of the project's zone: the unticked lines
    for X's party or person, or for a thread of a project whose `party` is
@@ -590,6 +592,33 @@ What this route never does: resolve two parties of one name by itself,
 guess a wall, create a zone, write a mail domain, a person's row or an
 alias nobody asked about, brief across more than one party, send anything,
 or ask the user for a tag.
+
+## Older notes: how far a question reaches
+
+Old pages fade out of working memory, by age, kind and use, as the `nurture`
+skill's *Fading* says: dormant pages to `dormant/wiki/...`, listed in
+`wiki/index-dormant.md`, and archived ones to `archive/wiki/...`, in no
+index. Each keeps its frontmatter, so its zone and parties decide where it
+may be used exactly as before: every wall check in *Prep* and in the
+`threads` skill applies to it unchanged.
+
+- **Working pages first.** Answer from `wiki/index.md` and the pages under
+  `wiki/` whenever they hold the answer.
+- **Then dormant ones, and say so.** When working pages hold nothing, or
+  not enough, and the setting reaches that far (`"reach"` in
+  `python3 System/tools/fade.py settings`, `dormant` unless changed), read
+  `wiki/index-dormant.md` and the pages it lists, and say it: "From older
+  notes: ...". Set to `working`, reach back only when asked.
+- **The archive only when asked**: "search the archive", or a question
+  about a past year, "what did we say about pricing in 2025". An answer
+  from it says so, with the page's date: "From the archive, March 2025:
+  ...". Find it with `python3 System/tools/fade.py list --wiki Meetings
+  --grade archived`, which gives each page's date and, where a page was
+  superseded, why.
+- **A page carrying `superseded:`** is never quoted as current. Say what
+  replaced it, and quote the replacement instead, when the wall allows it.
+- **Linking an older page from a live note brings it back**: the next fade
+  proposes waking it. Link it when the work needs it, never only to read it.
 
 ## Lint: "lint the meetings", "lint the wikis"
 

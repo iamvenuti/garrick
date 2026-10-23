@@ -489,6 +489,17 @@ class WakeTest(Base):
                            "date": "2025-01-01", "superseded": ""}], json.loads(out))
 
 
+class NamesTest(Base):
+    def test_a_faded_name_stays_taken_and_its_record_stays_filed(self):
+        ingest = load("garrick_ingest", REPO / "template" / "System" / "skills" / "meetings" / "ingest.py")
+        self.propose()
+        self.apply()
+        self.assertIn("250101-acme-old", ingest.taken_stems(self.meetings, "raw", "wiki/sources"))
+        self.assertIn("260401-acme-review", ingest.taken_stems(self.meetings, "raw", "wiki/sources"))
+        again = write(self.meetings / "raw" / "inbox" / "again.txt", "Dana: the old terms.\n")
+        self.assertEqual("archive/250101-acme-old", ingest.already_filed(self.root, again))
+
+
 class KnowledgeTest(Base):
     def test_reading_fades_by_kind_and_its_raw_goes_with_its_summary(self):
         k = self.wikis / "Knowledge"

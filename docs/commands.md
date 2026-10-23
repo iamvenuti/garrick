@@ -43,9 +43,10 @@ System/
   rules.md              how the assistant behaves: Garrick's, replaced by each update
   rules.local.md        your own rules, which win over Garrick's; no update touches it
   context.md            who you are and who you deal with, filled in from your answers
+  retention.md          what keeps a wiki page in working memory, in plain words: Garrick's; yours goes in retention.local.md
   garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, correct.py, nurture.py, probe.py, release.py, and garrick_lib.py, which they share
+  tools/                scaffold.py, check.py, correct.py, nurture.py, fade.py, probe.py, release.py, and garrick_lib.py, which they share
   skills/               threads, intake, meetings, knowledge, todo, nurture, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
@@ -255,6 +256,7 @@ The check reports and changes nothing, so its warnings pile up until nobody read
 | Wall | a project file that names, links or quotes a party across a wall | The file and the wall, never the material; taken out only on your yes |
 | Judgment | a stale resume point, a drifted copy, an orphan page, two pages that disagree | Reported, with the page to open |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one | Listed last, as low urgency; nothing to fix, and never in the morning digest |
+| Fading | wiki pages old enough to leave working memory, or a faded page linked again | How many, per wiki, and what to say; see [Fading](#fading). Nothing moves without a written proposal and your yes |
 
 Behind it is one tool, which adds no checks of its own: it runs `check.py --json`, `wiki_lint.py` for both wikis and `drift.py`, and sorts what they find.
 
@@ -270,6 +272,54 @@ A scope is a path from the workspace's top: a zone, a project, a thread, or `Wik
 A correction is the one kind no check finds: you give it, answering a finding or saying it outright during a pass. `nurture.py correct` hands it to the same tool as [Correcting a value](#correcting-a-value), so it finds and fixes every copy the same way, and records the copies, the commits and your yes in the day's report. With a scope, a copy in a file across a wall from it, or in one whose parties can't be told, is left out and left alone: the run says the sentence the rules give for a wall, once, and nothing else about it, no file, party or count. A copy in a file another session has changes in is held.
 
 With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the mechanical kind can also be applied every night, with nobody watching. Nothing of the other kinds changes until you are there, and a correction never runs at night.
+
+## Fading
+
+Both wikis only grow, and every question starts by reading their index. So old pages fade out of working memory, by age, kind and use, and stay where a search can still find them. Nothing is deleted.
+
+| Grade | Where, inside the wiki | Who reads it |
+|---|---|---|
+| Working | `wiki/...`, its raw record in `raw/...`, listed in `wiki/index.md` | every question, briefing and search |
+| Dormant | `dormant/wiki/...` and `dormant/raw/...`, listed in `wiki/index-dormant.md` with its date, the day it went dormant and why | a search that reaches back, and says "from older notes" |
+| Archived | `archive/wiki/...` and `archive/raw/...`, in no index | only when you ask: "search the archive", "what did we say about pricing in 2025" |
+
+Say "fade the meetings", "fade the library" or "what would fade". The `nurture` skill writes the list of what would go dormant, go to the archive or come back, grouped, each with why, and moves nothing. The first fade on a wiki stops there: read the list, and where it is wrong, change `System/retention.local.md` or the settings. After that, one yes applies exactly what the written list holds and still qualifies. Say "keep X" to keep a page in working memory for good.
+
+```sh
+python3 System/tools/fade.py propose --wiki Meetings                   # writes System/generated/fade/Meetings.md; moves nothing
+python3 System/tools/fade.py apply --wiki Meetings --id <id>           # the id is at the end of the written proposal
+python3 System/tools/fade.py keep --page "Meetings/wiki/sources/260310-acme-kickoff.md"
+python3 System/tools/fade.py counts                                    # what each grade holds, and what would move
+python3 System/tools/fade.py list --wiki Meetings --grade archived     # every archived page, with its date
+```
+
+- **Age** counts from the page's own `date:` (a meeting) or `published:` (reading), or the date its file name starts with, never from when the file last changed, so filing a page again does not make it young.
+- **Kind** sets the pace. Meetings and mail go dormant at 6 months and to the archive at 18; newsletters and articles at 3 and 12; reports, standards and other reading at 24, and never to the archive. Reading that came by mail counts as a newsletter.
+- **Use** pins a page: one linked from a live thread, from a live project's notes or from an open line in a `Todo.md`, or carrying `pinned: true`, never fades. A dormant page linked again from one of those, or linked afresh from a working page, comes back with the next fade. An archived page comes back only on "keep".
+- **`superseded:`**, a link to the page that replaces it or a short reason, keeps a page out of working memory whatever links it, and it never comes back by use. The reason shows beside it in `index-dormant.md` and in `fade.py list`.
+- **Person, entity and concept pages** never move. Each keeps an `## Earlier` section listing what faded, under two lines the assistant writes. A person page lists a meeting only when every party of the meeting is the person's own, since a person page is read on both sides of every wall.
+- **Pages that share one record**, the halves of a split call, move together or not at all.
+
+Every grade change is a move, never an edit: the page and its raw record are renamed, content unchanged, and every link into them, from both wikis and every zone's notes, is pointed at the new path, so nothing breaks. A link written with a path keeps its spelling around `dormant/` or `archive/`; a bare `[[260310-acme-kickoff]]` gains the path and keeps what it showed. The proposal lists each page's derived copies: the pages that go with it, the notes and ticked actions whose links are pointed at its new path, what stays as written, and the person and entity pages that list it. A note another session is changing holds every move it links, with why. One commit per repository, the wiki's first; a refused one puts everything back.
+
+Where a folder that holds a wiki is an Obsidian vault (the workspace, `Wikis/`, or the wiki itself), the fade adds `dormant/` and `archive/` to that vault's excluded files, after any you set, so faded pages leave the graph and the default search as well as the index. A vault opened later gets them with the next fade, or at once with `python3 System/tools/fade.py filters`.
+
+The settings are `"memory"` in `System/garrick-settings.json`, and `fade.py settings` prints them merged over the defaults:
+
+```json
+"memory": {
+  "wikis":  {"Meetings": true, "Knowledge": true},
+  "kinds":  {"meetings": {"wiki": "Meetings", "types": ["meeting", "email"], "domains": [], "dormant": 6, "archived": 18}},
+  "pins":   {"thread": true, "project": true, "todo": true, "pinned": true},
+  "wake":   true,
+  "reach":  "dormant",
+  "nightly": {"on": true, "min": 10}
+}
+```
+
+A kind names a wiki, the page `type`s and domains that belong to it (a page's own `domain:`, the folder its raw file is kept in under `raw/`, or `mail`), and its months; `null` means never, and a kind set to `null` is taken out. `wikis` switches fading off for one; `pins` switches each pin off; `wake` false leaves only "keep" to bring a page back; `reach` set to `working` keeps a search to working pages unless you ask for older ones. The judgment the numbers can't hold, such as "keep anything that sets a price", is in `System/retention.md`, shipped with Garrick, and your own in `System/retention.local.md`, which wins: the skill reads both when it proposes.
+
+Nothing fades overnight. With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-night) extra, the nightly nurture works out the list and, once a wiki's count reaches `nightly.min`, adds one line to the morning digest: "41 meeting pages would go dormant and 9 to the archive. Say "fade the meetings"."
 
 ## Correcting a value
 
@@ -290,4 +340,4 @@ The old value is matched as written, never inside a longer word, and a hit that 
 
 Everything comes in through an inbox. Drop a transcript from any recorder (a `.txt`, `.md` or `.vtt` file, not the audio) into `Wikis/Meetings/raw/inbox/`, and mail (a `.eml` file, or the message saved as `.txt` or `.md`) or any other file into a zone's `Inbox/`. Then say "process the inbox". The `intake` skill sorts each item by the *Ways in* rules in `System/rules.md`: a conversation goes to Meetings, through the `meetings` skill; something to read goes to Knowledge, through the `knowledge` skill; material for a project goes into that project's `Sources/`, with the mail it came in kept in Meetings. It asks for the zone, the parties or the project when they are not obvious, goes by the mail domains in the Parties table, and records any you teach it. Ways to fetch mail into an inbox without doing it by hand are in [ways in](extras/ways-in.md).
 
-You can also hand over a link, a PDF or pasted text and say "read this": the `knowledge` skill freezes the original into `raw/` and writes the pages. "Prep me for Acme" and "what does my library say about X" read them back.
+You can also hand over a link, a PDF or pasted text and say "read this": the `knowledge` skill freezes the original into `raw/` and writes the pages. "Prep me for Acme" and "what does my library say about X" read them back. Old pages [fade](#fading) out of working memory, and a question reaches back for them, saying so.

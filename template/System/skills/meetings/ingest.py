@@ -70,6 +70,17 @@ def _stems(*folders: Path) -> set:
     return out
 
 
+# A fade moves pages and their raw records into dormant/ and archive/ inside
+# their wiki (System/tools/fade.py). A name stays taken there: a new page
+# with a faded page's name would make every link to either mean both.
+FADED = ("dormant", "archive")
+
+
+def taken_stems(wiki: Path, *subs: str) -> set:
+    """Every name used in these folders of a wiki, at every grade."""
+    return _stems(*[wiki.joinpath(*([g] if g else []), *sub.split("/")) for g in ("",) + FADED for sub in subs])
+
+
 def build_slug(date_iso: str, title: str, taken: Iterable[str]) -> str:
     """`YYMMDD-slug`, the first form not already in `taken`."""
     taken = set(taken)
@@ -137,7 +148,8 @@ def source_id(path: Path) -> str:
 def already_filed(root: Path, path: Path) -> str:
     """The name of a raw record in Meetings that is this recording or mail
     already: the same bytes, or the same source ID. Empty when there is none.
-    raw/inbox/ is not filed yet, so it is never looked in."""
+    raw/inbox/ is not filed yet, so it is never looked in. A record that
+    faded with its page is still filed, under dormant/ or archive/."""
     raw = meetings_root(root) / "raw"
     if not raw.is_dir():
         return ""
@@ -146,9 +158,19 @@ def already_filed(root: Path, path: Path) -> str:
     except OSError:
         return ""
     digest, size, sid = hashlib.sha256(data).hexdigest(), len(data), source_id(path)
+    for grade in ("",) + FADED:
+        found = _filed_in(meetings_root(root) / grade / "raw" if grade else raw, raw, path, digest, size, sid)
+        if found:
+            return (grade + "/" if grade else "") + found
+    return ""
+
+
+def _filed_in(raw: Path, inbox_raw: Path, path: Path, digest: str, size: int, sid: str) -> str:
+    if not raw.is_dir():
+        return ""
     for folder, dirs, files in os.walk(raw):
         here = Path(folder)
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != raw / "inbox")
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and here / d != inbox_raw / "inbox")
         for f in sorted(files):
             other = here / f
             if f.startswith(".") or other.resolve() == path.resolve():
@@ -202,7 +224,7 @@ def land(root: Path, inbox: "str | Path", date_iso: str, title: str) -> Tuple[st
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
     refuse_if_filed(root, inbox_path)
-    taken = _stems(raw_dir, sources_dir)
+    taken = taken_stems(meetings, "raw", "wiki/sources")
     slug = build_slug(date_iso, title, taken)
     dest = raw_dir / ("%s%s" % (slug, inbox_path.suffix.lower()))
     with filing(root):

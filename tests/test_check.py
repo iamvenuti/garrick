@@ -15,6 +15,7 @@ from fixtures import (
     HAVE_GIT,
     build_workspace,
     commit_all,
+    git,
     git_init,
     meeting_page,
     project_hub,
@@ -823,6 +824,69 @@ class TestRaw(CheckCase):
         self.record.unlink()
         commit_all(self.meetings, "remove")
         self.assertFinds("raw", "error", "deleted")
+
+    def test_a_rename_alone_is_not_a_change(self):
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        self.assertClean("raw")                                 # staged, not yet committed
+        commit_all(self.meetings, "name corrected")
+        self.assertClean("raw")
+
+    def test_a_rename_with_an_edit_is_reported_under_the_new_name(self):
+        self.record.write_text("".join("Dana: line %d of the call.\n" % n for n in range(1, 11)))
+        commit_all(self.meetings, "full transcript")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        renamed = self.meetings / "raw" / "260310-acme-kick-off.txt"
+        renamed.write_text(renamed.read_text().replace("line 5", "line five"))
+        commit_all(self.meetings, "name corrected, and a line")
+        hits = self.assertFinds("raw", "error", "edited")
+        self.assertEqual(["Wikis/Meetings/raw/260310-acme-kick-off.txt"], [f.path for f in hits])
+
+    def test_an_earlier_edit_follows_the_record_when_it_moves(self):
+        self.record.write_text("Dana: we start Tuesday.\n")
+        commit_all(self.meetings, "tidy")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "raw/260310-acme-kick-off.txt")
+        commit_all(self.meetings, "name corrected")
+        hits = self.assertFinds("raw", "error", "edited")
+        self.assertEqual(["Wikis/Meetings/raw/260310-acme-kick-off.txt"], [f.path for f in hits])
+
+    def test_filed_out_of_the_inbox_is_not_a_change(self):
+        write(self.meetings / "raw" / "inbox" / "call.txt", "".join("line %d\n" % n for n in range(10)))
+        commit_all(self.meetings, "dropped in")
+        git(self.meetings, "mv", "raw/inbox/call.txt", "raw/260320-acme-call.txt")
+        filed = self.meetings / "raw" / "260320-acme-call.txt"
+        filed.write_text(filed.read_text().replace("line 5", "line five"))
+        commit_all(self.meetings, "filed")
+        self.assertClean("raw")
+
+    def test_a_record_fades_and_wakes_with_its_page(self):
+        for grade in ("dormant", "archive"):
+            (self.meetings / grade / "raw").mkdir(parents=True, exist_ok=True)
+            moved = "%s/raw/260310-acme-kickoff.txt" % grade
+            git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", moved)
+            self.assertClean("raw")                             # staged across the folders
+            commit_all(self.meetings, "faded to " + grade)
+            self.assertClean("raw")
+            git(self.meetings, "mv", moved, "raw/260310-acme-kickoff.txt")
+            commit_all(self.meetings, "woken")
+            self.assertClean("raw")
+
+    def test_a_faded_record_stays_protected(self):
+        (self.meetings / "dormant" / "raw").mkdir(parents=True)
+        (self.meetings / "archive" / "raw").mkdir(parents=True)
+        nested = write(self.meetings / "raw" / "2026" / "03" / "260311-acme-follow-up.txt", "Dana: Tuesday.\n")
+        commit_all(self.meetings, "file")
+        git(self.meetings, "mv", "raw/260310-acme-kickoff.txt", "dormant/raw/260310-acme-kickoff.txt")
+        (self.meetings / "archive" / "raw" / "2026" / "03").mkdir(parents=True)
+        git(self.meetings, "mv", "raw/2026/03/260311-acme-follow-up.txt", "archive/raw/2026/03/260311-acme-follow-up.txt")
+        commit_all(self.meetings, "faded")
+        self.assertFalse(nested.exists())
+        (self.meetings / "dormant" / "raw" / "260310-acme-kickoff.txt").write_text("Dana: we start Tuesday.\n")
+        (self.meetings / "archive" / "raw" / "2026" / "03" / "260311-acme-follow-up.txt").unlink()
+        self.assertFinds("raw", "error", "edited", "Wikis/Meetings/dormant/raw/260310-acme-kickoff.txt")
+        self.assertFinds("raw", "error", "deleted", "Wikis/Meetings/archive/raw/2026/03/260311-acme-follow-up.txt")
+        commit_all(self.meetings, "tidied")
+        self.assertFinds("raw", "error", "edited", "Wikis/Meetings/dormant/raw/260310-acme-kickoff.txt")
+        self.assertFinds("raw", "error", "deleted", "Wikis/Meetings/archive/raw/2026/03/260311-acme-follow-up.txt")
 
     def test_not_a_repo_is_skipped(self):
         shutil.rmtree(self.meetings / ".git")

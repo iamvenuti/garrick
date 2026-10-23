@@ -3999,9 +3999,43 @@ def _git(args: List[str], cwd: Path) -> Optional[str]:
     return res.stdout if res.returncode == 0 else None
 
 
+# Where a wiki keeps its raw records: beside its working pages, and beside the
+# pages that faded, dormant or archived. A record moves between them with its
+# page, as a git rename, and stays protected wherever it lands.
+RAW_HOMES = ("raw", "dormant/raw", "archive/raw")
+
+
+def name_status(data: str) -> Iterable[Tuple[Optional[str], str, str, Optional[str]]]:
+    """(commit, status, path, renamed from) for each entry of git's
+    `--name-status -z` output, from `log` (each commit opened by a line
+    `\\x01<hash>`, as `--format=%x01%H` writes it) or from `diff` (no commit)."""
+    tokens = data.split("\0")
+    commit = None
+    i = 0
+    while i < len(tokens):
+        token = tokens[i].lstrip("\n")
+        i += 1
+        if not token:
+            continue
+        if token.startswith("\x01"):
+            commit = token[1:]
+            continue
+        if token[:1] in "RC" and i + 1 < len(tokens):
+            yield commit, token, tokens[i + 1], tokens[i]
+            i += 2
+        elif i < len(tokens):
+            yield commit, token, tokens[i], None
+            i += 1
+
+
 def check_raw(ws: Workspace) -> List[Finding]:
     """A raw record is never changed after its first commit, unless the check
-    settings accept that change (`raw-accepted`): then only a later one counts."""
+    settings accept that change (`raw-accepted`): then only a later one counts.
+
+    A rename that keeps the content byte for byte is not a change: a name heard
+    wrong gets corrected, and a record moves with its page when the page fades
+    or wakes. A rename that also changes the content is an edit, reported under
+    the record's new name, and so is an earlier change to a record since moved."""
     out = []
     accepted = {k: v.strip() for k, v in ws.settings.get("raw-accepted", {}).items()
                 if isinstance(v, str) and COMMIT_RE.fullmatch(v.strip())}     # a commit, never an option for git
@@ -4009,47 +4043,76 @@ def check_raw(ws: Workspace) -> List[Finding]:
     if not wikis.is_dir():
         return out
     root = ws.root.resolve()
+    tops: Dict[Path, Optional[Path]] = {}
     for wiki in visible_dirs(wikis):
-        raw = wiki / "raw"
-        if not raw.is_dir():
+        if not any((wiki / home).is_dir() for home in RAW_HOMES):
             continue
-        top = _git(["rev-parse", "--show-toplevel"], raw)
-        if top is None:
-            continue  # not a git repository, or git is not installed: nothing to compare against
-        top_path = Path(top.strip()).resolve()
-        if top_path != root and root not in top_path.parents:
-            continue  # the repository belongs to something outside the workspace
-        rawrel = raw.resolve().relative_to(top_path).as_posix()
-        changed: Dict[str, str] = {}
-        log = _git(["log", "--no-renames", "--diff-filter=MD", "--name-status", "--format=", "--", rawrel], top_path) or ""
-        for line in log.splitlines():
-            status, _, name = line.partition("\t")
-            if name:
-                changed.setdefault(name, "deleted" if status.startswith("D") else "edited")
-        # A change the user accepted (raw-accepted in the check settings)
-        # counts no more; one in a later commit does.
-        for name in list(changed):
-            commit = accepted.get(rel(ws, top_path / name))
-            if commit:
-                later = _git(["log", "--no-renames", "--diff-filter=MD", "--format=%H", commit + "..HEAD", "--", name], top_path)
-                if later is None:
-                    out.append(Finding(WARNING, "raw", rel(ws, top_path / name),
-                                       "the check settings accept a change to it in commit %s, which git does not know" % commit,
-                                       "An accepted change names a commit git does not know"))
-                elif not later.strip():
-                    del changed[name]
-        status = _git(["status", "--porcelain", "--no-renames", "--untracked-files=no", "--", rawrel], top_path) or ""
-        for line in status.splitlines():
-            if len(line) > 3 and ("M" in line[:2] or "D" in line[:2]):
-                name = line[3:].strip().strip('"')
-                changed.setdefault(name, "deleted" if "D" in line[:2] else "edited")
-        inbox = rawrel + "/inbox/"
-        for name, how in sorted(changed.items()):
-            if name.startswith(inbox):
+        # One pathspec for each home, so that a move from one to another is
+        # seen whole: a rename out of the pathspecs shows as a deletion.
+        specs: Dict[Path, List[str]] = {}
+        inbox = None
+        for home in RAW_HOMES:
+            folder = wiki / home
+            where = (folder if folder.is_dir() else wiki).resolve()
+            if where not in tops:
+                top = _git(["rev-parse", "--show-toplevel"], where)
+                tops[where] = Path(top.strip()).resolve() if top else None
+            top_path = tops[where]
+            if top_path is None:
+                continue  # not a git repository, or git is not installed: nothing to compare against
+            if top_path != root and root not in top_path.parents:
+                continue  # the repository belongs to something outside the workspace
+            try:
+                spec = (folder.resolve() if folder.is_dir() else where / home).relative_to(top_path).as_posix()
+            except ValueError:
                 continue
-            out.append(Finding(ERROR, "raw", rel(ws, top_path / name),
-                               "raw record %s after its first commit; restore it from git and correct the summary instead" % how,
-                               "A raw record in %s was %s" % (wiki.name, how)))
+            specs.setdefault(top_path, []).append(spec)
+            if home == "raw":
+                inbox = (top_path, spec + "/inbox/")
+        for top_path, paths in specs.items():
+            after: Dict[str, Optional[set]] = {}
+
+            def counts(name: str, commit: Optional[str]) -> bool:
+                """Whether a change to `name` in `commit` counts: it does
+                unless the check settings accept a change to that record in
+                that commit or one before it."""
+                ok = accepted.get(rel(ws, top_path / name))
+                if commit is None or not ok:
+                    return True
+                if ok not in after:
+                    later = _git(["rev-list", ok + "..HEAD"], top_path)
+                    after[ok] = set(later.split()) if later is not None else None
+                    if later is None:
+                        out.append(Finding(WARNING, "raw", rel(ws, top_path / name),
+                                           "the check settings accept a change to it in commit %s, which git does not know" % ok,
+                                           "An accepted change names a commit git does not know"))
+                return after[ok] is None or commit in after[ok]
+
+            changed: Dict[str, str] = {}
+            log = _git(["log", "-z", "-M", "--reverse", "--diff-filter=DMR", "--name-status", "--format=%x01%H",
+                        "--", *paths], top_path) or ""
+            # What is uncommitted, staged or not, against the last commit.
+            diff = _git(["diff", "HEAD", "-z", "-M", "--diff-filter=DMR", "--name-status", "--", *paths], top_path) or ""
+            waiting = inbox[1] if inbox and inbox[0] == top_path else None
+            # Oldest first, so that a change follows its record through every
+            # later move, and the newest change to a name is the one reported.
+            for commit, status, name, before in [*name_status(log), *name_status(diff)]:
+                if before is not None and waiting and before.startswith(waiting):
+                    continue                                # filed out of the inbox: its first commit as a record
+                if before is not None:
+                    earlier = changed.pop(before, None)     # the record keeps its history under its new name
+                    if status != "R100" and counts(name, commit):
+                        changed[name] = "edited"
+                    elif earlier:
+                        changed[name] = earlier
+                elif counts(name, commit):
+                    changed[name] = "deleted" if status.startswith("D") else "edited"
+            for name, how in sorted(changed.items()):
+                if waiting and name.startswith(waiting):
+                    continue
+                out.append(Finding(ERROR, "raw", rel(ws, top_path / name),
+                                   "raw record %s after its first commit; restore it from git and correct the summary instead" % how,
+                                   "A raw record in %s was %s" % (wiki.name, how)))
     return out
 
 

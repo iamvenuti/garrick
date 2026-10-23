@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- `check.py` no longer reports a raw record that was only renamed as deleted ([#198](https://github.com/iamvenuti/garrick/issues/198)). The raw-records check read git's history with rename detection off, so correcting a misheard name in a record's file name showed as a deletion, and the only way to clear it was a `raw-accepted` entry. A rename that keeps the content byte for byte is now no change, committed or staged; a rename that also changes the content is reported as edited, under the new name, and an earlier change follows the record to its new name. A record deleted outright is still an error, and a record filed out of `raw/inbox/` is still its first commit.
+
 ## [0.39.0] - 2026-10-22
 
 ### Added

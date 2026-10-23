@@ -106,7 +106,7 @@ Early, for macOS, and built from one person's working week. See the [changelog](
 - [Command reference](docs/commands.md), [principles and limits](docs/principles.md), and [assistant compatibility](docs/harnesses.md).
 - [Concepts](docs/concepts.md), the words Garrick uses; [architecture](docs/architecture.md), how the parts fit together; [how Garrick keeps context](docs/context.md); and [what is enforced, and what is asked](docs/enforced.md).
 - [Updating to a newer Garrick](docs/updating.md), keeping what you changed.
-- [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html) (open it in a browser from your downloaded copy, which holds its images).
+- [The demo workspace](examples/demo/README.md) and [the introduction](presentation/index.html), a slide deck you open in a browser from your downloaded copy.
 
 ## Contributing
 

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- A fade wrote each meeting's title onto the person pages that list it under `## Earlier`, and `check.py` then warned on every one of them for repeating a meeting ([#203](https://github.com/iamvenuti/garrick/issues/203)). In a meeting wiki the title sums up what was discussed, and a person page is read on both sides of every wall. A person page now lists a faded meeting as `meeting of <date>`, linked to where it went; entity and concept pages keep the title. Waking a page still takes its line off, since that goes by the link. A page faded by 0.40.0 keeps the line it was given: write the date in place of the title by hand, or leave it for the check to name.
+
 ## [0.40.0] - 2026-10-23
 
 ### Added

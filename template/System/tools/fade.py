@@ -1227,10 +1227,19 @@ def add_earlier(text: str, entries: List[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def earlier_line(m: Move) -> str:
+def is_person(page: Optional[Page]) -> bool:
+    return bool(page) and (page.type == "person" or page.sub.split("/")[1:2] == ["people"])
+
+
+def earlier_line(m: Move, person: bool = False) -> str:
+    """The Earlier line for a page that faded. A person page is read on both
+    sides of every wall, so it gets the date alone: a meeting's title says
+    what was discussed."""
     target = m.new.split("/", 2)[2][:-3]
-    return "- [[%s|%s]], %s" % (target, m.page.title.replace("|", "-"),
-                                m.page.date.isoformat() if m.page.date else "undated")
+    when = m.page.date.isoformat() if m.page.date else ""
+    if person:
+        return "- [[%s|%s]]" % (target, "meeting of %s" % when if when else "an undated meeting")
+    return "- [[%s|%s]], %s" % (target, m.page.title.replace("|", "-"), when or "undated")
 
 
 def vaults(root: Path, wiki: str) -> List[Tuple[Path, str]]:
@@ -1444,7 +1453,7 @@ def changes_for(root: Path, wiki: str, moves: List[Move], every: Dict[str, Page]
     owners: Dict[str, Set[str]] = {}
     for m in moves:
         for h in earlier_hosts(root, m, every, links, refs):
-            hosts.setdefault(h, []).append(earlier_line(m))
+            hosts.setdefault(h, []).append(earlier_line(m, is_person(every.get(h))))
             owners.setdefault(h, set()).add(m.page.path)
         for path in (m.page.path, m.page.raw if m.raw_to else ""):
             for r in refs.get(path, []) if path else []:

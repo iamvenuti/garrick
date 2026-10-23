@@ -71,6 +71,12 @@ class TestSettings(CheckCase):
         self.assertClean("settings")
 
 
+    def test_the_context_debt_settings_are_settings(self):
+        settings(self.root, {"nurture-weights": {"wall": 20, "judgment": 2}, "nurture-threshold": 25})
+        self.assertClean("settings")
+        settings(self.root, {"nurture-threshold": "high"})
+        self.assertFinds("settings", "error", "`nurture-threshold` should be a number")
+
 class TestInstructionFilesPresent(CheckCase):
     def test_root_agents_missing(self):
         (self.root / "AGENTS.md").unlink()

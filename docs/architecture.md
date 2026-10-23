@@ -2,7 +2,7 @@
 
 Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. This page names its parts and follows four flows through them, and the [overview diagram](architecture/overview.png) ([interactive version](architecture/overview.html)) draws the same parts.
 
-The words in it are defined in [Concepts](concepts.md).
+The words in it are defined in [Concepts](concepts.md). [How Garrick keeps context](context.md) follows what the workspace holds through four stages, from the inbox to the archive.
 
 ## The parts
 
@@ -56,7 +56,7 @@ The cmux extra adds a ninth, `desk`, below.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.
 - `notifications.py` is the one way Garrick tells you something: every notice goes through it, to this Mac, cmux, Telegram or a command of your own, as the status page's Settings › Notifications says. It installs the hooks that let a Claude Code or Codex session say it needs you or has finished. With `release.py`, it is one of the two tools that reach the network, and only to the Telegram chat you switch on.
 - `correct.py` stops a wrong value everywhere: it lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on a yes fixes them all, one commit per repository, marking a page whose raw record holds the old value as superseded. See [Correcting a value](commands.md#correcting-a-value).
-- `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki; `nurture.py` sorts what those find by what a fix needs, and applies the mechanical ones on a yes.
+- `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki; `nurture.py` sorts what those find by what a fix needs, and applies the mechanical ones on a yes; `fade.py` proposes which wiki pages leave working memory, by age, kind and use, and moves them, links and all, on a yes. See [Fading](commands.md#fading).
 
 ### The guards
 

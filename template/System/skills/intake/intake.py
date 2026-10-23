@@ -64,7 +64,9 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
     write_new,
 )
-from ingest import RAW_EXTS, Refusal, _stems, build_slug, filing, meetings_root, refuse_if_filed, source_id  # noqa: E402
+from ingest import (  # noqa: E402
+    RAW_EXTS, Refusal, build_slug, filing, meetings_root, refuse_if_filed, source_id, taken_stems,
+)
 
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
@@ -505,7 +507,7 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
     refuse_if_filed(root, path)
-    slug = build_slug(date, title, _stems(raw_dir, sources))
+    slug = build_slug(date, title, taken_stems(meetings_root(root), "raw", "wiki/sources"))
     dest = raw_dir / (slug + path.suffix.lower())
     page = sources / (slug + ".md")
     meetings = meetings_root(root)
@@ -573,7 +575,7 @@ def file_reading(root: Path, path: Path, title: str = "", slug: str = "",
     raw_dir, sources = kroot / "raw", kroot / "wiki" / "sources"
     if not raw_dir.is_dir():
         raise Refusal("%s does not exist; is %s an installed workspace?" % (raw_dir, root))
-    if slug in _stems(raw_dir, sources):
+    if slug in taken_stems(kroot, "raw", "wiki/sources"):
         raise Refusal("%s is already used in Knowledge. If this is a different item, pass --slug with a "
                       "distinguishing word, not a number." % slug)
     schema, _ = knowledge_schema(root)

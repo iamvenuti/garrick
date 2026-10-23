@@ -45,7 +45,7 @@ PREFIX = "guide-"
 # Extras when it is in docs/extras/, and at the end of Look up otherwise; the
 # extras pages follow docs/extras/index.md, in the order it links them.
 SECTIONS = (("Start here", ("try-it-safely", "first-steps", "terminal-setup", "first-session", "guided-session")),
-            ("Understand", ("principles", "concepts", "architecture", "enforced", "harnesses")),
+            ("Understand", ("principles", "concepts", "architecture", "context", "enforced", "harnesses")),
             ("Do", ("updating",)),
             ("Extras", ("extras/index",)),
             ("Look up", ("commands",)))

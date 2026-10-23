@@ -2,7 +2,7 @@
 
 Garrick is a shell around Claude Code or Codex: you work through it, and the agent does the work underneath, in its desktop app or a terminal. This page names its parts and follows four flows through them, and the [overview diagram](architecture/overview.png) ([interactive version](architecture/overview.html)) draws the same parts.
 
-The words in it are defined in [Concepts](concepts.md).
+The words in it are defined in [Concepts](concepts.md). [How Garrick keeps context](context.md) follows what the workspace holds through four stages, from the inbox to the archive.
 
 ## The parts
 

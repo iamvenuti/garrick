@@ -21,6 +21,11 @@ With --digest, one line goes through System/tools/notifications.py as the
 *Todo summary* event, the morning digest's, saying what was fixed first and
 then what waits, in counts: never a file's content. Nothing to fix and
 nothing waiting sends nothing; a copy only behind the share is not waiting.
+A wall waits whatever else does, so one wall is enough for a notice. When the
+context debt is over its threshold, or has kept rising for a week, a second
+line says so, with the scope carrying most and the request that nurtures it:
+"Context debt 42, up from 18 last week, mostly attribution in the Meetings
+wiki. Say "nurture the meetings"."
 
 No assistant is called. Run it through job.py, so it has a log, a lock and a
 watchdog:
@@ -91,10 +96,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("held: %s: %s" % (item["path"], item["held"]))
     for f in out.get("failed", []):
         print("did not run: %s" % f, file=sys.stderr)
+    owed = out.get("debt_line") or ""                              # a nurture.py older than the debt has none
     print(said)
+    if owed:
+        print(owed)
     waits = out.get("waiting", len(out.get("items") or []))      # a nurture.py older than `waiting` counts every item
-    if args.digest and (out.get("fixed") or waits or out.get("refused")):
-        send_digest(said)
+    if args.digest and (out.get("fixed") or waits or out.get("refused") or owed):
+        send_digest("\n".join(x for x in (said, owed) if x))
     return out["code"]
 
 

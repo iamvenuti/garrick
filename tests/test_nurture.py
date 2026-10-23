@@ -558,6 +558,155 @@ class CorrectionTest(Base):
         self.assertEqual("5 places have the old value. Correct them all?", out.getvalue().strip())
 
 
+class DebtTest(Base):
+    """Context debt (#69): what is left after a run, weighed by kind, kept in
+    the day's record by kind and by scope."""
+
+    def weighed(self, items, weights=None):
+        weights = weights or nurture.WEIGHTS
+        return sum(weights.get(i["kind"], nurture.UNKNOWN_WEIGHT) for i in items)
+
+    def test_the_debt_is_the_weight_of_what_is_left(self):
+        _, out = self.run_tool("list")
+        debt = out["debt"]
+        self.assertEqual(self.weighed(out["items"]), debt["total"])
+        self.assertTrue(debt["whole"])
+        self.assertEqual(40, debt["threshold"])
+        self.assertEqual(10, debt["kinds"]["wall"])                          # one wall, ten
+        self.assertEqual(5, debt["kinds"]["attribution"])                    # one meeting page with no zone
+        self.assertEqual({"Zones/Work", "Wikis/Meetings", "System"}, set(debt["scopes"]))
+        self.assertEqual(10, debt["scopes"]["Zones/Work"]["wall"])
+        self.assertEqual(debt["total"], sum(sum(k.values()) for k in debt["scopes"].values()))
+        rec = json.loads((self.root / "System" / "generated" / "nurture" / "2026-10-17.json").read_text())
+        self.assertEqual(debt, rec["debt"])
+        self.assertEqual(len(out["items"]), len(rec["standing"]))
+        for word in ("Theo", "tender"):                                      # a wall is weighed, never quoted
+            self.assertNotIn(word, json.dumps(rec["standing"]))
+        report = (self.root / out["report"]).read_text()
+        self.assertIn("Context debt: %d (wall 10, attribution 5" % debt["total"], report)
+
+    def test_a_mechanical_finding_counts_only_while_it_is_not_fixed(self):
+        _, before = self.run_tool("list")
+        _, out = self.run_tool("fix", "--yes")
+        self.assertTrue(out["fixed"])
+        left = before["debt"]["kinds"]["mechanical"] - len(out["fixed"])
+        self.assertEqual(left, out["debt"]["kinds"].get("mechanical", 0))
+        self.assertEqual(before["debt"]["total"] - len(out["fixed"]), out["debt"]["total"])
+        self.assertEqual("", out["debt_line"])                              # 17, under the threshold, no history
+
+    def test_the_weights_and_the_threshold_are_settings(self):
+        write(self.root / "System" / "garrick-checks.json",
+              json.dumps({"nurture-weights": {"judgment": 0, "wall": 20, "mechanical": "lots"}, "nurture-threshold": 25}))
+        _, out = self.run_tool("list")
+        weights = dict(nurture.WEIGHTS, judgment=0, wall=20)
+        self.assertEqual(self.weighed(out["items"], weights), out["debt"]["total"])
+        self.assertNotIn("judgment", out["debt"]["kinds"])                  # weighs nothing, so not listed
+        self.assertEqual(4, out["debt"]["kinds"]["mechanical"])             # not a number: left as shipped
+        self.assertEqual(25, out["debt"]["threshold"])
+
+    def test_a_scoped_run_replaces_only_its_scope(self):
+        _, whole = self.run_tool("list")
+        _, out = self.run_tool("fix", "--yes", "--scope", "Wikis/Meetings")
+        self.assertTrue(out["debt"]["whole"])
+        self.assertEqual(whole["debt"]["scopes"]["Zones/Work"], out["debt"]["scopes"]["Zones/Work"])
+        self.assertNotIn("mechanical", out["debt"]["scopes"]["Wikis/Meetings"])
+        self.assertEqual(whole["debt"]["total"] - 1, out["debt"]["total"])
+
+    def test_a_scoped_first_run_carries_what_stood_before_it(self):
+        _, whole = self.run_tool("list")
+        folder = self.root / "System" / "generated" / "nurture"
+        os.rename(str(folder / "2026-10-17.json"), str(folder / "2026-10-15.json"))
+        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
+        self.assertEqual(whole["debt"], out["debt"])                         # nothing changed in between
+        self.assertTrue(out["debt"]["whole"])
+        shutil.rmtree(str(folder))
+        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
+        self.assertFalse(out["debt"]["whole"])                               # only a part seen: never read as the whole
+        self.assertEqual({"Wikis/Meetings"}, set(out["debt"]["scopes"]))
+
+    def test_an_answer_takes_its_question_off_the_debt(self):
+        _, out = self.run_tool("list")
+        page = self.by_path(out["items"], "260320-follow-up.md")[0]["path"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            nurture.main(["answered", "--path", page, "--asked", "Which zone?", "--answer", "Work",
+                          "--root", str(self.root), "--today", "2026-10-17"])
+        rec = json.loads((self.root / "System" / "generated" / "nurture" / "2026-10-17.json").read_text())
+        self.assertEqual(out["debt"]["total"] - 5, rec["debt"]["total"])
+        self.assertNotIn("attribution", rec["debt"]["kinds"])
+
+
+class DebtLineTest(unittest.TestCase):
+    """The morning's debt line, from the records alone (#69)."""
+
+    TODAY = nurture.datetime.date(2026, 10, 22)
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.folder = self.root / "System" / "generated" / "nurture"
+        self.folder.mkdir(parents=True)
+
+    def debt(self, total, scopes=None, whole=True, threshold=40):
+        scopes = scopes or {"Wikis/Meetings": {"attribution": total}}
+        kinds = {}
+        for ks in scopes.values():
+            for k, v in ks.items():
+                kinds[k] = kinds.get(k, 0) + v
+        return {"total": total, "kinds": kinds, "scopes": scopes, "whole": whole, "threshold": threshold}
+
+    def days(self, totals, **kw):
+        """A record a day, the last of `totals` today's; None leaves a day out."""
+        for back, total in enumerate(reversed(totals)):
+            if total is None:
+                continue
+            day = self.TODAY - nurture.datetime.timedelta(days=back)
+            write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": self.debt(total, **kw)}))
+        return self.debt(totals[-1], **kw)
+
+    def line(self, debt):
+        return nurture.debt_line(self.root, self.TODAY, debt)
+
+    def test_over_the_threshold(self):
+        debt = self.days([18, 20, 25, 22, 30, 35, 40, 42],
+                         scopes={"Wikis/Meetings": {"attribution": 25, "judgment": 3}, "Zones/Work": {"wall": 10, "judgment": 4}})
+        self.assertEqual('Context debt 42, up from 18 last week, mostly attribution in the Meetings wiki. '
+                         'Say "nurture the meetings".', self.line(debt))
+
+    def test_rising_for_a_week_under_the_threshold(self):
+        debt = self.days([10, 12, 12, 13, 15, 16, 20], scopes={"Zones/Work": {"judgment": 20}})
+        self.assertEqual('Context debt 20, up from 10 last week, mostly judgment in Work. Say "nurture Work".', self.line(debt))
+
+    def test_not_rising_without_seven_days_or_with_a_fall(self):
+        self.assertEqual("", self.line(self.days([10, 12, None, 13, 15, 16, 20])))
+        shutil.rmtree(str(self.folder))
+        self.folder.mkdir(parents=True)
+        self.assertEqual("", self.line(self.days([10, 12, 11, 13, 15, 16, 20])))
+        shutil.rmtree(str(self.folder))
+        self.folder.mkdir(parents=True)
+        self.assertEqual("", self.line(self.days([12, 12, 12, 12, 12, 12, 12])))       # level is not rising
+
+    def test_quiet_under_the_threshold_and_for_a_part(self):
+        self.assertEqual("", self.line(self.days([30])))
+        self.assertEqual("", self.line(self.debt(90, whole=False)))
+        self.assertEqual("", self.line(None))
+        self.assertTrue(self.line(self.debt(41)).startswith("Context debt 41, mostly"))   # no week behind it
+
+    def test_the_scope_names_the_request(self):
+        for scope, said in (("Wikis/Knowledge", 'in the Knowledge wiki. Say "nurture the library".'),
+                            ("System", 'in System. Say "nurture the context".'),
+                            ("Zones/Personal", 'in Personal. Say "nurture Personal".')):
+            self.assertTrue(self.line(self.debt(50, scopes={scope: {"wall": 50}})).endswith("mostly walls " + said))
+
+    def test_the_history_reads_only_whole_records(self):
+        self.days([5, 6, 7])
+        write(self.folder / "2026-10-19.json", json.dumps({"debt": self.debt(99, whole=False)}))
+        write(self.folder / "2026-10-18.json", "not json")
+        got = nurture.debt_history(self.root, self.TODAY, 30)
+        self.assertEqual([5, 6, 7], [d["total"] for _, d in got])
+        self.assertEqual(self.TODAY, got[-1][0])
+
+
 class NightlyTest(Base):
     def setUp(self):
         super().setUp()
@@ -631,6 +780,23 @@ class NightlyTest(Base):
             _, out = self.run_tool("nightly")
         self.assertEqual((0, ["behind"]), (out["waiting"], [i["kind"] for i in out["items"]]))
         self.assertEqual("Nothing needed fixing overnight.", out["digest"])
+
+    def test_the_debt_line_joins_the_digest_and_a_wall_is_said_whatever_the_total(self):
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"nurture-threshold": 1000}))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.job.main(["--workspace", str(self.root), "--digest"])
+        notice = self.notices.read_text()
+        self.assertIn("Waiting for you: one wall", notice)                    # far under the threshold, still said
+        self.assertNotIn("Context debt", notice)
+        self.notices.unlink()
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"nurture-threshold": 5}))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.job.main(["--workspace", str(self.root), "--digest"])
+        notice = self.notices.read_text()
+        self.assertIn("Waiting for you: one wall", notice)
+        self.assertRegex(notice, r'\nContext debt \d+, mostly walls in Work\. Say "nurture Work"\.')
+        for word in ("Theo", "tender"):
+            self.assertNotIn(word, notice)
 
     def test_a_workspace_without_the_tool_is_refused(self):
         os.remove(str(self.root / "System" / "tools" / "nurture.py"))

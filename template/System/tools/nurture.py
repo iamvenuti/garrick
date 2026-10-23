@@ -73,6 +73,15 @@ the day's record beside it, `<YYYY-MM-DD>.json`. `answered` adds a line the
 skill asked and the user answered; `correct --yes` adds the copies it fixed,
 each commit, and the yes. Neither file is committed.
 
+**Context debt**: each finding left after a run weighs by its kind (WEIGHTS,
+changed by `nurture-weights` in System/garrick-checks.json), and the sum is
+the workspace's debt. The day's record keeps it, by kind and by scope (a zone,
+a wiki or System), so its trend is read back without running anything: the
+status page draws it. When it is over `nurture-threshold` (THRESHOLD), or has
+kept rising for a week, a fix run's JSON carries `debt_line`, which the
+nightly job adds to the morning digest. A wall is in the digest whatever the
+total.
+
 **Kinds are a registry.** A kind is a `Kind`, put in KINDS by `register()`:
 its name, its heading, the rank it claims findings at (lower first, the
 judgment kind last as the catch-all), `claim(ctx, item)` that says whether a
@@ -1115,6 +1124,7 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     mine = 'Correct "%s" to "%s"' % (old, new)
     now = [stored(i) for i in leftover]
     rec["left"][key] = [i for i in rec["left"].get(key, []) if not i.get("line", "").startswith(mine) and i not in now] + now
+    settle(ctx, rec, lambda s: s.get("line", "").startswith(mine) or s in now, now)
     out["report"] = write_report(ctx, rec)
     return out
 
@@ -1369,6 +1379,12 @@ def render(rec: dict) -> str:
     if runs:
         out += ["Runs: %s." % "; ".join("%s, %s%s" % (r["at"], r["scope"], ", nobody watching" if r.get("headless") else "")
                                          for r in runs), ""]
+    debt = rec.get("debt")
+    if isinstance(debt, dict) and "total" in debt:
+        parts = ", ".join("%s %s" % (k, v) for k, v in sorted((debt.get("kinds") or {}).items(),
+                                                                                key=lambda kv: -kv[1]))
+        out += ["Context debt: %s%s%s." % (debt["total"], " (%s)" % parts if parts else "",
+                                           "" if debt.get("whole") else ", in what the runs so far have seen"), ""]
     out += ["## Fixed", ""]
     out += ["- %s (%s, %s)" % (f["line"], f["repo"], f["commit"]) for f in rec.get("fixed", [])] or ["Nothing."]
     out += ["", "## Asked and answered", ""]
@@ -1410,9 +1426,200 @@ def record_run(ctx: Ctx, scopes: List[str], items: List[Item], done: Optional[di
         rec["fixed"].append({"line": item.line(), "path": item.path, "commit": item.fix.get("commit", ""),
                              "repo": repo_label(ctx, ctx.repo_of(ctx.root / item.path) or ctx.root)})
     fixed_ids = {id(i) for i in fixed}
-    rec["left"][scope_key(scopes)] = [stored(i) for i in items if id(i) not in fixed_ids]
+    left = [stored(i) for i in items if id(i) not in fixed_ids]
+    rec["left"][scope_key(scopes)] = left
     rec["failed"] = sorted(set(ctx.failed))        # the last run's: a source that runs again is not left named
+    settle(ctx, rec, lambda s: in_scope(Item("", "", s["path"], ""), scopes), left, whole=not scopes)
     return write_report(ctx, rec)
+
+
+# ---------------------------------------------------------------------------
+# Context debt
+# ---------------------------------------------------------------------------
+#
+# Every finding left after a run weighs by its kind, and the sum is the
+# workspace's context debt: a wall most, then what decides where material
+# may be used, then the rest. A mechanical finding counts only while it is
+# not fixed, which a fix run settles before the sum is made; a copy behind
+# the share, and a page that would fade, weigh nothing. The weights were set
+# on a working workspace's runs; `nurture-weights` and `nurture-threshold` in
+# System/garrick-checks.json change them, a kind at a time.
+#
+# The day's record keeps the findings that stand across the whole workspace,
+# `standing`, and the debt worked out from them, by kind and by scope (a
+# zone, a wiki, or System), so the trend is read back without running
+# anything. A run of the whole workspace replaces them; a scoped run replaces
+# only what lies in its scope, on top of what stood before it, carried from
+# an earlier record when it is the day's first. The debt says `whole` once a
+# run of the whole workspace stands behind it; until then it is the part a
+# scope saw, and nothing reads it as the workspace's.
+
+WEIGHTS = {"wall": 10, "attribution": 5, "correction": 5, "judgment": 1, "mechanical": 1, BEHIND: 0, "fade": 0}
+UNKNOWN_WEIGHT = 1                  # a kind with no weight of its own, whoever registered it
+THRESHOLD = 40
+RISING_DAYS = 7                     # a week of records, none lower than the day before
+CARRY_DAYS = 7                      # how far back a scoped run looks for what stood before it
+CHECK_SETTINGS = ("System", "garrick-checks.json")
+
+
+def debt_settings(root: Path) -> Tuple[Dict[str, float], float]:
+    """(the weight of each kind, the threshold): the defaults, with what
+    System/garrick-checks.json sets in their place. A weight or a threshold
+    that is not a number of zero or more is left as shipped."""
+    weights, threshold = dict(WEIGHTS), THRESHOLD
+    try:
+        data = json.loads(root.joinpath(*CHECK_SETTINGS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+    given = data.get("nurture-weights") if isinstance(data, dict) else None
+    for kind, weight in (given.items() if isinstance(given, dict) else ()):
+        if number(weight):
+            weights[str(kind)] = weight
+    if isinstance(data, dict) and number(data.get("nurture-threshold")):
+        threshold = data["nurture-threshold"]
+    return weights, threshold
+
+
+def debt_scope(path: str) -> str:
+    """The part of the workspace a finding counts in: its zone, its wiki, or
+    System for everything else, a note beside the zones or the wikis among
+    it."""
+    parts = path.split("/")
+    if parts[0] in ("Zones", "Wikis") and len(parts) > 1 and parts[1] and (len(parts) > 2 or not parts[1].endswith(".md")):
+        return "/".join(parts[:2])
+    return "System"
+
+
+def whole_number(n: float):
+    return int(n) if float(n).is_integer() else round(n, 2)
+
+
+def weigh(findings: List[dict], weights: Dict[str, float]) -> dict:
+    """{"total", "kinds": {kind: points}, "scopes": {scope: {kind: points}}},
+    leaving out whatever weighs nothing."""
+    kinds: Dict[str, float] = {}
+    scopes: Dict[str, Dict[str, float]] = {}
+    for f in findings:
+        w = weights.get(f.get("kind", ""), UNKNOWN_WEIGHT)
+        if not w:
+            continue
+        kinds[f["kind"]] = kinds.get(f["kind"], 0) + w
+        here = scopes.setdefault(debt_scope(f.get("path", "")), {})
+        here[f["kind"]] = here.get(f["kind"], 0) + w
+    return {"total": whole_number(sum(kinds.values())),
+            "kinds": {k: whole_number(v) for k, v in sorted(kinds.items())},
+            "scopes": {s: {k: whole_number(v) for k, v in sorted(ks.items())} for s, ks in sorted(scopes.items())}}
+
+
+def earlier_standing(ctx: Ctx) -> Tuple[List[dict], bool]:
+    """What stood in the most recent record before today's, within
+    CARRY_DAYS, and whether it stood for the whole workspace."""
+    for back in range(1, CARRY_DAYS + 1):
+        day = ctx.today - datetime.timedelta(days=back)
+        try:
+            rec = json.loads(ctx.root.joinpath(*REPORTS).joinpath("%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("standing"), list):
+            return list(rec["standing"]), bool((rec.get("debt") or {}).get("whole"))
+    return [], False
+
+
+def settle(ctx: Ctx, rec: dict, replaced: Callable[[dict], bool], now: List[dict], whole: bool = False) -> dict:
+    """The record's standing findings with those `replaced` says this run
+    has seen taken out and `now` put in their place, and the debt worked out
+    again from them. `whole` when the run saw the whole workspace."""
+    if isinstance(rec.get("standing"), list):
+        before, was_whole = rec["standing"], bool((rec.get("debt") or {}).get("whole"))
+    else:
+        before, was_whole = earlier_standing(ctx)
+    rec["standing"] = [s for s in before if not replaced(s)] + list(now)
+    weights, threshold = debt_settings(ctx.root)
+    rec["debt"] = dict(weigh(rec["standing"], weights), whole=whole or was_whole, threshold=whole_number(threshold))
+    return rec["debt"]
+
+
+def debt_history(root: Path, today: datetime.date, days: int = 30) -> List[Tuple[datetime.date, dict]]:
+    """(day, debt) for each of the last `days` days, today's included, whose
+    record holds a debt for the whole workspace, oldest first. Read from the
+    records alone: nothing runs."""
+    out = []
+    folder = Path(root).joinpath(*REPORTS)
+    for back in range(days - 1, -1, -1):
+        day = today - datetime.timedelta(days=back)
+        try:
+            rec = json.loads(folder.joinpath("%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        debt = rec.get("debt") if isinstance(rec, dict) else None
+        if isinstance(debt, dict) and debt.get("whole") and isinstance(debt.get("total"), (int, float)):
+            out.append((day, debt))
+    return out
+
+
+def rising(history: List[Tuple[datetime.date, dict]], today: datetime.date) -> bool:
+    """Whether the debt has kept rising for a week: a record on each of the
+    last RISING_DAYS days, none lower than the day before, and the last
+    higher than the first."""
+    days = {d: debt["total"] for d, debt in history}
+    week = [days.get(today - datetime.timedelta(days=back)) for back in range(RISING_DAYS - 1, -1, -1)]
+    if any(v is None for v in week):
+        return False
+    return all(b >= a for a, b in zip(week, week[1:])) and week[-1] > week[0]
+
+
+KIND_WORDS = {"wall": "walls", "attribution": "attribution", "correction": "corrections", "judgment": "judgment",
+              "mechanical": "mechanical fixes"}
+
+
+def scope_said(scope: str) -> Tuple[str, str]:
+    """(how a scope is said in a sentence, the request that nurtures it)."""
+    if scope == "Wikis/Meetings":
+        return "the Meetings wiki", "nurture the meetings"
+    if scope == "Wikis/Knowledge":
+        return "the Knowledge wiki", "nurture the library"
+    if scope.startswith(("Zones/", "Wikis/")):
+        name = scope.split("/", 1)[1]
+        return name, "nurture %s" % name
+    return "System", "nurture the context"
+
+
+def heaviest(debt: dict) -> Tuple[str, str]:
+    """(the scope carrying most of the debt, the kind carrying most of it
+    there); ("", "") when nothing weighs anything."""
+    scopes = debt.get("scopes") or {}
+    if not scopes:
+        return "", ""
+    scope = max(sorted(scopes), key=lambda s: sum(scopes[s].values()))
+    kinds = scopes[scope]
+    return scope, max(sorted(kinds), key=lambda k: kinds[k])
+
+
+def debt_line(root: Path, today: datetime.date, debt: Optional[dict]) -> str:
+    """One line for the morning, when the debt is over its threshold or has
+    kept rising for a week, naming the scope carrying most and the request
+    that nurtures it; "" otherwise, or when the debt is not the whole
+    workspace's. Counts and names of places only, never a finding's text.
+    A wall is said in the morning line whatever the total: this line is
+    besides it, never instead of it."""
+    if not debt or not debt.get("whole"):
+        return ""
+    total, threshold = debt["total"], debt.get("threshold", THRESHOLD)
+    history = debt_history(root, today, RISING_DAYS + 1)
+    if not (total > threshold or rising(history, today)):
+        return ""
+    line = "Context debt %s" % total
+    then = [v["total"] for d, v in history if d < today]
+    if then:
+        before = then[0]
+        line += (", up from %s last week" % before if total > before else
+                 ", down from %s last week" % before if total < before else ", as last week")
+    scope, kind = heaviest(debt)
+    if not scope:
+        return line + "."
+    where, ask = scope_said(scope)
+    return '%s, mostly %s in %s. Say "%s".' % (line, KIND_WORDS.get(kind, kind), where, ask)
 
 
 # ---------------------------------------------------------------------------
@@ -1550,8 +1757,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             return EXIT_USAGE
         rec = read_record(ctx)
         rec["answered"].append({"path": a.path, "asked": a.asked, "answer": a.answer})
+        asked = lambda i: i.get("path") == a.path and i.get("kind") == "attribution"
         for items in rec["left"].values():
-            items[:] = [i for i in items if not (i["path"] == a.path and i["kind"] == "attribution")]
+            items[:] = [i for i in items if not asked(i)]
+        settle(ctx, rec, asked, [])
         print(write_report(ctx, rec).relative_to(root).as_posix())
         return 0
 
@@ -1564,18 +1773,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         done = apply(ctx, items)
     report = record_run(ctx, scopes, items, done)
     code = EXIT_FAILED if ctx.failed or (done and done["refused"]) else 0
+    debt = read_record(ctx).get("debt")
+    owed = debt_line(root, ctx.today, debt) if done is not None else ""
 
     if a.json:
         out = {"scope": scope_key(scopes), "headless": ctx.headless, "report": report.relative_to(root).as_posix(),
                "kinds": {k.name: sum(1 for i in items if i.kind == k.name) for k in ranked()},
-               "items": [item_json(i) for i in items], "failed": ctx.failed}
+               "items": [item_json(i) for i in items], "failed": ctx.failed, "debt": debt}
         if done is not None:
             out.update({"fixed": [item_json(i) for i in done["fixed"]], "held": [item_json(i) for i in done["held"]],
                         "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items),
-                        "waiting": sum(waiting(done, items).values())})
+                        "waiting": sum(waiting(done, items).values()), "debt_line": owed})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif a.ear:
-        print(say_ear(items, scopes) if done is None else digest(ctx, done, items))
+        print(say_ear(items, scopes) if done is None else " ".join(x for x in (digest(ctx, done, items), owed) if x))
     elif done is not None:
         lines = ["Fixed %s:" % plural(len(done["fixed"]), "thing")] + ["  %s" % i.line() for i in done["fixed"]]
         lines += ["Committed %s in %s: %s" % (c["commit"], c["repo"], ", ".join(c["paths"])) for c in done["commits"]]

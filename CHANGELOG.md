@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-10-23
+
+A fade lists a meeting on a person page by its date, so the check no longer warns on the pages it touched.
+
 ### Fixed
 
 - A fade wrote each meeting's title onto the person pages that list it under `## Earlier`, and `check.py` then warned on every one of them for repeating a meeting ([#203](https://github.com/iamvenuti/garrick/issues/203)). In a meeting wiki the title sums up what was discussed, and a person page is read on both sides of every wall. A person page now lists a faded meeting as `meeting of <date>`, linked to where it went; entity and concept pages keep the title. Waking a page still takes its line off, since that goes by the link. A page faded by 0.40.0 keeps the line it was given: write the date in place of the title by hand, or leave it for the check to name.
@@ -905,7 +909,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/iamvenuti/garrick/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/iamvenuti/garrick/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/iamvenuti/garrick/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/iamvenuti/garrick/compare/v0.37.0...v0.38.0

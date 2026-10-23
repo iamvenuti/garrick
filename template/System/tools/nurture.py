@@ -61,6 +61,13 @@ as they are, as `correct.py` keeps them. It is not unattended, and has no
 as a correction usually does: so `fix` and `nightly` never apply one, and
 under GARRICK_HEADLESS=1 `correct --yes` is refused.
 
+**Fading**, graded oblivion, is never applied here either. `fade.py`
+works out how many pages of each wiki would go dormant, be archived or wake,
+and each wiki with any is one finding, saying what to say: "fade the
+meetings" writes the proposal, and only a yes on it moves a page. With
+nobody watching it adds a line of its own to the morning digest, once a
+wiki's count reaches the `"memory"` setting's nightly minimum.
+
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
 changes with nobody watching. It reads drift from `System/generated/
@@ -1143,6 +1150,54 @@ register(Kind("judgment", "Judgment", 1000, lambda ctx, item: True, what="report
 register(Kind(BEHIND, "Behind the share", 1100, lambda ctx, item: False,
               what="the shared copy is the one that counts, so nothing to fix", quiet=True, say=say_judgment))
 
+
+# ---------------------------------------------------------------------------
+# Fading: what graded oblivion would move, worked out and never applied here
+# ---------------------------------------------------------------------------
+#
+# What would fade is no check's finding: fade.py works it out from each
+# wiki's pages, by age, kind and use. It is gathered as one finding a wiki,
+# with its counts, and has no `apply`: a fade moves pages, and only a
+# person's yes on a written proposal moves one ("fade the meetings"), so
+# neither `fix --yes` nor the nightly run ever does. It is quiet, kept out of
+# what the morning line says waits, which gives it a line of its own,
+# fade_line(), once a wiki's count reaches the setting's minimum.
+
+import fade  # noqa: E402
+
+
+def gather_fade(ctx: Ctx) -> List[Item]:
+    try:
+        found = fade.counts(ctx.root, today=ctx.today)
+    except Exception as exc:       # a fade that cannot be worked out must not stop the rest of the run
+        ctx.failed.append("fade.py: %s" % type(exc).__name__)
+        return []
+    out = []
+    for wiki, n in found.items():
+        said = fade.would_say(wiki, n)
+        if said:
+            # `fix` carries the counts the digest line needs; there is nothing here to apply.
+            out.append(Item("fade", "fade", "Wikis/%s/wiki" % wiki, said, "Pages in %s could fade" % wiki,
+                            kind="fade", fix=dict(n, wiki=wiki)))
+    return out
+
+
+def fade_line(ctx: Ctx, items: List[Item]) -> str:
+    """The morning's line about fading: each wiki whose count of pages that
+    would move reaches the setting's minimum, with what to say. Empty when
+    the nightly line is switched off or nothing reaches it."""
+    nightly = fade.settings(ctx.root)["nightly"]
+    if not nightly["on"]:
+        return ""
+    said = [i.message for i in items if i.kind == "fade" and i.fix
+            and i.fix.get("to_dormant", 0) + i.fix.get("to_archive", 0) + i.fix.get("to_wake", 0) >= max(1, nightly["min"])]
+    return " ".join(said)
+
+
+register(Kind("fade", "Fading", 1200, lambda ctx, item: False, gather=gather_fade, quiet=True,
+              what="proposed by \"fade the meetings\" or \"fade the library\"; nothing moves without a yes",
+              say=lambda item: "%s: %s" % (item.path, item.message)))
+
 # A kind in a module of its own is imported here, after the four, so it can
 # call register() and take its rank among them.
 
@@ -1436,7 +1491,8 @@ def say_text(items: List[Item], scopes: List[str]) -> str:
 SPOKEN = {"wall": ("one wall", "%d walls"), "mechanical": ("one fix ready", "%d fixes ready"),
           "correction": ("one correction", "%d corrections"),
           "attribution": ("one question", "%d questions"), "judgment": ("one thing to read", "%d things to read"),
-          BEHIND: ("one copy behind the share", "%d copies behind the share")}
+          BEHIND: ("one copy behind the share", "%d copies behind the share"),
+          "fade": ("one wiki with pages to fade", "%d wikis with pages to fade")}
 
 
 def say_ear(items: List[Item], scopes: List[str]) -> str:
@@ -1470,7 +1526,14 @@ def waiting(done: dict, items: List[Item]) -> Dict[str, int]:
 
 
 def digest(ctx: Ctx, done: dict, items: List[Item]) -> str:
-    """One line for the morning: what was fixed first, then what waits."""
+    """For the morning: one line, what was fixed first, then what waits; and
+    a line of its own when pages would fade."""
+    said = digest_head(ctx, done, items)
+    faded = fade_line(ctx, items)
+    return said + ("\n" + faded if faded else "")
+
+
+def digest_head(ctx: Ctx, done: dict, items: List[Item]) -> str:
     fixed = done["fixed"]
     when = " overnight" if ctx.headless else ""
     waits = waiting(done, items)
@@ -1572,7 +1635,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if done is not None:
             out.update({"fixed": [item_json(i) for i in done["fixed"]], "held": [item_json(i) for i in done["held"]],
                         "commits": done["commits"], "refused": done["refused"], "digest": digest(ctx, done, items),
-                        "waiting": sum(waiting(done, items).values())})
+                        "waiting": sum(waiting(done, items).values()), "fade": fade_line(ctx, items)})
         print(json.dumps(out, indent=1, ensure_ascii=False))
     elif a.ear:
         print(say_ear(items, scopes) if done is None else digest(ctx, done, items))

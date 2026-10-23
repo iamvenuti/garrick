@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Changed
 
 - The README opens on the two things Garrick does: where you work, and what it does with your context. Leave any piece of work and come back to the next action; behind that, Garrick reads what comes in, keeps it up to date, and lets finished work step aside. It uses the app's word, "piece of work", rather than "thread", describes the home (Your work, Continue, Ask something, Needs you), and offers walls for work that holds other people's confidences rather than leading with them.
+- The introduction deck, `presentation/index.html`, follows the README's new opening: it leads with leaving a piece of work and coming back to its next action, shows the return with Continue on the worked example, and then the four stages of the context life cycle, in twelve slides instead of sixteen.
 
 ### Fixed
 

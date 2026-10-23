@@ -207,7 +207,9 @@ DECLARED: Dict[str, Op] = {
     # "token" and "find-chat" are Telegram's Set up…. Settings keeps no
     # record (RECORDED), so the token is never written to the journal.
     "settings": _op(("launchers", "default", "zones", "notifications", "test", "token", "find-chat",
-                         "while-you-wait", "home"), (), "workspace"),
+                         "while-you-wait", "home", "memory"), (), "workspace"),
+    # Settings › Memory's unsaved values, counted by fade.py (#108): it only reads.
+    "memory-preview": _op(("memory",), (), "none", retry="safe"),
     # The simple home (#175). A Needs you question answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.

@@ -127,7 +127,7 @@ class StatusView extends ItemView {
 		// makes it ask now, since the page's script has already run by here. A plugin
 		// without them is never asked, and the page works as it did before the record.
 		this.web.addEventListener("dom-ready", () => {
-			this.web.executeJavaScript("window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()").catch(() => {});
+			this.web.executeJavaScript("window.GarrickReadsMemory=true;window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()").catch(() => {});
 		});
 		this.web.addEventListener("will-frame-navigate", (e) => {
 			if (e.isMainFrame && !e.url.startsWith("file:")) this.plugin.follow(e.url);
@@ -544,12 +544,13 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		child.stdin.end(JSON.stringify(request));
 	}
 
-	// The page asking what is running (page_action.py's "operations"), or how far
-	// a copy or a move of a work's files has got ("files-progress", #189), only reads:
-	// the reply goes to the page, with no toast and no rebuild, or asking would
-	// rebuild the page it asks from.
+	// The page asking what is running (page_action.py's "operations"), how far
+	// a copy or a move of a work's files has got ("files-progress", #189), or what
+	// Settings › Memory's unsaved values would do ("memory-preview", #108), only
+	// reads: the reply goes to the page, with no toast and no rebuild, or asking
+	// would rebuild the page it asks from.
 	reading(request) {
-		return !!request && ["operations", "files-progress"].includes(request.verb);
+		return !!request && ["operations", "files-progress", "memory-preview"].includes(request.verb);
 	}
 
 	// The reply: the toast, then the page, which shows a park or a wake at once

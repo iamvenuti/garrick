@@ -260,7 +260,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(17, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the simple home's, where a work's files live's, the menu's, the Guide's, the graph's
+        self.assertEqual(18, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Memory's, the simple home's, where a work's files live's, the menu's, the Guide's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -2400,6 +2400,167 @@ class TestCheckChipFix(StatusCase):
         with self.assertRaises(page_action.Refused):                   # a second click finds nothing left to fix
             page_action.act(self.root, req)
 
+
+
+class TestMemorySettings(StatusCase):
+    """Settings › Memory (#108): fade.py's settings drawn as they are, kinds
+    and all, with what they would do now beside them. A stand-in fade.py,
+    since the real one is graded oblivion's and has its own tests."""
+
+    def setUp(self):
+        super().setUp()
+        fixtures.write_fade_stub(self.root)
+
+    def section(self, html=None):
+        html = html or self.page()
+        start = html.index('<section class="setsec apponly" id="memory-settings">')
+        return html[start:html.index("</section>", start)]
+
+    def test_the_defaults_as_fade_has_them(self):
+        sec = self.section()
+        self.assertIn('<input type="checkbox" data-mwikion="Meetings" checked', sec)
+        self.assertIn('<input type="checkbox" data-mwikion="Knowledge" checked', sec)
+        self.assertEqual(["meetings", "reading", "reference"], re.findall(r'data-mkind="([a-z]+)"', sec))
+        meetings = sec[sec.index('data-mkind="meetings"'):sec.index('data-mkind="reading"')]
+        self.assertIn('data-mwiki="Meetings"', meetings)
+        self.assertIn('data-mk="dormant" min="1" max="240" value="6"', meetings)
+        self.assertIn('data-mk="archived" min="1" max="240" value="18"', meetings)
+        self.assertIn('data-mk="types" value="meeting, email"', meetings)
+        self.assertIn('<input type="checkbox" data-mk="never" aria-label', meetings)
+        reference = sec[sec.index('data-mkind="reference"'):]
+        self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
+        self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
+        self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', sec)))
+        self.assertIn('<input type="checkbox" id="m-wake" checked', sec)
+        self.assertIn('<option value="dormant" selected>working and dormant pages</option>', sec)
+        self.assertIn('<input type="checkbox" id="m-night" checked', sec)
+        self.assertIn('id="m-min" min="1" max="1000" value="10"', sec)
+        self.assertIn("dormant ones in its <code>dormant/</code> folder, archived ones in its <code>archive/</code> folder", sec)
+        self.assertIn('<li data-mw="Meetings"><b>Meetings</b> <span data-mc="grades">40 working · 12 dormant · 5 archived</span>'
+                      '<span class="mnext" data-mc="next">Next pass: 4 to dormant, 2 to the archive, 1 woken</span></li>', sec)
+        self.assertIn("Next pass: 9 to dormant, 4 to the archive, 1 woken", sec)              # Knowledge's two kinds
+
+    def test_what_was_saved_is_shown(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {
+            "wikis": {"Knowledge": False}, "reach": "working", "wake": False, "nightly": {"min": 25},
+            "kinds": {"board meetings": {"wiki": "Meetings", "types": ["meeting"], "domains": ["board.example"],
+                                          "dormant": 12, "archived": None}}}}))
+        sec = self.section()
+        self.assertEqual(["board meetings"], re.findall(r'data-mkind="([^"]+)"', sec))      # whatever kinds fade.py returns
+        self.assertIn('data-mk="domains" value="board.example"', sec)
+        self.assertIn('<input type="checkbox" data-mwikion="Knowledge" aria-label', sec)
+        self.assertIn('<option value="working" selected>', sec)
+        self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
+        self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
+        self.assertIn("Next pass: 2 to dormant</span>", sec)                                 # 24 // 12, never archived, no waking
+        self.assertIn('<span class="mnext" data-mc="next">Off: nothing fades</span>', sec)
+
+    def test_left_out_without_fade_and_said_when_it_fails(self):
+        os.remove(str(self.root / "System" / "tools" / "fade.py"))
+        status._FADE.pop(self.root, None)
+        html = self.page()
+        self.assertNotIn('id="memory-settings"', html)
+        self.assertIn('id="settings"', html)
+        write(self.root / "System" / "tools" / "fade.py", "def settings(root):\n    raise RuntimeError('no')\n"
+                                                           "def counts(root, memory=None):\n    return {}\n")
+        status._FADE.pop(self.root, None)
+        sec = self.section()
+        self.assertIn("did not give its settings (RuntimeError)", sec)
+        self.assertNotIn('id="m-prev"', sec)
+        write(self.root / "System" / "tools" / "fade.py", "import nothing_by_this_name\n")
+        status._FADE.pop(self.root, None)
+        self.assertNotIn('id="memory-settings"', self.page())
+
+    def test_the_form_reads_back_into_fades_keys_and_counts_again(self):
+        for key in ("wikis", "kinds", "pins", "wake", "reach", "nightly", "dormant", "archived", "types", "domains", "min"):
+            self.assertIn(key, status.MEMORY_JS)
+        self.assertIn("window.GarrickMemory=", status.MEMORY_JS)
+        self.assertIn("host.postMessage({act:{verb:'memory-preview',memory:request()}})", status.MEMORY_JS)
+        self.assertIn("window.GarrickReadsMemory", status.MEMORY_JS)          # only where the host answers it
+        self.assertIn("if(m){q.memory=M.request();M.saved()}", status.JS)     # sent with the rest when Settings closes
+        page = self.page()
+        self.assertIn(status.MEMORY_CSS.strip()[:60], page)
+        self.assertEqual(1, page.count('id="memory-settings"'))
+        self.assertLess(page.index("window.GarrickWait="), page.index("window.GarrickMemory="))
+
+    def test_the_page_and_its_script_say_the_counts_alike(self):
+        c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
+        self.assertEqual(("3 working · 2 dormant · 1 archived", "Next pass: 4 to the archive"), status.memory_said(c))
+        self.assertEqual("Next pass: nothing moves", status.memory_said(dict(c, to_archive=0))[1])
+        self.assertEqual("Off: nothing fades", status.memory_said(dict(c, on=False))[1])
+        for words in ("' working · '", "' dormant · '", "' archived'", "'Off: nothing fades'", "'to dormant'",
+                      "'to the archive'", "'woken'", "'Next pass: '", "'nothing moves'"):
+            self.assertIn(words, status.MEMORY_JS)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_script_parses(self):
+        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.MEMORY_JS,
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+
+class TestContextDebt(StatusCase):
+    """#69: the context debt beside the check's findings, read from the
+    records nurture.py keeps, with nothing run."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.folder = self.root / "System" / "generated" / "nurture"
+
+    def record(self, back, total, scopes=None, whole=True):
+        day = self.now.date() - dt.timedelta(days=back)
+        scopes = scopes or {"Wikis/Meetings": {"attribution": total}}
+        kinds = {}
+        for ks in scopes.values():
+            for k, v in ks.items():
+                kinds[k] = kinds.get(k, 0) + v
+        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
+            "total": total, "kinds": kinds, "scopes": scopes, "whole": whole, "threshold": 40}}))
+
+    def block(self, html):
+        start = html.index('<div class="debt" id="debt">')
+        return html[start:html.index("</p></div>", start)]
+
+    def test_nothing_without_a_record(self):
+        html = self.page()
+        self.assertNotIn('id="debt"', html)
+        self.record(0, 12, whole=False)                     # a scoped run's part is not the workspace's debt
+        self.assertNotIn('id="debt"', self.page())
+
+    def test_the_figure_its_trend_and_the_scopes_carrying_most(self):
+        for back, total in ((40, 3), (6, 18), (5, 20), (3, 30), (2, 35), (1, 40)):
+            self.record(back, total)
+        self.record(0, 42, {"Wikis/Meetings": {"attribution": 25}, "Zones/Work": {"wall": 10, "judgment": 2},
+                            "System": {"judgment": 5}})
+        b = self.block(self.page())
+        self.assertIn('<span class="dfig">42</span><span class="dlbl">context debt</span>', b)
+        self.assertIn('<span class="chip late"', b)
+        self.assertIn(">over 40</span>", b)
+        self.assertEqual(2, b.count('<polyline class="dl"'))               # broken where a day has no record
+        self.assertEqual(6, b.count('class="dd'))                          # thirty days: the one 40 days back left out
+        self.assertEqual(1, b.count('class="dd now"'))
+        self.assertIn('class="dt"', b)                                     # the threshold, dashed
+        self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
+        self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
+        self.assertIn("Say &#8220;nurture the meetings&#8221;.", b)
+        for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
+            self.fail("a fixed colour in the chart: %s" % colour)
+        self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
+
+    def test_under_the_threshold_and_an_older_day(self):
+        self.record(2, 9, {"Zones/Work": {"judgment": 9}})
+        b = self.block(self.page())
+        self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
+        self.assertIn('<span class="chip"', b)
+        self.assertIn(">under 40</span>", b)
+        self.assertIn("Say &#8220;nurture Work&#8221;.", b)
+        self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
+
+    def test_left_out_without_a_nurture_that_keeps_it(self):
+        self.record(0, 42)
+        with mock.patch.object(status, "nurture_lib", lambda ws: None):
+            self.assertNotIn('id="debt"', self.page())
 
 if __name__ == "__main__":
     unittest.main()

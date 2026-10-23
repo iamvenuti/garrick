@@ -592,6 +592,8 @@ SETTING_KINDS = {
     "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
     "todo-chase-days": (int, dict),      # days ahead a swept Waiting on line's ⏳ is set, 0 for none, or {zone: days}
     "memory": (str, list),   # the folder, or folders, where the assistant keeps a memory of its own
+    "nurture-weights": dict,             # finding kind -> its weight in the context debt: nurture.py's
+    "nurture-threshold": (int, float),   # the context debt over which the morning digest says so
 }
 AS_SHIPPED = ["System/tools/"]
 
@@ -617,6 +619,7 @@ def load_settings(root: Path) -> Tuple[dict, List[str]]:
                                               and isinstance(value, list) and not all(isinstance(v, str) for v in value)):
             problems.append("`%s` should be %s" % (key, "a list of names" if kind is list else "an object" if kind is dict
                                                    else "a folder, or a list of folders" if list in kind
+                                                   else "a number" if float in kind
                                                    else "a %s, or an object with one per zone" % ("number" if int in kind else "word")))
         else:
             out[key] = value

@@ -172,6 +172,57 @@ def meeting_page(zone: str = "Work", parties: str = "[acme]", title: str = "Kick
     return "\n".join(lines) + "\n"
 
 
+# A stand-in for System/tools/fade.py, graded oblivion's (#108), which the
+# status page's Settings › Memory and page_action.py build against: the
+# contract, and counts worked out from the settings alone, so a test can see
+# them follow a change. Never the real tool, which ships with its own tests.
+FADE_STUB = textwrap.dedent('''\
+    import json
+    from pathlib import Path
+
+    DEFAULTS = {
+        "wikis": {"Meetings": True, "Knowledge": True},
+        "kinds": {
+            "meetings": {"wiki": "Meetings", "types": ["meeting", "email"], "domains": [], "dormant": 6, "archived": 18},
+            "reading": {"wiki": "Knowledge", "types": ["newsletter", "article"], "domains": [], "dormant": 3, "archived": 12},
+            "reference": {"wiki": "Knowledge", "types": ["report", "standard"], "domains": [], "dormant": 24, "archived": None},
+        },
+        "pins": {"thread": True, "project": True, "todo": True, "pinned": True},
+        "wake": True,
+        "reach": "dormant",
+        "nightly": {"on": True, "min": 10},
+    }
+
+
+    def settings(root):
+        try:
+            stored = json.loads(Path(root, "System", "garrick-settings.json").read_text()).get("memory") or {}
+        except (OSError, ValueError):
+            stored = {}
+        out = json.loads(json.dumps(DEFAULTS))
+        for key, value in stored.items():
+            out[key] = dict(out[key], **value) if isinstance(out.get(key), dict) and key != "kinds" else value
+        return out
+
+
+    def counts(root, memory=None):
+        m = memory if memory is not None else settings(root)
+        out = {}
+        for wiki in ("Meetings", "Knowledge"):
+            on = bool(m["wikis"].get(wiki, True))
+            kinds = [k for k in m["kinds"].values() if k["wiki"] == wiki]
+            out[wiki] = {"on": on, "working": 40, "dormant": 12, "archived": 5,
+                         "to_dormant": sum(24 // k["dormant"] for k in kinds) if on else 0,
+                         "to_archive": sum(48 // k["archived"] for k in kinds if k["archived"]) if on else 0,
+                         "to_wake": 1 if on and m["wake"] else 0}
+        return out
+''')
+
+
+def write_fade_stub(root: Path) -> Path:
+    return write(Path(root) / "System" / "tools" / "fade.py", FADE_STUB)
+
+
 def build_workspace(root: Path) -> Path:
     """A clean workspace: the checker should find nothing wrong with it."""
     root = Path(root)

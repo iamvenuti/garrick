@@ -6,7 +6,7 @@ Some of Garrick's protections are code: a script that refuses, whatever the assi
 
 | Protection | How it holds | Where |
 |---|---|---|
-| A commit of a project file that links to a meeting across a declared wall, names a party, person or alias from the far side, or repeats eight words in a row held only there | **Code refuses.** Not complete: see [the known gaps](#the-wall-checks-known-gaps) | The pre-commit hook in each zone, and in any git repository inside a project, runs `System/tools/check.py --staged --walls-only`. See [What the check covers](principles.md#what-the-check-covers) |
+| A commit of a project file that links to a meeting across a declared wall, names a party, person or alias from the far side, or repeats eight words in a row held only there. A meeting page that faded, dormant or archived, counts as a working one does | **Code refuses.** Not complete: see [the known gaps](#the-wall-checks-known-gaps) | The pre-commit hook in each zone, and in any git repository inside a project, runs `System/tools/check.py --staged --walls-only`. See [What the check covers](principles.md#what-the-check-covers) |
 | A commit that links to, or repeats eight words from, a meeting page with no zone or parties yet | **Code refuses** | The same hook |
 | A commit of anything waiting in a zone's `Inbox/` or in `Wikis/Meetings/raw/inbox/` | **Code refuses** | The same hook |
 | A status page request carrying a field its verb does not declare | **Code refuses**, naming the field | `page_action.py` in the status extra, checking `DECLARED` in `System/tools/operations.py`. Without `operations.py` in the workspace nothing is validated |

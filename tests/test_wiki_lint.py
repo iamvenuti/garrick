@@ -72,6 +72,28 @@ class WikiLintTest(unittest.TestCase):
         self.assertEqual(before["pages"] + 1, found["pages"])                # a file that is not a page is not counted
         self.assertEqual(sorted(before["orphans"] + ["wiki/concepts/y"]), found["orphans"])   # nor does linking one
 
+    def test_faded_pages_are_not_working_pages_but_links_into_them_land(self):
+        before = wiki_lint.lint(self.k)
+        write(self.k / "dormant" / "wiki" / "sources" / "old.md", '---\nraw: "[[dormant/raw/old.pdf]]"\n---\n\n[[nowhere]]\n')
+        write(self.k / "dormant" / "raw" / "old.pdf", "%PDF")
+        write(self.k / "dormant" / "wiki" / "sources" / "old.png", "PNG")
+        write(self.k / "archive" / "wiki" / "concepts" / "past.md", "# Past\n\nLinks nowhere at all.\n")
+        write(self.k / "wiki" / "index-dormant.md", "# Dormant\n\n- [[dormant/wiki/sources/old|Old]], 2026-10-01: not read in a year\n")
+        write(self.k / "wiki" / "concepts" / "y.md",
+              "# Y\n\n[[old]], [[dormant/wiki/sources/old]], [[Wikis/Knowledge/archive/wiki/concepts/past]], [[past]],\n"
+              "[[dormant/raw/old.pdf]], [[old.png]], [[x]] and [[dormant/wiki/sources/gone]].\n")
+        found = wiki_lint.lint(self.k)
+        self.assertEqual(before["pages"] + 1, found["pages"])                # only y: no faded page, nor the dormant index
+        self.assertEqual(before["orphans"], found["orphans"])                # no faded page is an orphan
+        self.assertEqual(["Gone Concept", "dormant/wiki/sources/gone"], sorted(m["target"] for m in found["missing"]))
+        self.assertNotIn("nowhere", [m["target"] for m in found["missing"]])  # a faded page is not read for its links
+
+    def test_a_working_page_wins_its_name_over_a_faded_one(self):
+        write(self.k / "archive" / "wiki" / "concepts" / "x.md", "# X, as it was\n")
+        write(self.k / "wiki" / "concepts" / "y.md", "# Y\n\n[[x]]\n")
+        found = wiki_lint.lint(self.k)
+        self.assertNotIn("wiki/concepts/y", found["orphans"])               # the link landed on the working x
+
     def test_it_changes_nothing_and_speaks_plainly(self):
         before = sorted((p, p.read_bytes()) for p in self.k.rglob("*") if p.is_file())
         out = io.StringIO()

@@ -8,11 +8,11 @@
 
 Garrick keeps track of where each piece of your work stands. It reads what comes in, keeps it up to date, and lets finished work step aside, so Claude picks up where you stopped.
 
-Your assistant remembers your projects. It can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
+An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “hold this” when someone interrupts you and “back” when you return.
 
 The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer.
 
-Behind the home, Garrick keeps a record of each piece of work. It files what comes in, such as mail, transcripts and documents, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
+Behind the home, Garrick holds three things in one place: what you're working on, in your files; what was said, in a record of your meetings; and what you read, in a library of what you've studied. It files what comes in, such as mail, transcripts and documents, into the right one, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
 
 When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and a check runs before every commit.
 

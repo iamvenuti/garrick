@@ -2508,7 +2508,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     (`f`), its thread's or else its project's, where an app can open one. A
     thread whose own next action is overdue or due a chase, named by zone,
     project and thread in `urgent`, is marked `lt` and draws the one ring the
-    graph has: age alone never marks a note."""
+    graph has: age alone never marks a note. Every note carries its path from
+    its place's folder, without `.md` (`m`), and `pr` maps each place to that
+    folder from the workspace's, so Preview can name the note it reads (#206)."""
     places = [(z.name, z) for z in visible_dirs(ws / "Zones")]
     places += [(w.name, w / "wiki") for w in visible_dirs(ws / "Wikis") if (w / "wiki").is_dir()]
     names = short_names(T)
@@ -2587,7 +2589,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         nodes.append({"n": short_label(title) if wiki else title, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
-                      "w": say, "u": link(path)})
+                      "w": say, "u": link(path), "m": path.relative_to(root).as_posix()[:-3]})
         if moving and urgent and (place, project, folder_thread) in urgent:
             nodes[-1]["lt"] = 1                  # its next action is overdue or due a chase
         if wiki and nodes[-1]["n"] != title:
@@ -2666,6 +2668,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             "mode": "all" if len(nodes) <= 150 else "core",
             "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
             "cl": {z: CORE_LABEL[z] for z in wikis if z in CORE_LABEL},
+            "pr": {place: root.relative_to(ws).as_posix() for place, root in places},
             "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
 
 
@@ -6126,7 +6129,7 @@ function deskReq(o,v){var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.t
 function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 /* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
-function acts(o){var a=prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>';
+function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>');
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
@@ -7045,6 +7048,84 @@ sync();
 })();
 """
 
+# Preview (#206): a node's note read inside Garrick, over the graph, as Quick
+# Look reads a file. The card offers it where the host reads a note for it
+# (window.GarrickReadsNotes, set by Garrick.app and the Obsidian plugin); a
+# browser cannot read one, so it never offers it. The note is read by
+# page_action.py's `note-read`, drawn there by guide.py's renderer, and
+# `note-open` opens it in the app the Mac uses for a .md file, which is not
+# a launcher Settings chooses. A <dialog> shown modal holds it, so the card
+# and the graph underneath keep their selection, place and zoom while it is
+# open, and get them back as they were: it closes on Close, Escape, which it
+# keeps from the card, or a click outside it, and hands the keyboard back to
+# the Preview it was opened from. It never edits, and nothing stays open.
+NOTE_CSS = r"""
+dialog.nview{padding:0;border:0;background:transparent;color:var(--ink);width:min(820px,calc(100vw - 32px));max-width:none;max-height:none;overflow:visible}
+dialog.nview::backdrop{background:rgba(0,0,0,.32)}
+.nv-panel{display:flex;flex-direction:column;min-height:160px;max-height:calc(100vh - 64px);background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.3);overflow:hidden}
+.nv-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 12px;padding:14px 16px 12px 24px;border-bottom:1px solid var(--grid)}
+.nv-t{flex:1 1 260px;min-width:0}.nv-t h3{margin:0;font:600 19px/1.25 var(--display);overflow-wrap:anywhere}
+.nv-path{display:block;margin-top:3px;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.nv-acts{display:flex;gap:6px;flex:none}.nv-acts .act{font-size:12px;padding:5px 10px}
+.nv-said{margin:0;padding:14px 24px 0;font-size:13px;color:var(--ink2)}.nv-said:empty{display:none}.nv-said.bad{color:var(--critical)}
+.nv-body{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 24px 26px;line-height:1.6;font-size:14.5px;overflow-wrap:break-word}
+.nv-body:focus{outline:none}.nv-body:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.nv-body>:not(.gd-table){max-width:70ch}
+.nv-body h1{font:600 26px/1.2 var(--display);margin:18px 0 12px}.nv-body h2{font:600 20px/1.25 var(--display);margin:24px 0 8px}
+.nv-body h3{font-size:16px;margin:20px 0 6px}.nv-body :is(h4,h5,h6){font-size:14.5px;margin:16px 0 4px}
+.nv-body code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.nv-body pre{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto}
+.nv-body pre code{border:0;padding:0;background:none;white-space:pre}
+.nv-body blockquote{margin:12px 0;padding:2px 16px;border-left:3px solid var(--accent);color:var(--ink2);background:var(--wash);border-radius:0 8px 8px 0}
+.nv-body ul,.nv-body ol{padding-left:22px}.nv-body li{margin:3px 0}.nv-body hr{border:0;border-top:1px solid var(--grid);margin:18px 0}
+.nv-props{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;margin:14px 0 6px;padding:10px 12px;font-size:12.5px;line-height:1.45;background:var(--raise);border:1px solid var(--line);border-radius:10px}
+.nv-props div{display:contents}.nv-props dt{color:var(--muted)}.nv-props dd{margin:0;color:var(--ink2)}.nv-none{color:var(--muted)}
+@media (max-width:560px){.nv-head{padding-left:16px}.nv-said{padding-left:16px}.nv-body{padding:4px 16px 20px}}
+"""
+
+NOTE_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,dlg=null,cur=null,back=null,down=null;
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+/* only where the host reads a note for the page: a browser, or an app built before it, offers no Preview */
+function able(){return!!host&&!!window.GarrickReadsNotes}
+function button(path,title){return path&&able()?'<button class="act" type="button" data-note="'+esc(path)+'" data-title="'+esc(title)+'" aria-haspopup="dialog">Preview</button>':''}
+function el(s){return dlg.querySelector(s)}
+function make(){dlg=document.createElement('dialog');dlg.className='nview';dlg.setAttribute('role','dialog');dlg.setAttribute('aria-modal','true');dlg.setAttribute('aria-labelledby','nview-h');
+dlg.innerHTML='<div class="nv-panel"><div class="nv-head"><div class="nv-t"><h3 id="nview-h"></h3><small class="nv-path"></small></div>'
++'<div class="nv-acts"><button class="act" type="button" data-nv="open">Open in default app</button><button class="act" type="button" data-nv="close">Close</button></div></div>'
++'<p class="nv-said" role="status" aria-live="polite"></p><div class="nv-body" tabindex="0" aria-label="The note"></div></div>';
+document.body.appendChild(dlg);
+/* outside the panel is the dialog itself, behind its backdrop: a press that starts and ends there closes it, and text selected
+   in the note and dragged past its edge does not */
+dlg.addEventListener('pointerdown',function(e){down=e.target});
+dlg.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-nv]');if(b){if(b.dataset.nv==='open')openIn(cur&&cur.path);else shut();return}
+if(e.target===dlg&&down===dlg)shut()});
+/* Escape is the preview's alone, and never reaches the card underneath, whose own Escape closes it */
+dlg.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();shut()}});
+dlg.addEventListener('cancel',function(e){e.preventDefault();shut()})}
+function said(s,bad){var p=el('.nv-said');p.textContent=s||'';p.classList.toggle('bad',!!bad)}
+/* the note asked for, named and placed at once, its body once the host has read it */
+function read(path,title,btn){if(!dlg)make();cur={path:path};back=btn||null;
+el('#nview-h').textContent=title||path.split('/').pop().replace(/\.md$/,'');el('.nv-path').textContent=path;
+el('.nv-body').innerHTML='';el('[data-nv="open"]').hidden=false;said('Reading the note…');if(!dlg.open)dlg.showModal();el('.nv-body').focus();
+host.postMessage({act:{verb:'note-read',path:path}})}
+function openIn(path){if(!path)return;said('Opening it…');
+host.postMessage({act:{verb:'note-open',path:path}})}
+function shut(){if(!dlg||!dlg.open)return;dlg.close();cur=null;down=null;
+var b=back&&document.contains(back)?back:document.querySelector('#gpop button[data-note]');back=null;if(b)b.focus({preventScroll:true})}
+/* a reply for a note no longer shown is dropped. A note that is not there has nothing to open, so Open in default app goes */
+function heard(q,out){if(!cur||!dlg.open||q.path!==cur.path)return;if(out&&out.missing)el('[data-nv="open"]').hidden=true;
+if(q.verb==='note-open'){if(out&&out.ok)shut();else said((out&&out.say)||'That did not open.',true);return}
+if(out&&out.ok&&typeof out.html==='string'){said('');el('.nv-body').innerHTML=out.html;el('.nv-body').scrollTop=0}
+else said((out&&out.say)||'That note could not be read.',true)}
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}
+if(prev)return prev(q,out)};
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-note]');if(!b||!able())return;e.preventDefault();read(b.dataset.note,b.dataset.title,b)});
+window.GarrickNote={button:button,shown:function(){return!!(dlg&&dlg.open)}};
+})();
+"""
+
+
 # The graph: a force layout on a canvas, written here because the page loads
 # nothing from the network. Each zone and wiki has its own spot, laid along the
 # card in its proportions, so a zone reads as a cluster and the notes fill the
@@ -7233,12 +7314,14 @@ cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
 var esc=Panel.esc;
+/* the note behind a node, from the workspace's folder, for Preview (#206, NOTE_JS) */
+function notePath(n){return n.m!=null&&G.pr&&G.pr[n.z]?G.pr[n.z]+'/'+n.m+'.md':''}
 function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];return k?k[1]:'note'}
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;
 var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
-pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o)
+pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true;wake()}
@@ -7246,7 +7329,8 @@ function glide(tx,ty){var sx=px,sy=py,t0=performance.now();glides++;wake();(func
 pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
 var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode-'+zsel,mode)}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
-document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel)close()});
+/* Escape closes the card, unless a preview is open over it: that Escape is the preview's (NOTE_JS) */
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel&&!(window.GarrickNote&&GarrickNote.shown()))close()});
 function show(z){zsel=z;mode=modeFor(z);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
 /* a pick is stored, leads the card (#72) and is what a reload opens on */
 var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){var z=zsl.value;st.set('garrick-graph-place',z);leadZone(z);if(!cardZone(z))held=true;show(z)};
@@ -7841,14 +7925,17 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # still hears what its menu lists.
     # MANAGE_JS after the page's own, so it wraps the GarrickActed that PARK_JS sets,
     # FIND_JS after it, so its results are drawn again once a row has moved,
-    # and WORK_JS after all three. The Guide's pages come last of all, after every
-    # script, so reading past them never holds up the tabs that show the work.
+    # and WORK_JS after all three. NOTE_JS, Explore's Preview, in an element of its
+    # own before the graph's, whose cards offer it. The Guide's pages come last of
+    # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS, GRAPH_JS + FOLLOW_JS if show_graph else ""]
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS,
+               NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css(),
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout, link),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

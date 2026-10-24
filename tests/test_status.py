@@ -162,7 +162,7 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "hp", "pa", "pp", "oc"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "m", "hp", "pa", "pp", "oc"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], data["nodes"][self.node(data, "Pricing")]["oc"])   # what Open in Claude continues (#180)
         self.assertNotIn("Decisions.", html)
 
@@ -260,7 +260,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(18, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Memory's, the simple home's, where a work's files live's, the menu's, the Guide's, the graph's
+        self.assertEqual(19, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Memory's, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -321,6 +321,94 @@ class TestGraph(StatusCase):
         layout = {"x", "y", "vx", "vy", "ax", "ay", "r", "i", "adj", "deg", "lp", "lw"}
         for n in graph_data(self.page())["nodes"]:
             self.assertEqual(set(), layout & set(n))
+
+    def test_every_note_carries_its_path_for_preview(self):
+        # Preview (#206) reads a node's note by its path from the workspace: the place's folder, in `pr`
+        # once, and the note's path from it without `.md`, in `m`, so the page grows by little.
+        data = graph_data(self.page())
+        self.assertEqual({"Work": "Zones/Work", "Personal": "Zones/Personal", "Meetings": "Wikis/Meetings/wiki",
+                          "Knowledge": "Wikis/Knowledge/wiki"}, data["pr"])
+        self.assertEqual("Acme Review/Threads/Pricing/Pricing", data["nodes"][self.node(data, "Pricing")]["m"])
+        self.assertEqual("sources/260310-acme-kickoff", data["nodes"][self.node(data, "Acme kick-off")]["m"])
+        for n in data["nodes"]:
+            self.assertTrue((self.root / (data["pr"][n["z"]] + "/" + n["m"] + ".md")).is_file(), n)
+        self.assertIn("function notePath(n){return n.m!=null&&G.pr&&G.pr[n.z]?G.pr[n.z]+'/'+n.m+'.md':''}", status.GRAPH_JS)
+
+    def test_preview_sits_in_its_own_script_beside_the_graph(self):
+        html = self.page()
+        self.assertIn("<script>%s</script><script>%s</script>" % (status.NOTE_JS, status.GRAPH_JS + status.FOLLOW_JS), html)
+        self.assertIn(status.NOTE_CSS, html)
+        bare = self.page(show_graph=False)
+        self.assertNotIn(status.NOTE_JS, bare)
+        self.assertNotIn("dialog.nview", bare)
+
+    def test_preview_only_where_the_host_reads_a_note(self):
+        # A browser cannot read a file, nor can an app built before #206: neither is offered Preview.
+        js = status.NOTE_JS
+        self.assertIn("function able(){return!!host&&!!window.GarrickReadsNotes}", js)
+        self.assertIn("return path&&able()?'<button class=\"act\" type=\"button\" data-note=\"'", js)
+        self.assertIn("if(!b||!able())return;", js)
+        self.assertIn("host.postMessage({act:{verb:'note-read',path:path}})", js)
+        self.assertIn("host.postMessage({act:{verb:'note-open',path:path}})", js)
+        # the card is drawn again for each node selected, a linked one included, so Preview reads the note in it
+        self.assertIn("Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')", status.GRAPH_JS)
+        self.assertIn("if(b){var m=N[+b.dataset.i];", status.GRAPH_JS)
+        self.assertIn("select(m,true)}});", status.GRAPH_JS)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_preview_button_in_node(self):
+        harness = r"""
+        const vm = require("vm");
+        const [js, hosted, flag] = JSON.parse(process.argv[1]);
+        const ctx = { JSON, String, document: { addEventListener: () => {} } };
+        ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
+        if (flag) ctx.window.GarrickReadsNotes = true;
+        vm.createContext(ctx);
+        vm.runInContext(js + ";this.out=[window.GarrickNote.button('Wikis/Meetings/wiki/people/a & b.md','Dana \"D\" <W>'),"
+                        + "window.GarrickNote.button('','Nothing'),window.GarrickNote.shown()]", ctx);
+        process.stdout.write(JSON.stringify(ctx.out));
+        """
+
+        def button(hosted, flag):
+            done = subprocess.run(["node", "-e", harness, json.dumps([status.NOTE_JS, hosted, flag])],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return json.loads(done.stdout)
+
+        self.assertEqual(["", "", False], button(False, False))       # a browser
+        self.assertEqual(["", "", False], button(False, True))
+        self.assertEqual(["", "", False], button(True, False))        # an app built before Preview
+        self.assertEqual(['<button class="act" type="button" data-note="Wikis/Meetings/wiki/people/a &amp; b.md" '
+                          'data-title="Dana &quot;D&quot; &lt;W&gt;" aria-haspopup="dialog">Preview</button>', "", False],
+                         button(True, True))
+
+    def test_the_preview_closes_and_leaves_the_graph_as_it_was(self):
+        js, graph = status.NOTE_JS, status.GRAPH_JS
+        # a modal dialog, named by its title, the keyboard moved into it and handed back to Preview after
+        for part in ("dlg.setAttribute('role','dialog');dlg.setAttribute('aria-modal','true');dlg.setAttribute('aria-labelledby','nview-h')",
+                     '<h3 id="nview-h"></h3>', "dlg.showModal();el('.nv-body').focus();", "if(b)b.focus({preventScroll:true})",
+                     'data-nv="open">Open in default app</button>', 'data-nv="close">Close</button>'):
+            self.assertIn(part, js)
+        # Close, a click that starts and ends outside the panel, and Escape, which the card underneath never hears
+        self.assertIn("if(b){if(b.dataset.nv==='open')openIn(cur&&cur.path);else shut();return}", js)
+        self.assertIn("if(e.target===dlg&&down===dlg)shut()", js)
+        self.assertIn("if(e.key==='Escape'){e.preventDefault();e.stopPropagation();shut()}", js)
+        self.assertIn("if(e.key==='Escape'&&sel&&!(window.GarrickNote&&GarrickNote.shown()))close()", graph)
+        # closing it touches nothing of the graph's: no selection, place, zoom or panel
+        shut = js[js.index("function shut(){"):js.index("function heard(")]
+        for state in ("sel=", "px", "py", "scale", "theta", "pop.", "pop=", "select(", "GarrickGraph"):
+            self.assertNotIn(state, shut)
+        # loading, a refusal in the host's words, and no Open for a note that is not there
+        self.assertIn("said('Reading the note…')", js)
+        self.assertIn("if(out&&out.missing)el('[data-nv=\"open\"]').hidden=true;", js)
+        self.assertIn("else said((out&&out.say)||'That note could not be read.',true)}", js)
+        self.assertIn("if(!cur||!dlg.open||q.path!==cur.path)return;", js)     # a reply for a note no longer shown
+        self.assertIn("if(q&&(q.verb==='note-read'||q.verb==='note-open')){heard(q,out);return}", js)
+        self.assertIn("if(prev)return prev(q,out)};", js)
+        css = status.NOTE_CSS
+        for part in ("background:var(--surface)", "color:var(--ink)", ".nv-body>:not(.gd-table){max-width:70ch}", "overflow:auto"):
+            self.assertIn(part, css)
+        self.assertNotRegex(css, r"#[0-9a-fA-F]{3,6}\b")                    # the page's own colours, light or dark
 
 
 class TestTabs(StatusCase):
@@ -1111,7 +1199,8 @@ class TestThreadCards(StatusCase):
         for label in (">Open</a>", "Copy “", "'open '", "'wake '", "'park '"):
             self.assertIn(label, status.PANEL_JS)
         for js in (status.JS, status.GRAPH_JS):
-            self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o\)")      # a row's card as itself, the graph's as a panel
+            # a row's card as itself, the graph's as a panel, with Preview before the rest (#206)
+            self.assertRegex(js, r"Panel\.head\(o(,1)?\)\+Panel\.acts\(o(,window\.GarrickNote\?GarrickNote\.button\(notePath\(n\),n\.N\|\|n\.n\):'')?\)")
             self.assertNotIn("data-copy=", js)
             self.assertNotIn('class="act"', js)
 

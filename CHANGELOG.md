@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-23
+
+Settings reads as one column with its sections listed beside it, Memory says plainly what fading does and when, and Explore previews a note without leaving Garrick.
+
 ### Added
 
 - **Settings › Memory names the pages behind its counts** ([#205](https://github.com/iamvenuti/garrick/issues/205)). It showed how many pages the next pass would move, but not which. Now, per wiki, it lists the first five pages a pass would move, each with its date, where it would go and why, and the first five that are old enough to go but stay because active work links them, with what keeps each one, then names the written proposal, `System/generated/fade/<Wiki>.md`, for the whole list, linked once a review has written it. The lists follow the unsaved values as they change, as the counts do. A new `fade.py preview()` gives both from the same plan as `counts()`, and `page_action.py`'s `memory-preview` returns it as `preview` beside `counts`. With a workspace whose `fade.py` is older than `preview()`, the section shows the counts alone, as before.
@@ -923,7 +927,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.40.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/iamvenuti/garrick/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/iamvenuti/garrick/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/iamvenuti/garrick/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/iamvenuti/garrick/compare/v0.38.0...v0.39.0

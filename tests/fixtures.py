@@ -223,6 +223,24 @@ def write_fade_stub(root: Path) -> Path:
     return write(Path(root) / "System" / "tools" / "fade.py", FADE_STUB)
 
 
+def write_fade(root: Path) -> Path:
+    """The real System/tools/fade.py, with the library it imports, and
+    meetings old enough to fade whatever today is: seven from January 2020
+    nobody links, and one the live Pricing thread still draws on, so a
+    preview has pages to move, more than it lists, and a page to keep."""
+    root = Path(root)
+    for name in ("fade.py", "garrick_lib.py"):
+        write(root / "System" / "tools" / name, (TOOLS / name).read_text(encoding="utf-8"))
+    src = root / "Wikis" / "Meetings" / "wiki" / "sources"
+    for day in range(1, 9):
+        title = "Kept call" if day == 8 else "Old call %d" % day
+        write(src / ("200101-old-call-%d.md" % day if day < 8 else "200108-kept-call.md"),
+              meeting_page("Work", "[acme]", title).replace("date: 2026-03-10", "date: 2020-01-%02d" % day))
+    pricing = root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+    write(pricing, pricing.read_text(encoding="utf-8") + "\nStill on [[200108-kept-call]].\n")
+    return root / "System" / "tools" / "fade.py"
+
+
 def build_workspace(root: Path) -> Path:
     """A clean workspace: the checker should find nothing wrong with it."""
     root = Path(root)

@@ -678,6 +678,25 @@ class TestMemorySettings(ActionCase):
         with self.assertRaises(pa.Refused):                                          # only `memory`, as declared
             self.act(verb="memory-preview", memory={}, path="Wikis/Meetings")
 
+    def test_a_fade_older_than_its_preview_gives_the_counts_alone(self):
+        self.assertNotIn("preview", self.act(verb="memory-preview", memory={}))
+
+    def test_with_the_real_fade_the_preview_names_the_pages_too(self):
+        fixtures.write_fade(self.root)
+        pa._FADE.pop(self.root, None)
+        out = self.act(verb="memory-preview", memory={})
+        pv = out["preview"]["Meetings"]
+        self.assertEqual(set(pa.COUNT_KEYS), set(out["counts"]["Meetings"]))            # counts as before, from the same plan
+        self.assertEqual(out["counts"]["Meetings"], {k: pv[k] for k in pa.COUNT_KEYS})
+        self.assertIn("Old call 1", [r["title"] for r in pv["moving"]])
+        self.assertEqual(["Kept call"], [r["title"] for r in pv["keeping"] if r["date"] == "2020-01-08"])
+        later = self.act(verb="memory-preview", memory={"pins": {"thread": False}})["preview"]["Meetings"]
+        self.assertNotIn("Kept call", [r["title"] for r in later["keeping"]])            # unsaved values move the list too
+        self.assertGreater(later["moves"], pv["moves"])
+        self.assertLess(later["kept"], pv["kept"])
+        self.assertFalse(self.path().exists())
+        self.assertFalse((self.root / "System" / "generated" / "fade").exists())
+
     def test_through_the_script_as_a_host_sends_it(self):
         done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
                               input=json.dumps({"verb": "memory-preview", "memory": {"wake": False}}), timeout=60)

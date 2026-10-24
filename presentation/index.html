@@ -50,7 +50,7 @@ body {
 }
 
 /* ==========================================================================
-   FIXED 16:9 STAGE — MANDATORY BASE (viewport-base.css, included in full)
+   FIXED 16:9 STAGE: MANDATORY BASE (viewport-base.css, included in full)
    Slides are authored at 1920×1080 and the whole stage scales as one unit.
    Do not edit this block when restyling; it is the mechanism, not the look.
    ========================================================================== */
@@ -162,7 +162,7 @@ svg {
   }
   /* Print/export shows every slide at once as its own page, so entrance
      animation state (tied to the single "current" slide on screen) is
-     irrelevant here — force every slide's content to its settled state. */
+     irrelevant here. Force every slide's content to its settled state. */
   .reveal {
     opacity: 1 !important;
     transform: none !important;
@@ -266,7 +266,7 @@ h2.slide-title { font-size: 72px; max-width: 1500px; }
   color: var(--blue);
 }
 
-/* Speaker notes travel with the slide but never render on it — only the
+/* Speaker notes travel with the slide but never render on it: only the
    notes panel (toggled with N) reads their text. */
 .slide .notes { display: none; }
 
@@ -295,7 +295,11 @@ code.snippet {
 .slide--cover .subtitle { font-size: 40px; color: var(--cream-muted); max-width: 1300px; line-height: 1.35; }
 .slide--cover .byline { font-size: 24px; color: var(--cream-faint); }
 
-/* Statement slides: the claim, the wall, the autonomy line, the close.
+/* Cover set on the headline: the product's name rides in the kicker, and
+   the promise takes the title page's big serif line. */
+.slide--cover h1.deck-title--headline { font-size: 116px; letter-spacing: -1px; max-width: 1600px; }
+
+/* Statement slides: the measured cost, the close.
    Big centered serif sentence, nothing else competing for attention. */
 .slide--statement {
   justify-content: center;
@@ -315,16 +319,46 @@ code.snippet {
   max-width: 1200px;
   line-height: 1.4;
 }
-
-/* Wall divider used on the Acme / Birch slide */
-.wall {
-  width: 6px;
-  align-self: stretch;
-  background: repeating-linear-gradient(
-    to bottom, var(--blue) 0 14px, transparent 14px 26px
-  );
-  border-radius: 3px;
+.slide--statement .source {
+  font-size: 24px;
+  color: var(--cream-faint);
+  max-width: 1300px;
 }
+
+/* A list of pieces of work inside a card: name on the left, state on the right */
+.worklist {
+  display: grid;
+  grid-template-columns: 560px 1fr;
+  gap: 18px 40px;
+  align-items: baseline;
+}
+.worklist .name { font-size: 30px; font-weight: 600; color: var(--navy); }
+.worklist .state { font-size: 28px; color: var(--ink-muted); }
+
+/* Rows of a piece of work's record, as the record writes them */
+.record { display: grid; grid-template-columns: 230px 1fr; gap: 14px 28px; }
+.record dt { font-size: 21px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--blue-light); padding-top: 4px; }
+.record dd { font-size: 25px; line-height: 1.45; color: var(--cream-card); }
+
+/* The app's own button, drawn as a label */
+.pill {
+  display: inline-block;
+  align-self: flex-start;
+  background: var(--blue);
+  color: var(--cream-card);
+  font-size: 24px;
+  font-weight: 600;
+  padding: 12px 30px;
+  border-radius: 999px;
+}
+
+/* Navy panel on a cream slide: what Claude says, or what the record holds */
+.card--navy { background: var(--navy); border-color: var(--navy); }
+.card--navy .card-eyebrow { color: var(--blue-light); }
+.card--navy p { color: var(--cream-card); }
+.card--navy .asked { font-family: var(--font-display); font-style: italic; font-size: 32px; color: var(--blue-light); }
+
+.arrow { align-self: center; font-size: 64px; color: var(--blue); flex: none; }
 
 /* ==========================================================================
    ENTRANCE ANIMATION
@@ -343,7 +377,7 @@ code.snippet {
 .slide.visible .reveal:nth-child(5) { transition-delay: 0.45s; }
 
 /* ==========================================================================
-   DECK CHROME — counter, dots, keyboard hint, notes panel, edit toggle.
+   DECK CHROME: counter, dots, keyboard hint, notes panel, edit toggle.
    All fixed to the real viewport, outside the scaled 1920×1080 stage,
    per the fixed-stage rule (§6 of viewport-base.css above).
    ========================================================================== */
@@ -440,236 +474,209 @@ body.editing .editable {
   <main class="deck-stage" id="deckStage">
 
     <!-- ============================================================
-         1. COVER
+         1. COVER: the headline and subtitle, as chosen
          ============================================================ -->
     <section class="slide slide--navy slide--cover active" data-title="Garrick">
       <svg class="cover-mark reveal" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Garrick's mark"><path fill="#F5F0E6" d="M22.75 6V58H8.5C7.12 58 6 56.88 6 55.5V8.5C6 7.12 7.12 6 8.5 6ZM26.75 32H58V55.5C58 56.88 56.88 58 55.5 58H26.75Z"/><path fill="#8EB1F5" d="M26.75 6H55.5C56.88 6 58 7.12 58 8.5V28H26.75Z"/></svg>
-      <p class="kicker reveal">For people who hold other people's confidences</p>
-      <h1 class="deck-title reveal editable" data-edit-id="cover-title">Garrick</h1>
-      <p class="subtitle reveal editable" data-edit-id="cover-sub">An AI chief of staff for your knowledge work, running on the agent you already use. Everything stays in files you own.</p>
+      <p class="kicker reveal">Garrick</p>
+      <h1 class="deck-title deck-title--headline reveal editable" data-edit-id="cover-title">Leave any piece of work. Come back to the next action.</h1>
+      <p class="subtitle reveal editable" data-edit-id="cover-sub">Garrick keeps track of where each piece of your work stands. It reads what comes in, keeps it up to date, and lets finished work step aside, so Claude picks up where you stopped.</p>
       <p class="byline reveal">Marco Venuti</p>
-      <aside class="notes">Open by naming who's in the room: anyone holding confidences from more than one source: advisors and consultants, account and partner managers, analysts, people on internal projects that aren't for everyone. Lead with the chief of staff: it remembers the work and knows whose confidences you hold. Claude Code or Codex is the agent underneath. Introduce declared boundaries with their limits.</aside>
+      <aside class="notes">Two things in one line. The headline is what Garrick does for you: you can leave any piece of work and come back to its next action. The subtitle is what it does with your context to make that return worth trusting. The rest of the deck takes them in that order.</aside>
     </section>
 
     <!-- ============================================================
-         2. THE PROBLEM (antagonist)
+         2. BEAT 1: more pieces of work than you can hold
          ============================================================ -->
-    <section class="slide slide--cream" data-title="You already juggle things you can't afford to mix">
-      <p class="kicker reveal">The tab you already have open</p>
-      <h2 class="slide-title reveal editable" data-edit-id="problem-title">You already juggle things you can't afford to mix</h2>
-      <p class="slide-body reveal editable" data-edit-id="problem-body-1">A client tells you something in confidence. An hour later you're drafting a note for a different client, in the same chat window, with the same assistant that has remembered everything you've said all week. It's convenient, right up until it isn't.</p>
-      <p class="slide-body reveal editable" data-edit-id="problem-body-2" style="color:var(--blue-dark); font-weight:600;">Nothing in that chat knows a wall stands between those two, not just a change of subject.</p>
-      <p class="folio">Garrick</p>
-      <aside class="notes">Let the discomfort sit for a second before offering the fix. This is the case for a general AI chat tool. It's genuinely strong, which is why the next slides have to earn the alternative.</aside>
-    </section>
-
-    <!-- ============================================================
-         3. THE CLAIM (statement)
-         ============================================================ -->
-    <section class="slide slide--navy slide--statement" data-title="The claim">
-      <p class="kicker reveal">The idea, in one line</p>
-      <p class="statement reveal editable" data-edit-id="claim-statement">Garrick remembers your work and knows whose confidences you hold.</p>
-      <p class="statement-sub reveal">Decisions and sources stay with the work, in files you own. The agent underneath gets explicit rules for using them.</p>
-      <aside class="notes">Say this one slowly. Everything after it is mechanism, not more argument.</aside>
-    </section>
-
-    <!-- ============================================================
-         4. PLAIN FOLDERS
-         ============================================================ -->
-    <section class="slide slide--cream" data-title="Everything is plain folders, on your own disk">
-      <p class="kicker reveal">Where it lives</p>
-      <h2 class="slide-title reveal editable" data-edit-id="folders-title">Everything is plain folders, on your own disk</h2>
-      <div class="row reveal" style="flex:1; align-items:stretch;">
-        <p class="slide-body" style="flex:1.1;">
-          Notes, projects, meeting history: it's all files, under git, in a folder you already know how to open. You can read the record in a text editor. Content the assistant reads still goes to its provider.
-        </p>
-        <div class="card" style="flex:0.9; font-family:'DM Sans', monospace; gap:6px;">
-          <p class="card-eyebrow" style="font-family:var(--font-body);">Your workspace on disk</p>
-          <p style="font-size:24px; line-height:1.7; color:var(--navy);">~/Garrick/<br>&nbsp;&nbsp;Zones/Work/Acme Corp/<br>&nbsp;&nbsp;Zones/Personal/<br>&nbsp;&nbsp;Wikis/Meetings/<br>&nbsp;&nbsp;Wikis/Knowledge/<br>&nbsp;&nbsp;System/rules.md</p>
+    <section class="slide slide--cream" data-title="More pieces of work than one head can hold">
+      <p class="kicker reveal">What changed</p>
+      <h2 class="slide-title reveal editable" data-edit-id="many-title">More pieces of work than one head can hold</h2>
+      <p class="slide-body reveal editable" data-edit-id="many-body">With Claude drafting, reading and checking, one person keeps more work moving at once. Each piece moves a little, then waits: on someone else, or on you.</p>
+      <div class="card reveal" style="gap:22px;">
+        <p class="card-eyebrow">Robin's week, an invented example</p>
+        <div class="worklist">
+          <span class="name">Kestle chair launch</span><span class="state">The launch email, half written</span>
+          <span class="name">Brannock delivery problem</span><span class="state">A question only Robin can answer</span>
+          <span class="name">Ellisford University tender</span><span class="state">A page of the pitch deck to write</span>
+          <span class="name">Dealer price list</span><span class="state">Waiting on Nadia to sign off the margins</span>
+          <span class="name">Spring trade show</span><span class="state">Quiet for three weeks</span>
         </div>
       </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">If this is a screen-share, actually open the folder in Finder here. Nothing sells "plain files" like watching one get opened.</aside>
+      <aside class="notes">Robin Hale does product marketing at Quillfield Furniture, the worked example that ships with Garrick. Every name is invented. Five pieces of work is an ordinary week, and none of them is hard. The hard part is knowing, at any moment, where each one is.</aside>
     </section>
 
     <!-- ============================================================
-         5. HARNESS INDEPENDENCE
+         3. BEAT 2: the cost moved to coming back (statement)
          ============================================================ -->
-    <section class="slide slide--cream" data-title="The assistant is the replaceable part">
-      <p class="kicker reveal">Who reads it</p>
-      <h2 class="slide-title reveal editable" data-edit-id="harness-title">The assistant is the replaceable part</h2>
-      <p class="slide-body reveal editable" data-edit-id="harness-body">The workspace doesn't belong to one AI product. An assistant needs to read the instructions in <code class="snippet" style="font-size:28px; padding:6px 14px;">AGENTS.md</code> and run the workspace tools. Switch between supported assistants and keep the saved files and local history.</p>
-      <div class="row reveal" style="gap:24px;">
-        <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Claude Code</h3><p>Runs it today.</p></div>
-        <div class="card" style="flex:1; align-items:center; text-align:center;"><h3 style="font-size:32px;">Codex</h3><p>Runs it today.</p></div>
-        <div class="card" style="flex:1; align-items:center; text-align:center; border-style:dashed;"><h3 style="font-size:32px;">Whatever's next</h3><p>Check instruction and tool support first.</p></div>
-      </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">Name-drop nothing you can't stand behind two years from now. That's the whole point of this slide.</aside>
+    <section class="slide slide--navy slide--statement" data-title="The cost is in coming back">
+      <p class="kicker reveal">The cost is in coming back</p>
+      <p class="statement reveal editable" data-edit-id="cost-statement">Interrupted work is picked up again, on average, 23 minutes and about two other tasks later.</p>
+      <p class="statement-sub reveal editable" data-edit-id="cost-sub">And nearly one time in five, not the same day.</p>
+      <p class="source reveal">Gloria Mark, UC Irvine, observing 36 information workers over three working days. Gallup Business Journal, 2006.</p>
+      <aside class="notes">State it exactly as measured. The 23 minutes is the time until people came back to the interrupted work, after about two other tasks. It says nothing about how long it takes to get going again, so don't stretch it. The one time in five is the one to dwell on: work that simply isn't picked up that day.</aside>
     </section>
 
     <!-- ============================================================
-         6. TRY IT WITHOUT TOUCHING YOUR SETUP
+         4. BEAT 3: memory keeps the project, not your place
          ============================================================ -->
-    <section class="slide slide--cream" data-title="Try it in a folder that isn't your real one">
-      <p class="kicker reveal">Before you trust it with anything real</p>
-      <h2 class="slide-title reveal editable" data-edit-id="try-title">Try it in a folder that isn't your real one</h2>
+    <section class="slide slide--cream" data-title="Your assistant remembers the project, not where you left it">
+      <p class="kicker reveal">What's missing</p>
+      <h2 class="slide-title reveal editable" data-edit-id="memory-title">Your assistant remembers the project, not where you left it</h2>
       <div class="grid-3 reveal">
-        <div class="card"><p class="card-eyebrow">1</p><h3 style="font-size:32px;">A new folder</h3><p>Point the installer at an empty folder that isn't your real workspace.</p></div>
-        <div class="card"><p class="card-eyebrow">2</p><h3 style="font-size:32px;">Nothing else changes</h3><p>Nothing is written to your home configuration or any account you already use.</p></div>
-        <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Delete it, it's gone</h3><p>Don't like it? Remove the folder. Only your assistant's own chat history stays behind.</p></div>
+        <div class="card"><p class="card-eyebrow">It can't tell you</p><h3 style="font-size:34px;">Which piece of work is waiting on you</h3></div>
+        <div class="card"><p class="card-eyebrow">It can't tell you</p><h3 style="font-size:34px;">What comes next</h3></div>
+        <div class="card"><p class="card-eyebrow">It can't tell you</p><h3 style="font-size:34px;">What was only in your head when you stopped</h3></div>
       </div>
-      <code class="snippet reveal">python3 examples/demo/build.py --target ~/Garrick-demo</code>
-      <aside class="notes">Good moment to actually run this line, live, if it's a guided session: the risk-free part lands harder demonstrated than described.</aside>
+      <p class="slide-body reveal editable" data-edit-id="memory-body" style="color:var(--blue-dark); font-weight:600;">One stream is fine until your work has two sides.</p>
+      <aside class="notes">Concede what is true: with one line of work, the assistant's own memory is enough. The trouble starts with several pieces at once. A single ongoing stream, one conversation and one memory for everything, also works for one life with one confidence. It stops working the day your work has two sides, such as two clients, or a client and your employer. Name no product here; it is a direction, not a competitor.</aside>
     </section>
 
     <!-- ============================================================
-         7. ONE MEMORY, WALLED USE — load-bearing slide
+         5. BEAT 4: one place per piece of work
          ============================================================ -->
-    <section class="slide slide--navy slide--statement" data-title="One memory, walled use">
-      <p class="kicker reveal">The rule everything else serves</p>
-      <p class="statement reveal editable" data-edit-id="walled-statement">One memory, walled use.</p>
-      <p class="statement-sub reveal editable" data-edit-id="walled-sub">Conversations carry their sources and parties. You declare which party pairs must stay apart. The assistant applies those rules before using a conversation for a project. Checks catch some mistakes before a commit.</p>
-      <aside class="notes">Slow down here more than anywhere else in the deck. If this doesn't land, nothing after it matters. It's the reason to build this instead of using a folder of chat exports.</aside>
+    <section class="slide slide--cream" data-title="Each piece of work has one place that says where it stands">
+      <p class="kicker reveal">How it works</p>
+      <h2 class="slide-title reveal editable" data-edit-id="place-title">Each piece of work has one place that says where it stands</h2>
+      <div class="row reveal" style="flex:1; gap:48px; align-items:stretch; min-height:0;">
+        <div style="flex:0.85; display:flex; flex-direction:column; gap:28px;">
+          <p class="slide-body">It is written when you leave the work and read when you come back. Say "wrap it" at the end of a session.</p>
+          <p class="slide-body">Say "hold this" when someone interrupts you, and "back" when you return.</p>
+        </div>
+        <div class="card card--navy" style="flex:1.15; gap:22px; justify-content:center;">
+          <p class="card-eyebrow">Kestle chair launch, as Robin left it yesterday</p>
+          <dl class="record">
+            <dt>Where it stands</dt><dd>The launch email is half written. It stops before the pricing section and the dealer offer.</dd>
+            <dt>Next action</dt><dd>Finish the pricing section and the dealer offer, with a placeholder for prices until Nadia signs off.</dd>
+            <dt>Keep in mind</dt><dd>Leo wants durability first and price last.</dd>
+            <dt>Deadline</dt><dd>The draft to Leo and Ines by Friday.</dd>
+          </dl>
+        </div>
+      </div>
+      <aside class="notes">This is the worked example's own record, trimmed to four rows. Keep in mind is the line that holds what was only in your head. Wrapping writes it; nobody has to remember to keep a diary.</aside>
     </section>
 
     <!-- ============================================================
-         8. ZONE / PROJECT / THREAD
+         6. THE RETURN: load-bearing slide
          ============================================================ -->
-    <section class="slide slide--cream" data-title="Zone. Project. Thread.">
-      <p class="kicker reveal">The shape underneath</p>
-      <h2 class="slide-title reveal editable" data-edit-id="zpt-title">Zone. Project. Thread.</h2>
+    <section class="slide slide--cream" data-title="The next day, Continue">
+      <p class="kicker reveal">The return</p>
+      <h2 class="slide-title reveal editable" data-edit-id="return-title">The next day, Continue</h2>
+      <div class="row reveal" style="flex:1; gap:36px; align-items:stretch; min-height:0;">
+        <div class="card" style="flex:0.8; justify-content:center;">
+          <p class="card-eyebrow">Your work</p>
+          <h3>Kestle chair launch</h3>
+          <p>Next: finish the launch email's pricing section and dealer offer</p>
+          <p style="font-size:23px; color:var(--ink-faint);">Moved yesterday · 1 owed, due Friday</p>
+          <span class="pill">Continue</span>
+        </div>
+        <span class="arrow" aria-hidden="true">&rarr;</span>
+        <div class="card card--navy" style="flex:1.2; justify-content:center; gap:22px;">
+          <p class="card-eyebrow">Claude's desktop app, already answered</p>
+          <p class="asked">Where am I on Kestle chair launch?</p>
+          <p style="font-size:27px; line-height:1.5;">The launch email is half written: the subject line, the opening and the product section are done. Next is the pricing section and the dealer offer, with a placeholder for the prices until Nadia signs off the margins. Leo wants durability first and price last, and the draft goes to him and Ines by Friday.</p>
+        </div>
+      </div>
+      <p class="slide-body reveal editable" data-edit-id="return-body">Nothing retold. You start on the next action.</p>
+      <aside class="notes">This is the slide the deck is built around. Yesterday Robin stopped mid-email. Today one click on Continue opens Claude's desktop app on that piece of work, with the answer already on screen, and Robin starts writing the pricing section. The reply is drawn from the example's record; it is an illustration, not a captured run. Continue needs the Claude Code command-line tool installed and signed in. In a browser it copies the words to say instead.</aside>
+    </section>
+
+    <!-- ============================================================
+         7. BEAT 5: all your work on one page
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="All your work on one page">
+      <p class="kicker reveal">The home</p>
+      <h2 class="slide-title reveal editable" data-edit-id="home-title">All your work on one page</h2>
       <div class="grid-3 reveal" style="flex:1;">
-        <div class="card"><p class="card-eyebrow">Zone</p><h3>The separate sides of your working life</h3><p>Work and Personal, say. Each its own folder, its own history, its own backup.</p></div>
-        <div class="card"><p class="card-eyebrow">Project</p><h3>One per client or undertaking</h3><p>Everything for that engagement lives in one place, reachable in one hop.</p></div>
-        <div class="card"><p class="card-eyebrow">Thread</p><h3>One line of work inside it</h3><p>With a single place that says where it stands, so you can pick it back up cold.</p></div>
+        <div class="card"><p class="card-eyebrow">Your work</p><h3>Most recent first</h3><p>Each piece with its next action and what you owe. One waiting on someone says so: Waiting on Nadia Fenn.</p></div>
+        <div class="card"><p class="card-eyebrow">Ask something</p><h3>One box</h3><p>A question about any of your work, or something new to start. Claude opens on your words, already answered.</p></div>
+        <div class="card"><p class="card-eyebrow">Needs you</p><h3>Only your questions</h3><p>What Garrick is waiting on you to answer, one click each. Robin's: which delivery date was promised to Brannock Hotels.</p></div>
       </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">Three levels, no more, ever. Say it like you'd say a phone number: zone, project, thread.</aside>
+      <p class="slide-body reveal" style="font-size:27px;">The home is part of the Garrick app, an optional install on your Mac. Without it, ask Claude "where am I on the launch?" and the answer comes from the same place.</p>
+      <aside class="notes">The home lists every live piece of work, five at a time with the rest under more. A row whose next step is yours has a Continue button; a row waiting on someone has none. The Garrick app is an extra, set up by hand today; say so plainly. Everything on the home is read from the same one place per piece of work.</aside>
     </section>
 
     <!-- ============================================================
-         9. THE WALL IN ACTION — Acme / Birch
+         8. THE TWO DIMENSIONS
          ============================================================ -->
-    <section class="slide slide--cream" data-title="A declared boundary between Acme and Birch">
-      <p class="kicker reveal">The wall, not the metaphor</p>
-      <h2 class="slide-title reveal editable" data-edit-id="wall-title">A declared boundary between Acme and Birch</h2>
-      <div class="row reveal" style="flex:1; align-items:stretch; gap:32px;">
-        <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Acme Corp</h3><p>Supply-chain review. A conversation with their head of procurement, filed the day it happened.</p></div>
-        <div class="wall"></div>
-        <div class="card" style="flex:1;"><p class="card-eyebrow">Client</p><h3>Birch &amp; Co</h3><p>Market-entry advice, and a direct competitor of Acme's.</p></div>
+    <section class="slide slide--cream" data-title="Two things Garrick does">
+      <p class="kicker reveal">Why the return can be trusted</p>
+      <h2 class="slide-title reveal editable" data-edit-id="two-title">Two things Garrick does</h2>
+      <div class="grid-2 reveal">
+        <div class="card"><p class="card-eyebrow">For you</p><h3>Convenience</h3><p>Leave any piece of work and come back to its next action. See all of your work on one page, and open any of it with Continue.</p></div>
+        <div class="card"><p class="card-eyebrow">With your context</p><h3>The context life cycle</h3><p>It takes context in, keeps it true, uses it within walls and lets it fade, so the place you come back to is still right.</p></div>
       </div>
-      <p class="slide-body reveal" style="font-size:28px;">You declare the Acme/Birch wall. The assistant should exclude the other side’s material. The commit check catches names, links and copied wording in supported text. Paraphrases and exported documents still need review.</p>
-      <aside class="notes">This is the concrete version of the previous slide. If anyone's eyes glazed at "walled use," this is where it clicks.</aside>
+      <p class="slide-body reveal editable" data-edit-id="two-body" style="color:var(--blue-dark); font-weight:600;">They meet in one place per piece of work: leaving writes it, coming back reads it.</p>
+      <aside class="notes">Everything so far was the first of the two. The second is why you can rely on it: a place to come back to is only useful if what it says is still true.</aside>
     </section>
 
     <!-- ============================================================
-         10. RESUME POINT + WRAP HABIT
+         9. BEAT 6: the four stages
          ============================================================ -->
-    <section class="slide slide--cream" data-title="One resume point per thread">
-      <p class="kicker reveal">Picking it back up</p>
-      <h2 class="slide-title reveal editable" data-edit-id="resume-title">One resume point per thread</h2>
-      <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
-        <p class="slide-body" style="flex:1.1;">Every thread carries a block that says what's done, what the live artifact is, what happens next and who it's waiting on. Closing a session properly (the wrap habit) is what keeps that block true two months later, when you've forgotten everything else about it.</p>
-        <div class="card" style="flex:0.9; background:var(--navy); border-color:var(--navy);">
-          <p class="card-eyebrow" style="color:var(--blue-light);">Resume here</p>
-          <p style="color:var(--cream-card); font-size:24px; line-height:1.6;">Live artifact: the pricing draft<br>Next: send to Dana for sign-off<br>Waiting on: Acme, since Tuesday</p>
+    <section class="slide slide--cream" data-title="One memory, walled use">
+      <p class="kicker reveal">The context life cycle</p>
+      <h2 class="slide-title reveal editable" data-edit-id="stages-title">One memory, walled use</h2>
+      <div class="grid-2 reveal" style="flex:1; gap:28px;">
+        <div class="card" style="padding:36px; gap:12px;"><p class="card-eyebrow">1 · Take in</p><p>Mail, transcripts and documents land in an inbox, and each is filed by who it came from.</p></div>
+        <div class="card" style="padding:36px; gap:12px;"><p class="card-eyebrow">2 · Keep true</p><p>The record says where each entry came from. "That's wrong" fixes every copy on your yes, and checks report what no longer matches.</p></div>
+        <div class="card" style="padding:36px; gap:12px;"><p class="card-eyebrow">3 · Use within walls</p><p>The right part of the record reaches the task. If your work holds other people's confidences, you can declare walls: the agent gets rules for what may not cross, and a check runs before every commit.</p></div>
+        <div class="card" style="padding:36px; gap:12px;"><p class="card-eyebrow">4 · Let fade</p><p>Finished work steps aside with nothing in it lost. Old meetings and reading fade out of the way in stages, still findable.</p></div>
+      </div>
+      <aside class="notes">One memory: every conversation is kept in one place, so you can find your own record. Walled use: the walls apply where material is used, not where it is stored. Walls are for people with a second party, such as two clients; with one employer and one confidence you never meet them. Be straight about their limits: the rule is one the assistant follows, and the check catches names, links and copied wording, while a clean paraphrase can pass. Fading covers old meetings and reading in the two wikis, never a piece of work, and nothing is deleted.</aside>
+    </section>
+
+    <!-- ============================================================
+         10. BEAT 7: yours
+         ============================================================ -->
+    <section class="slide slide--cream" data-title="Yours, in plain files">
+      <p class="kicker reveal">Where it lives</p>
+      <h2 class="slide-title reveal editable" data-edit-id="yours-title">Yours, in plain files</h2>
+      <div class="row reveal" style="flex:1; align-items:stretch; gap:48px;">
+        <div style="flex:1.15; display:flex; flex-direction:column; gap:26px;">
+          <p class="slide-body">Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in.</p>
+          <p class="slide-body">Its own record is plain Markdown in folders on your Mac, and updates keep your edits.</p>
+          <p class="slide-body">Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.</p>
+        </div>
+        <div class="card" style="flex:0.85; font-family:'DM Sans', monospace; gap:6px;">
+          <p class="card-eyebrow" style="font-family:var(--font-body);">Garrick's record on disk</p>
+          <p style="font-size:24px; line-height:1.7; color:var(--navy);">~/Garrick/<br>&nbsp;&nbsp;Zones/Work/<br>&nbsp;&nbsp;&nbsp;&nbsp;Kestle chair launch/<br>&nbsp;&nbsp;&nbsp;&nbsp;Brannock delivery problem/<br>&nbsp;&nbsp;Wikis/Meetings/<br>&nbsp;&nbsp;Wikis/Knowledge/<br>&nbsp;&nbsp;System/rules.md</p>
         </div>
       </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">This is the habit that makes the whole workspace forgiving of a two-month gap, which is most working lives, most of the time.</aside>
+      <aside class="notes">If this is a screen share, open the folder in Finder and a note in a text editor. Two honest limits: what the assistant reads still goes to its provider, even though the files are on your disk, and the rules tell it to ask before anything is sent or published. Its own app permissions decide what it can run.</aside>
     </section>
 
     <!-- ============================================================
-         11. BUILT TO BE SPOKEN TO
+         11. TRY IT ON AN INVENTED WEEK
          ============================================================ -->
-    <section class="slide slide--cream" data-title="Built to be spoken to">
-      <p class="kicker reveal">How you actually use it</p>
-      <h2 class="slide-title reveal editable" data-edit-id="voice-title">Built to be spoken to</h2>
-      <p class="slide-body reveal editable" data-edit-id="voice-body">Names you can say out loud, with no dates or codes buried in them. Say "open Acme, pricing" and it tells you where you left off, in a couple of sentences, not a wall of text. When it mishears a name, it checks against your own list before it guesses.</p>
-      <p class="folio">Garrick</p>
-      <aside class="notes">If this is a live demo, this is the slide to actually say a command out loud on, not just describe it.</aside>
-    </section>
-
-    <!-- ============================================================
-         12. YOU KEEP THE DECISIONS (statement)
-         ============================================================ -->
-    <section class="slide slide--navy slide--statement" data-title="You approve what gets shared">
-      <p class="kicker reveal">What it never does alone</p>
-      <p class="statement reveal editable" data-edit-id="decisions-statement">You approve what gets shared.</p>
-      <p class="statement-sub reveal editable" data-edit-id="decisions-sub">The rules tell the assistant to ask before sending or publishing. Its app permissions control what it can execute. Material it reads is processed by its provider, even though the workspace is on your disk.</p>
-      <aside class="notes">This is the slide that answers the fear underneath the whole pitch: that an assistant with this much memory might act on it without asking.</aside>
-    </section>
-
-    <!-- ============================================================
-         13. CHECKS ITSELF
-         ============================================================ -->
-    <section class="slide slide--cream" data-title="A workspace that checks itself">
-      <p class="kicker reveal">Keeping it honest</p>
-      <h2 class="slide-title reveal editable" data-edit-id="check-title">A workspace that checks itself</h2>
-      <div class="row reveal" style="flex:1; gap:40px; align-items:stretch;">
-        <p class="slide-body" style="flex:1.1;">A rule that a machine can check gets a check, added in the same commit as the rule itself. Run it any time and it answers in plain language: a missing resume point, or a project note that links across a declared wall.</p>
-        <div class="card" style="flex:0.9; font-family:'DM Sans', monospace;">
-          <p class="card-eyebrow" style="font-family:var(--font-body);">$ python3 System/tools/check.py</p>
-          <p style="font-size:24px; line-height:1.7; color:var(--navy);">✓ every zone is its own repository<br>✓ every open thread has a resume point<br>✗ Project note links across a declared wall</p>
-        </div>
+    <section class="slide slide--cream" data-title="Try it on an invented week first">
+      <p class="kicker reveal">Before your own work</p>
+      <h2 class="slide-title reveal editable" data-edit-id="try-title">Try it on an invented week first</h2>
+      <div class="grid-3 reveal">
+        <div class="card"><p class="card-eyebrow">1</p><h3 style="font-size:32px;">Robin's week</h3><p>Five pieces of work at Quillfield Furniture, two call transcripts and one question waiting. Every name is invented.</p></div>
+        <div class="card"><p class="card-eyebrow">2</p><h3 style="font-size:32px;">A folder of its own</h3><p>Build it into a new folder, not your real workspace, and ask where the launch stands.</p></div>
+        <div class="card"><p class="card-eyebrow">3</p><h3 style="font-size:32px;">Gone in one step</h3><p>Delete the folder. In a workspace of your own, one command puts the example away.</p></div>
       </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">Illustrative output, not a captured run. The check cannot infer missing walls. Show real checker output in a demo and explain its limits.</aside>
+      <code class="snippet reveal" style="align-self:flex-start;">python3 examples/example-work/build.py --target ~/Garrick-example</code>
+      <aside class="notes">In a guided session, run this line live. The example builds with dates relative to today, so the launch email really was left yesterday. Continue needs the Garrick app and the Claude Code command-line tool; without them, ask Claude "where am I on the Kestle chair launch?" in the new folder.</aside>
     </section>
 
     <!-- ============================================================
-         14. STATUS PAGE
+         12. CLOSE
          ============================================================ -->
-    <section class="slide slide--cream" data-title="Where everything stands, at a glance">
-      <p class="kicker reveal">Optional extra</p>
-      <h2 class="slide-title reveal editable" data-edit-id="status-title">Where everything stands, at a glance</h2>
-      <div class="row reveal" style="flex:1; gap:48px; align-items:center; min-height:0;">
-        <img src="../docs/assets/status-overview.png" alt="The status page: the demo workspace overview, with the graph, threads grouped by project, open actions and inbox counts" style="height:620px; width:auto; border-radius:16px; box-shadow:0 12px 40px rgba(20,30,60,.22); flex:none;">
-        <p class="slide-body" style="flex:1;">The status page: one page, built from your own files. See what needs attention, your live threads, open actions and waiting inbox items. The graph shows how your notes connect; quiet threads carry a ring.</p>
-      </div>
-      <p class="folio">Garrick</p>
-      <aside class="notes">The fictional demo workspace, shown in the light theme. The overview shows the work: the graph, the threads grouped by project, open actions and waiting inbox items. Attention items, counts and check results lead the Status tab. Acme and Birch remain separate clusters. The page shows names, tags, dates and the links between notes, not what a note says; the check findings it lists can quote a link. It runs no server and loads nothing from the network. Hovering a thread in the list opens its card. Parked projects stay off the graph until you ask for them. Cards can be moved or hidden, and Reset view puts them back.</aside>
-    </section>
-
-    <!-- ============================================================
-         15. CORE VS EXTRAS
-         ============================================================ -->
-    <section class="slide slide--cream" data-title="Choose an app or a terminal">
-      <p class="kicker reveal">What you actually need</p>
-      <h2 class="slide-title reveal editable" data-edit-id="core-title">Choose an app or a terminal</h2>
-      <div class="grid-2 reveal" style="flex:1;">
-        <div class="card">
-          <p class="card-eyebrow">Desktop route</p>
-          <p>Claude in its Code tab, or Codex in the ChatGPT app. Start with one conversation, a useful brief and a saved next action. Add other tools later.</p>
-        </div>
-        <div class="card" style="border-style:dashed;">
-          <p class="card-eyebrow">Terminal route</p>
-          <p>Claude Code or Codex CLI. Add Obsidian for browsing and cmux for several sessions. No provider desktop app is needed for local CLI work.</p>
-        </div>
-      </div>
-      <p class="slide-body reveal" style="font-size:26px;">Both routes use the same files. Codex remote voice on iPhone adds a paired desktop host, awake and online.</p>
-      <aside class="notes">Offer the desktop route first to participants new to Terminal. Add phone access after the first useful session. See docs/extras/phone-access.md for provider requirements.</aside>
-    </section>
-
-    <!-- ============================================================
-         16. CLOSE
-         ============================================================ -->
-    <section class="slide slide--navy slide--statement" data-title="Start with one folder">
-      <p class="kicker reveal">Yours to open</p>
-      <p class="statement reveal editable" data-edit-id="close-statement">Start with one folder.</p>
-      <p class="statement-sub reveal editable" data-edit-id="close-sub">Set up your chosen assistant and Garrick. File one conversation, make a brief, then wrap it. Tomorrow, open the project and ask what comes next.</p>
+    <section class="slide slide--navy slide--statement" data-title="Two pieces of work, one month">
+      <p class="kicker reveal">Yours to try</p>
+      <p class="statement reveal editable" data-edit-id="close-statement">Move two pieces of work in. Come back to them through Garrick for a month.</p>
+      <p class="statement-sub reveal editable" data-edit-id="close-sub">Leave them when you need to, and come back with Continue or "where am I", not through chat history. Garrick was built from one person's working week; a month tells you whether it fits yours.</p>
       <p class="byline reveal" style="margin-top:20px;">Garrick · MIT licence · Marco Venuti</p>
-      <aside class="notes">End here, not on a roadmap. The point of this whole deck is that it's ready now, not that it will be someday.</aside>
+      <aside class="notes">End on the ask, not a roadmap. Two pieces of work is enough to feel the return and small enough to start today. Ask people to count how often they came back through Garrick in that month.</aside>
     </section>
 
   </main>
 </div>
 
-<!-- Deck chrome: counter, dot navigation, keyboard hint — all outside the
+<!-- Deck chrome: counter, dot navigation, keyboard hint, all outside the
      scaled stage so they stay a fixed size regardless of window size. -->
 <div class="deck-controls">
-  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">16</span></span>
+  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">12</span></span>
   <span class="deck-dots" id="deckDots"></span>
   <span class="kbd-hint">→ / space next · ← previous · N notes · E edit</span>
 </div>
@@ -868,7 +875,7 @@ class SlidePresentation {
       clearTimeout(this._savedTimer);
       this._savedTimer = setTimeout(() => this.savedFlag.classList.remove('show'), 900);
     } catch (err) {
-      /* storage unavailable (private window, locked-down profile) — edits
+      /* storage unavailable (private window, locked-down profile): edits
          still work for the current viewing, they just won't persist */
     }
   }

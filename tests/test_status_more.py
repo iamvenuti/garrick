@@ -626,13 +626,14 @@ class TestZoneOrder(StatusCase):
         self.assertIn("leadZone(zsel);", status.GRAPH_JS.split("function leadZone")[1])          # on load
         self.assertIn("st.set('garrick-graph-place',z);leadZone(z);", status.GRAPH_JS)          # on each pick
 class TestSettingsRowLines(StatusCase):
-    """Settings (#73): a row's own grey line waits behind its section's "?", and is its tooltip meanwhile."""
+    """Settings (#205): a row's own grey line says what the row does, always
+    shown, so nobody has to press a "?" to know what a control does."""
 
-    def test_row_lines_hidden_until_explained(self):
+    def test_row_lines_always_show(self):
         html = self.page()
-        self.assertIn("#settings .setsec:not(.explained) :is(.launcher-choice,.setlink,.flagrow) small{display:none}", html)
-        self.assertIn("sec.classList.toggle('explained',!p.hidden)", html)
-        self.assertIn("r.title=m.textContent.trim()+(r.dataset.tip0?' '+r.dataset.tip0:'')", html)
+        self.assertNotIn(":not(.explained)", html)                                       # nothing hides them
+        self.assertNotIn("classList.toggle('explained'", html)
+        self.assertNotIn("r.dataset.tip0", html)                                          # nor copies them into a tooltip
         self.assertIn("<small>", html[html.index('id="settings"'):])                     # the lines are all still there
 
 

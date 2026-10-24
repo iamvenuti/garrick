@@ -1218,7 +1218,9 @@ class TestSettings(StatusCase):
         self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
-        self.assertIn(".setcols{display:grid", status.SETTINGS_CSS)                  # two columns where they fit
+        for key, lede in (("launchers", "Which apps a project or thread can open in"), ("about", "Which Garrick this is"),
+                          ("preview", "Features that are built but not released yet")):
+            self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
         dialog = htmllib.unescape(self.dialog())
@@ -1262,6 +1264,70 @@ class TestSettings(StatusCase):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.StatusSettings.open()", swift)
         self.assertIn("window.StatusSettings=", status.JS)
+
+
+class TestSettingsLayout(StatusCase):
+    """Settings as one column of sections, read in order, with the list of
+    them beside it (#205): a link per section, grouped by what people come
+    for, and the one being read marked."""
+
+    ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "menu-settings", "wait-settings",
+             "notify-settings", "memory-settings", "about-settings", "preview-settings"]
+
+    def dialog(self, **kw):
+        html = self.page(**kw)
+        return html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
+
+    def test_one_column_in_the_order_the_list_names(self):
+        fixtures.write_fade_stub(self.root)
+        dialog = self.dialog()
+        nav = dialog[dialog.index('<nav class="setnav" aria-label="Settings sections">'):dialog.index("</nav>")]
+        listed = re.findall(r'<a href="#([a-z-]+)" data-setgo="\1">', nav)
+        built = re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"', dialog)
+        self.assertEqual(built, listed)                                             # every section, once, in its order
+        self.assertEqual([k for k in self.ORDER if k in built], built)
+        for must in ("home-settings", "launcher-settings", "zone-settings", "menu-settings", "notify-settings",
+                     "memory-settings", "about-settings", "preview-settings"):
+            self.assertIn(must, built)
+        heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
+        self.assertEqual(heads, dict(re.findall(r'data-setgo="([a-z-]+)">([^<]+)</a>', nav)))   # named as its heading
+        self.assertEqual("Manage older material", heads["memory-settings"])
+        self.assertEqual([t for _, t in status.SET_GROUPS], re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
+        self.assertEqual([t for _, t in status.SET_GROUPS], re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
+        main = dialog[dialog.index('<div class="setmain" id="settings-main">'):]
+        self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
+        self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
+        self.assertNotIn("setcols", dialog)
+        self.assertEqual(len(built), dialog.count('<p class="setlede">'))           # each opens with what it is for
+
+    def test_a_section_left_out_is_not_listed(self):
+        dialog = self.dialog()                                                      # no fade.py here
+        self.assertNotIn('id="memory-settings"', dialog)
+        self.assertNotIn("#memory-settings", dialog)
+        self.assertNotIn("How it keeps older material", dialog)                     # nor its group
+
+    def test_the_list_follows_what_the_host_shows_and_marks_where_the_reader_is(self):
+        js = status.JS
+        self.assertIn("function snShown(s){return!!s&&!s.hidden&&getComputedStyle(s).display!=='none'}", js)   # .apponly, Menu bar
+        self.assertIn("a.parentNode.hidden=!snShown(document.getElementById(a.dataset.setgo))", js)
+        self.assertIn("g.hidden=!g.querySelector('li:not([hidden])')", js)                # a group with none left goes
+        self.assertIn("a.setAttribute('aria-current','true')", js)
+        self.assertIn("sd.showModal();snHold=null;snSync()", js)                         # checked each time it opens
+        self.assertIn("s.focus({preventScroll:true})", js)                               # the keyboard lands on the section
+        css = status.SETTINGS_CSS
+        self.assertIn("dialog.settings[open]{display:flex;flex-direction:column}", css)
+        self.assertIn(".setbody{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:212px minmax(0,1fr)}", css)
+        self.assertIn(".setmain{position:relative;overflow:auto", css)
+        self.assertIn("max-width:1040px", css)
+        self.assertIn("@media (max-width:759px){.setbody{grid-template-columns:minmax(0,1fr)", css)   # a strip on top
+        self.assertIn(".setnav a[aria-current]", css)
+        self.assertIn(".nohost .apponly{display:none}", css)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_script_parses(self):
+        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.JS,
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
 
 
 class TestWaitSettings(StatusCase):
@@ -2431,14 +2497,20 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', sec)))
-        self.assertIn('<input type="checkbox" id="m-wake" checked', sec)
+        self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
+                      'work links again">', sec)
         self.assertIn('<option value="dormant" selected>working and dormant pages</option>', sec)
         self.assertIn('<input type="checkbox" id="m-night" checked', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', sec)
         self.assertIn("dormant ones in its <code>dormant/</code> folder, archived ones in its <code>archive/</code> folder", sec)
-        self.assertIn('<li data-mw="Meetings"><b>Meetings</b> <span data-mc="grades">40 working · 12 dormant · 5 archived</span>'
-                      '<span class="mnext" data-mc="next">Next pass: 4 to dormant, 2 to the archive, 1 woken</span></li>', sec)
+        self.assertIn('<div class="mwiki" data-mw="Meetings"><p class="mcount"><b>Meetings</b> <span data-mc="grades">40 working · '
+                      '12 dormant · 5 archived</span><span class="mnext" data-mc="next">Next pass: 4 to dormant, 2 to the archive, '
+                      '1 woken</span></p>', sec)
         self.assertIn("Next pass: 9 to dormant, 4 to the archive, 1 woken", sec)              # Knowledge's two kinds
+        # a fade.py older than preview() and its sentences: the counts alone, and no rule worded here in its place
+        self.assertNotIn('data-mc="moving"', sec)
+        self.assertNotIn('class="hint msaid"', sec)
+        self.assertIn("The full list, every page with why: <code>System/generated/fade/Meetings.md</code>", sec)
 
     def test_what_was_saved_is_shown(self):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {
@@ -2491,6 +2563,61 @@ class TestMemorySettings(StatusCase):
         for words in ("' working · '", "' dormant · '", "' archived'", "'Off: nothing fades'", "'to dormant'",
                       "'to the archive'", "'woken'", "'Next pass: '", "'nothing moves'"):
             self.assertIn(words, status.MEMORY_JS)
+
+    def test_it_reads_as_three_grades_and_three_steps_before_any_rule(self):
+        sec = htmllib.unescape(self.section())
+        for words in ("Older meetings and reading move out of the way, so today's work is quicker to find. Nothing is ever "
+                      "deleted, and nothing moves until you say yes.",
+                      "Put aside: out of the index, but still found when a search reaches back for it",
+                      "Kept out of the way: found only when you ask to search the archive.",
+                      "Closing Settings saves the rules below. Saving moves nothing.",
+                      "Ask “what would fade”: it writes the list of what the next pass would move, and why.",
+                      "Pages move only when you say yes to that list",
+                      "Active work is never put aside"):
+            self.assertIn(words, sec)                                               # on screen, not behind the "?"
+        order = [sec.index(x) for x in ('class="mgradesay"', 'class="msteps"', 'id="m-prev"', 'data-mwikion=',
+                                        'data-mkind=', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
+        self.assertEqual(sorted(order), order)                                      # what would happen, then the rules
+        self.assertEqual(3, sec.count('class="madv"'))                              # each kind's lists, under Advanced
+        self.assertRegex(sec, r'<details class="madv"><summary>Advanced: which pages this kind takes</summary>'
+                              r'<label class="mlist">Types <input type="text" data-mk="types"')
+        for gone in ("Use wakes a dormant page", "Opened, quoted or linked again"):
+            self.assertNotIn(gone, sec)
+
+    def test_with_the_real_fade_it_names_the_pages_and_says_its_own_rules(self):
+        fixtures.write_fade(self.root)
+        status._FADE.pop(self.root, None)
+        fade = status.fade_lib(self.root)
+        self.assertTrue(callable(fade.preview))
+        sec = self.section()
+        for name in ("AGE_SAID", "WAKE_SAID"):
+            self.assertIn('<p class="hint msaid">%s</p>' % status.said_html(getattr(fade, name)), sec)   # fade.py's words, as they are
+        self.assertIn("<code>pinned: true</code>", status.said_html(fade.WAKE_SAID))
+        meetings = sec[sec.index('data-mw="Meetings"'):sec.index('data-mw="Knowledge"')]
+        moving = re.search(r'<ul class="mrows" data-mc="moving">(.*?)</ul>', meetings).group(1)
+        self.assertEqual(fade.PREVIEW_LIMIT, moving.count("<li>"))                  # a short list
+        self.assertIn('<li><b>Old call 1</b> <span class="mdate">2020-01-01</span> <span class="mto">to the archive</span>'
+                      '<small>', moving)
+        self.assertIn("months old; meetings are archived at 18</small>", moving)    # and why
+        self.assertRegex(meetings, r'<p class="mmore" data-mc="moves">and \d+ more</p>')
+        keeping = re.search(r'<ul class="mrows" data-mc="keeping">(.*?)</ul>', meetings).group(1)
+        self.assertIn('<li><b>Kept call</b> <span class="mdate">2020-01-08</span><small>Kept by a live thread, '
+                      'Zones/Work/Acme Review/Threads/Pricing/Pricing.md</small></li>', keeping)
+        self.assertIn('<p class="mkeptlab" data-mc="keptlab">Old enough to go, but kept for active work</p>', meetings)
+        self.assertIn("<code>System/generated/fade/Meetings.md</code>, written when you ask", htmllib.unescape(meetings))
+        self.assertFalse((self.root / "System" / "generated").exists())             # building the page writes nothing
+        fade.propose(self.root, "Meetings")
+        meetings = self.section().split('data-mw="Meetings"', 1)[1]
+        self.assertRegex(meetings, r'<a href="[^"]+">System/generated/fade/Meetings\.md</a>, as last written')
+
+    def test_the_script_draws_the_pages_as_the_page_does(self):
+        js = status.MEMORY_JS
+        self.assertIn("paint(out.counts,out.preview)", js)
+        for words in ("'to dormant'", "'to the archive'", "'back to working'", "'Kept by '", "'undated'", "'and '", "' more'"):
+            self.assertIn(words, js)
+        self.assertEqual({"dormant": "to dormant", "archived": "to the archive", "working": "back to working"}, status.MEMORY_TO)
+        self.assertIn("textContent", js)
+        self.assertNotIn("innerHTML", js)                                           # a title is the user's text, never markup
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_script_parses(self):

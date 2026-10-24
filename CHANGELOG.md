@@ -9,6 +9,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 - The README opens on the two things Garrick does: where you work, and what it does with your context. Leave any piece of work and come back to the next action; behind that, Garrick reads what comes in, keeps it up to date, and lets finished work step aside. It uses the app's word, "piece of work", rather than "thread", describes the home (Your work, Continue, Ask something, Needs you), and offers walls for work that holds other people's confidences rather than leading with them.
 - The introduction deck, `presentation/index.html`, follows the README's new opening: it leads with leaving a piece of work and coming back to its next action, shows the return with Continue on the worked example, and then the four stages of the context life cycle, in twelve slides instead of sixteen.
 
+## [0.40.1] - 2026-10-23
+
+A fade lists a meeting on a person page by its date, so the check no longer warns on the pages it touched.
+
 ### Fixed
 
 - A fade wrote each meeting's title onto the person pages that list it under `## Earlier`, and `check.py` then warned on every one of them for repeating a meeting ([#203](https://github.com/iamvenuti/garrick/issues/203)). In a meeting wiki the title sums up what was discussed, and a person page is read on both sides of every wall. A person page now lists a faded meeting as `meeting of <date>`, linked to where it went; entity and concept pages keep the title. Waking a page still takes its line off, since that goes by the link. A page faded by 0.40.0 keeps the line it was given: write the date in place of the title by hand, or leave it for the check to name.
@@ -910,7 +914,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/iamvenuti/garrick/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/iamvenuti/garrick/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/iamvenuti/garrick/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/iamvenuti/garrick/compare/v0.37.0...v0.38.0

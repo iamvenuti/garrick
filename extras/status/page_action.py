@@ -90,7 +90,9 @@ zone's repository, as the skills would:
                 System/tools/fade.py keeps; saving moves no page
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
-                them, per wiki, as "counts". It only reads
+                them, per wiki, as "counts", and, from a fade.py with
+                preview(), the first pages that would move and those
+                active work keeps, as "preview". It only reads
     answer      a Needs you question answered by one of its options (#175):
                 {"zone", "file", "label"}; the work's Next action becomes
                 what the option leads to, with a dated entry, the question
@@ -132,6 +134,13 @@ zone's repository, as the skills would:
     work-file   a moved file opened, the work's Files/ folder in Finder, or
                 an earlier version opened to read or saved as a separate file:
                 {"zone", "file", "do", "path"?, "version"?, "to"?}
+    note-read   a note drawn for Explore's Preview (#206): {"path"}, from the
+                workspace's folder, a .md file inside Zones/ or Wikis/ once
+                every link is followed; "title" and "html", guide.py's
+                rendering, in the reply, or why not, with "missing" for a
+                note that is not there. It only reads
+    note-open   that note opened in the app the Mac uses for a .md file:
+                {"path"}; the same checks, and nothing written
 
 What a Todo verb says it did is the line's text without its Markdown links,
 cut to SAID_TEXT characters: the link back to a meeting belongs in Todo.md,
@@ -214,6 +223,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import html
 import importlib.util
 import json
 import os
@@ -237,7 +247,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "new-project", "new-thread", "check-name", "rename", "delete", "undo",
          "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
-         "work-file", "memory-preview")
+         "work-file", "memory-preview", "note-read", "note-open")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
@@ -1532,17 +1542,26 @@ def clean_memory(value) -> dict:
     return out
 
 
+COUNT_KEYS = ("on", "working", "dormant", "archived", "to_dormant", "to_archive", "to_wake")
+
+
 def memory_preview(ws: Path, req: dict) -> dict:
     """What Settings › Memory's unsaved values would do now: fade.py's counts
-    for them, merged over what is saved, a key at a time. Reads only."""
+    for them, merged over what is saved, a key at a time, and, where its
+    fade.py has preview(), the pages behind them (#205): per wiki, the first
+    that would move, with where to and why, and the first active work keeps.
+    One plan either way. Reads only."""
     lib = fade_lib(ws)
     if lib is None:
         raise Refused("cannot find System/tools/fade.py; update Garrick")
     chosen = clean_memory(req.get("memory") if "memory" in req else {})
     with tools_path(ws):
         memory = dict(lib.settings(ws), **chosen)
-        counts = lib.counts(ws, memory=memory)
-    return {"say": "Counted", "counts": counts}
+        if not callable(getattr(lib, "preview", None)):
+            return {"say": "Counted", "counts": lib.counts(ws, memory=memory)}
+        preview = lib.preview(ws, memory=memory)
+    counts = {w: {k: v for k, v in c.items() if k in COUNT_KEYS} for w, c in preview.items()}
+    return {"say": "Counted", "counts": counts, "preview": preview}
 
 
 def save_settings(ws: Path, req: dict) -> str:
@@ -3499,6 +3518,124 @@ def work_file(ws: Path, req: dict, today: dt.date) -> str:
 # ---- end of where a work's files live -----------------------------------------------
 
 
+# ---- a note previewed from Explore (#206) ---------------------------------------
+# A node's card on the graph offers Preview: the note read here, drawn by
+# guide.py's renderer, the one the Guide and the release notes are drawn with,
+# and shown over the graph; and, from the preview, Open in default app, the
+# note opened by `open` in whatever app the Mac uses for a .md file, whatever
+# Settings › Opening a thread says. Both only read. A note is named by its path
+# from the workspace's folder, and only a Markdown file inside Zones/ or Wikis/,
+# once every link on the way is followed, is either read or opened. A note
+# larger than NOTE_MAX is not drawn, and opens in its own app instead.
+_GUIDE = None
+NOTE_PLACES = ("Zones", "Wikis")
+NOTE_MAX = 400 * 1000
+NOTE_PROPS = 16                 # properties drawn above a note, at most
+NOTE_FM = re.compile(r"\A---[ \t]*\r?\n(.*?)^(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)", re.S | re.M)
+NOTE_KEY = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)\s*$")
+NOTE_ITEM = re.compile(r"^[ \t]+-[ \t]+(.*?)\s*$")
+
+
+class Missing(Refused):
+    """A note that is not there: the reply says so in `missing`, so the page
+    offers no Open in default app for it."""
+    reply = {"missing": True}
+
+
+def guide_lib():
+    """guide.py, beside this file: the one Markdown renderer."""
+    global _GUIDE
+    if _GUIDE is None:
+        spec = importlib.util.spec_from_file_location("garrick_guide", str(HERE / "guide.py"))
+        _GUIDE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GUIDE)
+    return _GUIDE
+
+
+def gone(name: str) -> Missing:
+    return Missing("%s is not there any more: it was moved, renamed or deleted after the page was built" % name)
+
+
+def note_file(ws: Path, rel) -> Path:
+    """A note by its path from the workspace, as the graph names it: a .md
+    file inside Zones/ or Wikis/ once every link is followed, so a note that
+    links to one elsewhere in them is read, and `..`, a hidden folder or a
+    link that leads out of them is refused. One that is not there is Missing."""
+    if not isinstance(rel, str) or not rel or len(rel) > PATH_MAX or any(c in rel for c in "\n\r\x00\\"):
+        raise Refused("no note named")
+    parts = rel.split("/")
+    if parts[0] not in NOTE_PLACES or any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        raise Refused("Garrick previews only a note in a zone or a wiki")
+    name = parts[-1][:-3] if parts[-1].endswith(".md") else parts[-1]
+    if not rel.endswith(".md"):
+        raise Refused("%s is not a Markdown note, so Garrick does not preview it" % name)
+    p = (ws / rel).resolve()
+    if p.suffix != ".md" or not any(root in p.parents for root in ((ws / place).resolve() for place in NOTE_PLACES)):
+        raise Refused("%s leads outside the zones and wikis, so Garrick does not preview it" % name)
+    if not p.is_file():
+        raise gone(name)
+    return p
+
+
+def note_props(block: str) -> list:
+    """A note's frontmatter as (key, value) to show: a key's value, or its
+    list on the lines under it or in brackets, joined by commas. A nested map
+    is left out; it is not what a reader looks for above a note."""
+    props: list = []
+    for line in block.splitlines():
+        m, item = NOTE_KEY.match(line), NOTE_ITEM.match(line)
+        if m:
+            v = m.group(2)
+            props.append([m.group(1), [x.strip() for x in v[1:-1].split(",")] if v[:1] == "[" and v[-1:] == "]" else [v], False])
+        elif item and props:
+            props[-1][1].append(item.group(1))
+        elif props and line.strip() and line[:1] in " \t":
+            props[-1][2] = True                     # a key under a key: a nested map
+    out = []
+    for key, values in [(k, v) for k, v, nested in props if not nested][:NOTE_PROPS]:
+        values = [v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else v for v in values]
+        if any(values):
+            out.append((key, ", ".join(v for v in values if v)))
+    return out
+
+
+def note_read(ws: Path, req: dict) -> dict:
+    """Preview (#206): {"path"}, the note drawn as HTML, its frontmatter as a
+    short list of properties above it, with its title. Nothing is written."""
+    p = note_file(ws, req.get("path"))
+    try:
+        size = p.stat().st_size
+        with p.open("rb") as f:
+            data = f.read(NOTE_MAX + 1) if size <= NOTE_MAX else b""
+    except FileNotFoundError:
+        raise gone(p.stem)
+    except OSError as e:
+        raise Refused("%s could not be read: %s" % (p.stem, (e.strerror or str(e)).lower()))
+    if size > NOTE_MAX or len(data) > NOTE_MAX:
+        raise Refused("%s is too large to preview here (%s); open it in its own app"
+                      % (p.stem, work_files_lib().said_size(max(size, len(data)))))
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise Refused("%s could not be read: it is not text Garrick can read (UTF-8)" % p.stem)
+    G, m = guide_lib(), NOTE_FM.match(text)
+    props = note_props(m.group(1)) if m else []
+    title = next((v for k, v in props if k == "title"), "") or p.stem
+    shown = "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (html.escape(k), G.inline(v)) for k, v in props if k != "title")
+    body = G.blocks(text[m.end():] if m else text)
+    return {"say": "Read %s" % p.stem, "title": title,
+            "html": ('<dl class="nv-props">%s</dl>' % shown if shown else "") + (body or '<p class="nv-none">This note is empty.</p>')}
+
+
+def note_open(ws: Path, req: dict) -> str:
+    """Open in default app (#206): {"path"}, the note opened by `open`, in the
+    app the Mac uses for a .md file, never one of Garrick's launchers."""
+    p = note_file(ws, req.get("path"))
+    open_path(p)
+    return "Opened %s" % p.stem
+# ---- end of a note previewed ----------------------------------------------------
+
+
 def fix_finding(ws: Path, req: dict) -> str:
     """The Fix button on a `check` chip's finding (#179): Nurture's own
     mechanical fix for the note it names, and nothing else. `nurture.py fix
@@ -3552,6 +3689,10 @@ def act(ws: Path, req, today=None, now=None):
         return save_settings(ws, req)
     if req["verb"] == "memory-preview":
         return memory_preview(ws, req)
+    if req["verb"] == "note-read":
+        return note_read(ws, req)
+    if req["verb"] == "note-open":
+        return note_open(ws, req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "interrupt":
@@ -3634,7 +3775,7 @@ def perform(ws: Path, req, ops=None):
                 else:
                     out = {"ok": True, "say": done}
         except Refused as e:
-            out = {"ok": False, "say": str(e)}
+            out = dict({"ok": False, "say": str(e)}, **getattr(e, "reply", {}))     # a note not there says so (#206)
             outcome, why = "refused", str(e)
         except Exception as e:          # a fault still answers in JSON, and is logged
             out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}

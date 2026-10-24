@@ -678,6 +678,25 @@ class TestMemorySettings(ActionCase):
         with self.assertRaises(pa.Refused):                                          # only `memory`, as declared
             self.act(verb="memory-preview", memory={}, path="Wikis/Meetings")
 
+    def test_a_fade_older_than_its_preview_gives_the_counts_alone(self):
+        self.assertNotIn("preview", self.act(verb="memory-preview", memory={}))
+
+    def test_with_the_real_fade_the_preview_names_the_pages_too(self):
+        fixtures.write_fade(self.root)
+        pa._FADE.pop(self.root, None)
+        out = self.act(verb="memory-preview", memory={})
+        pv = out["preview"]["Meetings"]
+        self.assertEqual(set(pa.COUNT_KEYS), set(out["counts"]["Meetings"]))            # counts as before, from the same plan
+        self.assertEqual(out["counts"]["Meetings"], {k: pv[k] for k in pa.COUNT_KEYS})
+        self.assertIn("Old call 1", [r["title"] for r in pv["moving"]])
+        self.assertEqual(["Kept call"], [r["title"] for r in pv["keeping"] if r["date"] == "2020-01-08"])
+        later = self.act(verb="memory-preview", memory={"pins": {"thread": False}})["preview"]["Meetings"]
+        self.assertNotIn("Kept call", [r["title"] for r in later["keeping"]])            # unsaved values move the list too
+        self.assertGreater(later["moves"], pv["moves"])
+        self.assertLess(later["kept"], pv["kept"])
+        self.assertFalse(self.path().exists())
+        self.assertFalse((self.root / "System" / "generated" / "fade").exists())
+
     def test_through_the_script_as_a_host_sends_it(self):
         done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
                               input=json.dumps({"verb": "memory-preview", "memory": {"wake": False}}), timeout=60)
@@ -1726,6 +1745,161 @@ class TestScript(ActionCase):
         self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
             'todo-done zone="Work"  ->  refused: that did not work: OSError: the disk went away'))
         self.assertFalse((self.jobs / "operations.jsonl").exists())
+
+
+class TestNotePreview(ActionCase):
+    """Explore's Preview (#206): a note read and drawn, and opened in its own
+    app, by its path from the workspace; only inside the zones and wikis, and
+    nothing written either way."""
+
+    NOTE = "Wikis/Knowledge/wiki/concepts/lead-times.md"
+    TEXT = ("---\ntitle: Lead times\ntype: concept\nparties:\n  - acme\n  - birch\ntags: [freight, \"supply\"]\nsources:\n"
+            "  first:\n    - nested\n---\n\n# Lead times\n\nHow long an order takes, from [[supply-chain-report|the report]] "
+            "and [[wiki/concepts/resilience]].\n\n## Kinds\n\n- **Quoted**: what the supplier says\n- *Actual*: what arrived\n\n"
+            "| Supplier | Weeks |\n|---|---:|\n| Acme Corp | 6 |\n\n```python\nweeks = 6 < 8\n```\n\n<script>alert(1)</script>\n")
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / self.NOTE, self.TEXT)
+
+    def read(self, path):
+        return self.act(verb="note-read", path=path)
+
+    def test_a_note_is_drawn_with_its_properties_and_its_title(self):
+        out = self.read(self.NOTE)
+        self.assertEqual(("Read lead-times", "Lead times"), (out["say"], out["title"]))
+        html = out["html"]
+        self.assertTrue(html.startswith('<dl class="nv-props"><div><dt>type</dt><dd>concept</dd></div>'
+                                        '<div><dt>parties</dt><dd>acme, birch</dd></div><div><dt>tags</dt><dd>freight, supply</dd></div>'), html)
+        self.assertNotIn("<dt>title</dt>", html)             # it heads the preview
+        self.assertNotIn("<dt>sources</dt>", html)           # a nested map is left out
+        self.assertNotIn("nested", html)
+        self.assertIn("<h1>Lead times</h1>", html)
+        self.assertIn("<h2>Kinds</h2>", html)
+        self.assertIn("<ul><li><b>Quoted</b>: what the supplier says</li><li><i>Actual</i>: what arrived</li></ul>", html)
+        self.assertIn("<th>Supplier</th>", html)
+        self.assertIn('<td style="text-align:right">6</td>', html)
+        self.assertIn('<pre><code class="lang-python">weeks = 6 &lt; 8</code></pre>', html)
+        self.assertIn("from the report and resilience.", html)              # a [[link]] is its words, never a link
+        self.assertNotIn("[[", html)
+        self.assertNotIn("<a ", html)
+        self.assertNotIn("<script", html)                                   # what the note holds is text, escaped
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_a_note_without_frontmatter_takes_its_name(self):
+        out = self.read("Wikis/Knowledge/wiki/concepts/resilience.md")
+        self.assertEqual("resilience", out["title"])
+        self.assertEqual("<h1>Resilience</h1>", out["html"])
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Empty.md", "---\ntype: note\n---\n")
+        out = self.read("Zones/Work/Acme Review/Empty.md")
+        self.assertIn('<p class="nv-none">This note is empty.</p>', out["html"])
+
+    def test_nothing_outside_the_zones_and_wikis(self):
+        for path in ("System/context.md", "AGENTS.md", "/etc/hosts.md", str(self.root / self.NOTE), "Wikis/../System/context.md",
+                     "Zones/Work/../../System/context.md", "Zones/./Work/Todo.md", "Zones//Work/Todo.md",
+                     "Zones/Work/.git/notes.md", "Zones\\Work\\Todo.md", "Zones/Work/Todo.md\n", "", None, 3, ["Zones"]):
+            with self.assertRaises(pa.Refused, msg=path) as said:
+                self.read(path)
+            self.assertNotIsInstance(said.exception, pa.Missing, path)
+
+    def test_a_link_is_followed_and_must_stay_inside(self):
+        outside = Path(self._tmp.name) / "elsewhere.md"
+        write(outside, "# Not the workspace's\n")
+        links = self.root / "Zones" / "Work" / "Acme Review"
+        os.symlink(str(outside), str(links / "Away.md"))
+        os.symlink(str(self.root / "System" / "context.md"), str(links / "Context.md"))
+        os.symlink(str(self.root / self.NOTE), str(links / "Lead times.md"))                # into a wiki: read
+        for name in ("Away.md", "Context.md"):
+            with self.assertRaises(pa.Refused, msg=name) as said:
+                self.read("Zones/Work/Acme Review/" + name)
+            self.assertIn("leads outside the zones and wikis", str(said.exception))
+        self.assertEqual("Lead times", self.read("Zones/Work/Acme Review/Lead times.md")["title"])
+        os.symlink(str(self.root / "System"), str(links / "System"))                        # a folder that leads out
+        with self.assertRaises(pa.Refused):
+            self.read("Zones/Work/Acme Review/System/context.md")
+
+    def test_only_a_markdown_note(self):
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Sources" / "rates.csv", "a,b\n")
+        os.symlink(str(self.root / "Zones" / "Work" / "Acme Review" / "Sources" / "rates.csv"),
+                   str(self.root / "Zones" / "Work" / "Acme Review" / "Rates.md"))
+        for path in ("Zones/Work/Acme Review/Sources/rates.csv", "Zones/Work/Acme Review/Rates.md", "Zones/Work/Acme Review"):
+            with self.assertRaises(pa.Refused, msg=path) as said:
+                self.read(path)
+            self.assertIn("Garrick does not preview it", str(said.exception))
+
+    def test_a_note_that_is_not_there_says_so_and_offers_no_open(self):
+        with self.assertRaises(pa.Missing) as said:
+            self.read("Wikis/Meetings/wiki/people/rowan-ash.md")
+        self.assertEqual("rowan-ash is not there any more: it was moved, renamed or deleted after the page was built",
+                         str(said.exception))
+        out, _, why = pa.perform(self.root, {"verb": "note-read", "path": "Wikis/Meetings/wiki/people/rowan-ash.md"})
+        self.assertEqual({"ok": False, "say": why, "missing": True}, out)
+        out, _, _ = pa.perform(self.root, {"verb": "note-read", "path": "System/context.md"})
+        self.assertNotIn("missing", out)                    # refused, not gone: the page keeps its Open
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads a file whatever its mode")
+    def test_a_note_that_cannot_be_read_says_why(self):
+        note = self.root / self.NOTE
+        note.chmod(0)
+        try:
+            with self.assertRaises(pa.Refused) as said:
+                self.read(self.NOTE)
+        finally:
+            note.chmod(0o644)
+        self.assertEqual("lead-times could not be read: permission denied", str(said.exception))
+        note.write_bytes(b"# Rates\n\n\xff\xfe caf\xe9\n")
+        with self.assertRaises(pa.Refused) as said:
+            self.read(self.NOTE)
+        self.assertEqual("lead-times could not be read: it is not text Garrick can read (UTF-8)", str(said.exception))
+
+    def test_a_note_too_large_is_left_to_its_own_app(self):
+        (self.root / self.NOTE).write_text("# Big\n\n" + "word " * (pa.NOTE_MAX // 5), encoding="utf-8")
+        with self.assertRaises(pa.Refused) as said:
+            self.read(self.NOTE)
+        self.assertEqual("lead-times is too large to preview here (400 KB); open it in its own app", str(said.exception))
+        self.assertNotIsInstance(said.exception, pa.Missing)
+
+    def test_only_the_path_is_taken(self):
+        with self.assertRaises(pa.Refused) as said:
+            self.act(verb="note-read", path=self.NOTE, zone="Work")
+        self.assertEqual("note-read takes no zone field", str(said.exception))
+        with self.assertRaises(pa.Refused):
+            self.act(verb="note-open", path=self.NOTE, app="TextEdit")
+
+    def test_open_hands_the_note_to_the_macs_own_app(self):
+        with mock.patch.object(pa, "open_path") as opened:               # never this Mac's own `open`
+            self.assertEqual("Opened lead-times", self.act(verb="note-open", path=self.NOTE))
+            opened.assert_called_once_with((self.root / self.NOTE).resolve())
+            for path in ("System/context.md", "Zones/Work/../../AGENTS.md", "Zones/Work/Acme Review/Sources/.gitkeep"):
+                with self.assertRaises(pa.Refused, msg=path):
+                    self.act(verb="note-open", path=path)
+            with self.assertRaises(pa.Missing):
+                self.act(verb="note-open", path="Wikis/Meetings/wiki/people/rowan-ash.md")
+            self.assertEqual(1, opened.call_count)
+
+    def test_open_runs_the_opener_with_the_file(self):
+        stub, log = Path(self._tmp.name) / "open", Path(self._tmp.name) / "opened"
+        write(stub, '#!/bin/sh\nprintf "%s\\n" "$@" >> "$OPEN_LOG"\n')
+        stub.chmod(0o755)
+        with mock.patch.dict(os.environ, {"GARRICK_OPEN": str(stub), "OPEN_LOG": str(log)}):
+            self.act(verb="note-open", path=self.NOTE)
+        self.assertEqual(str((self.root / self.NOTE).resolve()) + "\n", log.read_text())
+
+    def test_through_the_script_as_a_host_sends_it(self):
+        def run(req):
+            done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], capture_output=True, text=True,
+                                  input=json.dumps(req), timeout=60)
+            return json.loads(done.stdout)
+        reply = run({"verb": "note-read", "path": self.NOTE})
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual("Lead times", reply["title"])
+        self.assertIn("<h2>Kinds</h2>", reply["html"])
+        gone = run({"verb": "note-read", "path": "Zones/Work/Acme Review/Gone.md"})
+        self.assertEqual((False, True), (gone["ok"], gone["missing"]))
+        log = (self.jobs / "page-actions.log").read_text()
+        self.assertIn('note-read path="%s"  ->  ok: Read lead-times' % self.NOTE, log)      # the sentence, never the note
+        self.assertNotIn("Kinds", log)
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())       # nothing written
 
 
 if __name__ == "__main__":

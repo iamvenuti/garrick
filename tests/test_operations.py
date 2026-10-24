@@ -335,6 +335,9 @@ SHAPES = {
     "vreq: 'work-file'": {"work-file": ("to",)},
     # MEMORY_JS (#108): what Settings › Memory's unsaved values would do, which only reads
     "ask: 'memory-preview'": {"memory-preview": ()},
+    # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
+    "read: 'note-read'": {"note-read": ()},
+    "openIn: 'note-open'": {"note-open": ()},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",),
@@ -359,7 +362,8 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "NOTIFY_JS": {"nact: 'settings'"},
            "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
            "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"},
-           "MEMORY_JS": {"ask: 'memory-preview'"}}
+           "MEMORY_JS": {"ask: 'memory-preview'"},
+           "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
 
 
 class TestWhatThePageSends(unittest.TestCase):

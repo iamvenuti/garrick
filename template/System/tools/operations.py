@@ -210,6 +210,10 @@ DECLARED: Dict[str, Op] = {
                          "while-you-wait", "home", "memory"), (), "workspace"),
     # Settings › Memory's unsaved values, counted by fade.py (#108): it only reads.
     "memory-preview": _op(("memory",), (), "none", retry="safe"),
+    # A note from Explore's card (#206): read for its Preview, which only
+    # reads, or opened in the app the Mac uses for a .md file.
+    "note-read": _op(("path",), ("path",), "none", retry="safe"),
+    "note-open": _op(("path",), ("path",), "machine"),
     # The simple home (#175). A Needs you question answered by one of its
     # options, or put off to a later day: the question's file and the work's
     # note, committed in its zone.

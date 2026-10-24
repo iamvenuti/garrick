@@ -93,6 +93,79 @@ class SettingsTest(unittest.TestCase):
         self.assertFalse(hasattr(fade, "out_refs"))
 
 
+class WordsTest(unittest.TestCase):
+    """What Settings › Memory says about age and waking is fade.py's own
+    (AGE_SAID, WAKE_SAID, #205), held here against what the code does, so the
+    words cannot drift from it again: the page shows them as they are."""
+
+    def page(self, grade: str = "dormant", **more) -> "fade.Page":
+        sub = "wiki/sources/260401-review.md"
+        return fade.Page(fade.place("Meetings", grade, sub), "Meetings", grade, sub, title="Review", type="meeting",
+                         date=datetime.date(2026, 4, 1), kind="meetings", **more)
+
+    def ref(self, where: str, written: str = "260401-review") -> "fade.Ref":
+        src = {"thread": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "project": "Zones/Work/Acme Review/Acme Review.md",
+               "todo": "Zones/Work/Todo.md", "working": "Wikis/Meetings/wiki/sources/270501-later.md",
+               "note": "Zones/Work/Acme Review/Threads/Freight/Freight.md"}[where]
+        return fade.Ref(src, written, where, True)
+
+    def test_opening_a_page_wakes_nothing_and_a_link_from_active_work_proposes_it(self):
+        s, said = fade.merged({}), fade.WAKE_SAID
+        self.assertIn("Opening, reading or quoting a page brings nothing back", said)
+        self.assertIsNone(fade.wake(self.page(), [], s))                    # reading leaves no link, and links are all it reads
+        self.assertIsNone(fade.wake(self.page(), [self.ref("note")], s))    # nor a note outside live work
+        for where, words in (("thread", "a live thread"), ("project", "a live project's notes"), ("todo", "an open action")):
+            self.assertIn(words, said)
+            self.assertEqual("working", fade.wake(self.page(), [self.ref(where)], s).to)
+            self.assertIsNone(fade.wake(self.page(), [self.ref(where)], fade.merged({"pins": {where: False}})))
+        self.assertIn("where that protection is switched on", said)
+        self.assertIsNone(fade.wake(self.page(), [self.ref("thread")], fade.merged({"wake": False})))
+        self.assertIn("a working page links it afresh rather than through the link the fade rewrote", said)
+        self.assertEqual("working", fade.wake(self.page(), [self.ref("working")], s).to)
+        self.assertIsNone(fade.wake(self.page(), [self.ref("working", "dormant/wiki/sources/260401-review")], s))
+        self.assertIn("Marking it `pinned: true` brings it back too, and is the only way back from the archive", said)
+        self.assertEqual("working", fade.wake(self.page(pinned=True), [], fade.merged({"wake": False})).to)
+        self.assertIsNone(fade.wake(self.page("archived"), [self.ref("thread"), self.ref("working")], s))
+        self.assertEqual("working", fade.wake(self.page("archived", pinned=True), [], s).to)
+        self.assertIn("a superseded page never comes back", said)
+        self.assertIsNone(fade.wake(self.page(pinned=True, superseded="replaced"), [self.ref("thread")], s))
+        self.assertIn("nothing comes back until you confirm a review", said)
+        woken = fade.decide(self.page(), [self.ref("thread")], s, TODAY, fade.Plan("Meetings", True, []))
+        self.assertEqual(("working", "Wikis/Meetings/wiki/sources/260401-review.md"), (woken.to, woken.new))   # a move planned, not made
+
+    def test_age_counts_from_the_dates_the_words_name_and_never_from_the_file(self):
+        said = fade.AGE_SAID
+        self.assertEqual({"Meetings": ("date",), "Knowledge": ("published", "date")}, fade.DATE_FIELDS)
+        self.assertIn("the day its meeting took place (its `date:`)", said)
+        self.assertIn("the day its reading came out (its `published:`, else its `date:`)", said)
+        self.assertIn("it counts from the date its file name starts with, such as `260314` or `2026-03-14`", said)
+        self.assertIn("It never counts from when the page was last opened or changed", said)
+        self.assertIn("A date that names only a month or a year counts from the end of it", said)
+        self.assertIn("a page with no date at all never fades by age", said)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve() / "Workspace"
+            build_workspace(root)
+            src = root / "Wikis" / "Meetings" / "wiki" / "sources"
+            write(src / "call.md", meeting("Call", "2020-02"))
+            write(src / "260314-named.md", meeting("Named", "").replace("date: \n", ""))
+            write(src / "2026-03-15 named.md", meeting("Named too", "").replace("date: \n", ""))
+            undated = write(src / "undated.md", meeting("Undated", "").replace("date: \n", ""))
+            os.utime(str(undated), (0, 0))                                   # a file as old as it gets
+            write(root / "Wikis" / "Knowledge" / "wiki" / "sources" / "report.md",
+                  "---\ntitle: Report\ntype: report\npublished: 2021\ndate: 2025-01-01\n---\n\nText.\n")
+            pages = {p.sub: p for w in fade.WIKIS for p in fade.scan_wiki(root, w)}
+            self.assertEqual(datetime.date(2020, 2, 29), pages["wiki/sources/call.md"].date)
+            self.assertEqual(datetime.date(2026, 3, 14), pages["wiki/sources/260314-named.md"].date)
+            self.assertEqual(datetime.date(2026, 3, 15), pages["wiki/sources/2026-03-15 named.md"].date)
+            self.assertEqual(datetime.date(2021, 12, 31), pages["wiki/sources/report.md"].date)   # published, first
+            self.assertIsNone(pages["wiki/sources/undated.md"].date)                              # its file's time never counts
+            p = fade.Plan("Meetings", True, [])
+            page = pages["wiki/sources/undated.md"]
+            page.kind = "meetings"
+            self.assertIsNone(fade.decide(page, [], fade.merged({}), TODAY, p))
+            self.assertEqual(1, p.undated)
+
+
 class RespellTest(unittest.TestCase):
     """How a link is written once its page has moved."""
 
@@ -299,6 +372,25 @@ class ProposeTest(Base):
         later = fade.counts(self.root, {"kinds": {"meetings": {"archived": 12}}}, today=TODAY)
         self.assertEqual(4, later["Meetings"]["to_archive"])        # unsaved settings, shown before they are saved
         self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
+
+    def test_a_preview_names_the_pages_behind_the_counts_in_the_proposals_order(self):
+        pv = fade.preview(self.root, today=TODAY, limit=2)["Meetings"]
+        c = fade.counts(self.root, today=TODAY)["Meetings"]
+        self.assertEqual(c, {k: pv[k] for k in c})                          # counts(), and more
+        self.assertEqual((4, 2), (pv["moves"], len(pv["moving"])))
+        kept = {r["page"].rsplit("/", 1)[1]: r for r in pv["keeping"]}
+        self.assertIn("a live thread, Zones/Work/Acme Review/Threads/Pricing/Pricing.md", kept["260310-acme-kickoff.md"]["why"])
+        self.assertEqual(("Acme kick-off", "2026-03-10"), (kept["260310-acme-kickoff.md"]["title"], kept["260310-acme-kickoff.md"]["date"]))
+        self.assertEqual(("System/generated/fade/Meetings.md", False), (pv["proposal"], pv["written"]))
+        self.assertFalse((self.root / "System" / "generated").exists())       # it writes nothing
+        self.propose()
+        every = fade.preview(self.root, today=TODAY, limit=100)["Meetings"]
+        self.assertTrue(every["written"])
+        written = self.text(self.root / "System" / "generated" / "fade" / "Meetings.md")
+        at = [written.index("`%s`, %s" % (m["page"].split("/Meetings/", 1)[1], m["title"])) for m in every["moving"]]
+        self.assertEqual(sorted(at), at)                                    # in the order the written list has them
+        self.assertEqual(sorted((m["page"], m["to"], m["why"]) for m in self.propose()["moves"]),
+                         sorted((m["page"], m["to"], m["why"]) for m in every["moving"]))
 
     def test_what_would_fade_is_said_for_the_ear(self):
         code, out, _ = self.run_tool("propose", "--wiki", "Meetings", "--ear")

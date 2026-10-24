@@ -930,7 +930,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
 				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
-				if !self.reading(request) { self.freshen(force: true) }
+				if self.rebuilds(request) { self.freshen(force: true) }
 			}
 		}
 		do {
@@ -943,11 +943,17 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The page asking what is running (page_action.py's "operations"), how
-	// far a copy or a move of a work's files has got ("files-progress"), or what
-	// Settings › Memory's unsaved values would do ("memory-preview"), only reads:
-	// the reply goes to the page, with no toast and no rebuild, or asking would
-	// rebuild the page it asks from.
-	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview"].contains(request["verb"] as? String ?? "") }
+	// far a copy or a move of a work's files has got ("files-progress"), what
+	// Settings › Memory's unsaved values would do ("memory-preview"), or a note
+	// for Explore's Preview ("note-read", #206), only reads: the reply goes to
+	// the page, with no toast and no rebuild, or asking would rebuild the page
+	// it asks from.
+	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview", "note-read"].contains(request["verb"] as? String ?? "") }
+
+	// What changes nothing the page shows is not followed by a rebuild, which
+	// would reload the page under the preview: a request that only reads, and
+	// a note opened in its own app from it ("note-open"), which still toasts.
+	func rebuilds(_ request: [String: Any]) -> Bool { !reading(request) && request["verb"] as? String != "note-open" }
 
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
@@ -1020,13 +1026,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// GarrickReads tells the page this app answers a request that only reads, so
 	// it may ask what is running (page_action.py's "operations"); GarrickReadsFiles,
 	// that it answers how far a copy or a move has got (#189); GarrickReadsMemory,
-	// that it counts what Settings › Memory would do (#108); and GarrickSaves,
+	// that it counts what Settings › Memory would do (#108); GarrickReadsNotes,
+	// that it reads a note for Explore's Preview (#206); and GarrickSaves,
 	// that Save a copy opens its Save panel. An app without
 	// it is never asked, and the page works as it did before the record. It is
 	// set at document start, before the page's own scripts run.
 	func appScript() -> WKUserScript {
 		WKUserScript(source: """
-			window.GarrickApp=\(appJSON());window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickSaves=true;window.GarrickReadsMemory=true;
+			window.GarrickApp=\(appJSON());window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickSaves=true;window.GarrickReadsMemory=true;window.GarrickReadsNotes=true;
 			(function(i){var r=document.documentElement;r.classList.add('appicons');
 			for(var k in i)r.style.setProperty('--icon-'+k,i[k])})(\(iconJSON));
 			window.addEventListener('error',function(e){try{window.webkit.messageHandlers.garrick.postMessage({pageError:{line:e.lineno||0,

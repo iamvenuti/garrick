@@ -127,7 +127,7 @@ class StatusView extends ItemView {
 		// makes it ask now, since the page's script has already run by here. A plugin
 		// without them is never asked, and the page works as it did before the record.
 		this.web.addEventListener("dom-ready", () => {
-			this.web.executeJavaScript("window.GarrickReadsMemory=true;window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()").catch(() => {});
+			this.web.executeJavaScript("window.GarrickReadsMemory=true;window.GarrickReadsNotes=true;window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()").catch(() => {});
 		});
 		this.web.addEventListener("will-frame-navigate", (e) => {
 			if (e.isMainFrame && !e.url.startsWith("file:")) this.plugin.follow(e.url);
@@ -539,18 +539,26 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 				said = { ok: false, say: err && err.killed ? "page_action.py had no answer after fifteen minutes and was stopped." : "That did not work." };
 			}
 			this.acted(view, request, said);
-			if (!this.reading(request)) this.rebuild(true);
+			if (this.rebuilds(request)) this.rebuild(true);
 		});
 		child.stdin.end(JSON.stringify(request));
 	}
 
 	// The page asking what is running (page_action.py's "operations"), how far
-	// a copy or a move of a work's files has got ("files-progress", #189), or what
-	// Settings › Memory's unsaved values would do ("memory-preview", #108), only
-	// reads: the reply goes to the page, with no toast and no rebuild, or asking
-	// would rebuild the page it asks from.
+	// a copy or a move of a work's files has got ("files-progress", #189), what
+	// Settings › Memory's unsaved values would do ("memory-preview", #108), or a
+	// note for Explore's Preview ("note-read", #206), only reads: the reply goes
+	// to the page, with no toast and no rebuild, or asking would rebuild the
+	// page it asks from.
 	reading(request) {
-		return !!request && ["operations", "files-progress", "memory-preview"].includes(request.verb);
+		return !!request && ["operations", "files-progress", "memory-preview", "note-read"].includes(request.verb);
+	}
+
+	// What changes nothing the page shows is not followed by a rebuild, which
+	// would reload the page under the preview: a request that only reads, and
+	// a note opened in its own app from it ("note-open"), which still toasts.
+	rebuilds(request) {
+		return !this.reading(request) && !(request && request.verb === "note-open");
 	}
 
 	// The reply: the toast, then the page, which shows a park or a wake at once

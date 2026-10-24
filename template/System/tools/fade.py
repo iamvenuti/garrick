@@ -76,7 +76,10 @@ skill reads both when it proposes, and leaves a page out with `--leave`.
 Importable with no side effects: `settings(root)`, `counts(root, memory)`
 (what each grade holds now and how many would move, with `memory` laid over
 the stored settings, fast enough for a status page build: no git call),
-`plan()`, `propose()`, `apply()` and `keep()`.
+`preview(root, memory)` (the same counts, with the first pages that would
+move and why, and the first kept by active work), `plan()`, `propose()`,
+`apply()` and `keep()`. `AGE_SAID` and `WAKE_SAID` say in plain words how
+age is counted and what wakes a page, for Settings to show as they are.
 
 Exit codes: 0; 1 when a proposal or a commit was refused; 2 for a usage
 error or no workspace.
@@ -247,6 +250,20 @@ def _last_day(year: int, month: int) -> datetime.date:
     return nxt - datetime.timedelta(days=1)
 
 
+# Where a page's age comes from, per wiki, first to last; the date its file
+# name starts with when none of them reads.
+DATE_FIELDS = {"Meetings": ("date",), "Knowledge": ("published", "date")}
+
+# How age is counted, in plain words, for Settings › Memory to show as it
+# is: tests/test_fade.py holds it against DATE_FIELDS, read_date() and
+# name_date(), so the page never words a rule this file does not keep.
+AGE_SAID = ("A page's age counts from the day its meeting took place (its `date:`), or the day its reading came out "
+            "(its `published:`, else its `date:`). Without one, it counts from the date its file name starts with, "
+            "such as `260314` or `2026-03-14`. It never counts from when the page was last opened or changed. A date "
+            "that names only a month or a year counts from the end of it, and a page with no date at all never fades "
+            "by age.")
+
+
 def read_date(value) -> Optional[datetime.date]:
     """A frontmatter date: YYYY-MM-DD, or YYYY-MM or YYYY, counted from the
     end of the month or year it names."""
@@ -369,8 +386,7 @@ def scan_wiki(root: Path, wiki: str, texts: Optional[Dict[str, str]] = None) -> 
             page.superseded = str(fm.get("superseded") or "").strip()
             page.parties = tags(fm.get("parties"))
             page.party = strip_tag(str(fm.get("party") or ""))
-            fields = ("date",) if wiki == "Meetings" else ("published", "date")
-            page.date = next((d for d in (read_date(fm.get(f)) for f in fields) if d), None) or name_date(path.name)
+            page.date = next((d for d in (read_date(fm.get(f)) for f in DATE_FIELDS[wiki]) if d), None) or name_date(path.name)
             if fm.get("raw"):
                 find_raw(top, page, link_target(fm.get("raw")))
             doms = tags(fm.get("domain")) + tags(fm.get("domains"))
@@ -725,6 +741,16 @@ def decide(page: Page, refs: List[Ref], s: dict, today: datetime.date, p: Plan) 
     return None
 
 
+# What wakes a page, in plain words, for Settings › Memory to show as it is:
+# tests/test_fade.py holds it against wake() and decide(), so the page never
+# promises a wake this file does not make.
+WAKE_SAID = ("A dormant page is proposed to come back when a live thread, a live project's notes or an open action "
+             "links it, where that protection is switched on, or when a working page links it afresh rather than "
+             "through the link the fade rewrote. Marking it `pinned: true` brings it back too, and is the only way "
+             "back from the archive. Opening, reading or quoting a page brings nothing back, nothing comes back until "
+             "you confirm a review, and a superseded page never comes back.")
+
+
 def wake(page: Page, refs: List[Ref], s: dict) -> Optional[Move]:
     """A dormant page linked again, or a page someone said to keep. Never a
     superseded one."""
@@ -764,21 +790,52 @@ def together(p: Plan) -> None:
                 p.together.append((g, "shares its record with %s, which would not move with it" % others))
 
 
+def tally(p: Optional[Plan], s: dict, wiki: str) -> dict:
+    """One wiki's counts: what each grade holds and how many would move."""
+    if p is None:
+        return {"on": bool(s["wikis"].get(wiki)), "working": 0, "dormant": 0, "archived": 0,
+                "to_dormant": 0, "to_archive": 0, "to_wake": 0}
+    return {"on": p.on, "working": p.count("working"), "dormant": p.count("dormant"),
+            "archived": p.count("archived"), "to_dormant": p.going("dormant"),
+            "to_archive": p.going("archived"), "to_wake": p.going("working")}
+
+
 def counts(root: Path, memory: Optional[dict] = None, today: Optional[datetime.date] = None) -> dict:
     """{wiki: {"on", "working", "dormant", "archived", "to_dormant",
     "to_archive", "to_wake"}}, with `memory` laid over the stored settings."""
     s = merged(memory, settings(root)) if memory is not None else settings(root)
     plans = plan(root, s, today)
+    return {wiki: tally(plans.get(wiki), s, wiki) for wiki in WIKIS}
+
+
+PREVIEW_LIMIT = 5
+
+
+def preview(root: Path, memory: Optional[dict] = None, today: Optional[datetime.date] = None,
+            limit: int = PREVIEW_LIMIT) -> dict:
+    """counts(), and the pages behind them, for Settings › Memory: per wiki,
+    `moving`, the first `limit` pages the next pass would move, in the
+    written proposal's order, each with where to and why, and `keeping`, the
+    first `limit` old enough to go that active work keeps, each with what
+    keeps it. `moves` and `kept` count them all; `proposal` names the written
+    proposal that lists every one, and `written` says whether one is there.
+    Reads files only, as counts() does."""
+    s = merged(memory, settings(root)) if memory is not None else settings(root)
+    today = today or datetime.date.today()
+    plans = plan(root, s, today)
+    row = lambda page, why, **more: dict({"page": page.path, "title": page.title,
+                                          "date": page.date.isoformat() if page.date else "", "why": why}, **more)
     out = {}
     for wiki in WIKIS:
         p = plans.get(wiki)
-        if p is None:
-            out[wiki] = {"on": bool(s["wikis"].get(wiki)), "working": 0, "dormant": 0, "archived": 0,
-                         "to_dormant": 0, "to_archive": 0, "to_wake": 0}
-            continue
-        out[wiki] = {"on": p.on, "working": p.count("working"), "dormant": p.count("dormant"),
-                     "archived": p.count("archived"), "to_dormant": p.going("dormant"),
-                     "to_archive": p.going("archived"), "to_wake": p.going("working")}
+        moves = sorted(p.moves if p else [], key=lambda m: (("dormant", "archived", "working").index(m.to),
+                                                           m.page.kind, m.page.date or datetime.date.min, m.page.path))
+        kept = p.kept if p else []
+        out[wiki] = dict(tally(p, s, wiki), moves=len(moves), kept=len(kept),
+                         moving=[row(m.page, m.why, to=m.to) for m in moves[:limit]],
+                         keeping=[row(page, why) for page, why in kept[:limit]],
+                         proposal=proposal_paths(root, wiki)[0].relative_to(root).as_posix(),
+                         written=proposal_paths(root, wiki)[0].is_file())
     return out
 
 

@@ -90,7 +90,9 @@ zone's repository, as the skills would:
                 System/tools/fade.py keeps; saving moves no page
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
-                them, per wiki, as "counts". It only reads
+                them, per wiki, as "counts", and, from a fade.py with
+                preview(), the first pages that would move and those
+                active work keeps, as "preview". It only reads
     answer      a Needs you question answered by one of its options (#175):
                 {"zone", "file", "label"}; the work's Next action becomes
                 what the option leads to, with a dated entry, the question
@@ -1532,17 +1534,26 @@ def clean_memory(value) -> dict:
     return out
 
 
+COUNT_KEYS = ("on", "working", "dormant", "archived", "to_dormant", "to_archive", "to_wake")
+
+
 def memory_preview(ws: Path, req: dict) -> dict:
     """What Settings › Memory's unsaved values would do now: fade.py's counts
-    for them, merged over what is saved, a key at a time. Reads only."""
+    for them, merged over what is saved, a key at a time, and, where its
+    fade.py has preview(), the pages behind them (#205): per wiki, the first
+    that would move, with where to and why, and the first active work keeps.
+    One plan either way. Reads only."""
     lib = fade_lib(ws)
     if lib is None:
         raise Refused("cannot find System/tools/fade.py; update Garrick")
     chosen = clean_memory(req.get("memory") if "memory" in req else {})
     with tools_path(ws):
         memory = dict(lib.settings(ws), **chosen)
-        counts = lib.counts(ws, memory=memory)
-    return {"say": "Counted", "counts": counts}
+        if not callable(getattr(lib, "preview", None)):
+            return {"say": "Counted", "counts": lib.counts(ws, memory=memory)}
+        preview = lib.preview(ws, memory=memory)
+    counts = {w: {k: v for k, v in c.items() if k in COUNT_KEYS} for w, c in preview.items()}
+    return {"say": "Counted", "counts": counts, "preview": preview}
 
 
 def save_settings(ws: Path, req: dict) -> str:

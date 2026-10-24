@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The README and the deck name the three things Garrick holds: what you're working on, in your files; what was said, in the Meetings wiki; and what you read, in the Knowledge wiki. The deck's life-cycle slide shows them above the four stages, and its slide on the assistant's memory adds that an assistant is only as useful as what it knows about your work.
+
 ## [0.41.0] - 2026-10-23
 
 Settings reads as one column with its sections listed beside it, Memory says plainly what fading does and when, and Explore previews a note without leaving Garrick.

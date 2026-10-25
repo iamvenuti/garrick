@@ -83,7 +83,7 @@
 <div class="stage">
 <svg viewBox="0 0 1200 640" role="img" aria-labelledby="dtitle ddesc" xmlns="http://www.w3.org/2000/svg">
   <title id="dtitle">Garrick at a glance</title>
-  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and threads and opens a thread where you work: the Claude or Codex desktop app, or cmux. You work on the record: Knowledge, Meetings and the threads, into which mail, files and recordings are filed. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first, and the rules, the walls and a check on every commit apply to the whole record.</desc>
+  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and threads and opens a thread where you work: the Claude or Codex desktop app, or cmux. You work on the record: your pieces of work, Meetings and Knowledge. Three sources feed it, each its own part: what you're working on, your files, feeds the pieces of work; what was said, your meetings, feeds Meetings; what you read feeds Knowledge. Documents, mail, transcripts and articles arrive and are filed there. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first. The rules and the walls apply to the whole record, and the commit check runs on every commit in each zone.</desc>
   <defs>
     <marker id="m-go" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-go" d="M0,0 L10,5 L0,10 z"/></marker>
     <marker id="m-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-in" d="M0,0 L10,5 L0,10 z"/></marker>
@@ -92,42 +92,48 @@
   </defs>
 
   <!-- Layer 1: navigate and control -->
-  <rect class="grp" x="470" y="16" width="260" height="104" rx="12"/>
-  <text class="glabel" x="484" y="36">Navigate and control</text>
-  <rect class="box nav" x="500" y="48" width="200" height="60" rx="8"/>
-  <text class="t" x="600" y="74">Garrick App</text>
-  <text class="s" x="600" y="94">zones, projects, threads</text>
+  <rect class="grp" x="362" y="16" width="260" height="104" rx="12"/>
+  <text class="glabel" x="376" y="36">Navigate and control</text>
+  <rect class="box nav" x="392" y="48" width="200" height="60" rx="8"/>
+  <text class="t" x="492" y="74">Garrick App</text>
+  <text class="s" x="492" y="94">zones, projects, threads</text>
 
   <!-- Layer 2: where you work -->
-  <rect class="grp" x="330" y="176" width="540" height="104" rx="12"/>
-  <text class="glabel" x="344" y="196">Where you work: one or the other</text>
-  <rect class="box nav" x="360" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="470" y="234">Claude or Codex app</text>
-  <text class="s" x="470" y="254">the desktop app</text>
-  <rect class="box nav" x="620" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="730" y="234">cmux</text>
-  <text class="s" x="730" y="254">a terminal tab per thread</text>
+  <rect class="grp" x="285" y="176" width="414" height="104" rx="12"/>
+  <text class="glabel" x="299" y="196">Where you work: one or the other</text>
+  <rect class="box nav" x="300" y="208" width="182" height="60" rx="8"/>
+  <text class="t" x="391" y="234">Claude or Codex app</text>
+  <text class="s" x="391" y="254">the desktop app</text>
+  <rect class="box nav" x="502" y="208" width="182" height="60" rx="8"/>
+  <text class="t" x="593" y="234">cmux</text>
+  <text class="s" x="593" y="254">a terminal tab per thread</text>
 
-  <!-- Way in -->
-  <rect class="box way" x="40" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="150" y="234">Mail, files, recordings</text>
-  <text class="s" x="150" y="254">filed for you</text>
+  <!-- The three sources, beside the layers: each feeds its own part of the record -->
+  <rect class="box way" x="50" y="208" width="210" height="60" rx="8"/>
+  <text class="t" x="155" y="234">What you’re working on</text>
+  <text class="s" x="155" y="254">your files</text>
+  <rect class="box way" x="725" y="208" width="170" height="60" rx="8"/>
+  <text class="t" x="810" y="234">What was said</text>
+  <text class="s" x="810" y="254">your meetings</text>
+  <rect class="box way" x="960" y="208" width="170" height="60" rx="8"/>
+  <text class="t" x="1045" y="234">What you read</text>
+  <text class="s" x="1045" y="254">your reading</text>
 
   <!-- Layer 3: the record -->
-  <rect class="grp" x="40" y="336" width="1120" height="110" rx="12"/>
-  <text class="glabel" x="54" y="356">The record: plain files you own</text>
-  <rect class="box memory" x="70" y="370" width="230" height="60" rx="8"/>
-  <text class="t" x="185" y="396">Knowledge</text>
-  <text class="s" x="185" y="416">what you read</text>
-  <rect class="box memory" x="340" y="370" width="230" height="60" rx="8"/>
-  <text class="t" x="455" y="396">Meetings</text>
-  <text class="s" x="455" y="416">every conversation</text>
-  <rect class="box thread" x="610" y="370" width="240" height="60" rx="8"/>
-  <text class="t" x="730" y="396">Thread</text>
-  <text class="s" x="730" y="416">resume point, next action</text>
-  <rect class="box thread" x="890" y="370" width="240" height="60" rx="8"/>
-  <text class="t" x="1010" y="396">Another thread</text>
-  <text class="s" x="1010" y="416">resume point, next action</text>
+  <rect class="grp" x="30" y="336" width="1140" height="110" rx="12"/>
+  <text class="glabel" x="44" y="356">The record: plain files you own</text>
+  <rect class="box thread" x="50" y="370" width="210" height="60" rx="8"/>
+  <text class="t" x="155" y="396">Piece of work</text>
+  <text class="s" x="155" y="416">resume point, next action</text>
+  <rect class="box thread" x="300" y="370" width="220" height="60" rx="8"/>
+  <text class="t" x="410" y="396">Another piece of work</text>
+  <text class="s" x="410" y="416">resume point, next action</text>
+  <rect class="box memory" x="710" y="370" width="200" height="60" rx="8"/>
+  <text class="t" x="810" y="396">Meetings</text>
+  <text class="s" x="810" y="416">every conversation</text>
+  <rect class="box memory" x="945" y="370" width="200" height="60" rx="8"/>
+  <text class="t" x="1045" y="396">Knowledge</text>
+  <text class="s" x="1045" y="416">published material</text>
 
   <!-- Layer 4: underneath, and the guard -->
   <rect class="grp" x="100" y="506" width="300" height="104" rx="12"/>
@@ -135,30 +141,37 @@
   <rect class="box model" x="120" y="538" width="260" height="60" rx="8"/>
   <text class="t" x="250" y="564">Claude or Codex</text>
   <text class="s" x="250" y="584">the model doing the work</text>
-  <rect class="grp-guard" x="580" y="506" width="580" height="104" rx="12"/>
+  <rect class="grp-guard" x="580" y="506" width="590" height="104" rx="12"/>
   <text class="glabel-guard" x="594" y="526">The guard</text>
-  <rect class="box rule" x="600" y="538" width="250" height="60" rx="8"/>
-  <text class="t" x="725" y="564">Rules and walls</text>
-  <text class="s" x="725" y="584">what goes where, who never mixes</text>
-  <rect class="box rule" x="890" y="538" width="250" height="60" rx="8"/>
-  <text class="t" x="1015" y="564">Commit check</text>
-  <text class="s" x="1015" y="584">catches a crossing</text>
+  <rect class="box rule" x="600" y="538" width="260" height="60" rx="8"/>
+  <text class="t" x="730" y="564">Rules and walls</text>
+  <text class="s" x="730" y="584">what goes where, who never mixes</text>
+  <rect class="box rule" x="890" y="538" width="260" height="60" rx="8"/>
+  <text class="t" x="1020" y="564">Commit check</text>
+  <text class="s" x="1020" y="584">catches a crossing</text>
 
-  <!-- Edges: every one ends on a group's border -->
-  <path class="edge go" d="M600,120 L600,174" marker-end="url(#m-go)"/>
-  <text class="elabel go-t" x="612" y="152">opens a thread in</text>
+  <!-- Edges: every one between layers ends on a group's border -->
+  <path class="edge go" d="M492,120 L492,174" marker-end="url(#m-go)"/>
+  <text class="elabel go-t" x="504" y="152">opens a thread in</text>
 
-  <path class="edge go" d="M600,280 L600,334" marker-end="url(#m-go)"/>
-  <text class="elabel go-t" x="612" y="312">work on it, at its next action</text>
+  <path class="edge go" d="M492,280 L492,334" marker-end="url(#m-go)"/>
+  <text class="elabel go-t" x="504" y="312">work on it, at its next action</text>
 
-  <path class="edge in" d="M150,268 L150,334" marker-end="url(#m-in)"/>
-  <text class="elabel in-t" x="162" y="306">filed where it belongs</text>
+  <path class="edge in" d="M155,268 L155,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="167" y="306">documents, filed</text>
+
+  <path class="edge in" d="M810,268 L810,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="822" y="306">mail and transcripts, filed</text>
+
+  <path class="edge in" d="M1045,268 L1045,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="1057" y="306">articles, filed</text>
 
   <path class="edge work" d="M250,506 L250,448" marker-end="url(#m-work)"/>
   <text class="elabel work-t" x="262" y="482">does the work, across all of it</text>
 
   <path class="edge rl" d="M870,506 L870,448" marker-end="url(#m-rl)"/>
-  <text class="elabel rl-t" x="882" y="482">apply to all of it, on every commit</text>
+  <text class="elabel rl-t" x="882" y="473">rules on all of it;</text>
+  <text class="elabel rl-t" x="882" y="490">the check on every zone’s commits</text>
 
   <path class="edge work" d="M400,568 L578,568" marker-end="url(#m-work)"/>
   <text class="elabel work-t" x="489" y="558" text-anchor="middle">reads the rules first</text>
@@ -169,11 +182,11 @@
     <p>The Garrick App is the control panel over your zones, projects and threads: where each stands, what is due, park or wake a thread, tick an action.</p>
     <p>It opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Say “hold this” when interrupted and “back” when you return.</p></section>
   <section class="card"><h2>The record</h2>
-    <p>Each thread has one resume point: what is done, the next action, and what was only in your head.</p>
-    <p>Meetings keeps every conversation, Knowledge what you read. All of it is plain Markdown in git, on your Mac. Mail, files and recordings are filed into it for you.</p></section>
+    <p>It holds what you’re working on, what was said and what you read: your pieces of work, Meetings and Knowledge. Documents, mail and transcripts are filed into the part they belong to for you.</p>
+    <p>Each piece of work has one resume point: what is done, the next action, and what was only in your head. All of it is plain Markdown in git, on your Mac.</p></section>
   <section class="card"><h2>Underneath, and the guard</h2>
     <p>Claude or Codex is the model doing the work across the whole record, whichever app you use it in, and it reads the rules first.</p>
-    <p>The rules and the walls you declare apply to everything in the record. A check before every commit catches links, names and copied wording across a wall, within limits: see <a href="../principles.md#what-the-check-covers">Principles and limits</a>.</p></section>
+    <p>The rules and the walls you declare apply to everything in the record. A check before every commit in each zone catches links, names and copied wording across a wall, within limits: see <a href="../principles.md#what-the-check-covers">Principles and limits</a>.</p></section>
 </div>
 </main>
 <script>

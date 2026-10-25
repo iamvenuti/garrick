@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- The overview diagram shows what Garrick holds: what you're working on, what was said and what you read, each feeding its own part of the record (your pieces of work, Meetings and Knowledge), with documents, mail, transcripts and articles filed into them. The old single box for mail, files and recordings is gone, and the thread boxes are pieces of work. The guard's arrow now says what the code does: the rules apply to the whole record, and the commit check runs in every zone, not in the wikis.
+
 ## [0.42.0] - 2026-10-25
 
 "Catch me up" briefs you, thread by thread, on what changed while you were away; a new install with the simple home now gets the page it opens on; and status page builds no longer trip over each other or outlive the update that replaced them.

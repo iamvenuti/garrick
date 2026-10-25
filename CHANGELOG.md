@@ -8,6 +8,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The docs call the status page the Garrick App, and the architecture page has four layers.** [Architecture](docs/architecture.md) now follows the diagram: navigate and control with the Garrick App, where you work in the Claude or Codex desktop app or cmux, the record of Knowledge, Meetings and the threads, and underneath the model, the rules and the commit check. It says that the rules, the walls and the model act on the whole record. [Concepts](docs/concepts.md) defines the words a new user meets in the first week, among them piece of work, the simple home, Continue, Needs you, the Guide, Nurture and context debt. Across `docs/`, the status page is the Garrick App, the Mac app is the Mac app, and [the Garrick App's page](docs/extras/status-page.md) describes its Guide tab. Code names and paths stay as they are.
 
+## [0.43.0] - 2026-10-25
+
+Explore's *Preview* is a magnifier on a note's card, and Settings can switch it off.
+
+### Changed
+
+- Explore's *Preview* is a magnifier, and you can switch it off. Since 0.41.0 a note's card in Explore offered *Preview* as a word, which read as clutter beside the card's other actions and, unlike them, could not be turned off. It is now a magnifier, first among the card's actions, named *Preview* when you point at it and to a screen reader, on the same square as the apps' icons in the Mac app and as tall as the card's words in Obsidian. Settings › *Opening a thread* gains a *Preview* box after the note's own link, on by default and with no *Default* radio, since it opens nothing; switched off, the card no longer offers it, in the app or in Obsidian, and nothing in Explore opens the preview. It is kept with the ways to open a thread, as `preview` under `"launchers"` in `System/garrick-settings.json`, so a file saved before it existed offers it, and `page_action.py`'s `settings` refuses it as the default. A browser, which never offers *Preview*, leaves the row out. Nothing needs rebuilding in the Mac app. ([#219](https://github.com/iamvenuti/garrick/issues/219))
+
 ## [0.42.0] - 2026-10-25
 
 "Catch me up" briefs you, thread by thread, on what changed while you were away; a new install with the simple home now gets the page it opens on; and status page builds no longer trip over each other or outlive the update that replaced them.
@@ -955,7 +963,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/iamvenuti/garrick/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/iamvenuti/garrick/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/iamvenuti/garrick/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/iamvenuti/garrick/compare/v0.40.0...v0.40.1

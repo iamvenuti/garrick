@@ -64,8 +64,10 @@ zone's repository, as the skills would:
                 delete here keep the stack in step themselves
     settings    which ways to open a thread the page offers, and which one
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
-                "default": "cmux"}; each zone's colour and icon: {"zones":
-                {"Work": {"color": "Teal", "icon": "briefcase"}}}; or both.
+                "default": "cmux"}, with "preview" for whether Explore's cards
+                offer Preview, which is never the default; each zone's colour
+                and icon: {"zones": {"Work": {"color": "Teal", "icon":
+                "briefcase"}}}; or both.
                 Kept in System/garrick-settings.json, committed with the
                 workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
@@ -252,8 +254,9 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
-# The ways to open a thread Settings lists: the note's own link, then status.py's LAUNCHERS.
-LAUNCHERS = ("note", "finder", "cmux", "codex", "claude")
+# The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
+# which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
+LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
@@ -1634,6 +1637,8 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("no way to open a thread called %s" % ", ".join(repr(k) for k in unknown))
         if default not in LAUNCHERS:
             raise Refused("no way to open a thread called %r" % (default,))
+        if default == "preview":
+            raise Refused("Preview reads a note and opens nothing, so it cannot be what clicking a thread does")
         if default != "note" and default not in on:
             raise Refused("the default must be one of the ways switched on")
         new = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}

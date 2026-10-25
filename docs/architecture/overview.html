@@ -74,7 +74,7 @@
 <div class="stage">
 <svg viewBox="0 0 1200 640" role="img" aria-labelledby="dtitle ddesc" xmlns="http://www.w3.org/2000/svg">
   <title id="dtitle">Garrick at a glance</title>
-  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and threads and opens a thread where you work: the Claude or Codex desktop app, or cmux. You work on the record: your pieces of work, Meetings and Knowledge. Three sources feed it, each its own part: what you're working on, your files, feeds the pieces of work; what was said, your meetings, feeds Meetings; what you read feeds Knowledge. Documents, mail, transcripts and articles arrive and are filed there. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first. The rules and the walls apply to the whole record, and the commit check runs on every commit in each zone.</desc>
+  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and pieces of work and opens a piece of work where you work: the Claude or Codex desktop app, or cmux. You work on the record: your pieces of work, Meetings and Knowledge. Three sources feed it, each its own part: what you're working on, your files, feeds the pieces of work; what was said, your meetings, feeds Meetings; what you read feeds Knowledge. Documents, mail, transcripts and articles arrive and are filed there. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first. The rules and the walls apply to the whole record, and the commit check runs on every zone's commits. Colour shows who owns each box: Garrick, third-party tools, your content, or what comes in.</desc>
   <defs>
     <marker id="m-link" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-link" d="M0,0 L10,5 L0,10 z"/></marker>
     <marker id="m-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-in" d="M0,0 L10,5 L0,10 z"/></marker>
@@ -93,19 +93,19 @@
   <!-- Layer 1: navigate and control -->
   <rect class="grp" x="362" y="16" width="260" height="104" rx="12"/>
   <text class="glabel" x="376" y="36">Navigate and control</text>
-  <rect class="box own" x="392" y="48" width="200" height="60" rx="8"/>
+  <rect class="box own" x="377" y="48" width="230" height="60" rx="8"/>
   <text class="t" x="492" y="74">Garrick App</text>
-  <text class="s" x="492" y="94">zones, projects, threads</text>
+  <text class="s" x="492" y="94">zones, projects, pieces of work</text>
 
   <!-- Layer 2: where you work -->
-  <rect class="grp" x="285" y="176" width="414" height="104" rx="12"/>
-  <text class="glabel" x="299" y="196">Where you work: one or the other</text>
-  <rect class="box tool" x="300" y="208" width="182" height="60" rx="8"/>
-  <text class="t" x="391" y="234">Claude or Codex app</text>
-  <text class="s" x="391" y="254">the desktop app</text>
-  <rect class="box tool" x="502" y="208" width="182" height="60" rx="8"/>
-  <text class="t" x="593" y="234">cmux</text>
-  <text class="s" x="593" y="254">a terminal tab per thread</text>
+  <rect class="grp" x="280" y="176" width="432" height="104" rx="12"/>
+  <text class="glabel" x="294" y="196">Where you work: one or the other</text>
+  <rect class="box tool" x="294" y="208" width="180" height="60" rx="8"/>
+  <text class="t" x="384" y="234">Claude or Codex app</text>
+  <text class="s" x="384" y="254">the desktop app</text>
+  <rect class="box tool" x="488" y="208" width="212" height="60" rx="8"/>
+  <text class="t" x="594" y="234">cmux</text>
+  <text class="s" x="594" y="254">a terminal tab per piece of work</text>
 
   <!-- The three sources, beside the layers: each feeds its own part of the record -->
   <rect class="box way" x="50" y="208" width="210" height="60" rx="8"/>
@@ -151,7 +151,7 @@
 
   <!-- Edges: every one between layers ends on a group's border -->
   <path class="edge link" d="M492,120 L492,174" marker-end="url(#m-link)"/>
-  <text class="elabel link-t" x="504" y="152">opens a thread in</text>
+  <text class="elabel link-t" x="504" y="152">opens a piece of work in</text>
 
   <path class="edge link" d="M492,280 L492,334" marker-end="url(#m-link)"/>
   <text class="elabel link-t" x="504" y="312">work on it, at its next action</text>
@@ -178,8 +178,8 @@
 </div>
 <div class="cards">
   <section class="card"><h2>Navigate, then work</h2>
-    <p>The Garrick App is the control panel over your zones, projects and threads: where each stands, what is due, park or wake a thread, tick an action.</p>
-    <p>It opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Say “hold this” when interrupted and “back” when you return.</p></section>
+    <p>The Garrick App is the control panel over your zones, projects and pieces of work: where each stands, what is due, park or wake one, tick an action.</p>
+    <p>It opens a piece of work where you work: the Claude or Codex desktop app, or cmux with a terminal tab per piece of work. Say “hold this” when interrupted and “back” when you return.</p></section>
   <section class="card"><h2>The record</h2>
     <p>It holds what you’re working on, what was said and what you read: your pieces of work, Meetings and Knowledge. Documents, mail and transcripts are filed into the part they belong to for you.</p>
     <p>Each piece of work has one resume point: what is done, the next action, and what was only in your head. All of it is plain Markdown in git, on your Mac.</p></section>

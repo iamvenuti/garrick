@@ -22,6 +22,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import urllib.parse
@@ -123,6 +124,23 @@ PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._-]+$")
 # its "home" setting, and on the simple home its zones' lists start without the
 # zone template's example line.
 NEW_HOME = "simple"
+# The extras that live in the workspace, where their pages say to copy them:
+# (name, what it is called, [(folder in Garrick, folder in the workspace,
+# folders inside it that go elsewhere)]). An extra counts as installed when one
+# of its folders is in the workspace; update.py then updates its files as the
+# core's, and adds any it lacks. The installer puts one in place itself: the
+# status page, on the simple home, which is that page (#208). The zone guard and
+# the Garrick band run from a Garrick you keep outside the workspace, so they
+# are not here.
+EXTRAS = (
+    ("status", "the status page", (("extras/status", "System/status", ()),)),
+    ("jobs", "the scheduled jobs", (("extras/jobs", "System/jobs", ()),)),
+    ("cmux", "desk, for cmux", (("extras/cmux", "System/cmux", ("desk",)),
+                                ("extras/cmux/desk", "System/skills/desk", ()))),
+)
+# How long the first build of the status page may take before the installer
+# gives up on it and says how to build it by hand.
+PAGE_TIMEOUT = 300
 
 
 class InstallError(Exception):
@@ -748,6 +766,10 @@ def install(cfg, target, force=False, quiet=False):
     ours = read_json_file(root / recorded, recorded)
     ours.setdefault("home", NEW_HOME)
     w.write(root / recorded, json.dumps(ours, indent=2) + "\n")
+    # The simple home is the status page, so a workspace that opens on it gets
+    # the page itself (#208): the extra in System/status, committed and
+    # fingerprinted with the rest, as an update finds one copied in by hand.
+    page = ours["home"] == "simple" and put_extra(w, root, "status")
 
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an
     # update can tell a file still as installed from one the user has changed.
@@ -767,6 +789,9 @@ def install(cfg, target, force=False, quiet=False):
         except (FileExistsError, FileNotFoundError) as exc:
             raise InstallError(f"Could not install the wall check: {exc}")
     hooks_path = pl.hooks_path(root)
+    # Built once, now everything is committed, so the page is there from the first
+    # minute; the Mac app is the setup skill's to offer.
+    unbuilt = build_page(root) if page else ""
 
     say("")
     say(f"Your workspace is ready at {root}")
@@ -785,6 +810,12 @@ def install(cfg, target, force=False, quiet=False):
             say("  " + line)
     else:
         say("  No command is allowed in advance, so your assistant asks before each one.")
+    if page and not unbuilt:
+        say("  Your home page is built, in System/generated/status.html: the status page, in System/status, "
+            "opens on the simple home. \"Set up Garrick\" offers to make it a Mac app.")
+    elif page:
+        say(f"  Your home page, in System/status, was not built: {unbuilt}")
+        say(f"  To build it: python3 System/status/status.py --workspace {shlex.quote(str(root))}")
     say("  More zones and parties can come later: ask your assistant.")
     if local_identity:
         say("  git had no name or email set, so commits here carry your name and the address garrick@localhost. "
@@ -794,6 +825,42 @@ def install(cfg, target, force=False, quiet=False):
     say("")
     say(f"Next: open {root} in your Claude or ChatGPT app, or start claude or codex there, and say \"set up Garrick\".")
     return root
+
+
+# --------------------------------------------------------------------------- the status page
+
+
+def put_extra(w, root, name):
+    """Copy one of EXTRAS into the workspace, each of its folders where the
+    table says, as its page says to copy it by hand. update.py's
+    extras_shipped() gives the same files, so an update finds it installed.
+    Whether it was put there: a Garrick without that extra's folders, such as a
+    copy of the installer and the template alone, has nothing to copy."""
+    for extra, _, places in EXTRAS:
+        if extra != name:
+            continue
+        there = [(src, dest, skip) for src, dest, skip in places if (REPO / src).is_dir()]
+        for src, dest, skip in there:
+            w.mkdir(root / dest)
+            w.copy_tree(REPO / src, root / dest, skip=skip)
+        return bool(there)
+    raise InstallError(f"Garrick has no extra called {name}.")
+
+
+def build_page(root):
+    """Build the status page once, as its page says to: status.py, in its own
+    process, into System/generated/, which git leaves out. "" when it was
+    built, or why not. A page that did not build leaves the workspace as it is."""
+    tool = root / "System" / "status" / "status.py"
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--workspace", str(root)], cwd=root,
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=PAGE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if r.returncode != 0:
+        lines = (r.stderr or r.stdout).strip().splitlines()
+        return lines[-1] if lines else f"status.py stopped with exit code {r.returncode}"
+    return ""
 
 
 # --------------------------------------------------------------------------- questions
@@ -950,6 +1017,10 @@ def main(argv=None):
         root = install(cfg, Path(target).expanduser(), force=args.force)
         if args.example:
             add_example(root)
+            if (root / "System" / "status" / "status.py").is_file():
+                why = build_page(root)          # the page built at install had no example to show yet
+                if why:
+                    print(f"The home page was not rebuilt with the example: {why}", file=sys.stderr)
     except InstallError as exc:
         print(exc, file=sys.stderr)
         return 1

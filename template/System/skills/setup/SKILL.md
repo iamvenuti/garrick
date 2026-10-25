@@ -117,7 +117,23 @@ mode* in the `threads` skill describes.
      saying what it does.
    - Anything else the probe flagged: say what it means, and what it would
      take, then leave it unless the user asks.
-6. **Hand over.** Read `System/context.md` and list the projects:
+6. **Offer the Mac app**, as the last question before you hand over, and
+   only where `System/garrick-settings.json` says `"home": "simple"`,
+   `System/status/app/make-app.sh` is there, this is a Mac, and
+   `~/Applications/Garrick.app` is not there yet. The simple home is the
+   status page: the installer put it in `System/status/` and built it once,
+   and the app that shows it in a window of its own is built here, on a yes.
+   Ask in one plain sentence: "Shall I make your Garrick home an app on this
+   Mac, so it opens from the Dock like any other?" On a yes, say "Making the
+   Garrick app now; it takes a minute", then run, from the workspace,
+   `System/status/app/make-app.sh --workspace "<this workspace>"`. It
+   compiles the app with the Xcode command line tools, downloads nothing,
+   and puts it in `~/Applications`, printing its place as its last line.
+   Then: "It's in your Applications folder as Garrick. Drag it to the Dock
+   to keep it there." If it fails, say what its last line means in plain
+   words, and that the home still opens in a browser from
+   `System/generated/status.html`. On a no, leave it there.
+7. **Hand over.** Read `System/context.md` and list the projects:
    - No parties and no projects yet: offer the short way first, and the
      interview as the fuller one. "Tell me one thing you need to prepare,
      and I'll set up just enough to do it. Or say 'interview me' and I'll
@@ -194,8 +210,9 @@ than nothing: it looks like an answer.
 ## Never
 
 - Never install, download, sign in to or configure an app for the user.
-  Say what it would take and leave it. The notification hooks are the one
-  exception, and only on the yes the question above asks for.
+  Say what it would take and leave it. The notification hooks and the
+  Garrick app, built on this Mac from the workspace's own `System/status/`,
+  are the two exceptions, and each only on the yes its question asks for.
 - Never write the user's work, parties or anything said in confidence into
   `System/setup.md`.
 - Never edit `System/rules.md` or an `AGENTS.md`: the user's rules and

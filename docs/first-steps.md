@@ -51,6 +51,8 @@ macOS may ask whether Terminal may access files in your Downloads folder. Click 
 
 Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones you need for your first project, and name who you work for or with, or press Enter to skip. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](commands.md#another-zone). Walls, the pairs of parties whose information must stay apart, are not asked here: you declare them in your first session. Two folders alone do not create one. The last question offers to let the assistant run Garrick's own tools, and git's commands that look at or save history, without asking each time; [The commands it asks to approve](#the-commands-it-asks-to-approve) says exactly what that allows. The [command reference](commands.md#install) explains the questions.
 
+The installer also puts your home page in place and builds it: the [simple home](extras/simple-home.md), your work, a box to ask something and the questions waiting on you, in `System/generated/status.html`. There is nothing to copy or build by hand. When you say "Set up Garrick" in step 4, the assistant offers to make it an app on your Mac, so it opens from the Dock.
+
 You can close Terminal when installation finishes. The assistant runs the tools for everyday work, and asks you to approve commands as your app settings say. [The commands it asks to approve](#the-commands-it-asks-to-approve) explains them.
 
 ## 4. Open the workspace in your app

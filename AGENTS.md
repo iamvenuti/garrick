@@ -20,7 +20,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |
 | `examples/example-work/` | The worked example: one person's ordinary work, a zone of its own with a shared drive beside it. `build.py` builds it with dates relative to today, into a new workspace or one already installed; `install.py --example` adds it, and `System/tools/example.py` archives and restores it |
-| `extras/` | Optional tools outside core, never installed: the mail fetcher, scheduled jobs, and the status page with its Mac app |
+| `extras/` | Optional tools outside core: the mail fetcher, scheduled jobs, and the status page with its Mac app. None is installed except the status page, which the installer puts in place for the simple home; `EXTRAS` in `install.py` says where each goes in a workspace |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |
 | `tests/` | `python3 -m unittest discover -s tests` |

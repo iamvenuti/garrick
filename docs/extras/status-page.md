@@ -2,7 +2,7 @@
 
 One page that answers two questions before you open anything: is anything wrong, and where was I? It is a single HTML file you open in a browser, or in a small [Mac app](#a-mac-app) of its own. It needs no server, no account and no network, and it works whether or not you use Obsidian or cmux: each time it is built, it checks which of them this machine has and offers only what will work.
 
-A newly installed workspace opens on the [simple home](simple-home.md) instead: your work, a box to ask something and the questions waiting on you, with *Continue* opening a piece of work in Claude's desktop app, and everything this page describes under *More*. One installed before the simple home existed keeps this page; *Settings › Home* switches either way.
+A newly installed workspace has this page from the start, put in place and built by the installer, and opens it on the [simple home](simple-home.md) instead: your work, a box to ask something and the questions waiting on you, with *Continue* opening a piece of work in Claude's desktop app, and everything this page describes under *More*. One installed before the simple home existed keeps this page; *Settings › Home* switches either way.
 
 ## What it shows
 
@@ -197,7 +197,9 @@ In the Mac app and in Obsidian, the graph's panel also has *Preview*, first amon
 
 ## Set it up
 
-1. **Copy `extras/status/` into your workspace as `System/status/`**, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. The previews' scripts (`page_action.py`, `ask.py` and `ask-brief.md`) go with it, and `obsidian/` holds the [Obsidian plugin](#in-obsidian). A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing. From then on, [updating Garrick](../updating.md#extras) updates `System/status/` with the rest.
+A workspace installed with the simple home, as every new one is, has it already: the installer puts `extras/status/` in place as `System/status/`, commits it with the rest, and builds the page once, so it is there from the first minute. "Set up Garrick" then offers to build the [Mac app](#a-mac-app) on a yes. Step 1 is then done, and step 2 builds the page again whenever you want.
+
+1. **Copy `extras/status/` into your workspace as `System/status/`**, in a workspace installed without it, next to `System/jobs/` if you have it, and commit it in the workspace root's repository. The previews' scripts (`page_action.py`, `ask.py` and `ask-brief.md`) go with it, and `obsidian/` holds the [Obsidian plugin](#in-obsidian). A workspace installed before this extra existed needs one line added to its root `.gitignore`: `System/generated/`. The check tells you if it is missing. From then on, [updating Garrick](../updating.md#extras) updates `System/status/` with the rest.
 2. **Build it and open it:**
    ```sh
    python3 System/status/status.py --workspace ~/Garrick --open
@@ -223,7 +225,7 @@ The page says how old it is, and turns its banner red when it is more than a day
 - **The Edit menu works in its fields.** ⌘V pastes into the Todo list's *Add* field and the panel's field, with Cut, Copy, Undo and Redo beside it.
 - **Safari can inspect it.** With Safari's *Develop* menu on, *Develop › your Mac › Garrick* opens the Web Inspector on the page, for its console and what it keeps in storage. The app names itself `GarrickApp` in its user agent.
 
-Build it once, from the workspace:
+On a workspace that opens on the simple home, "Set up Garrick" offers to build it, in one question at its end, and runs the command below on your yes. Otherwise, or to build it yourself, run it once, from the workspace:
 
 ```sh
 System/status/app/make-app.sh

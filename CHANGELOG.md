@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-10-25
+
+"Catch me up" briefs you, thread by thread, on what changed while you were away; a new install with the simple home now gets the page it opens on; and status page builds no longer trip over each other or outlive the update that replaced them.
+
 ### Added
 
 - **"Catch me up": what changed while you were away, thread by thread.** Coming back after a day off, or from a week on another client, meant opening each thread in turn to find out what had moved. Now "catch me up", "catch me up on Acme", "catch me up on Acme, pricing since Monday" or "catch me up on Work this week" goes through the `threads` skill's new *Catch up*. It answers with a short overview, then one section per thread that changed: what changed and why it matters, the decisions with their reasons and the questions still open, what to look at before carrying on, the thread's open actions, and where it stands now with its next action. Each statement links the note, the commit or the `Todo.md` it rests on, and a gap in the records (commits with no dated entry, a checkpoint nobody wrapped, a line that could be either of two threads) is said as a gap. Listening, you hear the overview and are offered the rest. It covers one zone unless you name more, and leaves out the threads that did not change, a parked thread unless you name it and a finished one unless it changed. It is shown, not saved: one that covers a single project ends by offering to save it in that project's `Deliverables/`, by the route a meeting brief is saved. "Brief me for X" stays the meetings skill's brief for a meeting.
@@ -947,7 +951,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/iamvenuti/garrick/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/iamvenuti/garrick/compare/v0.40.1...v0.41.0
 [0.40.1]: https://github.com/iamvenuti/garrick/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/iamvenuti/garrick/compare/v0.39.0...v0.40.0

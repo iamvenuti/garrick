@@ -46,8 +46,9 @@ class Case(unittest.TestCase):
         gitconfig = base / "gitconfig"
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
                              "[commit]\n\tgpgsign = false\n")
+        # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
         self.env = dict(os.environ, HOME=str(base / "home"), GIT_CONFIG_GLOBAL=str(gitconfig),
-                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
+                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1", GARRICK_INSTALL_NO_PAGE="1")
         self.patch = mock.patch.dict(os.environ, self.env)
         self.patch.start()
         self.base = base
@@ -100,6 +101,7 @@ class TestWhatGarrickShips(Case):
     def test_shipped_is_exactly_what_the_installer_wrote(self):
         files = self.stamp()["files"]
         new = update.shipped(update.zones_of(self.root, self.stamp()), simple=True)    # a new workspace's home
+        new.update(update.extras_shipped(["status"]))       # and the status page that home is (#208)
         self.assertEqual(sorted(files), sorted(new))
         for path, (data, _) in new.items():
             self.assertEqual(files[path], sha(data), path)
@@ -400,7 +402,9 @@ class TestSorting(Case):
         files = self.stamp()["files"]
         self.assertIn(todo, files)
         self.assertIsNone(files[todo])                   # there, but what Garrick gave it is unknown
-        self.assertEqual(sorted(update.shipped(update.zones_of(self.root, self.stamp()))), sorted(files))
+        there = update.shipped(update.zones_of(self.root, self.stamp()))
+        there.update(update.extras_shipped(["status"]))              # the status page a new workspace has (#208)
+        self.assertEqual(sorted(there), sorted(files))
         (self.root / todo).unlink()
         self.commit(self.root / "Zones" / "Work", "no todo for me")
         p = self.plan()
@@ -937,12 +941,20 @@ class ExtrasCase(Case):
             self.addCleanup(patch.stop)
 
     def install_extra(self, *names):
-        for path, (data, mode) in update.extras_shipped(names).items():
+        """Copy these extras in by hand. The status page a new workspace already
+        has (#208) is taken out of the stamp's list, so it too counts as copied in
+        by hand, with no record of what Garrick gave it."""
+        extra = update.extras_shipped(names)
+        for path, (data, mode) in extra.items():
             target = self.root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             os.chmod(target, mode)
         self.commit(self.root, "extras by hand")
+        stamp = self.stamp()
+        if any(path in stamp["files"] for path in extra):
+            stamp["files"] = {k: v for k, v in stamp["files"].items() if k not in extra}
+            self.set_stamp(stamp)
 
     def built_app(self, workspace=None, args=("--no-graph",)):
         app = self.base / "Applications" / "Garrick.app" / "Contents"
@@ -954,7 +966,17 @@ class ExtrasCase(Case):
 
 
 class TestExtras(ExtrasCase):
+    def test_a_new_workspace_has_the_status_page_installed(self):
+        """#208: the installer puts it in place for the simple home, so an update
+        treats it as one copied in by hand, with nothing to do."""
+        p = self.plan()
+        self.assertEqual(["status"], p["extras"])
+        self.assertEqual({k: [] for k in update.KINDS}, p["actions"])
+        self.assertIn("System/status/status.py", p["current"])
+
     def test_a_workspace_without_extras_has_none_to_update(self):
+        shutil.rmtree(self.root / "System" / "status")      # installed without the simple home, or taken out
+        self.commit(self.root, "no status page")
         p = self.plan()
         self.assertEqual([], p["extras"])
         self.assertFalse([x for x in p["files"] if x.startswith(("System/status/", "System/jobs/", "System/cmux/"))])
@@ -1007,7 +1029,7 @@ class TestExtras(ExtrasCase):
         skill.write_bytes((REPO / "extras/cmux/desk/SKILL.md").read_bytes())
         self.commit(self.root, "desk skill")
         p = self.plan()
-        self.assertEqual(["cmux"], p["extras"])
+        self.assertEqual(["status", "cmux"], p["extras"])          # status: a new workspace has it (#208)
         self.assertIn("System/cmux/desk.py", p["actions"]["add"])
         self.assertNotIn("System/cmux/desk/SKILL.md", p["files"])
 

@@ -428,6 +428,26 @@ class SkillsTest(unittest.TestCase):
         for word in ("push", "reset", "checkout"):
             self.assertNotIn(word, offer[0])
 
+    def test_setup_offers_the_mac_app_at_its_end_on_the_simple_home(self):
+        """#208: the installer puts the status page in place and builds it; the
+        app is the setup skill's to offer, once, in one plain sentence, and to
+        build only on a yes, with make-app.sh from the workspace's own copy."""
+        text = (SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
+        steps = section(text, '## "Set up Garrick"')
+        offer = flat(steps[steps.index("6. **Offer the Mac app**"):steps.index("7. **Hand over.**")])
+        for needle in ('`"home": "simple"`', "`System/status/app/make-app.sh` is there", "this is a Mac",
+                       "`~/Applications/Garrick.app` is not there yet", "the last question before you hand over",
+                       "in one plain sentence", "On a yes",
+                       '`System/status/app/make-app.sh --workspace "<this workspace>"`', "downloads nothing",
+                       "`System/generated/status.html`"):
+            self.assertIn(needle, offer, needle)
+        question = re.findall(r'Ask in one plain sentence: "([^"]+)"', offer)
+        self.assertEqual(1, len(question), offer)
+        self.assertEqual(1, len(re.findall(r"[.?!](?:\s|$)", question[0])), question[0])   # one sentence
+        never = flat(section(text, "## Never"))
+        self.assertIn("the Garrick app", never)
+        self.assertIn("each only on the yes its question asks for", never)
+
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",

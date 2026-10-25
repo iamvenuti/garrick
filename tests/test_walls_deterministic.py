@@ -573,7 +573,7 @@ class TestInstalledHook(unittest.TestCase):
         }
         config = base / "config.json"
         config.write_text(json.dumps(cfg))
-        env = dict(ENV, HOME=str(base))
+        env = dict(ENV, HOME=str(base), GARRICK_INSTALL_NO_PAGE="1")     # the status page put in place, not built
         cls.env = env
         cls.install = subprocess.run([sys.executable, str(INSTALL), "--config", str(config), "--target", str(cls.root)],
                                      env=env, capture_output=True, text=True)

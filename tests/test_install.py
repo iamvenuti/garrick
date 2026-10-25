@@ -7,8 +7,10 @@ and git's global config pointed at temporary files, so nothing on the machine
 running the tests is read or written.
 """
 
+import contextlib
 import importlib.util
 import hashlib
+import io
 import json
 import os
 import re
@@ -68,7 +70,9 @@ def recorded_settings(target):
 class Sandbox:
     """A temporary HOME and git identity for one test class."""
 
-    def __init__(self):
+    def __init__(self, page=False):
+        """`page`: build the status page at install, as a user's install does.
+        Off by default, since a build takes seconds and few tests read the page."""
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name).resolve()
         self.home = base / "home"
@@ -80,8 +84,15 @@ class Sandbox:
         # which can still be writing in .git when the folder is cleaned up.
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
                              "[commit]\n\tgpgsign = false\n[maintenance]\n\tautoDetach = false\n")
+        # The first build of the status page looks for Claude Code's command-line
+        # tool; GARRICK_CLAUDE names one that is not there, so it looks nowhere else.
         self.env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_GLOBAL=str(gitconfig),
-                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
+                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1",
+                        GARRICK_CLAUDE=str(base / "no-claude"))
+        if not page:
+            self.env["GARRICK_INSTALL_NO_PAGE"] = "1"
+        else:
+            self.env.pop("GARRICK_INSTALL_NO_PAGE", None)
 
     def install(self, name, config=EXAMPLE, extra=()):
         target = self.work / name
@@ -282,7 +293,7 @@ class InstallTest(unittest.TestCase):
         for line in ("Zones/", "Wikis/", "System/generated/", ".DS_Store"):
             self.assertIn(line, ignore)
         # A page a tool rebuilds, such as the status page, never enters the root history.
-        (self.root / "System" / "generated").mkdir()
+        (self.root / "System" / "generated").mkdir(exist_ok=True)         # the install built the page there
         (self.root / "System" / "generated" / "status.html").write_text("<p>every zone</p>\n")
         self.assertEqual(git(self.root, "status", "--porcelain"), "")
         # Opening a zone as an Obsidian vault: the state it rewrites constantly stays out, its settings do not.
@@ -1131,6 +1142,99 @@ class ZoneTodoTest(unittest.TestCase):
             self.assertIn(self.NOTE, text, name)
             template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
             self.assertEqual(template.replace("{{ZONE}}", name), text)
+
+
+class HomePageTest(unittest.TestCase):
+    """#208: a workspace that opens on the simple home gets the page itself, the
+    status extra in System/status, committed with the rest, and the page built
+    once. One installed without the simple home gets neither, as before."""
+
+    PAGE = Path("System") / "generated" / "status.html"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.box = Sandbox(page=True)
+        cls.root, cls.result = cls.box.install("ws")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.box.close()
+
+    def in_process(self, name, home, env=None, **patches):
+        """An install from this module, with NEW_HOME set to `home`, in the
+        sandbox's environment and `env`: (root, what it said)."""
+        installer = load_installer()
+        installer.NEW_HOME = home
+        for key, value in patches.items():
+            setattr(installer, key, value)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, dict(self.box.env, **(env or {})), clear=True), \
+                contextlib.redirect_stdout(out):
+            root = installer.install(json.loads(EXAMPLE.read_text()), self.box.work / name)
+        return root, out.getvalue()
+
+    def test_a_simple_home_install_has_the_status_page_and_a_built_page(self):
+        self.assertEqual(self.result.returncode, 0, self.result.stderr)
+        self.assertEqual("simple", recorded_settings(self.root)["home"])
+        sys.path.insert(0, str(REPO))
+        try:
+            import update
+        finally:
+            sys.path.remove(str(REPO))
+        extra = update.extras_shipped(["status"])
+        self.assertIn("System/status/status.py", extra)
+        self.assertIn("System/status/app/make-app.sh", extra)
+        for rel, (data, mode) in extra.items():                     # as copying the extra by hand would leave it
+            self.assertEqual(data, (self.root / rel).read_bytes(), rel)
+            self.assertEqual(mode, (self.root / rel).stat().st_mode & 0o777, rel)
+        self.assertEqual(sorted(extra), sorted(p.relative_to(self.root).as_posix()
+                                               for p in (self.root / "System" / "status").rglob("*") if p.is_file()))
+        tracked = git(self.root, "ls-files", "System/status").splitlines()
+        self.assertEqual(sorted(extra), sorted(tracked))            # committed with the rest
+        stamp = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
+        self.assertTrue(set(extra) <= set(stamp))                   # fingerprinted, so an update can tell it as written
+        # Built once, on the simple home, where git leaves it out.
+        page = (self.root / self.PAGE).read_text(encoding="utf-8")
+        self.assertIn('<body class="simple" data-tab="home"', page)
+        self.assertEqual("", git(self.root, "status", "--porcelain", "--untracked-files=all"))
+        self.assertIn("Your home page is built, in System/generated/status.html", self.result.stdout)
+        self.assertIn('"Set up Garrick" offers to make it a Mac app.', self.result.stdout)
+        self.assertFalse(list(self.box.home.iterdir()))             # nothing built or written outside it, no app
+        # An update finds the extra installed, with nothing to do.
+        p = update.plan(self.root)
+        self.assertEqual(["status"], p["extras"])
+        self.assertEqual({k: [] for k in update.KINDS}, p["actions"])
+
+    def test_a_classic_install_has_neither(self):
+        root, said = self.in_process("classic", "full")
+        self.assertEqual("full", recorded_settings(root)["home"])
+        self.assertFalse((root / "System" / "status").exists())
+        self.assertFalse((root / self.PAGE).exists())
+        self.assertFalse((root / "System" / "generated").exists())
+        self.assertNotIn("home page", said)
+        stamp = json.loads((root / "System" / "garrick-version.json").read_text())["files"]
+        self.assertFalse([rel for rel in stamp if rel.startswith("System/status/")])
+
+    def test_a_page_that_does_not_build_leaves_the_install_and_says_how(self):
+        asked = []
+        root, said = self.in_process("unbuilt", "simple",
+                                     build_page=lambda r: asked.append(r) or "status.py stopped: no luck")
+        self.assertEqual([root], asked)
+        self.assertTrue((root / "System" / "status" / "status.py").is_file())
+        self.assertFalse((root / self.PAGE).exists())
+        self.assertIn("Your home page, in System/status, was not built: status.py stopped: no luck", said)
+        self.assertIn("To build it: python3 System/status/status.py --workspace %s" % shlex.quote(str(root)), said)
+        self.assertEqual("", git(root, "status", "--porcelain"))
+        self.assertTrue(said.strip().splitlines()[-1].startswith("Next: open "))
+
+    def test_the_suites_switch_puts_the_page_in_place_unbuilt(self):
+        asked = []
+        root, said = self.in_process("switched", "simple", env={"GARRICK_INSTALL_NO_PAGE": "1"},
+                                     build_page=lambda r: asked.append(r) or "")
+        self.assertEqual([], asked)
+        self.assertTrue((root / "System" / "status" / "status.py").is_file())
+        self.assertFalse((root / self.PAGE).exists())
+        self.assertIn("To build it: python3 System/status/status.py --workspace", said)
 
 
 class ZoneIdentityTest(unittest.TestCase):

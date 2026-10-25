@@ -101,18 +101,11 @@ NEW_SUFFIX = ".new"
 
 KINDS = ("replace", "add", "merge", "split", "yours", "restore", "retired")
 
-# The extras that live in the workspace, where their pages say to copy them:
-# (name, what it is called, [(folder in Garrick, folder in the workspace,
-# folders inside it that go elsewhere)]). An extra counts as installed when one
-# of its folders is in the workspace; its files are then updated as the core's
-# are, and any it lacks are added. The zone guard and the Garrick band run from
-# a Garrick you keep outside the workspace, so they are not here.
-EXTRAS = (
-    ("status", "the status page", (("extras/status", "System/status", ()),)),
-    ("jobs", "the scheduled jobs", (("extras/jobs", "System/jobs", ()),)),
-    ("cmux", "desk, for cmux", (("extras/cmux", "System/cmux", ("desk",)),
-                                ("extras/cmux/desk", "System/skills/desk", ()))),
-)
+# The extras that live in the workspace: the installer's table, which it reads
+# to put the status page in place on the simple home. An extra counts as
+# installed when one of its folders is in the workspace; its files are then
+# updated as the core's are, and any it lacks are added.
+EXTRAS = install.EXTRAS
 
 
 class UpdateError(Exception):

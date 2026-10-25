@@ -121,8 +121,9 @@ class KnowledgeIngestTest(unittest.TestCase):
             "[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
             "[commit]\n\tgpgsign = false\n"
         )
+        # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
         cls.env = dict(os.environ, HOME=str(home), GIT_CONFIG_GLOBAL=str(gitconfig),
-                       GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
+                       GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1", GARRICK_INSTALL_NO_PAGE="1")
 
     @classmethod
     def tearDownClass(cls):

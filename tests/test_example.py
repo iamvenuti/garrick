@@ -53,8 +53,8 @@ MOST_RECENT_FIRST = ["Kestle chair launch", "Brannock delivery problem", "Ellisf
                      "Dealer price list 2027", "Spring trade show"]
 
 
-def run(args, cwd=None):
-    return subprocess.run([str(a) for a in args], cwd=str(cwd) if cwd else None, env=ENV,
+def run(args, cwd=None, env=None):
+    return subprocess.run([str(a) for a in args], cwd=str(cwd) if cwd else None, env=env or ENV,
                           capture_output=True, text=True)
 
 
@@ -353,7 +353,14 @@ class AddedToAWorkspaceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.tmp.name).resolve() / "garrick"
-        cls.result = run([sys.executable, INSTALL, "--config", ACME, "--target", cls.root, "--example"], cwd=REPO)
+        # The install builds the home page, which looks at what the Mac has: a
+        # HOME of its own, and no Claude Code to find, keep it off this one.
+        home = Path(cls.tmp.name).resolve() / "home"
+        home.mkdir()
+        env = dict(ENV, HOME=str(home), GARRICK_CLAUDE=str(home / "no-claude"))
+        env.pop("GARRICK_INSTALL_NO_PAGE", None)                 # this one is a user's install, page and all
+        cls.result = run([sys.executable, INSTALL, "--config", ACME, "--target", cls.root, "--example"], cwd=REPO,
+                         env=env)
         if cls.result.returncode != 0:
             return
         # The user's own work, made alongside the example and committed.
@@ -386,6 +393,14 @@ class AddedToAWorkspaceTest(unittest.TestCase):
             "stamp": (self.root / "System" / "garrick-version.json").read_bytes(),
             "settings": (self.root / ".claude" / "settings.json").read_bytes(),
         }
+
+    def test_the_home_page_is_built_with_the_example_in_it(self):
+        """#208: the installer builds the page once, and again once the example is
+        in, so the first page a new user opens already shows it."""
+        page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
+        self.assertIn('<body class="simple" data-tab="home"', page)
+        for project in WORK:
+            self.assertIn(project, page)
 
     def test_check_is_clean_beside_the_users_own_parties(self):
         res, report = check(self.root)

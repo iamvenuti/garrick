@@ -200,6 +200,7 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		this.addCommand({ id: "open", name: "Open", callback: () => this.open(false) });
 		this.addCommand({ id: "rebuild-open", name: "Rebuild and open", callback: () => this.open(true) });
 		this.addCommand({ id: "open-browser", name: "Open in browser", callback: () => shell.openPath(this.page()) });
+		this.addCommand({ id: "catch-up", name: "Catch up", callback: () => this.catchUp() });
 		this.addSettingTab(new GarrickSettings(this.app, this));
 
 		// The page and the file list follow the workspace: a reload whenever the
@@ -298,6 +299,20 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		const leaf = this.app.workspace.getLeavesOfType(VIEW)[0] || this.app.workspace.getLeaf("tab");
 		if (leaf.view.getViewType() !== VIEW) await leaf.setViewState({ type: VIEW, active: true });
 		this.app.workspace.revealLeaf(leaf);
+	}
+
+	// Catch up (#27), from the command palette: the page's own dialog in the
+	// Garrick view, as its button beside Settings opens it. A view still
+	// loading opens it once the page is ready.
+	async catchUp() {
+		await this.open(false);
+		const view = this.views()[0];
+		if (!view || !view.web) return;
+		const run = () => view.web.executeJavaScript("window.GarrickCatchUp&&window.GarrickCatchUp.open()").catch(() => {});
+		let loading = false;
+		try { loading = !!(view.web.isLoading && view.web.isLoading()); } catch (e) {}
+		if (loading) view.web.addEventListener("dom-ready", run, { once: true });
+		else run();
 	}
 
 	async freshen(force) {

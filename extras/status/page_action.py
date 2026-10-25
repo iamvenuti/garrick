@@ -83,7 +83,10 @@ zone's repository, as the skills would:
                 log names only LOGGED, settings keeps no durable record, and
                 a failure is said in words of this file's own.
                 Settings › While you wait: {"while-you-wait": {...}},
-                checked by System/tools/next_up.py. Settings › Home:
+                checked by System/tools/next_up.py. Settings › Catch up:
+                {"catch-up": {"period": "day"}}, the period a
+                catch-up covers when none is said, checked by
+                System/tools/briefing.py. Settings › Home:
                 {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
@@ -1426,6 +1429,32 @@ def next_up_lib(ws: Path):
     return _NEXT_UP[key]
 
 
+_BRIEFING = {}
+
+
+def briefing_lib(ws: Path):
+    """System/tools/briefing.py, which checks Settings › Catch up (#27):
+    found as next_up_lib() finds its module. None when there is none."""
+    key = Path(ws)
+    if key not in _BRIEFING:
+        found = None
+        for src in (key / "System" / "tools" / "briefing.py", Path(__file__).resolve().parent.parent / "tools" / "briefing.py",
+                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "briefing.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_briefing", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if callable(getattr(mod, "clean", None)):
+                found = mod
+                break
+        _BRIEFING[key] = found
+    return _BRIEFING[key]
+
+
 # Settings › Memory (#108). System/tools/fade.py, the workspace's own, owns
 # graded oblivion: its settings() keeps what is saved merged over its
 # defaults, and counts() says what a set of them would do now. What the page
@@ -1576,7 +1605,7 @@ def save_settings(ws: Path, req: dict) -> str:
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175)."""
     notifying = {"notifications", "test", "token", "find-chat"} & set(req)
-    if not ({"launchers", "zones", "while-you-wait", "home", "memory"} | notifying) & set(req):
+    if not ({"launchers", "zones", "while-you-wait", "home", "memory", "catch-up"} | notifying) & set(req):
         raise Refused("nothing to save")
     new = {}
     if "home" in req:
@@ -1622,6 +1651,14 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("cannot find System/tools/next_up.py; update Garrick")
         try:
             new[wait.KEY] = wait.clean(req["while-you-wait"])
+        except ValueError as e:
+            raise Refused(str(e))
+    if "catch-up" in req:
+        catch = briefing_lib(ws)
+        if catch is None:
+            raise Refused("cannot find System/tools/briefing.py; update Garrick")
+        try:
+            new[catch.KEY] = catch.clean(req["catch-up"])
         except ValueError as e:
             raise Refused(str(e))
     if "memory" in req:

@@ -611,6 +611,26 @@ class TestWaitSettings(ActionCase):
         self.assertIn("- [x] [[Pricing]]: Send the revised terms", (self.work / "Todo.md").read_text())
 
 
+class TestCatchUpSettings(ActionCase):
+    """Settings › Catch up (#27): the default period, checked by briefing.py and kept beside the rest."""
+
+    def path(self):
+        return self.root / "System" / "garrick-settings.json"
+
+    def test_saved_checked_and_beside_the_rest(self):
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
+        self.assertEqual("Settings saved", self.act(verb="settings", **{"catch-up": {"period": "week"}}))
+        saved = json.loads(self.path().read_text())
+        self.assertEqual("cmux", saved["default"])                                   # the rest stays
+        self.assertEqual({"period": "week"}, saved["catch-up"])
+
+    def test_refused_with_the_reason(self):
+        for catch in ({"period": "month"}, {"colour": "Teal"}, "week"):
+            with self.assertRaises(pa.Refused, msg=catch):
+                self.act(verb="settings", **{"catch-up": catch})
+        self.assertFalse(self.path().exists())
+
+
 class TestMemorySettings(ActionCase):
     """Settings › Memory (#108): checked here against fade.py's shape, kept
     under "memory" beside the rest, and counted from unsaved values without

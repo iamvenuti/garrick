@@ -260,7 +260,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(19, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Memory's, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(20, html.count("</script>"))         # the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Catch up's, Memory's, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1361,7 +1361,7 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "menu-settings", "wait-settings",
-             "notify-settings", "memory-settings", "about-settings", "preview-settings"]
+             "notify-settings", "catch-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -1472,6 +1472,90 @@ class TestWaitSettings(StatusCase):
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_script_parses(self):
         done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.WAIT_JS,
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+
+
+class TestCatchUp(StatusCase):
+    """Catch up (#27): beside Settings, a dialog that picks the period and,
+    if wanted, the projects and threads of one zone, and hands "catch me up
+    ..." to the default assistant; Settings › Catch up keeps the default
+    period, briefing.py's; the menu bar's menu and the panel get the periods."""
+
+    def dialog(self, html=None):
+        html = html or self.page()
+        start = html.index('<dialog id="catchup"')
+        return html[start:html.index("</dialog>", start)]
+
+    def menu(self, html):
+        return json.loads(htmllib.unescape(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)))
+
+    def test_a_button_beside_settings_opens_it(self):
+        html = self.page()
+        bar = html[html.index('<div class="bacts">'):html.index('id="open-settings"')]
+        self.assertIn('id="open-catchup" aria-label="Catch up"', bar)
+        self.assertIn("window.GarrickCatchUp={open:open,phrase:phrase}", status.CATCH_JS)
+        self.assertIn("var b=document.getElementById('open-catchup');if(b)b.onclick=open;", status.CATCH_JS)
+
+    def test_the_periods_and_the_default_are_briefings(self):
+        lib = status.catch_lib(self.root)
+        sec = self.dialog()
+        self.assertEqual([k for k, _, _ in lib.PERIODS], re.findall(r'name="cu-period" value="([^"]+)"', sec))
+        self.assertIn('value="day" data-words="since yesterday" checked', sec)
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"catch-up": {"period": "week"}}))
+        sec = self.dialog()
+        self.assertIn('data-default="week"', sec)
+        self.assertIn('value="week" data-words="this week" checked', sec)
+
+    def test_projects_and_threads_by_the_names_a_request_says(self):
+        sec = self.dialog()
+        self.assertIn('data-root="%s"' % htmllib.escape(str(self.root)), sec)
+        self.assertIn('<input type="checkbox" data-cu="Acme Review"> Acme Review', sec)
+        self.assertIn('data-cu="Acme Review, Pricing" data-cup="Acme Review"> Pricing', sec)   # "Project, Thread"
+        self.assertIn('<ul class="cuz" data-zone="Work">', sec)
+
+    def test_the_request_goes_to_the_default_assistant_or_is_copied(self):
+        js = status.CATCH_JS
+        self.assertIn("return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}", js)
+        self.assertIn("var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m)", js)
+        self.assertIn("GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})", js)
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                          # as the app's assistant()
+
+    def test_settings_keeps_the_default_period(self):
+        html = self.page()
+        start = html.index('<section class="setsec apponly" id="catch-settings">')
+        sec = html[start:html.index("</section>", start)]
+        self.assertIn('<input type="radio" name="cu-default" value="day" checked> <span>The last day</span>', sec)
+        self.assertIn("q['catch-up']=C.request();C.saved()", status.JS)                   # sent with the rest when Settings closes
+        self.assertIn("System/briefing.local.md", sec)
+
+    def test_the_menu_gets_the_periods(self):
+        catch = self.menu(self.page(launchers=("claude",)))["catchup"]
+        self.assertEqual({"n": "Catch Up", "f": str(self.root), "d": "day",
+                          "p": [list(p) for p in status.catch_lib(self.root).PERIODS]}, catch)
+        self.assertNotIn("catchup", self.menu(self.page()))                               # nothing installed to open it in
+
+    def test_left_out_without_briefing(self):
+        with mock.patch.object(status, "catch_lib", lambda ws: None):
+            html = self.page(launchers=("claude",))
+        for gone in ('id="catchup"', 'id="open-catchup"', 'id="catch-settings"'):
+            self.assertNotIn(gone, html)
+        self.assertNotIn("catchup", self.menu(html))
+
+    def test_the_app_and_obsidian_open_the_same_dialog(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        self.assertIn('web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()")', swift)
+        self.assertIn('item("Catch Up…", #selector(openCatchUp(_:)), "")', swift)            # File › Catch Up…
+        self.assertIn("if text.isEmpty, let catchUp = catchItem() { menu.addItem(catchUp) }", swift)
+        self.assertIn('return "catch me up" + (zones.isEmpty ? "" : " on " + zones.joined(separator: " and ")) + " " + words', swift)
+        self.assertIn("self.launch(c.app, c.folder, phrase: self.catchPhrase(def[2]))", swift)   # the panel's row
+        main = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn('this.addCommand({ id: "catch-up", name: "Catch up", callback: () => this.catchUp() });', main)
+        self.assertIn('window.GarrickCatchUp&&window.GarrickCatchUp.open()', main)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_script_parses(self):
+        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.CATCH_JS,
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
 

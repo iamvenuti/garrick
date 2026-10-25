@@ -104,6 +104,16 @@ class TodoTest(unittest.TestCase):
         write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-expire-days": 30}))
         self.assertEqual(30, todo.expire_days(self.root, "Personal", None))
 
+    def test_a_lines_thread_and_the_day_it_was_done(self):
+        """What briefing.py reads a thread's lines with (#27): the link an open
+        or a ticked line opens with, and a ticked line's ✅ day."""
+        self.assertEqual("Pricing", todo.link_of("- [x] [[Pricing]]: old one ✅ 2026-10-01"))
+        self.assertEqual("Acme/Threads/Pricing/Pricing", todo.link_of("- [ ] [[Acme/Threads/Pricing/Pricing|Pricing]]: send it"))
+        self.assertIsNone(todo.link_of("- [ ] Dana: confirm volumes"))
+        self.assertEqual(dt.date(2026, 10, 1), todo.done_on("- [x] [[Pricing]]: old one ✅ 2026-10-01"))
+        self.assertIsNone(todo.done_on("- [ ] [[Pricing]]: send it ✅ 2026-10-01"))
+        self.assertIsNone(todo.done_on("- [x] [[Pricing]]: no day"))
+
     def test_archive_keeps_today_and_moves_the_rest_by_year(self):
         self.assertEqual(1, todo.archive(self.zone, dt.date(2026, 10, 12)))
         self.assertIn("today's ✅ 2026-10-12", self.text())

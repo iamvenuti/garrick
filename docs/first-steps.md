@@ -105,6 +105,7 @@ Unless you allowed them when you installed, a first session asks you to approve 
 | `python3 System/tools/wiki_lint.py` | Lists a wiki's pages that nothing links to, and links to pages that are not there. It changes nothing |
 | `python3 System/tools/drift.py` | Compares what a project published with the copy in a shared folder. It changes nothing |
 | `python3 System/tools/next_up.py` | Ranks one thing worth doing while a long turn runs, for "what's next". It changes nothing |
+| `python3 System/tools/briefing.py` | Gathers what changed in a zone's threads over a period, for "catch me up". It changes nothing |
 | `python3 System/tools/discover.py` | Looks through a folder you picked for the pieces of work in it, from names and dates alone. It opens no file there and changes nothing there |
 | `python3 System/tools/extract.py` | Takes the text out of a piece of work's Word, PowerPoint and Excel files, into `System/generated/extracts/`, for Claude to read. It changes nothing in the folder |
 | `python3 System/tools/nurture.py` | Sorts what the check and the wiki lint find by what a fix needs. It changes nothing unless you say yes to its mechanical fixes, which it commits |

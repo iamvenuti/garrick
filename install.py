@@ -7,6 +7,8 @@
     python3 install.py --allowlist ~/Garrick             allow Garrick's own commands there, and nothing else
 
 Python 3.9+, standard library only. Writes nothing outside the target folder.
+GARRICK_INSTALL_NO_PAGE=1 puts the status page in place on the simple home
+without building it, for a test suite that installs many workspaces.
 """
 
 import sys
@@ -141,6 +143,9 @@ EXTRAS = (
 # How long the first build of the status page may take before the installer
 # gives up on it and says how to build it by hand.
 PAGE_TIMEOUT = 300
+# Set to 1, the page is put in place but not built: a test suite installs
+# hundreds of workspaces and asserts the page in a few of them.
+NO_PAGE = "GARRICK_INSTALL_NO_PAGE"
 
 
 class InstallError(Exception):
@@ -791,7 +796,8 @@ def install(cfg, target, force=False, quiet=False):
     hooks_path = pl.hooks_path(root)
     # Built once, now everything is committed, so the page is there from the first
     # minute; the Mac app is the setup skill's to offer.
-    unbuilt = build_page(root) if page else ""
+    build = page and os.environ.get(NO_PAGE) != "1"
+    unbuilt = build_page(root) if build else ""
 
     say("")
     say(f"Your workspace is ready at {root}")
@@ -810,7 +816,10 @@ def install(cfg, target, force=False, quiet=False):
             say("  " + line)
     else:
         say("  No command is allowed in advance, so your assistant asks before each one.")
-    if page and not unbuilt:
+    if page and not build:
+        say(f"  Your home page is in System/status. To build it: "
+            f"python3 System/status/status.py --workspace {shlex.quote(str(root))}")
+    elif page and not unbuilt:
         say("  Your home page is built, in System/generated/status.html: the status page, in System/status, "
             "opens on the simple home. \"Set up Garrick\" offers to make it a Mac app.")
     elif page:
@@ -1017,7 +1026,7 @@ def main(argv=None):
         root = install(cfg, Path(target).expanduser(), force=args.force)
         if args.example:
             add_example(root)
-            if (root / "System" / "status" / "status.py").is_file():
+            if (root / "System" / "status" / "status.py").is_file() and os.environ.get(NO_PAGE) != "1":
                 why = build_page(root)          # the page built at install had no example to show yet
                 if why:
                     print(f"The home page was not rebuilt with the example: {why}", file=sys.stderr)

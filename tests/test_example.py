@@ -358,6 +358,7 @@ class AddedToAWorkspaceTest(unittest.TestCase):
         home = Path(cls.tmp.name).resolve() / "home"
         home.mkdir()
         env = dict(ENV, HOME=str(home), GARRICK_CLAUDE=str(home / "no-claude"))
+        env.pop("GARRICK_INSTALL_NO_PAGE", None)                 # this one is a user's install, page and all
         cls.result = run([sys.executable, INSTALL, "--config", ACME, "--target", cls.root, "--example"], cwd=REPO,
                          env=env)
         if cls.result.returncode != 0:

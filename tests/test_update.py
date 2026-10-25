@@ -46,8 +46,9 @@ class Case(unittest.TestCase):
         gitconfig = base / "gitconfig"
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
                              "[commit]\n\tgpgsign = false\n")
+        # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
         self.env = dict(os.environ, HOME=str(base / "home"), GIT_CONFIG_GLOBAL=str(gitconfig),
-                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1")
+                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1", GARRICK_INSTALL_NO_PAGE="1")
         self.patch = mock.patch.dict(os.environ, self.env)
         self.patch.start()
         self.base = base

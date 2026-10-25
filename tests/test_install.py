@@ -70,7 +70,9 @@ def recorded_settings(target):
 class Sandbox:
     """A temporary HOME and git identity for one test class."""
 
-    def __init__(self):
+    def __init__(self, page=False):
+        """`page`: build the status page at install, as a user's install does.
+        Off by default, since a build takes seconds and few tests read the page."""
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name).resolve()
         self.home = base / "home"
@@ -87,6 +89,10 @@ class Sandbox:
         self.env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_GLOBAL=str(gitconfig),
                         GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1",
                         GARRICK_CLAUDE=str(base / "no-claude"))
+        if not page:
+            self.env["GARRICK_INSTALL_NO_PAGE"] = "1"
+        else:
+            self.env.pop("GARRICK_INSTALL_NO_PAGE", None)
 
     def install(self, name, config=EXAMPLE, extra=()):
         target = self.work / name
@@ -1147,21 +1153,23 @@ class HomePageTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.box = Sandbox()
+        cls.box = Sandbox(page=True)
         cls.root, cls.result = cls.box.install("ws")
 
     @classmethod
     def tearDownClass(cls):
         cls.box.close()
 
-    def in_process(self, name, home, **patches):
-        """An install from this module, with NEW_HOME set to `home`: (root, what it said)."""
+    def in_process(self, name, home, env=None, **patches):
+        """An install from this module, with NEW_HOME set to `home`, in the
+        sandbox's environment and `env`: (root, what it said)."""
         installer = load_installer()
         installer.NEW_HOME = home
         for key, value in patches.items():
             setattr(installer, key, value)
         out = io.StringIO()
-        with mock.patch.dict(os.environ, self.box.env, clear=True), contextlib.redirect_stdout(out):
+        with mock.patch.dict(os.environ, dict(self.box.env, **(env or {})), clear=True), \
+                contextlib.redirect_stdout(out):
             root = installer.install(json.loads(EXAMPLE.read_text()), self.box.work / name)
         return root, out.getvalue()
 
@@ -1218,6 +1226,15 @@ class HomePageTest(unittest.TestCase):
         self.assertIn("To build it: python3 System/status/status.py --workspace %s" % shlex.quote(str(root)), said)
         self.assertEqual("", git(root, "status", "--porcelain"))
         self.assertTrue(said.strip().splitlines()[-1].startswith("Next: open "))
+
+    def test_the_suites_switch_puts_the_page_in_place_unbuilt(self):
+        asked = []
+        root, said = self.in_process("switched", "simple", env={"GARRICK_INSTALL_NO_PAGE": "1"},
+                                     build_page=lambda r: asked.append(r) or "")
+        self.assertEqual([], asked)
+        self.assertTrue((root / "System" / "status" / "status.py").is_file())
+        self.assertFalse((root / self.PAGE).exists())
+        self.assertIn("To build it: python3 System/status/status.py --workspace", said)
 
 
 class ZoneIdentityTest(unittest.TestCase):

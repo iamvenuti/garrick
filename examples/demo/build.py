@@ -10,13 +10,15 @@ ingested, threads wrapped. The finished files come from content/, which mirrors
 the workspace tree. One transcript is left, uncommitted, in the Meetings inbox,
 and four mails in the Work zone's Inbox, so "process the inbox" can be shown live.
 
-Standard library only. Deterministic: the same repository gives the same files
-and the same commit hashes. Refuses a folder that is not empty.
+Standard library only. Deterministic: the same files in the repository give
+the same files and the same commit hashes, whatever its commit, whether it has
+edits not committed, and whenever it runs. Refuses a folder that is not empty.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -36,6 +38,12 @@ OWNER = "Sam Rivera"
 EMAIL = "garrick@localhost"  # what install.py sets when git has no identity
 TZ = "+01:00"
 INSTALLED = "2026-09-01 09:00"
+# Which Garrick the demo says it was installed from. The installer records the
+# source's own commit, its date and whether it has edits not committed; the
+# demo records this instead, so a commit or an edit in the source between two
+# builds does not change the workspace's first commit (#209).
+VERSION_STAMP = "System/garrick-version.json"
+DEMO_VERSION = {"commit": "demo", "date": INSTALLED.split(" ")[0]}
 INBOX = "Wikis/Meetings/raw/inbox/Theo Marsh call 2026-09-28.vtt"
 # Saved from Sam's mail program into the Work zone's Inbox. Zone inboxes are
 # gitignored, so these never show as changes. A newsletter, which goes to the
@@ -443,36 +451,23 @@ def check_target(target):
             raise BuildError(f"{target} is not empty. Pick an empty or new folder.")
 
 
-def notes(folder):
-    """Every .md under a folder, never inside .git, where git may be packing
-    objects in the background as the walk passes."""
-    for top, dirs, files in os.walk(folder):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for f in files:
-            if f.endswith(".md"):
-                yield Path(top) / f
-
-
 def scaffold(root, when, args):
-    """Run the workspace's own scaffold script, then give what it wrote the plan's date.
+    """Run the workspace's own scaffold script on the plan's day, never the clock's."""
+    run([sys.executable, str(root / "System" / "tools" / "scaffold.py"), "--today", when.split(" ")[0]] + args,
+        root, when, "scaffold")
 
-    The script stamps today's date and has no option to set another, so the
-    `created:` and `updated:` lines of the files it wrote or changed are rewritten.
-    """
-    zone = root / "Zones" / args[args.index("--zone") + 1]
-    before = {p: p.read_bytes() for p in notes(zone)}
-    run([sys.executable, str(root / "System" / "tools" / "scaffold.py")] + args, root, when, "scaffold")
-    stamp_re = re.compile(r"(?m)^(created|updated): \d{4}-\d{2}-\d{2}$")
-    date = when.split(" ")[0]
-    for path in notes(zone):
-        if before.get(path) == path.read_bytes():
-            continue
-        text = path.read_text(encoding="utf-8")
-        if path in before:  # the hub: only `updated` moves
-            text = re.sub(r"(?m)^updated: \d{4}-\d{2}-\d{2}$", "updated: " + date, text)
-        else:
-            text = stamp_re.sub(lambda m: m.group(1) + ": " + date, text)
-        path.write_text(text, encoding="utf-8")
+
+def pin_version(root):
+    """Record DEMO_VERSION in place of the source's commit, date and edits, in
+    the installer's own first commit, which is the root's only one so far."""
+    path = root / VERSION_STAMP
+    stamp = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("commit", "date", "from", "modified"):
+        stamp.pop(key, None)
+    path.write_text(json.dumps(dict(DEMO_VERSION, **stamp), indent=2) + "\n", encoding="utf-8")
+    run(["git", "add", "--", VERSION_STAMP], root, INSTALLED, "staging the version stamp")
+    run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--amend", "--no-edit"], root, INSTALLED,
+        "recording the demo's version")
 
 
 def add_alias(root, heard, means):
@@ -496,6 +491,7 @@ def build(target):
         raise BuildError(f"{CONTENT} is missing.")
     run([sys.executable, str(INSTALL), "--config", str(CONFIG), "--target", str(target)], REPO, INSTALLED, "install.py")
     root = target.resolve()
+    pin_version(root)
 
     todos = {z: TodoList((CONTENT / "Zones" / z / "Todo.md").read_text(encoding="utf-8")) for z in ("Work", "Personal")}
     named = plan_paths()

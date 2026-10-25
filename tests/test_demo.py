@@ -258,11 +258,27 @@ class DemoTest(unittest.TestCase):
             self.assertFalse((REPO / "demo-here").exists())
 
     def test_deterministic_and_refuses_a_full_folder(self):
+        """Built again, minutes later, from a copy of this repository that has a
+        commit of its own and an edit not committed to a file the install never
+        reads: the same hashes. The installer records the source's commit and
+        its edits, so a commit or an edit made while a long run went on gave the
+        root a different first commit (#209)."""
+        source = self.base / "source"
+        shutil.copytree(REPO, source, symlinks=True, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        who = ("-c", "user.name=Sam Rivera", "-c", "user.email=garrick@localhost", "-c", "commit.gpgsign=false")
+        for args in (("init", "-q"), ("add", "-A"), who + ("commit", "-q", "-m", "A copy of Garrick")):
+            done = run(["git", "-C", source, *args])
+            self.assertEqual(done.returncode, 0, done.stderr)
+        with (source / "AGENTS.md").open("a", encoding="utf-8") as f:
+            f.write("\nAn edit not committed.\n")
         again = self.base / "again"
-        res = build(again)
+        res = run([sys.executable, source / "examples" / "demo" / "build.py", "--target", again])
         self.assertEqual(res.returncode, 0, res.stderr)
         for repo in REPOS:
             self.assertEqual(git(self.root, repo, "rev-parse", "HEAD"), git(again, repo, "rev-parse", "HEAD"), repo)
+        stamp = json.loads((again / "System" / "garrick-version.json").read_text(encoding="utf-8"))
+        self.assertEqual({"commit": "demo", "date": "2026-09-01"}, {k: stamp.get(k) for k in ("commit", "date")})
+        self.assertNotIn("modified", stamp)
         res = build(again)
         self.assertEqual(res.returncode, 1)
         self.assertIn("not empty", res.stderr)

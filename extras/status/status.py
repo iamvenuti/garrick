@@ -69,6 +69,9 @@ System/garrick-flags.json switches them on. With the cmux extra beside this fold
 (../cmux/cmuxlib.py), the page shows which projects and threads have a
 session open, and its buttons can drive the desk. `--settle` lets a burst of
 build requests make one page; `--also` and `--moved` reach effort.py.
+A build whose status.py is replaced while it runs, as an update replaces it
+during a `--settle` wait, writes nothing and builds again from the new file,
+so the page is always drawn by the status.py on disk.
 
 Copy this folder into your workspace as `System/status/`, next to
 `System/jobs/` if you have it, and run it by hand or on a schedule through
@@ -7960,6 +7963,55 @@ def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:
         return True
 
 
+# What this file was when the build loaded it. A build that finds it changed
+# just before it writes has drawn the page with code an update has since
+# replaced, and builds again from the file on disk instead (#213).
+SELF = Path(__file__).resolve()
+RERUN = "GARRICK_STATUS_RERUN"      # set for the build started again, so it starts again only once
+
+
+def own_stamp() -> Optional[Tuple[int, int, int]]:
+    """This file as it is on disk now: its inode, size and modification time."""
+    try:
+        st = os.stat(str(SELF))
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+STARTED = own_stamp()
+
+
+def rerun(argv: Optional[List[str]]) -> int:
+    """status.py changed while this build ran, so the page it drew is the old
+    code's and is not written. The build starts again from the file on disk,
+    without --settle, since its wait is over: in place of this process when
+    it was run as a command, as a process of its own when main() was called
+    with arguments. A build already started again that finds the file
+    changed once more writes nothing and leaves the page to the next build,
+    so a file that keeps changing cannot keep it going."""
+    if os.environ.get(RERUN):
+        print("status: status.py changed again while the page was being built, so nothing was written; "
+              "the next build draws it.", file=sys.stderr)
+        return 75
+    words, given = [], list(sys.argv[1:] if argv is None else argv)
+    while given:
+        w = given.pop(0)
+        if w == "--settle":
+            given[:1] = []
+        elif not w.startswith("--settle="):
+            words.append(w)
+    python = sys.executable or "python3"
+    cmd = [python, str(SELF)] + words
+    env = dict(os.environ, **{RERUN: "1"})
+    print("status: status.py changed while the page was being built; building it again with the new one.", file=sys.stderr)
+    if argv is None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execvpe(python, cmd, env)
+    return subprocess.call(cmd, env=env)
+
+
 def write_page(out: Path, text: str) -> None:
     """Put the page in place whole. Each build writes a temporary file of its
     own beside it and renames that over the page, so builds that overlap never
@@ -8030,6 +8082,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                  vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                  launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")))
+    if STARTED is not None and own_stamp() != STARTED:
+        return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
     write_page(out, page)
     release_ask(ws)
     print(out)

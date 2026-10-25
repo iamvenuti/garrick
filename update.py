@@ -50,8 +50,10 @@ page in `System/status`, the scheduled jobs in `System/jobs`, and desk in
 `System/cmux` with its skill in `System/skills/desk`. Their files are sorted as
 the core's are, and the report names the extras it found. Once the files are
 written, the update does what an extra needs next, and the report says so
-first: it rebuilds Garrick.app with the flags it was built with, refreshes the
-Obsidian plugin in each vault that has it, and points a `desk` command linked
+first: it rebuilds Garrick.app with the flags it was built with, rebuilds the
+status page with the same flags when anything in `System/status` changed, so
+no page drawn by the replaced code stays up, refreshes the Obsidian plugin in
+each vault that has it, and points a `desk` command linked
 to another copy at the workspace's. What it cannot do, it prints: a merge to
 make first, or the zone guard and the Garrick band, which run from a Garrick
 kept outside the workspace.
@@ -807,6 +809,9 @@ APP_SOURCES = ("System/status/app/", "System/status/status.py")     # the app's 
 PLUGIN = (".obsidian", "plugins", "garrick-status")
 PLUGIN_SOURCE = "System/status/obsidian/"
 DESK = "System/cmux/desk.py"
+STATUS_FOLDER = "System/status/"
+STATUS_PY = "System/status/status.py"
+PAGE = "System/generated/status.html"
 
 
 def on_mac():
@@ -925,8 +930,9 @@ def same_place(a, b):
 
 def next_steps(root, p, done=None):
     """What the extras need once their files are written: rebuild the Mac
-    app, refresh the Obsidian plugin in each vault, point the desk command at
-    the workspace's copy, and say which extras run from a copy outside it.
+    app, then the status page with the app's flags, refresh the Obsidian
+    plugin in each vault, point the desk command at the workspace's copy,
+    and say which extras run from a copy outside it.
     `done` is apply()'s record; without it, what the plan would write. Returns
     [(what it is, a function that does it, or None when it is for you)]."""
     if done is None:
@@ -937,9 +943,10 @@ def next_steps(root, p, done=None):
         merged = set(done["merge"])
     ours = written | set(p["current"])          # files that are, or will be, as this Garrick ships them
     steps = []
+    apps = garrick_apps(root) if any(path.startswith(STATUS_FOLDER) for path in written) else []
 
     if any(path.startswith(APP_SOURCES) for path in written):
-        for app, args in garrick_apps(root):
+        for app, args in apps:
             if any(path.startswith(APP_SOURCES) for path in merged):
                 steps.append(("Garrick.app in %s: merge the .new files under System/status first, then rebuild it "
                               "with System/status/app/make-app.sh" % app.parent, None))
@@ -948,6 +955,22 @@ def next_steps(root, p, done=None):
                    "--dest", str(app.parent), "--"] + args
             steps.append(("Rebuild Garrick.app in %s, with the flags it was built with%s" % (
                 app.parent, ": " + " ".join(args) if args else " (none)"), lambda cmd=cmd: say_make_app(cmd)))
+
+    # The page a build left is the replaced code's, and the app shows it as
+    # current until it is old enough to rebuild, so it is built again here,
+    # once every file is in place, with the flags the app builds it with.
+    if any(path.startswith(STATUS_FOLDER) for path in written) and (root / STATUS_PY).is_file() \
+            and (apps or (root / PAGE).is_file()):
+        if any(path.startswith(STATUS_FOLDER) for path in merged):
+            steps.append(("The status page: merge the .new files under System/status first, then rebuild it "
+                          "with python3 %s" % STATUS_PY, None))
+        else:
+            args = apps[0][1] if apps else []
+            cmd = [sys.executable or "python3", str(root / STATUS_PY), "--workspace", str(root)] + args
+            steps.append(("Rebuild the status page, %s, %s" % (
+                PAGE, "with the flags Garrick.app was built with" + (": " + " ".join(args) if args else " (none)")
+                if apps else "with no flags, as no Garrick.app is built for this workspace"),
+                lambda cmd=cmd: say_page(cmd)))
 
     sources = sorted(path for path in p["files"] if path.startswith(PLUGIN_SOURCE))
     known = known_hashes()
@@ -996,6 +1019,22 @@ def say_make_app(cmd):
     code, last = make_app(cmd)
     return "Rebuilt Garrick.app: %s." % last if code == 0 else "Garrick.app was not rebuilt: %s. Run %s by hand." % (
         last or "make-app.sh failed", " ".join(cmd[1:2]))
+
+
+def build_page(cmd):
+    """Run status.py; (exit code, the page it wrote, or why it did not)."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    lines = (r.stdout if r.returncode == 0 else r.stderr + r.stdout).strip().splitlines()
+    return r.returncode, lines[-1] if lines else ""
+
+
+def say_page(cmd):
+    code, last = build_page(cmd)
+    return "Rebuilt the status page: %s." % last if code == 0 else "The status page was not rebuilt: %s. Run python3 %s by hand." % (
+        last or "status.py failed", cmd[1])
 
 
 def refresh_plugin(root, copy, paths, p):

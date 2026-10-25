@@ -1071,6 +1071,55 @@ class TestWhatExtrasNeedNext(ExtrasCase):
             self.apply()
         self.assertFalse(make.called)
 
+    def stale_page(self):
+        page = self.root / update.PAGE
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("<p>drawn by the older status.py</p>\n")
+        return page
+
+    def test_an_update_that_changes_status_py_leaves_the_page_built_by_the_new_one(self):
+        self.install_extra("status")
+        page = self.stale_page()
+        self.as_if_older("System/status/status.py", "# an older status page\n")
+        p = self.plan()
+        self.assertIn("Rebuild the status page, System/generated/status.html, with no flags, as no Garrick.app is built "
+                      "for this workspace.", self.report_of(p))
+        self.assertEqual("<p>drawn by the older status.py</p>\n", page.read_text())     # the report changes nothing
+        result = update.apply(self.root, p)                 # nothing mocked: the workspace's own status.py builds it
+        html = page.read_text(encoding="utf-8")
+        self.assertTrue(html.startswith("<!doctype html>") and html.endswith("</html>"), html[:200])
+        self.assertIn('data-built="', html)
+        self.assertIn("Rebuilt the status page: %s." % page, result["then"])
+        self.assertEqual([], [p.name for p in page.parent.iterdir() if p.name.startswith("status.html.")])
+
+    def test_the_page_is_rebuilt_after_the_app_with_the_apps_flags(self):
+        self.older_app()
+        self.stale_page()
+        self.built_app(args=("--no-graph", "--obsidian", "Acme Vault"))
+        with mock.patch.object(update, "on_mac", lambda: True), \
+                mock.patch.object(update, "make_app", return_value=(0, "/Applications/Garrick.app")), \
+                mock.patch.object(update, "build_page", return_value=(0, str(self.root / update.PAGE))) as build:
+            p = self.plan()
+            self.assertIn("Rebuild the status page, System/generated/status.html, with the flags Garrick.app was built "
+                          "with: --no-graph --obsidian Acme Vault.", self.report_of(p))
+            result = update.apply(self.root, p)
+        build.assert_called_once_with([sys.executable, str(self.root / "System/status/status.py"), "--workspace",
+                                       str(self.root), "--no-graph", "--obsidian", "Acme Vault"])
+        app = result["then"].index("Rebuilt Garrick.app: /Applications/Garrick.app.")
+        self.assertEqual(app + 1, result["then"].index("Rebuilt the status page: %s." % (self.root / update.PAGE)))
+
+    def test_no_page_rebuild_with_a_merge_to_make_or_no_page_to_replace(self):
+        self.install_extra("status")
+        self.as_if_older("System/status/effort.py", "# an older effort\n")
+        with mock.patch.object(update, "build_page") as build:
+            self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "status page" in w])   # never built
+            self.stale_page()
+            self.as_if_older("System/status/status.py", "# an older status page\n", "# an older status page\n# mine\n")
+            result = self.apply()
+        self.assertFalse(build.called)
+        self.assertIn("To do: The status page: merge the .new files under System/status first, then rebuild it with "
+                      "python3 System/status/status.py.", result["then"])
+
     def test_the_obsidian_plugin_is_refreshed_where_it_is_as_garrick_wrote_it(self):
         self.install_extra("status")
         main = "System/status/obsidian/main.js"

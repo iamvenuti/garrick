@@ -121,6 +121,7 @@ An extra counts as installed when one of its folders is there. Its files go thro
 After the files, the update does what an extra needs next, and the report lists each step before you apply:
 
 - **The Mac app.** When the app's code changed, it builds `Garrick.app` again with `System/status/app/make-app.sh`, in the folder it is in now and with the flags you built it with, which the app keeps in its own settings. On a Mac, and only for an app built for this workspace. If you changed the app's code yourself, it says to merge the `.new` first and rebuild by hand.
+- **The status page.** When anything in `System/status/` changed, it builds `System/generated/status.html` again once every file is in place, with the flags the app was built with, or none without an app, so the page on screen is never the replaced code's. Only where there is a page or an app to rebuild. If you changed a file there yourself, it says to merge the `.new` first.
 - **The Obsidian plugin.** In every vault inside the workspace that has `.obsidian/plugins/garrick-status/`, it copies in the newer `main.js` and `manifest.json`, and commits them where git keeps them. A copy you changed yourself is left as it is, and named. Then switch the plugin off and on in Obsidian, or restart it.
 - **The desk command.** When `desk` on your PATH is a link to a `desk.py` somewhere else, such as an older download, it points the link at the workspace's `System/cmux/desk.py`, which the update keeps current.
 

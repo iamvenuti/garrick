@@ -563,12 +563,16 @@ class TestWarmSession(AskCase):
         t = self.serve_in_thread()
         try:
             path = ask.sock_path(self.root)
-            for _ in range(100):
-                if path.exists():
+            for _ in range(100):                # the socket is there from bind(), and refuses until listen()
+                c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    c.connect(str(path))
                     break
-                __import__("time").sleep(0.05)
-            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            c.connect(str(path))
+                except (FileNotFoundError, ConnectionRefusedError):
+                    c.close()
+                    __import__("time").sleep(0.05)
+            else:
+                self.fail("the server never listened")
             c.sendall(b'{"op": "ask", "text": "what\'s open"}\n')
             c.close()                                                               # gone before the answer
             t.join(3)

@@ -462,7 +462,8 @@ def thread(root: Path, zone: Path, row: dict, since: datetime.date, today: datet
     cp = checkpoint(text)
     todo = lines_for(found, row, zone, shared)
     dirty = uncommitted(zone, rel_folder)
-    times = [c["when"][:10] for c in history or []] + [t["done"] for t in todo["ticked"]]
+    times = ([c["when"][:10] for c in history or []] + [t["done"] for t in todo["ticked"]]
+             + [e["date"] for e in added if e["date"]] + ([today.isoformat()] if dirty else []))
     if cp and cp["at"]:
         times.append(str(cp["at"])[:10])
     cp_new = bool(cp and cp["at"] and str(cp["at"])[:10] >= since.isoformat())

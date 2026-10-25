@@ -345,8 +345,8 @@ class TestGraph(StatusCase):
     def test_preview_only_where_the_host_reads_a_note(self):
         # A browser cannot read a file, nor can an app built before #206: neither is offered Preview.
         js = status.NOTE_JS
-        self.assertIn("function able(){return!!host&&!!window.GarrickReadsNotes}", js)
-        self.assertIn("return path&&able()?'<button class=\"act\" type=\"button\" data-note=\"'", js)
+        self.assertIn("function able(){var P=window.GarrickPrefs;return!!host&&!!window.GarrickReadsNotes&&!(P&&P.launchers().preview===false)}", js)
+        self.assertIn("return path&&able()?'<button class=\"act nv-glass\" type=\"button\" data-note=\"'", js)
         self.assertIn("if(!b||!able())return;", js)
         self.assertIn("host.postMessage({act:{verb:'note-read',path:path}})", js)
         self.assertIn("host.postMessage({act:{verb:'note-open',path:path}})", js)
@@ -359,18 +359,19 @@ class TestGraph(StatusCase):
     def test_the_preview_button_in_node(self):
         harness = r"""
         const vm = require("vm");
-        const [js, hosted, flag] = JSON.parse(process.argv[1]);
+        const [js, hosted, flag, prefs] = JSON.parse(process.argv[1]);
         const ctx = { JSON, String, document: { addEventListener: () => {} } };
         ctx.window = hosted ? { webkit: { messageHandlers: { garrick: { postMessage: () => {} } } } } : {};
         if (flag) ctx.window.GarrickReadsNotes = true;
+        if (prefs) ctx.window.GarrickPrefs = { launchers: () => prefs };
         vm.createContext(ctx);
         vm.runInContext(js + ";this.out=[window.GarrickNote.button('Wikis/Meetings/wiki/people/a & b.md','Dana \"D\" <W>'),"
                         + "window.GarrickNote.button('','Nothing'),window.GarrickNote.shown()]", ctx);
         process.stdout.write(JSON.stringify(ctx.out));
         """
 
-        def button(hosted, flag):
-            done = subprocess.run(["node", "-e", harness, json.dumps([status.NOTE_JS, hosted, flag])],
+        def button(hosted, flag, prefs=None):
+            done = subprocess.run(["node", "-e", harness, json.dumps([status.NOTE_JS, hosted, flag, prefs])],
                                   capture_output=True, text=True, timeout=30)
             self.assertEqual(0, done.returncode, done.stderr)
             return json.loads(done.stdout)
@@ -378,9 +379,18 @@ class TestGraph(StatusCase):
         self.assertEqual(["", "", False], button(False, False))       # a browser
         self.assertEqual(["", "", False], button(False, True))
         self.assertEqual(["", "", False], button(True, False))        # an app built before Preview
-        self.assertEqual(['<button class="act" type="button" data-note="Wikis/Meetings/wiki/people/a &amp; b.md" '
-                          'data-title="Dana &quot;D&quot; &lt;W&gt;" aria-haspopup="dialog">Preview</button>', "", False],
-                         button(True, True))
+        drawn = button(True, True)
+        self.assertEqual(["", False], drawn[1:])
+        # a magnifier (#219), not the word: Preview is its tooltip and its accessible name, and the glass is hidden from a screen reader
+        self.assertRegex(drawn[0], r'^<button class="act nv-glass" type="button" data-note="Wikis/Meetings/wiki/people/a &amp; b\.md" '
+                                   r'data-title="Dana &quot;D&quot; &lt;W&gt;" title="Preview" aria-label="Preview" aria-haspopup="dialog">'
+                                   r'<svg viewBox="0 0 16 16" aria-hidden="true">.*</svg></button>$')
+        self.assertNotIn(">Preview<", drawn[0])
+        self.assertEqual(drawn, button(True, True, {"note": True}))         # a choice saved before Preview had one: offered
+        self.assertEqual(drawn, button(True, True, {"preview": True}))
+        # Settings › Opening a thread switches it off: no icon, and nothing opens the preview
+        self.assertEqual(["", "", False], button(True, True, {"preview": False}))
+        self.assertIn("if(!b||!able())return;", status.NOTE_JS)
 
     def test_the_preview_closes_and_leaves_the_graph_as_it_was(self):
         js, graph = status.NOTE_JS, status.GRAPH_JS
@@ -1628,8 +1638,13 @@ class TestLaunchers(StatusCase):
     def test_a_checkbox_and_a_default_for_each_way_to_open(self):
         dialog = self.page(launchers=("finder", "claude"))
         dialog = dialog[dialog.index('<dialog id="settings"'):dialog.index("</dialog>", dialog.index('<dialog id="settings"'))]
-        self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
+        self.assertEqual(["note", "preview", "finder", "cmux", "codex", "claude"], re.findall(r'data-launcher="([a-z]+)"', dialog))
+        # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
         self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
+        self.assertIn('<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
+                      '<span>Preview<small>', dialog)                                # a browser, which never offers it, leaves it out
+        self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
+        self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
         self.assertIn('id="close-settings"', dialog[:dialog.index("<h2")])          # the close box, top right
         self.assertNotIn(">Done<", dialog)

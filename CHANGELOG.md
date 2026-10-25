@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- Explore's *Preview* is a magnifier, and you can switch it off. Since 0.41.0 a note's card in Explore offered *Preview* as a word, which read as clutter beside the card's other actions and, unlike them, could not be turned off. It is now a magnifier, first among the card's actions, named *Preview* when you point at it and to a screen reader, on the same square as the apps' icons in the Mac app and as tall as the card's words in Obsidian. Settings › *Opening a thread* gains a *Preview* box after the note's own link, on by default and with no *Default* radio, since it opens nothing; switched off, the card no longer offers it, in the app or in Obsidian, and nothing in Explore opens the preview. It is kept with the ways to open a thread, as `preview` under `"launchers"` in `System/garrick-settings.json`, so a file saved before it existed offers it, and `page_action.py`'s `settings` refuses it as the default. A browser, which never offers *Preview*, leaves the row out. Nothing needs rebuilding in the Mac app. ([#219](https://github.com/iamvenuti/garrick/issues/219))
+
 ## [0.42.0] - 2026-10-25
 
 "Catch me up" briefs you, thread by thread, on what changed while you were away; a new install with the simple home now gets the page it opens on; and status page builds no longer trip over each other or outlive the update that replaced them.

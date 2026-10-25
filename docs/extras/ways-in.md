@@ -1,6 +1,6 @@
 # Ways in: getting recordings, mail and files into the workspace
 
-Three things come into a Garrick workspace: recordings, mail, and files you drop in. [The diagram page](../architecture/overview.html) shows the picture. Getting each one here happens in two separate steps:
+Recordings, mail and files you drop in are how things come into a Garrick workspace. Once sorted, they join the three things Garrick holds: what you're working on, what was said and what you read, as [the diagram page](../architecture/overview.html) shows. Getting each one here happens in two separate steps:
 
 - **Fetching** puts a file in an inbox. It is done by hand, by a script, or by your assistant's own mail connector, and it decides nothing.
 - **Sorting** decides where the file goes. That is core Garrick: the *Ways in* rules in `System/rules.md`, applied by the `intake` skill when you say "process the inbox".

@@ -556,7 +556,7 @@ class TestSettings(ActionCase):
 
     def test_saved_whole(self):
         self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux", "claude"], default="claude"))
-        self.assertEqual({"launchers": {"note": True, "finder": False, "cmux": True, "codex": False, "claude": True},
+        self.assertEqual({"launchers": {"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": True},
                           "default": "claude"}, json.loads(self.path().read_text()))
         self.act(verb="settings", launchers=[])
         self.assertEqual("note", json.loads(self.path().read_text())["default"])
@@ -564,7 +564,8 @@ class TestSettings(ActionCase):
 
     def test_refused_names(self):
         for req in ({"launchers": ["note", "terminal"]}, {"launchers": "note"}, {"launchers": ["cmux", "cmux"]},
-                    {"launchers": ["cmux"], "default": "codex"}, {"launchers": ["cmux"], "default": "vim"}, {"launchers": [1]}):
+                    {"launchers": ["cmux"], "default": "codex"}, {"launchers": ["cmux"], "default": "vim"}, {"launchers": [1]},
+                    {"launchers": ["note", "preview"], "default": "preview"}):     # Preview opens nothing (#219)
             with self.assertRaises(pa.Refused, msg=req):
                 self.act(verb="settings", **req)
         self.assertFalse(self.path().exists())
@@ -573,7 +574,16 @@ class TestSettings(ActionCase):
         spec = importlib.util.spec_from_file_location("garrick_status_for_settings", REPO / "extras" / "status" / "status.py")
         status = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(status)
-        self.assertEqual(("note",) + tuple(k for k, _, _, _ in status.LAUNCHERS), pa.LAUNCHERS)
+        self.assertEqual(("note",) + tuple(k for k, _, _, _ in status.LAUNCHERS), tuple(k for k in pa.LAUNCHERS if k != "preview"))
+        self.assertEqual(status.LAUNCH_KEYS, pa.LAUNCHERS)
+
+    def test_preview_is_switched_on_and_off_with_them(self):
+        # Explore's Preview (#219): a key beside the ways to open a thread, kept on or off as they are
+        self.act(verb="settings", launchers=["note", "preview", "cmux"], default="cmux")
+        self.assertTrue(json.loads(self.path().read_text())["launchers"]["preview"])
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
+        self.assertEqual({"note": True, "preview": False, "finder": False, "cmux": True, "codex": False, "claude": False},
+                         json.loads(self.path().read_text())["launchers"])
 
 
 class TestWaitSettings(ActionCase):

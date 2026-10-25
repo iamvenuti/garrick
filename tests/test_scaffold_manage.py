@@ -86,12 +86,11 @@ class TestParty(ManageCase):
         self.assertIn("Birch & Co is already a party, `birch`, in Work, with no project yet.", r.stdout)
 
     def test_a_new_party_is_added_and_the_commit_left_to_the_caller(self):
-        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
                       "in Work.", r.stdout)
-        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | %s, user |" % datetime.date.today().isoformat(),
-                      self.context())
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | 2027-01-01, user |", self.context())
         # The rows typed by hand are left exactly as they were; only the header gains the column.
         self.assertIn("| Domains | Learned |", self.context())
         self.assertNotIn("|  |  |\n", self.context())
@@ -265,7 +264,7 @@ class TestNaming(ManageCase):
 
 class TestRename(ManageCase):
     def test_a_thread_and_every_link_to_it(self):
-        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
+        r = self.scaffold("--today", "2027-01-01", "rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
         self.assertEqual(0, r.returncode, r.stderr)
         note = self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md"
         self.assertTrue(note.is_file())
@@ -283,7 +282,7 @@ class TestRename(ManageCase):
                                                         "Acme/Threads/Renewal/Renewal.md").stdout)
         context = (self.root / "System" / "context.md").read_text()
         # The alias a rename leaves is a learned row, and says it came from the user.
-        self.assertIn("| pricing | Renewal | %s, user |" % datetime.date.today().isoformat(), context)
+        self.assertIn("| pricing | Renewal | 2027-01-01, user |", context)
         self.assertIn("| Heard | Means | Learned |", context)
         found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
         self.assertEqual([], [f for f in found if f["severity"] == "error" and "Work" in f["path"]])
@@ -812,7 +811,7 @@ class TestParkBothWays(ManageCase):
         self.assertEqual("Acme, Pricing is parked", r.stdout.strip())
         by_cli = self.note.read_text()
         self.assertIn("\nstatus: parked\n", by_cli)
-        self.assertIn("**%d " % datetime.date.today().day, by_cli)
+        self.assertIn("**%d " % datetime.date.fromisoformat(self.today).day, by_cli)
         self.assertEqual(["Acme/Threads/Pricing/Pricing.md"],                  # left for the caller to commit
                          [l[3:] for l in self.git("status", "--porcelain").stdout.splitlines()])
         self.restore()

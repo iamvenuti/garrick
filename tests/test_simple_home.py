@@ -48,6 +48,9 @@ status = _load("garrick_status_simple", HERE / "status.py")
 pa = _load("garrick_page_action_simple", HERE / "page_action.py")
 handoff = pa.handoff()
 
+# The day the running test began on. HomeCase.setUp sets it again as each test
+# starts, and the page is built at that same moment, so what a test writes,
+# what it expects and what the page reads agree when a run crosses midnight (#212).
 TODAY = dt.date.today()
 
 
@@ -127,6 +130,9 @@ class HomeCase(unittest.TestCase):
     has two, and Personal has a third piece of work."""
 
     def setUp(self):
+        global TODAY
+        self.now = dt.datetime.now()
+        TODAY = self.now.date()
         self._tmp = tempfile.TemporaryDirectory()
         base = Path(self._tmp.name).resolve()
         self.root = base / "Workspace"
@@ -156,7 +162,7 @@ class HomeCase(unittest.TestCase):
         write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n%s\n\n## Done\n" % "\n".join(lines))
 
     def page(self, **kw):
-        return status.build(self.root, folder=self.jobs, **kw)
+        return status.build(self.root, folder=self.jobs, **dict({"now": self.now}, **kw))
 
     def works(self):
         T = status.threads(self.root)
@@ -219,6 +225,19 @@ class TestYourWork(HomeCase):
         self.assertEqual("Send Dana the price sheet", got[0][1])
         self.assertTrue(got[0][2].startswith("Yesterday"))
         self.assertEqual("Continue", got[0][3])
+
+    def test_how_long_ago_counts_from_the_moment_the_page_is_built(self):
+        """#212: a page built after midnight said "2 days ago" of a note a test
+        had dated yesterday on the day before. The page counts from the moment
+        it is given, so either side of a midnight it says what that moment makes it."""
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(re.sub(r"(?m)^updated: .*$", "updated: 2026-12-31", note.read_text(), count=1))
+
+        def said(now):
+            return next(r for r in rows(self.page(now=now)) if r[0] == "Acme Review")[2]
+        self.assertTrue(said(dt.datetime(2026, 12, 31, 23, 59)).startswith("Today"))
+        self.assertTrue(said(dt.datetime(2027, 1, 1, 0, 1)).startswith("Yesterday"))
+        self.assertTrue(said(dt.datetime(2027, 1, 2, 0, 1)).startswith("2 days ago"))
 
     def test_a_next_action_loses_its_whose_it_is_tail(self):
         S = status
@@ -501,6 +520,14 @@ class TestAnswering(GitCase):
         pa.act(self.root, {"verb": "answer", "zone": "Work", "file": self.FILE, "label": "400 pallets"},
                today=TODAY + dt.timedelta(days=1))
         self.assertNotIn("later:", self.q.read_text(encoding="utf-8"))
+
+    def test_not_now_is_the_day_after_the_day_given_and_back_when_it_comes(self):
+        """#212: put off before midnight and read after it, the question was back
+        on a page the test expected to show none."""
+        pa.act(self.root, {"verb": "later", "zone": "Work", "file": self.FILE}, today=dt.date(2026, 12, 31))
+        self.assertEqual("2027-01-01", status.frontmatter(self.q)["later"])
+        self.assertIn("Nothing needs you.", self.page(now=dt.datetime(2026, 12, 31, 23, 59)))
+        self.assertIn("<b>Acme Review: which volume floor", self.page(now=dt.datetime(2027, 1, 1, 0, 1)))
 
     def test_not_now_to_a_named_day_and_never_to_today(self):
         pa.act(self.root, {"verb": "later", "zone": "Work", "file": self.FILE, "until": day(5)}, today=TODAY)

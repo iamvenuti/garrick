@@ -3567,7 +3567,8 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
                      why: Optional[Dict[str, Optional[str]]] = None) -> str:
     """Settings › Opening a thread: the note's own link, then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
-    (what clicking a thread's name does). A launcher that cannot work here is
+    (what clicking a thread's name does). Explore's Preview has the box alone,
+    after the note's link (#219). A launcher that cannot work here is
     disabled with the reason on it, before any click rather than after: not
     installed, or installed without the launcher it opens a folder through.
     Kept in this viewer's own storage, so the page still writes nothing."""
@@ -3576,17 +3577,22 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     rows += [(k, VERB[k], k in installed,
               "Installed" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT)
              for k, _, _, _ in LAUNCHERS]
-    html = "".join('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
-                   '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>'
-                   % (k, "" if ok else " disabled", E(label), note, k, "" if ok else " disabled")
-                   for k, label, ok, note in rows)
+    row = ('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
+           '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>')
+    html = [row % (k, "" if ok else " disabled", E(label), note, k, "" if ok else " disabled") for k, label, ok, note in rows]
+    # Explore's Preview (#219), after the note it reads: a box and no Default, since it opens
+    # nothing, and only where the host reads a note for the page, as the card offers it
+    html.insert(1, '<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
+                   '<span>Preview<small>Explore&#39;s cards read the note inside Garrick, in the Mac app and Obsidian</small></span></label></div>')
+    html = "".join(html)
     return ('<section class="setsec" id="launcher-settings">%s%s%s</section>'
             % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
                         "thread&#39;s name does."), help_text("launchers", 'Tick what project and thread cards offer; the dot marks what '
                'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app, which says what opened. Claude starts with the phrase '
                'that resumes the thread typed in, for you to send, and is started first and waited for when it is not running; Codex and cmux open '
                'in the folder and say that the phrase is now on the clipboard; Finder, which can take neither, names the phrase instead. A greyed '
-               'row says why it cannot work here. Saved as you change it.'),
+               'row says why it cannot work here. Preview reads the note over Explore without opening anything, so it is never what a click does. '
+               'Saved as you change it.'),
                html))
 
 
@@ -3678,7 +3684,10 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
             '<div class="setmain" id="settings-main">%s%s</div></div></dialog>' % (settings_nav(groups), main, VIEW))
 
 
-LAUNCH_KEYS = ("note",) + tuple(k for k, _, _, _ in LAUNCHERS)
+# Explore's Preview (#219, NOTE_JS) is switched on and off beside them, in the
+# same section and the same saved choice, though it opens nothing: it reads the
+# note over the graph. It is never what clicking a thread does.
+LAUNCH_KEYS = ("note", "preview") + tuple(k for k, _, _, _ in LAUNCHERS)
 
 
 def shared_launchers(ws: Path) -> Optional[dict]:
@@ -3698,7 +3707,7 @@ def shared_launchers(ws: Path) -> Optional[dict]:
         chosen = [k for k in LAUNCH_KEYS if k in on]
     else:
         return None
-    default = data.get("default") if data.get("default") in LAUNCH_KEYS else "note"
+    default = data.get("default") if data.get("default") in LAUNCH_KEYS and data.get("default") != "preview" else "note"
     return {"launchers": chosen, "default": default}
 
 
@@ -6095,7 +6104,7 @@ PANEL_JS = r"""
    app, the settings saved for every viewer (#launch-settings, written by
    page_action.py from what Settings sends) come first; a browser keeps its own. */
 var GarrickPrefs=(function(){
-var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','finder','cmux','codex','claude'];
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,KEYS=['note','preview','finder','cmux','codex','claude'];
 var el=document.getElementById('launch-settings'),shared=null;if(host&&el){try{shared=JSON.parse(el.textContent)}catch(e){}}
 if(shared&&!Array.isArray(shared.launchers))shared=null;
 function local(k){try{return localStorage.getItem(k)}catch(e){return null}}
@@ -7223,7 +7232,9 @@ sync();
 # Preview (#206): a node's note read inside Garrick, over the graph, as Quick
 # Look reads a file. The card offers it where the host reads a note for it
 # (window.GarrickReadsNotes, set by Garrick.app and the Obsidian plugin); a
-# browser cannot read one, so it never offers it. The note is read by
+# browser cannot read one, so it never offers it, and neither does a card
+# while Settings › Opening a thread has it switched off (#219: `preview`,
+# among the launchers). The card draws it as a magnifier. The note is read by
 # page_action.py's `note-read`, drawn there by guide.py's renderer, and
 # `note-open` opens it in the app the Mac uses for a .md file, which is not
 # a launcher Settings chooses. A <dialog> shown modal holds it, so the card
@@ -7232,6 +7243,11 @@ sync();
 # keeps from the card, or a click outside it, and hands the keyboard back to
 # the Preview it was opened from. It never edits, and nothing stays open.
 NOTE_CSS = r"""
+/* Preview on the card, a magnifier: as tall as the card's words outside the app, and in Garrick.app, whose
+   ways to open a note are icons (.appicons), on the same square as they are */
+.act.nv-glass{display:inline-flex;align-items:center;justify-content:center;padding:4px 6px}.act.nv-glass svg{display:block;width:13px;height:13px}
+.appicons .act.nv-glass{width:34px;height:34px;padding:0;border-color:transparent;border-radius:8px;background:transparent}
+.appicons .act.nv-glass svg{width:20px;height:20px}.appicons .act.nv-glass:hover{border-color:var(--base)}
 dialog.nview{padding:0;border:0;background:transparent;color:var(--ink);width:min(820px,calc(100vw - 32px));max-width:none;max-height:none;overflow:visible}
 dialog.nview::backdrop{background:rgba(0,0,0,.32)}
 .nv-panel{display:flex;flex-direction:column;min-height:160px;max-height:calc(100vh - 64px);background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.3);overflow:hidden}
@@ -7258,9 +7274,13 @@ dialog.nview::backdrop{background:rgba(0,0,0,.32)}
 NOTE_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,dlg=null,cur=null,back=null,down=null;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-/* only where the host reads a note for the page: a browser, or an app built before it, offers no Preview */
-function able(){return!!host&&!!window.GarrickReadsNotes}
-function button(path,title){return path&&able()?'<button class="act" type="button" data-note="'+esc(path)+'" data-title="'+esc(title)+'" aria-haspopup="dialog">Preview</button>':''}
+/* only where the host reads a note for the page: a browser, or an app built before it, offers no Preview; and only while
+   Settings › Opening a thread offers it (PANEL_JS's GarrickPrefs, #219): switched off, nothing here opens the preview */
+function able(){var P=window.GarrickPrefs;return!!host&&!!window.GarrickReadsNotes&&!(P&&P.launchers().preview===false)}
+/* a magnifier, as the card's other actions are icons, named Preview for the pointer and the screen reader */
+var GLASS='<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/>'
++'<path d="M10.2 10.2L14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+function button(path,title){return path&&able()?'<button class="act nv-glass" type="button" data-note="'+esc(path)+'" data-title="'+esc(title)+'" title="Preview" aria-label="Preview" aria-haspopup="dialog">'+GLASS+'</button>':''}
 function el(s){return dlg.querySelector(s)}
 function make(){dlg=document.createElement('dialog');dlg.className='nview';dlg.setAttribute('role','dialog');dlg.setAttribute('aria-modal','true');dlg.setAttribute('aria-labelledby','nview-h');
 dlg.innerHTML='<div class="nv-panel"><div class="nv-head"><div class="nv-t"><h3 id="nview-h"></h3><small class="nv-path"></small></div>'

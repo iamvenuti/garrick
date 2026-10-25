@@ -722,7 +722,12 @@ class TestSharedLauncherSettings(StatusCase):
         write(self.root / "System" / "garrick-settings.json",
               json.dumps({"launchers": {"note": True, "finder": False, "cmux": False, "codex": False}, "default": "cmux"}))
         found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
-        self.assertEqual({"launchers": ["note", "claude"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
+        self.assertEqual({"launchers": ["note", "preview", "claude"], "default": "cmux"}, json.loads(found.group(1)))   # a name left out is on
+        # Explore's Preview (#219): on in a choice saved before it had one, off once switched off, and never the default
+        write(self.root / "System" / "garrick-settings.json",
+              json.dumps({"launchers": {"note": True, "preview": False}, "default": "preview"}))
+        found = re.search(r'id="launch-settings">(.*?)</script>', self.page(), re.S)
+        self.assertEqual({"launchers": ["note", "finder", "cmux", "codex", "claude"], "default": "note"}, json.loads(found.group(1)))
         write(self.root / "System" / "garrick-settings.json", json.dumps({"launchers": "all"}))
         self.assertNotIn('id="launch-settings"', self.page())
 

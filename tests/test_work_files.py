@@ -34,7 +34,6 @@ from test_your_work import PAGE_HARNESS, Case, H, Y, pa, status  # noqa: E402
 
 F = pa.work_files_lib()
 NOTE = "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"
-TODAY = dt.date.today()
 
 OPEN_STUB = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -72,8 +71,9 @@ class Stored(Case):
         env.start()
         self.addCleanup(env.stop)
 
-    def files_act(self, do, **more):
-        return pa.act(self.root, dict({"verb": "files", "zone": "Work", "file": NOTE, "do": do}, **more))
+    def files_act(self, do, today=None, **more):
+        return pa.act(self.root, dict({"verb": "files", "zone": "Work", "file": NOTE, "do": do}, **more),
+                      today=today or self.today)
 
     def changed(self):
         return set(filter(None, self.git("show", "--name-only", "--format=", "HEAD").splitlines()))
@@ -283,7 +283,7 @@ class TestMoveIntoGarrick(Stored):
         self.assertEqual(sorted(os.listdir(self.folder)), ["Proofs"])
         self.assertTrue((self.files / rec.name).is_file())                                   # media comes too
         self.assertIn("storage: moved", self.hub.read_text())
-        self.assertIn("moved: %s" % TODAY.isoformat(), self.hub.read_text())
+        self.assertIn("moved: %s" % self.today.isoformat(), self.hub.read_text())
         self.assertEqual([self.rule(self.folder)], self.deny())                               # Claude may edit the files
         self.assertEqual({"Catalogue 2027/Catalogue 2027.md", "Catalogue 2027/.gitignore"}, self.changed())
         self.assertEqual("", self.git("status", "--porcelain"))
@@ -291,6 +291,12 @@ class TestMoveIntoGarrick(Stored):
             rel = row[1].split("Catalogue 2027/", 1)[1] if "Marketing/Catalogue 2027/" in row[1] else None
             if rel:
                 self.assertEqual(row[2], F.digest(self.files / rel))
+
+    def test_the_day_it_moved_is_the_day_given_not_the_clock(self):
+        """#212: a run that crossed midnight wrote one day and expected another."""
+        self.files_act("move", today=dt.date(2027, 1, 1))
+        self.before = None
+        self.assertIn("moved: 2027-01-01", self.hub.read_text())
 
     def test_a_copy_that_becomes_a_move_keeps_its_versions(self):
         self.with_media()                                                                    # out of the copy, in the move
@@ -465,7 +471,7 @@ class TestThePage(Stored):
     def test_a_file_changed_in_the_folder_is_changed_not_new(self):
         """Before any Continue, a file that moved lately counted as new; the copy's history says it was there."""
         note = self.note()
-        note.write_text(re.sub(r"(?m)^updated: .*$", "updated: %s" % (TODAY - dt.timedelta(days=5)).isoformat(),
+        note.write_text(re.sub(r"(?m)^updated: .*$", "updated: %s" % (self.today - dt.timedelta(days=5)).isoformat(),
                                note.read_text(), count=1))
         self.git("commit", "-q", "-am", "an older note")
         self.files_act("copy")

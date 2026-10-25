@@ -41,7 +41,6 @@ status = _load("garrick_status_your_work", HERE / "status.py")
 pa = _load("garrick_page_action_your_work", HERE / "page_action.py")
 Y = pa.your_work()
 H = pa.handoff()
-TODAY = dt.date.today()
 
 LOOK = {"what": "The 2027 product catalogue, printed and online, 64 pages.",
         "who": "Hana Royle (layout), Owen Tarrant (prices)",
@@ -119,6 +118,7 @@ class Case(unittest.TestCase):
     personal = False
 
     def setUp(self):
+        self.today = dt.date.today()        # the day this test runs on, given to every action it takes (#212)
         self._tmp = tempfile.TemporaryDirectory()
         base = Path(self._tmp.name).resolve()
         self.base = base
@@ -166,8 +166,8 @@ class Case(unittest.TestCase):
         self.assertEqual(self.before, manifest(self.drive), "the user's folder changed")
         self._tmp.cleanup()
 
-    def act(self, **req):
-        return pa.act(self.root, req)
+    def act(self, today=None, **req):
+        return pa.act(self.root, req, today=today or self.today)
 
     def git(self, *args, repo=None):
         return subprocess.run(["git", "-C", str(repo or self.work)] + list(args), check=True, capture_output=True,
@@ -293,7 +293,7 @@ class TestStartWithThisOne(Case):
         out = self.start()
         self.assertIn("Garrick has a first look at Catalogue 2027", out["say"])
         note = self.note().read_text()
-        self.assertIn("first-look: %s" % TODAY.isoformat(), note)
+        self.assertIn("first-look: %s" % self.today.isoformat(), note)
         self.assertIn("| Next action | Confirm 64 pages to the printer by Friday |", note)
         self.assertIn("First look, made by Garrick from the files in Catalogue 2027; check it before you rely on it.", note)
         self.assertIn("Involved: Hana Royle (layout), Owen Tarrant (prices).", note)
@@ -540,9 +540,9 @@ class TestStopUsingThis(Case):
         self.assertEqual("Catalogue 2027 is put away. Its folder is as it was", said)
         self.assertFalse((self.work / "Catalogue 2027").exists())
         away = self.work / "archive" / "Catalogue 2027" / "Catalogue 2027.md"
-        self.assertIn("put-away: %s" % TODAY.isoformat(), away.read_text())
+        self.assertIn("put-away: %s" % self.today.isoformat(), away.read_text())
         self.assertEqual("", self.git("status", "--porcelain"))
-        self.assertEqual([{"zone": "Work", "project": "Catalogue 2027", "since": TODAY.isoformat()}], Y.put_away(self.root))
+        self.assertEqual([{"zone": "Work", "project": "Catalogue 2027", "since": self.today.isoformat()}], Y.put_away(self.root))
         html = self.page()
         self.assertIn("Catalogue 2027 is put away.", html)
         self.assertIn(htmllib.escape(json.dumps({"verb": "bring-back", "zone": "Work", "project": "Catalogue 2027"})), html)
@@ -558,6 +558,23 @@ class TestStopUsingThis(Case):
         with self.assertRaisesRegex(pa.Refused, "has changes not saved yet"):
             self.act(verb="stop-using", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
         self.assertTrue(self.note().is_file())
+
+    def test_each_day_written_is_the_day_given_either_side_of_midnight(self):
+        """#212: a run that crossed midnight wrote one day and expected another.
+        Given a day, the record carries that day, whatever the clock says."""
+        eve, day, next_day = dt.date(2026, 12, 31), dt.date(2027, 1, 1), dt.date(2027, 1, 2)
+        note = "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"
+        self.add(today=eve)
+        self.act(verb="start", zone="Work", file=note, today=eve)
+        self.assertIn("first-look: 2026-12-31", self.note().read_text())
+        self.act(verb="stop-using", zone="Work", file=note, today=day)
+        away = self.work / "archive" / "Catalogue 2027"
+        self.assertIn("put-away: 2027-01-01", (away / "Catalogue 2027.md").read_text())
+        self.assertIn("first-look: 2026-12-31", (away / "Threads" / "Catalogue 2027" / "Catalogue 2027.md").read_text())
+        self.assertEqual("2027-01-01", Y.put_away(self.root)[0]["since"])
+        self.act(verb="bring-back", zone="Work", project="Catalogue 2027", today=day)
+        self.act(verb="stop-using", zone="Work", file=note, today=next_day)
+        self.assertEqual("2027-01-02", Y.put_away(self.root)[0]["since"])
 
 
 class TestAFirstWorkspace(unittest.TestCase):

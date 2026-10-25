@@ -242,7 +242,7 @@ class RoutesTest(unittest.TestCase):
 
     def test_setup_offers_it_instead_of_requiring_the_interview(self):
         text = (SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
-        hand_over = flat(text).split("6. **Hand over.**", 1)[1].split("## ", 1)[0]
+        hand_over = flat(text).split("**Hand over.**", 1)[1].split("## ", 1)[0]
         self.assertIn("Tell me one thing you need to prepare, and I'll set up just enough to do it.", hand_over)
         self.assertIn("Or say 'interview me'", hand_over)
         self.assertIn("the `meetings` skill's *Nothing there yet*", hand_over)

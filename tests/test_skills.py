@@ -226,6 +226,27 @@ class SkillsTest(unittest.TestCase):
             self.assertIn("search the archive", said, skill)
             self.assertIn("python3 System/tools/fade.py settings", said, skill)
 
+    def test_catching_up_is_the_threads_skills_and_brief_me_the_meetings(self):
+        """"Catch me up" (#27) is a thread command, which gathers through
+        briefing.py, reads briefing.md with the local file winning, quotes no
+        meeting, and offers to save only for one project, by the route a
+        meeting brief is saved. "Brief me" stays with the meetings skill."""
+        phrases = triggers(SKILLS / "threads")
+        for phrase in ("catch me up", "catch me up on x", "catch me up on x since monday", "catch me up this week"):
+            self.assertIn(phrase, phrases, phrase)
+        self.assertFalse([p for p in phrases if p.startswith("brief")])
+        self.assertIn("brief me for x", triggers(SKILLS / "meetings"))
+        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        catch = flat(section(text, '## Catch up: "catch me up", "catch me up on X", "since Monday", "this week"'))
+        for needle in ("python3 System/tools/briefing.py --zone Work", "`System/briefing.local.md`, which wins",
+                       "**Offer to save it, only when it covers one project**", "the `meetings` skill's *Prep*, step 7",
+                       "Nothing is read from the Meetings wiki for a catch-up", "**A gap is said as a gap**",
+                       "Spoken: the overview alone, then offer the detail", "One zone at a time"):
+            self.assertIn(needle, catch, needle)
+        shipped = (REPO / "template" / "System" / "briefing.md").read_text(encoding="utf-8")
+        self.assertIn("Read `System/briefing.local.md` next, when it exists", shipped)
+        self.assertNotIn("—", shipped)
+
     def test_a_new_zone_goes_through_the_scaffold(self):
         """A zone is made as the installer makes one, by the scaffold script, once the
         name and what it holds are given; the interview hands over to it."""

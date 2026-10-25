@@ -66,6 +66,14 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 When something cuts in, "I'm being interrupted" or "hold this" asks three short questions, writes the answers into the thread's Resume here block with the time, and puts the thread on a stack. "Back" opens the thread on top, so the last one held comes back first, and "back to X" takes one from anywhere in it. The stack only keeps the order, in `System/generated/interrupted.json`, which the [status page](#the-status-page)'s `page_action.py` keeps; without that extra, the answers are still saved and "back" offers the thread you worked on last. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
+### Catch up
+
+"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and decides nothing; the `threads` skill writes it. Shown, not saved, unless it covers one project and you say yes to saving it. See [Opening and wrapping](commands.md#opening-and-wrapping).
+
+### `System/briefing.md`
+
+What a catch-up raises first, says in a line, and leaves out, in plain words: "a decision, with who took it and why" comes first, a commit that only tidied the Todo list is left out. Garrick's, replaced by each update; yours goes in `System/briefing.local.md`, which wins.
+
 ## Parties and walls
 
 ### Party

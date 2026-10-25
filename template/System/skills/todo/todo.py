@@ -219,6 +219,28 @@ def archive(zone: Path, today: datetime.date) -> int:
     return n
 
 
+TASK_LINK = re.compile(r"^- \[[ x]\] \[\[([^\]|#]+)")
+
+
+def link_of(line: str) -> Optional[str]:
+    """The thread a task line opens with, open or ticked: the link's path as
+    written (`Pricing`, or `Acme/Threads/Pricing/Pricing` where another
+    project has a Pricing too). None for a line that opens with no link.
+    System/tools/briefing.py finds a thread's lines with it."""
+    m = TASK_LINK.match(line)
+    return m.group(1).strip() if m else None
+
+
+def done_on(line: str) -> Optional[datetime.date]:
+    """The day a ticked line was done, from its `✅` date. None for an open
+    line, or a ticked one with no date."""
+    m = DONE.search(line) if line.startswith("- [x] ") else None
+    try:
+        return datetime.date.fromisoformat(m.group(1)) if m else None
+    except ValueError:
+        return None
+
+
 def thread_name(line: str) -> str:
     """The name a Tasks query sorts a line by: the alias after `|`, else the
     link's last part, case-folded."""

@@ -100,6 +100,7 @@ ALLOWED_TOOLS = (
     "System/tools/wiki_lint.py",
     "System/tools/drift.py",
     "System/tools/next_up.py",
+    "System/tools/briefing.py",
     "System/tools/nurture.py",
     "System/tools/fade.py",
     "System/tools/discover.py",

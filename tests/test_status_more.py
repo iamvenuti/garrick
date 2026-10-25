@@ -570,6 +570,125 @@ class TestReloadAndSettle(StatusCase):
         self.assertFalse(out.exists())
 
 
+class TestBuildsAtOnce(StatusCase):
+    """Builds overlap in ordinary use: the app after a button, a hook, a job,
+    a build by hand (#214). Each runs here as its own process, with a home
+    folder and a PATH of the test's own, so nothing on this machine is read."""
+
+    def builds(self, n=2):
+        home = self.root.parent / "home"
+        home.mkdir(exist_ok=True)
+        env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin", PYTHONDONTWRITEBYTECODE="1")
+        env.pop("GARRICK_WORKSPACE", None)
+        cmd = [sys.executable, str(REPO / "extras" / "status" / "status.py"), "--workspace", str(self.root),
+               "--no-obsidian", "--no-cmux", "--no-graph"]
+        procs = [subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(n)]
+        return [(p.wait(timeout=120), p.stderr.read()) for p in procs]
+
+    def generated(self):
+        return sorted(p.name for p in (self.root / "System" / "generated").iterdir())
+
+    def test_two_builds_at_once_both_succeed_and_leave_a_whole_page(self):
+        for _ in range(3):                    # the race shows on the first go; three make sure
+            for code, err in self.builds():
+                self.assertEqual(0, code, err)
+            page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
+            self.assertTrue(page.startswith("<!doctype html>"))
+            self.assertTrue(page.endswith("</body></html>"))
+            self.assertEqual(1, page.count("<!doctype html>"))
+
+    def test_no_temporary_file_is_left(self):
+        for code, err in self.builds():
+            self.assertEqual(0, code, err)
+        self.assertEqual(["status.html"], [n for n in self.generated() if n.startswith("status.html")])
+        self.assertFalse([n for n in self.generated() if n.endswith(".tmp")])
+        out = self.jobs / "page.html"                                       # a write that fails takes its file away
+        with mock.patch.object(status.os, "replace", side_effect=OSError("disk full")), \
+                mock.patch.object(status, "build", return_value="<html></html>"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(OSError):
+                status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian"])
+        self.assertEqual([], sorted(p.name for p in self.jobs.iterdir() if p.name.startswith("page.html")))
+
+    def test_the_last_to_finish_wins(self):
+        out = self.jobs / "page.html"
+        for text in ("<html>first</html>", "<html>second</html>"):
+            status.write_page(out, text)
+        self.assertEqual("<html>second</html>", out.read_text())
+        self.assertEqual(["page.html"], sorted(p.name for p in self.jobs.iterdir()))
+
+
+class TestReplacedWhileBuilding(StatusCase):
+    """An update replaces System/status/status.py while a build is waiting
+    out --settle (#213): the page must be the new code's, never the old's."""
+
+    OLD_NAME = 'NAME = "Garrick"     #'
+    NEW_NAME = 'NAME = "Garrick Next"     #'
+
+    def test_a_build_whose_code_is_replaced_during_its_settle_wait_draws_with_the_new_code(self):
+        copy = self.root / "System" / "status"
+        shutil.copytree(REPO / "extras" / "status", copy, ignore=shutil.ignore_patterns("app", "obsidian", "__pycache__"))
+        script = copy / "status.py"
+        self.assertEqual(1, script.read_text(encoding="utf-8").count(self.OLD_NAME))
+        home = self.root.parent / "home"
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin", PYTHONDONTWRITEBYTECODE="1")
+        for k in ("GARRICK_WORKSPACE", status.RERUN):
+            env.pop(k, None)
+        page = self.root / "System" / "generated" / "status.html"
+        proc = subprocess.Popen([sys.executable, str(script), "--workspace", str(self.root), "--settle", "3",
+                                 "--no-obsidian", "--no-cmux", "--no-graph"],
+                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        marker = page.with_name("status.html.settle")
+        deadline = time.time() + 30
+        while not marker.exists() and time.time() < deadline:      # loaded, and waiting
+            time.sleep(0.05)
+        self.assertTrue(marker.exists())
+        newer = script.with_name("status.py.update")
+        newer.write_text(script.read_text(encoding="utf-8").replace(self.OLD_NAME, self.NEW_NAME), encoding="utf-8")
+        os.replace(newer, script)                                    # as an update writes it
+        _, err = proc.communicate(timeout=120)
+        self.assertEqual(0, proc.returncode, err)
+        html = page.read_text(encoding="utf-8")
+        self.assertTrue("<title>Garrick Next</title>" in html, "the page is not the new code's")
+        self.assertFalse("<title>Garrick</title>" in html, "the old code drew the page")
+        self.assertIn("building it again with the new one", err)
+        self.assertEqual(["status.html", "status.html.settle"], sorted(p.name for p in page.parent.iterdir()
+                                                                       if p.name.startswith("status.html")))
+
+    def test_started_again_once_without_its_settle(self):
+        out = self.jobs / "page.html"
+        argv = ["--workspace", str(self.root), "--out", str(out), "--settle", "3", "--no-obsidian", "--no-graph"]
+        with mock.patch.object(status, "STARTED", (0, 0, 0)), mock.patch.object(status, "settle", return_value=True), \
+                mock.patch.dict(os.environ), mock.patch.object(status.subprocess, "call", return_value=0) as call, \
+                mock.patch.object(status, "build", return_value="<html>old</html>"), contextlib.redirect_stderr(io.StringIO()):
+            os.environ.pop(status.RERUN, None)
+            self.assertEqual(0, status.main(argv))
+        cmd = call.call_args.args[0]
+        self.assertEqual([sys.executable, str(status.SELF), "--workspace", str(self.root), "--out", str(out),
+                          "--no-obsidian", "--no-graph"], cmd)
+        self.assertEqual("1", call.call_args.kwargs["env"][status.RERUN])
+        self.assertFalse(out.exists())                               # the old code wrote nothing
+
+    def test_a_build_started_again_that_finds_it_changed_again_writes_nothing(self):
+        out = self.jobs / "page.html"
+        err = io.StringIO()
+        with mock.patch.object(status, "STARTED", (0, 0, 0)), mock.patch.dict(os.environ, {status.RERUN: "1"}), \
+                mock.patch.object(status.subprocess, "call") as call, mock.patch.object(status.os, "execvpe") as execs, \
+                mock.patch.object(status, "build", return_value="<html>old</html>"), contextlib.redirect_stderr(err):
+            self.assertEqual(75, status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian", "--no-graph"]))
+        self.assertFalse(call.called or execs.called)
+        self.assertFalse(out.exists())
+        self.assertIn("the next build draws it", err.getvalue())
+
+    def test_an_unchanged_file_builds_as_before(self):
+        out = self.jobs / "page.html"
+        with mock.patch.object(status.subprocess, "call") as call, mock.patch.object(status, "build", return_value="<html>new</html>"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian", "--no-graph"]))
+        self.assertFalse(call.called)
+        self.assertEqual("<html>new</html>", out.read_text(encoding="utf-8"))
+
+
 class TestEffortFolders(StatusCase):
     def test_also_and_moved_reach_effort(self):
         flags(self.root, effort=True)

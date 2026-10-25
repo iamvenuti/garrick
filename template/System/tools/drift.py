@@ -80,6 +80,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -382,10 +383,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.save:
         target = root.joinpath(*SAVED)
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"checked": datetime.datetime.now().isoformat(timespec="seconds"), "files": found},
-                                  indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, target)
+        fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")    # its own: two sessions at once share none
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps({"checked": datetime.datetime.now().isoformat(timespec="seconds"), "files": found},
+                                   indent=1) + "\n")
+            os.replace(tmp, str(target))
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
     if a.json:
         print(json.dumps(found, indent=1))
     else:

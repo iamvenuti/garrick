@@ -209,7 +209,7 @@ In the Mac app and in Obsidian, the graph's panel also has *Preview*, first amon
    python3 System/jobs/job.py status --cwd ~/Garrick -- \
      python3 System/status/status.py --workspace ~/Garrick
    ```
-   `extras/status/garrick.status.plist` runs that every evening at 23:30. Where several things may ask for a build at once, such as a hook at the end of each session, add `--settle 10`: each request waits ten seconds and builds only if no later one came meanwhile, so a burst makes one page.
+   `extras/status/garrick.status.plist` runs that every evening at 23:30. Where several things may ask for a build at once, such as a hook at the end of each session, add `--settle 10`: each request waits ten seconds and builds only if no later one came meanwhile, so a burst makes one page. A build whose `status.py` is replaced while it runs, as an update can during that wait, writes nothing and builds again from the new file, so the page is always the one the code on disk draws.
 
 The page says how old it is, and turns its banner red when it is more than a day and a half old, so a schedule that stopped is not mistaken for a quiet week.
 
@@ -268,7 +268,7 @@ Three edges can collide with macOS. On the left, Stage Manager shows its strip o
 
 Seeing where the pointer is needs no permission in macOS; only reading keys typed in other apps would, and the panel never does.
 
-The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. An app built before needs a rebuild to get the icon; the flag alone does not add it. An update that changes the app's code rebuilds it for you, with the flags it was built with.
+The menu is filled from the page, so it holds what the last build found. Opening it rebuilds a page more than 30 minutes old, and the app checks every hour, so the dot is never a day behind. An app built before needs a rebuild to get the icon; the flag alone does not add it. An update that changes the app's code rebuilds it for you, with the flags it was built with, and one that changes anything in `System/status/` rebuilds the page as well, with the same flags.
 
 ### Ask
 

@@ -570,6 +570,53 @@ class TestReloadAndSettle(StatusCase):
         self.assertFalse(out.exists())
 
 
+class TestBuildsAtOnce(StatusCase):
+    """Builds overlap in ordinary use: the app after a button, a hook, a job,
+    a build by hand (#214). Each runs here as its own process, with a home
+    folder and a PATH of the test's own, so nothing on this machine is read."""
+
+    def builds(self, n=2):
+        home = self.root.parent / "home"
+        home.mkdir(exist_ok=True)
+        env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin", PYTHONDONTWRITEBYTECODE="1")
+        env.pop("GARRICK_WORKSPACE", None)
+        cmd = [sys.executable, str(REPO / "extras" / "status" / "status.py"), "--workspace", str(self.root),
+               "--no-obsidian", "--no-cmux", "--no-graph"]
+        procs = [subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(n)]
+        return [(p.wait(timeout=120), p.stderr.read()) for p in procs]
+
+    def generated(self):
+        return sorted(p.name for p in (self.root / "System" / "generated").iterdir())
+
+    def test_two_builds_at_once_both_succeed_and_leave_a_whole_page(self):
+        for _ in range(3):                    # the race shows on the first go; three make sure
+            for code, err in self.builds():
+                self.assertEqual(0, code, err)
+            page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
+            self.assertTrue(page.startswith("<!doctype html>"))
+            self.assertTrue(page.endswith("</body></html>"))
+            self.assertEqual(1, page.count("<!doctype html>"))
+
+    def test_no_temporary_file_is_left(self):
+        for code, err in self.builds():
+            self.assertEqual(0, code, err)
+        self.assertEqual(["status.html"], [n for n in self.generated() if n.startswith("status.html")])
+        self.assertFalse([n for n in self.generated() if n.endswith(".tmp")])
+        out = self.jobs / "page.html"                                       # a write that fails takes its file away
+        with mock.patch.object(status.os, "replace", side_effect=OSError("disk full")), \
+                mock.patch.object(status, "build", return_value="<html></html>"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(OSError):
+                status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian"])
+        self.assertEqual([], sorted(p.name for p in self.jobs.iterdir() if p.name.startswith("page.html")))
+
+    def test_the_last_to_finish_wins(self):
+        out = self.jobs / "page.html"
+        for text in ("<html>first</html>", "<html>second</html>"):
+            status.write_page(out, text)
+        self.assertEqual("<html>second</html>", out.read_text())
+        self.assertEqual(["page.html"], sorted(p.name for p in self.jobs.iterdir()))
+
+
 class TestEffortFolders(StatusCase):
     def test_also_and_moved_reach_effort(self):
         flags(self.root, effort=True)

@@ -136,9 +136,15 @@ def fetch_with_curl(url: str, headers: dict, timeout: int, limit: int) -> bytes:
 def write_cache(root: Path, data: dict) -> None:
     path = root.joinpath(*RELEASE_CACHE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")      # its own: two builds asking at once share none
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=1) + "\n")
+        os.replace(tmp, str(path))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def read_cache(root: Path) -> dict:

@@ -91,6 +91,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -7959,6 +7960,25 @@ def settle(marker: Path, seconds: float, sleep=time.sleep) -> bool:
         return True
 
 
+def write_page(out: Path, text: str) -> None:
+    """Put the page in place whole. Each build writes a temporary file of its
+    own beside it and renames that over the page, so builds that overlap never
+    share one: the last to finish wins, and none fails on another's rename. A
+    write that fails takes its temporary file away with it."""
+    fd, tmp = tempfile.mkstemp(dir=str(out.parent), prefix=out.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        mask = os.umask(0o022)
+        os.umask(mask)
+        os.chmod(tmp, 0o666 & ~mask)         # as a plain write would leave it, not mkstemp's owner-only
+        os.replace(tmp, str(out))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build the status page for a Garrick workspace.")
     ap.add_argument("--workspace", help="the workspace folder (default: GARRICK_WORKSPACE, or the folder this runs in)")
@@ -7996,7 +8016,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0                              # a later request builds it
     out.parent.mkdir(parents=True, exist_ok=True)
     prefs().migrate(ws)          # choices a Garrick before 0.25.0 left in System/generated/, kept where they belong
-    tmp = out.with_name(out.name + ".tmp")
     vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
     flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
     moved = {}
@@ -8007,11 +8026,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         old, new = m.split("=", 1)
         moved[old] = new
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
-    tmp.write_text(build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
-                         vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
-                         managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
-                         launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux"))), encoding="utf-8")
-    os.replace(tmp, out)
+    page = build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
+                 vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
+                 managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
+                 launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")))
+    write_page(out, page)
     release_ask(ws)
     print(out)
     if args.open:

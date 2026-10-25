@@ -122,6 +122,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1420,9 +1421,16 @@ def scope_key(scopes: List[str]) -> str:
 def write_report(ctx: Ctx, rec: dict) -> Path:
     folder = ctx.root.joinpath(*REPORTS)
     folder.mkdir(parents=True, exist_ok=True)
-    tmp = record_path(ctx).with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, record_path(ctx))
+    target = record_path(ctx)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")      # its own: two runs at once share none
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(rec, indent=1, ensure_ascii=False) + "\n")
+        os.replace(tmp, str(target))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     md = folder / ("%s.md" % ctx.today.isoformat())
     md.write_text(render(rec), encoding="utf-8")
     return md

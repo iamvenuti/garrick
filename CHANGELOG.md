@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - The README and the deck name the three things Garrick holds: what you're working on, in your files; what was said, in the Meetings wiki; and what you read, in the Knowledge wiki. The deck's life-cycle slide shows them above the four stages, and its slide on the assistant's memory adds that an assistant is only as useful as what it knows about your work.
 
+### Fixed
+
+- Two status page builds at once no longer share one temporary file. Every build wrote `System/generated/status.html.tmp` and renamed it over the page, so when the app, a hook, a job and a build by hand overlapped, the second build failed on a rename the first had already made, and the app said "Did not rebuild; showing the last build" for a build that had run; the other way round, a page cut off part-way could go live. Each build now writes a temporary file of its own beside the page, renames it into place and takes it away if the write fails, so the last to finish wins and none fails. The other writers that kept a fixed temporary name and can overlap do the same: `effort.py --record`, the release notice's `System/generated/garrick-release.json`, `drift.py --save` and Context Nurture's day record ([#214](https://github.com/iamvenuti/garrick/issues/214)).
+
 ## [0.41.0] - 2026-10-23
 
 Settings reads as one column with its sections listed beside it, Memory says plainly what fading does and when, and Explore previews a note without leaving Garrick.

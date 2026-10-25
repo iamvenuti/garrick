@@ -49,6 +49,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -373,12 +374,17 @@ def record(ws: Path, store: Path, also: Iterable[Path] = (), folder: Optional[Pa
     first. Returns the number of lines."""
     rows = ledger(ws, store, also, folder=folder, moved=moved)
     store.parent.mkdir(parents=True, exist_ok=True)
-    tmp = store.with_name(store.name + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        for k in sorted(rows):
-            day, zone, project, thread = k
-            f.write(json.dumps(dict(rows[k], day=day, zone=zone, project=project, thread=thread), sort_keys=True) + "\n")
-    os.replace(tmp, store)
+    fd, tmp = tempfile.mkstemp(dir=str(store.parent), prefix=store.name + ".")     # its own: two records at once share none
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for k in sorted(rows):
+                day, zone, project, thread = k
+                f.write(json.dumps(dict(rows[k], day=day, zone=zone, project=project, thread=thread), sort_keys=True) + "\n")
+        os.replace(tmp, str(store))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     return len(rows)
 
 

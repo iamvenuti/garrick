@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **The docs call the status page the Garrick App, and the architecture page has four layers.** [Architecture](docs/architecture.md) now follows the diagram: navigate and control with the Garrick App, where you work in the Claude or Codex desktop app or cmux, the record of Knowledge, Meetings and the threads, and underneath the model, the rules and the commit check. It says that the rules, the walls and the model act on the whole record. [Concepts](docs/concepts.md) defines the words a new user meets in the first week, among them piece of work, the simple home, Continue, Needs you, the Guide, Nurture and context debt. Across `docs/`, the status page is the Garrick App, the Mac app is the Mac app, and [the Garrick App's page](docs/extras/status-page.md) describes its Guide tab. Code names and paths stay as they are.
+
 ## [0.42.0] - 2026-10-25
 
 "Catch me up" briefs you, thread by thread, on what changed while you were away; a new install with the simple home now gets the page it opens on; and status page builds no longer trip over each other or outlive the update that replaced them.

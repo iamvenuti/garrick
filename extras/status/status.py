@@ -1093,13 +1093,14 @@ def debt_block(ws: Path, today: dt.date) -> str:
     named = " · ".join("%s %s" % (E(said(sc)[0]), E(str(debt_points(sum(scopes[sc].values()))))) for sc in heavy)
     over = total > threshold
     when = "" if day == today else " as of %s" % day.strftime("%a %d %b")
-    ask = ('<span class="dask">Say &#8220;%s&#8221;.</span>' % E(said(heavy[0])[1])) if heavy and said(heavy[0])[1] else ""
+    phrase = (said(heavy[0])[1] if heavy else "") or ""      # the request that nurtures the heaviest, on a button (#234)
+    button = request_button(phrase[:1].upper() + phrase[1:], phrase, ws, "act dask") if phrase else ""
     return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
             '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p></div>'
             % (E(str(total)), E(when), " late" if over else "",
                E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
                "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
-               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", ask))
+               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button))
 
 
 def debt_points(n):
@@ -1114,7 +1115,7 @@ DEBT_CSS = r"""
 .dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
-.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dask{color:var(--ink2)}
+.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 """
 
 
@@ -3462,6 +3463,14 @@ def copy(label: str, text: str, say: str) -> str:
     """A button that copies a phrase for your assistant, or a command for your
     terminal. The page acts on nothing itself."""
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
+
+
+def request_button(label: str, phrase: str, folder: Path, cls: str = "act") -> str:
+    """A button named for a request, such as Process the Inbox (#234). In the
+    app it opens the assistant the menu's rows open, at `folder`, with the
+    request typed in (JS's data-request); in a browser it copies the request."""
+    return ('<button class="%s" type="button" data-request="%s" data-folder="%s" title="%s">%s</button>'
+            % (cls, E(phrase), E(str(folder)), E("Hand “%s” to your assistant" % phrase), E(label)))
 
 
 # The changelog the workspace was installed with: install.py copies the
@@ -6201,6 +6210,11 @@ if(!host)document.body.classList.add('nohost');      /* a browser cannot act: it
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
+/* The assistant a request goes to, as the app's assistant() picks it for the menu's Process the Inbox: the
+   default for clicking a thread when it is Claude, Codex or cmux, else the first of those switched on; none, null */
+var ASKS={claude:'Claude',codex:'Codex',cmux:'cmux'};
+window.GarrickAssistant=function(){var P=window.GarrickPrefs,on=P?P.launchers():{},d=P?P.def():'note';
+var a=(document.body.dataset.launchers||'').split(',').filter(function(k){return ASKS[k]&&on[k]!==false});return a.indexOf(d)>=0?d:a[0]||null};
 var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
@@ -6213,6 +6227,11 @@ if(x.dataset.confirm&&!x.classList.contains('armed')){var was=x.textContent;x.cl
 setTimeout(function(){x.classList.remove('armed');x.textContent=was},4000);return}
 x.classList.remove('armed');if(x.dataset.expect&&window.GarrickExpect)GarrickExpect(x.dataset.expect);
 if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r});say(x.dataset.say);return}
+/* A button named for a request, Process the Inbox or Nurture Work (#234): in the app, to the assistant the menu's
+   rows open, at the folder given, with the request typed in; in a browser, or with no assistant on, copied. */
+var q=t.closest('button[data-request]');if(q){var a=host&&GarrickAssistant(),p=q.dataset.request;
+if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');return}
+put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')},function(){say(p)});return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -7942,7 +7961,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
         0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
         "%d waiting" % n if n else "empty") for name, f, n in IB)
-    inbox_card = card("inboxes", "Inboxes", "files waiting to be filed; say \"process the inbox\"", '<div class="tiles">%s</div>' % ib)
+    waits = ('<div class="gacts">%s</div>' % request_button("Process the Inbox", "process the inbox", ws)) if any(n for _, _, n in IB) else ""
+    inbox_card = card("inboxes", "Inboxes", "", '<div class="tiles">%s</div>%s' % (ib, waits))
 
     # ---- jobs and calls, only when the jobs extra is in use
     jobs_card = calls_card = ""

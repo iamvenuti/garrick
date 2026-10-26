@@ -1893,6 +1893,26 @@ class TestPanels(StatusCase):
         self.assertIn("1 waiting", html)
         self.assertIn("1 item waiting in the inboxes", html)
 
+    def inboxes(self, html):
+        start = html.index('id="inboxes"')
+        return html[start:html.index("</details>", start)]
+
+    def test_process_the_inbox_is_a_button_while_anything_waits(self):
+        self.assertNotIn("data-request", self.inboxes(self.page()))                 # every inbox empty: no button
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        card = self.inboxes(self.page())
+        self.assertIn('<h2>Inboxes</h2><span class="meta"></span>', card)          # no "say …" in the caption (#234)
+        self.assertIn('<div class="gacts"><button class="act" type="button" data-request="process the inbox" data-folder="%s"' % self.root, card)
+        self.assertIn(">Process the Inbox</button>", card)
+        self.assertNotIn('say "process the inbox"', self.page())
+
+    def test_a_request_button_opens_the_menus_assistant_or_copies(self):
+        js = status.JS
+        self.assertIn("var q=t.closest('button[data-request]')", js)
+        self.assertIn("host.postMessage({launch:a,folder:q.dataset.folder,phrase:p})", js)   # the launch the menu's row makes
+        self.assertIn("put(p).then(", js)                                                    # a browser, or no assistant: copied
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                             # the default, else the first switched on
+
     def test_open_actions_skip_the_placeholder_and_done(self):
         write(self.root / "Zones" / "Work" / "Todo.md",
               "# Work\n\n## Inbox\n\n- [ ] <action> · <project or person> · <date>\n- [ ] Send the memo · Acme · 3 March\n\n## Done\n\n- [ ] stray\n")
@@ -2903,7 +2923,9 @@ class TestContextDebt(StatusCase):
         self.assertIn('class="dt"', b)                                     # the threshold, dashed
         self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
         self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
-        self.assertIn("Say &#8220;nurture the meetings&#8221;.", b)
+        self.assertIn('data-request="nurture the meetings" data-folder="%s"' % self.root, b)      # a button, not "Say …" (#234)
+        self.assertIn('>Nurture the meetings</button>', b)
+        self.assertNotIn("Say &#8220;", b)
         for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
             self.fail("a fixed colour in the chart: %s" % colour)
         self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
@@ -2914,7 +2936,8 @@ class TestContextDebt(StatusCase):
         self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
         self.assertIn('<span class="chip"', b)
         self.assertIn(">under 40</span>", b)
-        self.assertIn("Say &#8220;nurture Work&#8221;.", b)
+        self.assertIn('<button class="act dask" type="button" data-request="nurture Work"', b)
+        self.assertIn(">Nurture Work</button>", b)
         self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
 
     def test_left_out_without_a_nurture_that_keeps_it(self):

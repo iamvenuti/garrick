@@ -79,7 +79,7 @@ class TestTodoTab(StatusCase):
         work = tab[tab.index('<div class="tz" data-zone="Work"'):]
         self.assertLess(work.index("Book the room"), work.index("Send the revised terms"))      # A-Z: no thread first
         self.assertIn("<b>5</b> open", work)
-        self.assertIn("<b>2</b> overdue or due a chase", work)                                 # a chase is late on its day
+        self.assertIn("<b>2</b> late</span>", work)                                     # a chase is late on its day
         self.assertIn("<b>2</b> without a date", work)                            # the room, and the clause in its note
         self.assertIn("highest priority", work)
         self.assertIn("in the thread note", work)
@@ -127,7 +127,7 @@ class TestTodoTab(StatusCase):
         self.assertIn("window.TodoPending=function(z,target,date,text)", status.TODO_JS)
         self.assertIn("if(window.TodoPending)TodoPending(z,target,date,text)", status.JS)
         _, tab = self.tab()
-        self.assertIn('<button class="tdate overdue" type="button"', tab)
+        self.assertIn('<button class="tdate late" type="button"', tab)
         self.assertIn("＋ date", tab)
 
     def test_a_browser_shows_no_buttons(self):
@@ -801,7 +801,7 @@ class TestZoneColours(StatusCase):
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
-        self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Open actions
+        self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Todo
         self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
         self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
 
@@ -1971,7 +1971,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
-        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Open actions, unnamed, ahead of what was put back
+        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Todo, unnamed, ahead of what was put back
         self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):

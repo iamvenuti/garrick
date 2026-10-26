@@ -89,7 +89,7 @@ EVENTS = (
     ("needs-you", "Needs you", "A session is waiting: a permission to give, a question, an idle prompt"),
     ("finished", "Finished", "A session has ended its turn, after running longer than the minutes set"),
     ("todo-refreshed", "Todo refreshed", "The nightly sweep has run: lines added, folded, expired"),
-    ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: overdue, due today, chases due"),
+    ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: what is late and what is due today"),
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
     ("job-idle", "Job idle", "A job has run cleanly but done nothing for days"),
     ("desk", "Desk", "The cmux desk starting the day or shutting down"),

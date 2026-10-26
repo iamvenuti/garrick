@@ -757,7 +757,7 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     """Preview: each zone's open actions, read from the notes, never written.
     Per zone: the lines of Todo.md grouped under its `## ` headings in their
     order, then the lines that sit in thread notes ("In thread notes"), then
-    what was ticked today, with counts of the open, the overdue and the
+    what was ticked today, with counts of the open, the late and the
     undated. An empty section is left out, but an empty Inbox is said. A
     label names a note in the zone or, failing that, a project in System/."""
     tl = todo_lines()
@@ -829,7 +829,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
         rel = "today" if when == today else "tomorrow" if (when - today).days == 1 else \
             "%s %d %s" % (when.strftime("%a"), when.day, when.strftime("%b"))
         chip = "%s %s" % ("Chase" if r["waiting"] else "Due", rel)
-        cls = "overdue" if r["late"] else "today" if when == today else ""
+        cls = "late" if r["late"] else "today" if when == today else ""
     name = r["label"] or ("thread?" if r["unsure"] else "")
     thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(name)) if r["link"] and name
            else '<span class="thr%s">%s</span>' % (" unsure" if r["unsure"] and not r["label"] else "", E(name)) if name else "")
@@ -857,7 +857,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
 def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws: Path) -> None:
     """Hang what a thread owes on each of its rows: `actions`, its open task
     lines, the late ones first; `next`, the first of them; `late`, whether
-    one of them is overdue or due a chase; `checks`, the error findings
+    one of them is late; `checks`, the error findings
     against a file in its folder that the page can explain and fix
     (explained(), with Nurture's mechanical fix where it has one), and
     `flagged`, how many; and `urgent`, late or flagged.
@@ -1138,7 +1138,7 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                    projects: Optional[Dict[str, List[dict]]] = None, link: Optional["Links"] = None,
                    styles: Optional[Dict[str, dict]] = None) -> str:
     """The Todo tab: one zone at a time, picked above the list, each in its
-    colour and with its icon from Settings › Zones; All, Overdue and No date
+    colour and with its icon from Settings › Zones; All, Late and No date
     to filter; A–Z or by due date to sort. In the app with actions on, a box
     ticks a line (or reopens one ticked today), its date opens a menu of
     dates, and ＋ Add writes a new one."""
@@ -1160,7 +1160,7 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
         opener = ('<a class="act" href="%s" title="Open %s/Todo.md">Open Todo.md</a>' % (E(link(z["file"])), E(z["zone"]))
                   if link and z["file"] else "")
-        summ = ('<b>%d</b> open · <span class="%s"><b>%d</b> overdue or due a chase</span> · <b>%d</b> without a date'
+        summ = ('<b>%d</b> open · <span class="%s"><b>%d</b> late</span> · <b>%d</b> without a date'
                 % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
         panes += '<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s%s</span></div>%s</div>' % (
             E(z["zone"]), summ, add, opener, body)
@@ -1169,7 +1169,7 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                     for z in lists)
     bar = ('<div class="tbar"><div class="seg zseg" role="group" aria-label="Zone"%s>%s</div>'
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
-           '<button type="button" data-tf="late">Overdue</button><button type="button" data-tf="nodate">No date</button></div>'
+           '<button type="button" data-tf="late">Late</button><button type="button" data-tf="nodate">No date</button></div>'
            '<div class="seg sseg" role="group" aria-label="Sort"><button type="button" data-ts="alpha" title="By thread, then by the action">A–Z</button>'
            '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div></div>'
            % (" hidden" if len(lists) < 2 else "", zones))      # a box and a date chip explain themselves (#235)
@@ -1964,7 +1964,7 @@ TODO_CSS = r"""
 button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:var(--ink)}
 .tdate.none{color:var(--muted);border-style:dashed;background:none}.tdate:empty{visibility:hidden}
 .ro .tdate.none:not(:empty){border-style:solid}.nohost button.tdate{pointer-events:none}.nohost button.tdate.none{visibility:hidden}
-.tdate.overdue{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
+.tdate.late{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
 .tdate.today{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .trow.done .tdate{visibility:hidden}
 .tempty{color:var(--muted);font-size:12.5px;margin:2px 8px 10px}
@@ -2051,7 +2051,7 @@ var b=r.querySelector('.tdate'),w=r.dataset.w==='1';r.dataset.d=v==='-'?'':v;r.c
 if(v==='-'){b.textContent=w?'＋ chase date':'＋ date';b.classList.add('none');r.classList.add('undated');return}
 var d=new Date(v+'T12:00:00'),n=Math.round((d-at(0))/864e5);
 b.textContent=(w?'Chase ':'Due ')+(n===0?'today':n===1?'tomorrow':lab(d));
-if(n<0||(w&&n===0)){b.classList.add('overdue');r.classList.add('late')}else if(n===0)b.classList.add('today');
+if(n<0||(w&&n===0)){b.classList.add('late');r.classList.add('late')}else if(n===0)b.classList.add('today');
 if(r.dataset.sec==='Inbox'&&r.dataset.f==='Todo.md'){var m=r.querySelector('.tmeta');if(!m){m=document.createElement('div');m.className='tmeta';r.querySelector('.tmain').appendChild(m)}
 var s=m.querySelector('.moved');if(!s){s=document.createElement('span');s.className='moved';m.appendChild(s)}s.textContent='→ moves to '+(w?'Waiting on':n<=7?'This week':'Soon')}}
 /* a line being added shows at once, greyed, in the section it is going to; the rebuild replaces it with the real row */
@@ -2499,7 +2499,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     From a note it keeps its title, kind, place, party tags and, for a thread,
     how long since it moved; from its body only the targets of its links.
     Instructions (AGENTS.md) are not notes, and each zone's Todo.md has the
-    Open actions card, so neither is drawn. A parked thread, with the notes in
+    Todo card, so neither is drawn. A parked thread, with the notes in
     its folder, and a project with no live thread left, with everything in it,
     are marked `s` and drawn only when the page is asked to show them.
 
@@ -2509,7 +2509,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     leave notes out, as Obsidian's graph does. Elsewhere each kind keeps its
     colour. Every note in a project carries the folder an app opens it in
     (`f`), its thread's or else its project's, where an app can open one. A
-    thread whose own next action is overdue or due a chase, named by zone,
+    thread whose own next action is late, named by zone,
     project and thread in `urgent`, is marked `lt` and draws the one ring the
     graph has: age alone never marks a note. Every note carries its path from
     its place's folder, without `.md` (`m`), and `pr` maps each place to that
@@ -2594,7 +2594,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path), "m": path.relative_to(root).as_posix()[:-3]})
         if moving and urgent and (place, project, folder_thread) in urgent:
-            nodes[-1]["lt"] = 1                  # its next action is overdue or due a chase
+            nodes[-1]["lt"] = 1                  # its next action is late
         if wiki and nodes[-1]["n"] != title:
             nodes[-1]["N"] = title                   # the whole title, for the card and the tooltip
         vault = vault_at[root]
@@ -3224,7 +3224,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
     the note was updated, whether it is parked (`held` when only because its
     project is), the name to say, its note's link; whether the note has a
     Resume here block (`r`), how old that block's date is (`rd`), and whether
-    its own next action is overdue or due a chase (`lt`), which is the one
+    its own next action is late (`lt`), which is the one
     thing that marks a thread; its age never does. Where an app to open it in is installed (`cmux`, for any
     of LAUNCHERS), also the thread's folder. With the cmux extra (`desk`, the
     sessions open), the session's state, and with `drive` (the extra and
@@ -3233,7 +3233,7 @@ def thread_card(r: dict, names: Dict[Tuple[str, str, str], str], link: "Links", 
             "s": 1 if r["status"] == "parked" else 0, "w": names[(r["zone"], r["project"], r["thread"])], "h": 0,
             "u": link(r["note"]), "r": 1 if r.get("resume") else 0,
             "rd": (today - r["resumed"]).days if today and r.get("resumed") else None}
-    if r.get("urgent"):
+    if r.get("late"):
         card["lt"] = 1
     if cmux:
         card["f"] = str(r["note"].parent)
@@ -4042,7 +4042,7 @@ def cost_chart(L: dict) -> str:
 
 # ------------------------------------------------- what you were doing, what you owe
 # Overview opens on the Threads card (#143): each live thread by name or most
-# recently touched first. Open actions and the inboxes sit beside it, and the
+# recently touched first. Todo and the inboxes sit beside it, and the
 # graph keeps every mode it has behind Explore at the foot of the same tab.
 #
 # A row is the thread's name, its age bar, and at most two chips (#179):
@@ -4347,7 +4347,7 @@ def due_said(day: dt.date, today: dt.date) -> str:
 
 def owed_said(owed: List[dict], today: dt.date) -> str:
     """What a piece of work owes other people, from its Todo.md lines: "2 owed,
-    1 due Thursday", "1 owed, due Friday", "3 owed, 1 overdue". Each unticked
+    1 due Thursday", "1 owed, due Friday", "3 owed, 1 late". Each unticked
     line is one owed; a 📅 date makes it due."""
     if not owed:
         return ""
@@ -4355,7 +4355,7 @@ def owed_said(owed: List[dict], today: dt.date) -> str:
     due = sorted(a["when"] for a in owed if a["when"] and a["when"] >= today)
     said = "%d owed" % len(owed)
     if late:
-        return said + (", overdue" if len(owed) == 1 else ", %d overdue" % len(late))
+        return said + (", late" if len(owed) == 1 else ", %d late" % len(late))
     if due:
         first = [d for d in due if d == due[0]]
         return said + (", due %s" % due_said(due[0], today) if len(owed) == 1
@@ -6678,16 +6678,16 @@ u.appendChild(h);u.appendChild(s);place(box,u,tail);R.chev(b);R.bind(h);return u
 function recountUnit(u){var h=headOf(u),s=u.querySelector(':scope>.subthreads');if(!h||!s)return;var rs=s.querySelectorAll(':scope>.thread'),n=rs.length;if(!n){u.remove();return}
 var bare=inFold(u)?0:[].filter.call(rs,function(r){var c=cardOf(r);return c&&c.r===0}).length,t=h.querySelector('.subn'),b=h.querySelector('.pchev');
 var urg=inFold(u)?0:[].filter.call(rs,function(r){var c=cardOf(r);return c&&c.lt}).length;
-if(t)t.textContent=n+' thread'+(n===1?'':'s')+(urg?' · '+urg+' needing a chase':'')+(bare?' · '+bare+' without a resume block':'');
+if(t)t.textContent=n+' thread'+(n===1?'':'s')+(urg?' · '+urg+' late':'')+(bare?' · '+bare+' without a resume block':'');
 if(b)b.title='Show its '+n+' thread'+(n===1?'':'s')}
-/* a zone's line as the build writes it: live, those needing a chase (a row the
-   build marked not ok, which is its next action's doing and never its age),
-   and the done it counted */
+/* a zone's line as the build writes it: live, those late (a row whose todo
+   chip is red, which is its next action's doing and never its age), and the
+   done it counted */
 function count(z,f,sel){return z.querySelectorAll(sel).length-(f?f.querySelectorAll(sel).length:0)}
 function recount(){var live=0,held=0;document.querySelectorAll('.tview details.zone').forEach(function(z){var f=fold(z,false),
 p=f?f.querySelectorAll('.thread:not(.proj)').length:0,l=count(z,f,'.thread:not(.proj)'),meta=z.querySelector(':scope>summary .meta');
-live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj)[data-ok="0"]'),d=/(\d+) done/.exec(meta.textContent);
-meta.textContent=l+' live'+(a?' · '+a+' needing a chase':'')+(d?' · '+d[1]+' done':'')}
+live+=l;held+=p;if(meta){var a=count(z,f,'.thread:not(.proj) .tchip.todo.late'),d=/(\d+) done/.exec(meta.textContent);
+meta.textContent=l+' live'+(a?' · '+a+' late':'')+(d?' · '+d[1]+' done':'')}
 if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
 var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
 if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
@@ -7032,7 +7032,7 @@ function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--
 /* a note in a vault with colour groups of its own takes its group's colour, or grey; elsewhere its kind's */
 var OTHERK=G.colors.indexOf(G.other);
 function fill(n){return n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:n.g===-1?G.other:G.colors[n.k]||C['--muted']}
-/* a ring for a thread whose own next action is overdue or due a chase (lt), never for age alone */
+/* a ring for a thread whose own next action is late (lt), never for age alone */
 function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
 var f=sel||hover,near={};if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
@@ -7275,7 +7275,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # reads this, and none of them reads its age.
     thread_actions(T, lists, C, ws)
     urgent = {(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"])
-              for z in T.values() for r in z["rows"] if r.get("urgent")}
+              for z in T.values() for r in z["rows"] if r.get("late")}      # Explore's ring: a late next action (#233)
     # The simple home (#175), where Settings › Home chose it: the pieces of
     # work, the questions waiting on the user, what Continue kept, and
     # whether Claude's desktop app can open work on this Mac.
@@ -7305,7 +7305,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                       '<span class="dot %s"></span><span class="sh-dw">%s</span></button><button class="sh-morebtn" type="button" data-more="overview" '
                       'title="Threads, Todo, Status and the Guide">More</button>'
                       % ((E("; ".join(t for _, t, _ in attn)) if attn else "Nothing failing, waiting or broken"), worst,
-                         "All well" if not attn else "%d thing%s to look at" % (len(attn), "" if len(attn) == 1 else "s")))
+                         "All clear" if not attn else "%d %s attention" % (len(attn), "thing needs" if len(attn) == 1 else "things need")))
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
@@ -7321,10 +7321,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # Each tile leads to the card that explains it, in whichever tab that card sits.
     tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging), "threads")]
     if TD:
-        tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
+        tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
-    tiles += [("Waiting to be filed", "%d" % waiting, "", "inboxes"),
-              ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
+    tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
+              ("Checks", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
                if C and not C.get("failed") else "—", "" if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
@@ -7466,13 +7466,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                     E("%s since its newest thread moved, toward sixty days" % ("%d days" % newest if newest is not None else "No date")),
                     max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
-            urg = 0 if parked else sum(1 for r in items if r.get("urgent"))
+            late = 0 if parked else sum(1 for r in items if r.get("late"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
                     'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
                     % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
-                       n, "" if n == 1 else "s", " · %d needing a chase" % urg if urg else "",
+                       n, "" if n == 1 else "s", " · %d late" % late if late else "",
                        " · %d without a resume block" % bare if bare else "", bar, E(age_said(newest, "its newest thread")),
                        "%dd" % newest if newest is not None else "—", EV.cells(total) if EV else ""))
             out.append('<div class="tunit" data-a="%d"%s>%s<div class="subthreads tsort" id="%s" hidden>%s</div></div>'
@@ -7481,12 +7481,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
 
     cols = ""
     for z, data in T.items():
-        live_units, cnt = units(z, data["rows"])
+        live_units, _ = units(z, data["rows"])
         held_units, _ = units(z, data["parked"], parked=True) if data["parked"] else ([], None)
         slug = re.sub(r"\W+", "-", z.lower())
         parked_block = ('<details class="parked tsort" id="parked-%s"><summary>%sParked<span class="n">%d</span></summary>%s</details>'
                         % (slug, CHEV, len(data["parked"]), "".join(held_units))) if data["parked"] else ""
-        meta = "%d live" % len(data["rows"]) + (" · %d needing a chase" % cnt[True] if cnt[True] else "") + \
+        late = sum(1 for r in data["rows"] if r.get("late"))      # a red todo; a check has its own chip
+        meta = "%d live" % len(data["rows"]) + (" · %d late" % late if late else "") + \
             (" · %d done" % data["done"] if data["done"] else "")
         cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
                  % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
@@ -7534,7 +7535,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
-    todo_card = card("todo", "Open actions", "", tb) if TD else ""
+    todo_card = card("todo", "Todo", "", tb) if TD else ""
     ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
         0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
         "%d waiting" % n if n else "empty") for name, f, n in IB)
@@ -7624,8 +7625,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label[:1].upper() + label[1:]))) for i, label in GR["kinds"])
         legend += "".join('<span data-g="%d"><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
                           for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
-        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action overdue '
-                  'or due a chase</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
+        legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action late'
+                  '</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
@@ -7654,7 +7655,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
     # The Overview opens on the Threads card: each live thread with at most
     # its `todo` and `check` chips (#179), listed by name or most recently
-    # touched first (#143). Open actions on the left, the inboxes on the right,
+    # touched first (#143). Todo on the left, the inboxes on the right,
     # and the graph behind Explore at the foot. A workspace with no project
     # yet has no work to show, so Start here leads instead. A browser that
     # still holds what it kept for A thought, the card #143 took away, shows it
@@ -7679,7 +7680,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<button type="button" role="tab" data-tab="status">Status%s</button>'
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
-               % (sum(z["open"] for z in lists), '<span class="dot critical" title="overdue"></span>' if late else "") if todo_tab else "",
+               % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))

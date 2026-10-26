@@ -497,6 +497,9 @@ class TestTabs(StatusCase):
         self.assertIn("header.bar{position:sticky;top:0", status.BAR_CSS)
         for t in ("auto", "light", "dark"):                                  # icons, each named
             self.assertRegex(bar, r'<button type="button" data-t="%s" title="[^"]+" aria-label="Theme: [^"]+"><svg' % t)
+        self.assertIn('id="open-settings" aria-label="Settings" title="Settings">', bar)   # a name, not a description (#236)
+        self.assertRegex(bar, r'<p title="Built \w{3} \d{2} \w{3}, \d{2}:\d{2}">Built <span id="age">just now</span></p>')
+        self.assertEqual(["Built "], re.findall(r">(Built[^<]*)<", bar))            # one timestamp shown, the date and time on hover
         dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
         self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', dialog)   # hidden cards are listed in Settings
         self.assertIn("'<p class=\"hint\">Hidden cards</p>", status.LAYOUT_JS)
@@ -1536,7 +1539,7 @@ class TestCatchUp(StatusCase):
     def test_a_button_beside_settings_opens_it(self):
         html = self.page()
         bar = html[html.index('<div class="bacts">'):html.index('id="open-settings"')]
-        self.assertIn('id="open-catchup" aria-label="Catch up"', bar)
+        self.assertIn('id="open-catchup" aria-label="Catch up" title="Catch up">', bar)
         self.assertIn("window.GarrickCatchUp={open:open,phrase:phrase}", status.CATCH_JS)
         self.assertIn("var b=document.getElementById('open-catchup');if(b)b.onclick=open;", status.CATCH_JS)
 
@@ -1557,12 +1560,21 @@ class TestCatchUp(StatusCase):
         self.assertIn('data-cu="Acme Review, Pricing" data-cup="Acme Review"> Pricing', sec)   # "Project, Thread"
         self.assertIn('<ul class="cuz" data-zone="Work">', sec)
 
+    def test_only_choices_and_the_request(self):
+        sec = self.dialog()                                                   # no sentence but the request it sends (#236)
+        self.assertEqual(["Asks: "], re.findall(r'<p[^>]*>([^<]*)', sec))
+        for gone in ("cuwhat", "cuhint", "while you were away", "none ticked"):
+            self.assertNotIn(gone, sec)
+            self.assertNotIn(gone, status.CATCH_CSS)
+
     def test_the_request_goes_to_the_default_assistant_or_is_copied(self):
         js = status.CATCH_JS
         self.assertIn("return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}", js)
         self.assertIn("var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m)", js)
         self.assertIn("GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})", js)
-        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                          # as the app's assistant()
+        self.assertIn("a=host&&window.GarrickAssistant&&GarrickAssistant();", js)         # the one rule, in JS
+        self.assertNotIn("function assistant(", js)
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", status.JS)                 # as the app's assistant()
 
     def test_settings_has_no_catch_up(self):
         html = self.page()

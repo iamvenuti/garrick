@@ -2,7 +2,7 @@
 """briefing.py: what changed in a zone's threads over a period, gathered for
 "catch me up". It lists and orders; it never decides what matters.
 
-    python3 System/tools/briefing.py --zone Work                  the period Settings › Catch up keeps
+    python3 System/tools/briefing.py --zone Work                  the period the settings keep, the last day
     python3 System/tools/briefing.py --zone Work --since 2026-10-19
     python3 System/tools/briefing.py --zone Work --days 3
     python3 System/tools/briefing.py --zone Work --period week     since Monday
@@ -53,7 +53,7 @@ only when it changed. The live threads in scope that did not change are
 named under "quiet", and the parked ones left out are counted, never named.
 
 Importable: `gather()`, `period()`, `settings()`, `clean()`, and PERIODS
-for Settings › Catch up on the status page. Exit codes: 0; 2 for a usage
+for the status page's Catch up dialog. Exit codes: 0; 2 for a usage
 error, no workspace or no such zone. Standard library only, Python 3.9 or
 later.
 """
@@ -79,7 +79,7 @@ if str(HERE) not in sys.path:
 import garrick_lib as gl  # noqa: E402
 
 KEY = "catch-up"
-# Each period a catch-up can cover by default: its key, how Settings names it,
+# Each period a catch-up can cover by default: its key, how the dialog names it,
 # and the words a request carries for it, which the skill hears back.
 PERIODS = (
     ("day", "The last day", "since yesterday"),
@@ -110,8 +110,8 @@ FIELD = "\x1f"
 # ---- settings -------------------------------------------------------------------
 
 def clean(given) -> dict:
-    """Settings › Catch up as the page sends it, checked. Raises ValueError
-    with the sentence the page shows."""
+    """The "catch-up" setting, checked. Raises ValueError with the sentence
+    to show. Settings no longer offers it (#226): it is set by hand."""
     if not isinstance(given, dict):
         raise ValueError("Catch up: not a set of choices")
     unknown = sorted(set(given) - set(DEFAULTS))

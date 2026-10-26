@@ -72,23 +72,11 @@ zone's repository, as the skills would:
                 workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
                 when the cmux extra and cmux are there. Settings ›
-                Notifications: {"notifications": {...}}, checked and kept by
-                System/tools/notifications.py, and with "test": "telegram"
-                (or "mac", "command") a test sent on that channel once the
-                rest is saved; the reply says whether it went. Telegram's
-                Set up…: "token", the bot's token, kept in the keychain
-                through notifications.py's store_token(), which hands it to
-                `security` on its standard input; and "find-chat": true,
-                the chat that last wrote to the bot found, kept, Telegram
-                switched on and a test sent (set_up_chat()). The token is
-                the one field no reply, log line or record holds: the audit
-                log names only LOGGED, settings keeps no durable record, and
-                a failure is said in words of this file's own.
+                Notifications: {"notifications": {"tell": {...}, "after": 2,
+                "quiet": {...}}}, which notices this Mac shows, checked and
+                kept by System/tools/notifications.py.
                 Settings › While you wait: {"while-you-wait": {...}},
-                checked by System/tools/next_up.py. Settings › Catch up:
-                {"catch-up": {"period": "day"}}, the period a
-                catch-up covers when none is said, checked by
-                System/tools/briefing.py. Settings › Home:
+                checked by System/tools/next_up.py. Settings › Home:
                 {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
@@ -1399,7 +1387,7 @@ def notifications_lib(ws: Path):
                 spec.loader.exec_module(mod)
             except Exception:
                 continue
-            if callable(getattr(mod, "clean", None)) and callable(getattr(mod, "test", None)):
+            if callable(getattr(mod, "clean", None)):
                 found = mod
                 break
         _NOTIFY[key] = found
@@ -1430,32 +1418,6 @@ def next_up_lib(ws: Path):
                 break
         _NEXT_UP[key] = found
     return _NEXT_UP[key]
-
-
-_BRIEFING = {}
-
-
-def briefing_lib(ws: Path):
-    """System/tools/briefing.py, which checks Settings › Catch up (#27):
-    found as next_up_lib() finds its module. None when there is none."""
-    key = Path(ws)
-    if key not in _BRIEFING:
-        found = None
-        for src in (key / "System" / "tools" / "briefing.py", Path(__file__).resolve().parent.parent / "tools" / "briefing.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "briefing.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_briefing", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "clean", None)):
-                found = mod
-                break
-        _BRIEFING[key] = found
-    return _BRIEFING[key]
 
 
 # Settings › Memory (#108). System/tools/fade.py, the workspace's own, owns
@@ -1607,27 +1569,13 @@ def save_settings(ws: Path, req: dict) -> str:
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175)."""
-    notifying = {"notifications", "test", "token", "find-chat"} & set(req)
-    if not ({"launchers", "zones", "while-you-wait", "home", "memory", "catch-up"} | notifying) & set(req):
+    if not {"launchers", "zones", "notifications", "while-you-wait", "home", "memory"} & set(req):
         raise Refused("nothing to save")
     new = {}
     if "home" in req:
         if req["home"] not in HOMES:
             raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
         new["home"] = req["home"]
-    notify = notifications_lib(ws) if notifying else None
-    if notifying and notify is None:
-        raise Refused("cannot find System/tools/notifications.py; update Garrick")
-    test = req.get("test")
-    if test is not None and test not in ("mac", "telegram", "command"):
-        raise Refused("no channel to test called %r" % (test,))
-    tok, find = req.get("token"), req.get("find-chat")
-    if tok is not None and not isinstance(tok, str):
-        raise Refused("not a bot token")
-    if find is not None and find is not True:
-        raise Refused("find-chat is true or left out")
-    if find and not callable(getattr(notify, "set_up_chat", None)):
-        raise Refused("this workspace's System/tools/notifications.py cannot find a chat yet; update Garrick")
     if "launchers" in req:
         on, default = req.get("launchers"), req.get("default", "note")
         if not isinstance(on, list) or not all(isinstance(k, str) for k in on) or len(set(on)) != len(on):
@@ -1645,9 +1593,11 @@ def save_settings(ws: Path, req: dict) -> str:
     if "zones" in req:
         new["zones"] = zone_styles(ws, req["zones"])
     if "notifications" in req:
-        zones = [z.name for z in (ws / "Zones").iterdir() if z.is_dir()] if (ws / "Zones").is_dir() else []
+        notify = notifications_lib(ws)
+        if notify is None or not hasattr(notify, "TELL"):
+            raise Refused("cannot find System/tools/notifications.py, or it is older than this page; update Garrick")
         try:
-            new["notifications"] = notify.clean(req["notifications"], zones)
+            new["notifications"] = notify.clean(req["notifications"])
         except ValueError as e:
             raise Refused(str(e))
     if "while-you-wait" in req:
@@ -1656,14 +1606,6 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("cannot find System/tools/next_up.py; update Garrick")
         try:
             new[wait.KEY] = wait.clean(req["while-you-wait"])
-        except ValueError as e:
-            raise Refused(str(e))
-    if "catch-up" in req:
-        catch = briefing_lib(ws)
-        if catch is None:
-            raise Refused("cannot find System/tools/briefing.py; update Garrick")
-        try:
-            new[catch.KEY] = catch.clean(req["catch-up"])
         except ValueError as e:
             raise Refused(str(e))
     if "memory" in req:
@@ -1679,46 +1621,14 @@ def save_settings(ws: Path, req: dict) -> str:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "home" in new and set(new) == {"home"} and not notifying:
+    if "home" in new and set(new) == {"home"}:
         return "Garrick now opens on %s" % ("the simple home" if new["home"] == "simple" else "the full page")
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
         if changed:
             recolour(ws, changed)
-    if tok is not None:
-        keep_token(notify, ws, tok, bool(new))
-        if not find and test is None:
-            return "%sToken kept in this Mac's keychain. Now send your bot any message, then press Find my chat" % (
-                "Settings saved. " if new else "")
-    if find:
-        ok, said = notify.set_up_chat(ws, desk=(CMUX_EXTRA / "cmuxlib.py").is_file())
-        if not ok:
-            raise Refused(said.rstrip("."))
-        return said.rstrip(".")
-    if test is not None:
-        name = {"mac": "this Mac", "telegram": "Telegram", "command": "your command"}[test]
-        problem = notify.test(ws, test)
-        if problem:
-            raise Refused("%sthe test did not go: %s %s" % ("Settings saved, but " if new else "", name[:1].upper() + name[1:], problem))
-        return "%sA test went to %s" % ("Settings saved. " if new else "", name)
     return "Settings saved"
-
-
-def keep_token(notify, ws: Path, tok: str, saved: bool) -> None:
-    """The bot's token into the keychain, or Refused in words that cannot
-    carry it: notifications.py's own for a value that is not a token or a
-    keychain that said no, and only the kind of anything else, whose own
-    message is never read out, since nobody here wrote it."""
-    first = "Settings saved, but " if saved else ""
-    try:
-        notify.store_token(tok, ws)
-    except ValueError as e:                 # notifications.Invalid: its words never quote the value
-        raise Refused(first + str(e).strip())
-    except OSError as e:
-        raise Refused("%sthe token was not kept: %s" % (first, notify.scrub(str(e), tok.strip())))
-    except Exception as e:
-        raise Refused("%sthe token was not kept: %s" % (first, type(e).__name__))
 
 
 def zone_styles(ws: Path, given) -> dict:

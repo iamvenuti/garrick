@@ -227,8 +227,11 @@ class TestThreadsView(EffortCase):
         self.assertEqual(int(unit.group(1)), 5 * 60)                         # its thread and its own work
         self.assertAlmostEqual(float(unit.group(2)), 5 * COST, places=3)
         self.assertIn(">5 min<", card)
-        self.assertIn("Outside the zones 2 min", card)                       # what no row took, said once
-        self.assertIn("Last 30 days: 9 min active", card)
+        foot = re.search(r'<p class="hint me efoot" title="([^"]*)">(.*?)</p>', card)
+        self.assertRegex(foot.group(2), r"^<b>Last 30 days: 9 min active · \$[\d.]+ at list price · 4 sessions</b>$")   # one line (#228)
+        tip = htmllib.unescape(foot.group(1))
+        self.assertIn("Outside the zones 2 min", tip)                        # what no row took, said once, on hover
+        self.assertIn("Codex is not counted yet", tip)                       # and how it is counted
         self.assertNotIn(SECRET.split()[1], html)
 
     def test_a_parked_thread_keeps_its_figures_in_the_parked_fold(self):

@@ -1291,8 +1291,9 @@ class Effort:
         return '<span class="meta me">%s · %s</span>' % (E(say_time(a["seconds"])), E(say_cost(a["cost"])))
 
     def foot(self) -> str:
-        """What no row showed, by kind, then the whole: the line that makes
-        the card's figures add up."""
+        """The whole, in one line under the columns; its title holds what no
+        row showed, by kind, so the card's figures add up, and how they are
+        counted (#228)."""
         kinds: Dict[str, dict] = {}
         for k, a in self.agg.items():
             if k in self.used:
@@ -1303,11 +1304,12 @@ class Effort:
             t["cost"] += a["cost"]
         parts = ["%s %s · %s" % (kind[:1].upper() + kind[1:], say_time(t["seconds"]), say_cost(t["cost"]))
                  for kind, t in sorted(kinds.items(), key=lambda kv: -kv[1]["seconds"])]
-        return ('<p class="hint me efoot"><b>Last %d days: %s active · %s at list price · %d session%s.</b>%s Claude Code sessions, read '
-                'from their transcripts; Codex is not counted yet. Active time counts the gaps between messages up to five minutes. '
-                'A project&#39;s figure includes its work in no thread. Scheduled jobs are in Assistant calls.</p>'
-                % (self.DAYS, E(say_time(self.total["seconds"])), E(say_cost(self.total["cost"])), self.total["sessions"],
-                   "" if self.total["sessions"] == 1 else "s", (" " + E(" · ".join(parts)) + ".") if parts else ""))
+        tip = ("%sClaude Code sessions, read from their transcripts; Codex is not counted yet. Active time counts the gaps "
+               "between messages up to five minutes. A project's figure includes its work in no thread. Scheduled jobs are in "
+               "Assistant calls." % ((" · ".join(parts) + ". ") if parts else ""))
+        return ('<p class="hint me efoot" title="%s"><b>Last %d days: %s active · %s at list price · %d session%s</b></p>'
+                % (E(tip), self.DAYS, E(say_time(self.total["seconds"])), E(say_cost(self.total["cost"])), self.total["sessions"],
+                   "" if self.total["sessions"] == 1 else "s"))
 
 
 def torder_switch() -> str:
@@ -1342,7 +1344,7 @@ TVIEW_CSS = r"""
 .tview:not([data-tm="updated"]) .thread{grid-template-columns:minmax(0,1fr) 80px 60px}
 .tview .num.mt,.tview .num.mc{text-align:right;font-variant-numeric:tabular-nums}
 .ebar{height:6px;border-radius:3px;background:var(--grid);position:relative}.ebar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent);min-width:2px}
-.efoot{margin-top:10px}.efoot b{font-weight:600;color:var(--ink2)}
+.efoot{margin-top:10px;cursor:help}.efoot b{font-weight:600;color:var(--ink2)}
 .chip.tchip{font:inherit;font-size:11px;line-height:1.45;background:none;cursor:pointer}.chip.tchip:hover{border-color:var(--base)}
 .chip.todo.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}.chip.tchip[aria-expanded="true"]{background:var(--wash)}
 .tpop{grid-column:1/-1;margin:2px 0 4px 16px;padding:4px 6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;font-size:13px}
@@ -1595,7 +1597,7 @@ FIND_CSS = r"""
 .tfind kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:inherit;font-size:11px;line-height:16px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;pointer-events:none}
 .tfind input:focus~kbd,.tfind input:not(:placeholder-shown)~kbd{display:none}
 @media (hover:none){.tfind kbd{display:none}}
-.tview.finding .zones,.tview.finding .tmodes,.tview.finding .legend,.tview.finding .efoot,.tview.finding .gsum{display:none!important}
+.tview.finding .zones,.tview.finding .tmodes,.tview.finding .efoot,.tview.finding .gsum{display:none!important}
 .tfound-n{margin:0 0 6px}
 .sres{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--grid);border-radius:6px;font-size:13px;transition:background .1s}
 .sres:hover,.sres.on{background:var(--wash)}.sres .t{min-width:0}
@@ -4265,6 +4267,15 @@ def late_said(a: dict, today: dt.date) -> str:
     return ("to chase since %s" if a["waiting"] else "was due %s") % day_said(a["when"], today)
 
 
+def age_said(days, what: str) -> str:
+    """The title of a Threads row's day figure, which the card's legend used
+    to explain (#228): how long since the note moved, and that it marks
+    nothing."""
+    if days is None:
+        return "No date on %s" % what
+    return "%d day%s since %s moved: a figure, not a fault" % (days, "" if days == 1 else "s", what)
+
+
 def row_id(r: dict) -> str:
     """A row's own name for the lists its chips open, the same on every build,
     so a list left open stays open across the rebuild a tick brings."""
@@ -5812,7 +5823,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .strip{display:flex;gap:2px}.strip i{width:11px;height:18px;border-radius:3px;background:var(--none);flex:none}
 .strip i.good{background:var(--good)}.strip i.warning{background:var(--warning)}.strip i.critical{background:var(--critical)}.strip i:hover,.strip i:focus{outline:2px solid var(--ink)}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);white-space:nowrap}.status svg{width:14px;height:14px;flex:none}
-.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;color:var(--muted);font-size:12px}.legend>span{display:inline-flex;align-items:center;gap:6px}.legend>span>i{flex:none}.legend .lt{min-width:0}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;color:var(--muted);font-size:12px}.legend>span{display:inline-flex;align-items:center;gap:6px}.legend>span>i{flex:none}
 .legend i{width:10px;height:10px;border-radius:2px;background:var(--none)}.legend i.good{background:var(--good)}.legend i.warning{background:var(--warning)}.legend i.critical{background:var(--critical)}
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
@@ -7795,13 +7806,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
                 max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
         return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
-                '<span class="num muted mu" style="text-align:right">%s</span>%s%s</div>'
+                '<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s%s</div>'
                 % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
                    E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
                    ('<span class="tchips">%s</span>' % chips if chips else "") + ("<small>%s</small>" % under if under else ""),
-                   bar, "%dd" % days if days is not None else "—", EV.cells(figures) if EV else "", pops)), k
+                   bar, E(age_said(days, "its note")), "%dd" % days if days is not None else "—",
+                   EV.cells(figures) if EV else "", pops)), k
 
     def project_card(zone, project, items, days):
         hub = items[0]["hub"]
@@ -7868,11 +7880,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             urg = 0 if parked else sum(1 for r in items if r.get("urgent"))
             head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
                     'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
-                    '%s<span class="num muted mu" style="text-align:right">%s</span>%s</div>'
+                    '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
                     % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d needing a chase" % urg if urg else "",
-                       " · %d without a resume block" % bare if bare else "", bar,
+                       " · %d without a resume block" % bare if bare else "", bar, E(age_said(newest, "its newest thread")),
                        "%dd" % newest if newest is not None else "—", EV.cells(total) if EV else ""))
             out.append('<div class="tunit" data-a="%d"%s>%s<div class="subthreads tsort" id="%s" hidden>%s</div></div>'
                        % (i, EV.attrs(total) if EV else "", head, sid, "".join(subs)))
@@ -7890,19 +7902,13 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         cols += ('<details class="zone tsort" id="zone-%s" data-zone="%s" open><summary>%s<h3%s>%s</h3><span class="meta mu">%s</span>%s</summary>%s%s</details>'
                  % (slug, E(z), CHEV, zone_attr(z, ZS), zone_name(z, ZS), E(meta), EV.zone_meta(z) if EV else "",
                     "".join(live_units) or '<p class="muted">No live threads.</p>', parked_block))
-    # Each entry is its swatch and one run of text: the text, `code` and all, in a span of its own, so the
-    # flex row lays out two items and the sentence wraps as a sentence, never as a column per word.
-    legend = ('<div class="legend mu"><span><i class="critical"></i><span class="lt">A red <code>todo</code>: an open action is '
-              'overdue, or a <code>#waiting</code> chase date has come. <code>check</code>: an error the page can explain and '
-              'fix</span></span><span><i style="background:var(--base)"></i><span class="lt">Days since the note moved, toward '
-              'sixty: a figure, not a fault</span></span></div>')
     # The search box leads the row, New project and New thread follow it, and
     # what it finds takes the columns' place while a query is in it (#140).
     new_bar = ('<div class="mg-new">%s<button class="act" type="button" data-manage="new-project">New project</button>'
                '<button class="act" type="button" data-manage="new-thread">New thread</button></div>' % FIND_BOX)
     threads_card = card("threads", "Threads", "",
-                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
-                        % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, legend, EV.foot() if EV else "", live, parked_n))
+                        '<div class="tview" data-tm="updated" data-to="name">%s%s%s%s<div class="zones">%s</div>%s<p class="hint gsum mu">%d live · %d parked · by name · hover one for what to do</p></div>'
+                        % (new_bar, FIND_LIST, torder_switch(), tview_switch() if EV else "", cols, EV.foot() if EV else "", live, parked_n))
 
 
     # ---- checks

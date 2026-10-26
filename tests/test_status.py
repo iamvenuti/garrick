@@ -474,6 +474,18 @@ class TestTabs(StatusCase):
             self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
         self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
 
+    def test_each_tile_is_named_as_the_card_it_opens(self):
+        # #233: Waiting to be filed, Check and Open actions named other things than the cards they open.
+        html = self.page()
+        tiles = dict(re.findall(r'<a class="tile go" href="#([a-z]+)"><div class="lbl">([^<]*)</div>', html))
+        self.assertEqual({"inboxes": "Inboxes", "checks": "Checks", "todolist": "Todo"},
+                         {k: v for k, v in tiles.items() if k != "threads"})
+        for title in ("Inboxes", "Checks", "Todo"):
+            self.assertIn("<h2>%s</h2>" % title, html)                     # the Todo card on the Overview, as the tab and the file
+        self.assertIn('data-tab="todo">Todo<', html)
+        for gone in ("Waiting to be filed", "Open actions", '<div class="lbl">Check</div>'):
+            self.assertNotIn(gone, html)
+
     def test_one_pinned_row_and_no_sidebar(self):
         html = self.page()
         self.assertNotIn("<aside", html)                                      # the tabs move, the cards are in view
@@ -811,8 +823,9 @@ class TestOpensOnTheWork(StatusCase):
         self.assertLess(listed.index("send the floor"), listed.index("book the call"))       # the late one first
         self.assertIn('<span class="lateby">was due Sun 1 Mar</span>', listed)                 # said in words, not by colour alone
         self.assertIn('data-ok="0"', threads)
-        self.assertIn("1 needing a chase", threads)                          # the project's row, and its zone's meta
-        for gone in (">overdue</span>", ">chase due</span>"):
+        self.assertRegex(threads, r'<span class="muted subn">\d+ threads? · 1 late')   # the project's row (#233)
+        self.assertRegex(threads, r'<span class="meta mu">\d+ live · 1 late')          # and its zone's meta
+        for gone in (">overdue</span>", ">chase due</span>", "needing a chase"):
             self.assertNotIn(gone, threads)
 
     def test_the_row_carries_its_urgency_so_a_park_recounts_in_the_same_words(self):
@@ -821,8 +834,10 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         self.assertEqual(1, cards(html)[("Acme Review", "Pricing")]["lt"])          # the card says it, not its age
         self.assertNotIn("lt", cards(html)[("Birch Entry", "Market Sizing")])
-        self.assertIn("' · '+a+' needing a chase'", status.PARK_JS)                 # and PARK_JS recounts in those words
-        self.assertIn("' · '+urg+' needing a chase'", status.PARK_JS)
+        self.assertIn("' · '+a+' late'", status.PARK_JS)                 # and PARK_JS recounts in those words
+        self.assertIn("' · '+urg+' late'", status.PARK_JS)
+        self.assertIn("'.thread:not(.proj) .tchip.todo.late'", status.PARK_JS)    # a red todo, as the build counts
+        self.assertNotIn("needing a chase", status.PARK_JS)
         for word in ("aging", "stale", ".fresh.warning", ".fresh.critical"):
             self.assertNotIn(word, status.PARK_JS, word)
 
@@ -871,10 +886,13 @@ class TestOpensOnTheWork(StatusCase):
     def test_an_error_finding_shows_check_with_what_is_wrong_and_what_fixes_it(self):
         self.fake_check({"check": "threads", "severity": "error",
                          "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "message": "no `### Resume here` block"})
-        pricing = self.row(self.page(), "Pricing")
+        html = self.page()
+        pricing = self.row(html, "Pricing")
         self.assertEqual(["check"], self.chips(pricing))
         self.assertIn('class="chip tchip check late"', pricing)
         self.assertIn('data-ok="0"', pricing[:60])
+        self.assertNotRegex(self.rows(html, "threads"), r" · \d+ late")      # its chip says it; nothing is late (#233)
+        self.assertNotIn("lt", cards(html)[("Acme Review", "Pricing")])
         found = self.pop(pricing, "cp")
         self.assertIn("<b>Pricing.md</b> It has no Resume here block, so nobody can pick it up cold.", found)
         self.assertIn("Wrap it: a wrap writes the block.", found)
@@ -1740,7 +1758,7 @@ class TestPreviewFeatures(StatusCase):
         self.assertNotIn("Old one", card)                                         # ticked
         order = [card.index(t) for t in ("Book the room", "Send the revised terms", "Numbers from Birch", "Check the clause")]
         self.assertEqual(sorted(order), order)                                    # by section, then A-Z by thread
-        self.assertIn('<button class="tdate overdue" type="button" title="Set the date">Due Mon 3 Jan</button>', card)
+        self.assertIn('<button class="tdate late" type="button" title="Set the date">Due Mon 3 Jan</button>', card)
         self.assertIn("Chase", card)
         for group in ("Inbox", "Waiting on", "In thread notes"):
             self.assertIn('<span class="tname">%s</span>' % group, card)
@@ -2193,7 +2211,7 @@ class TestCaptions(StatusCase):
 
     def test_a_healthy_page_has_empty_captions(self):
         metas = self.metas(self.page())
-        for title in ("Open actions", "Checks", "Repositories", "Wikis"):
+        for title in ("Todo", "Checks", "Repositories", "Wikis"):
             self.assertEqual("", metas.get(title, ""), title)
         page = self.page()
         for said in ("unticked items", "check.py --quick", "a ring means", "newest entry in each log",
@@ -2371,7 +2389,8 @@ class TestOpenActions(StatusCase):
             todo.unlink()
         html = self.page()
         self.assertNotIn('id="todo"', html)
-        self.assertNotIn("Open actions", html)                    # no card, no tile, no sidebar line
+        self.assertNotIn("<h2>Todo</h2>", html)                    # no card, no tile, no sidebar line
+        self.assertNotIn('<div class="lbl">Todo</div>', html)
         self.assertIn('class="top" style="--tiles:3"', html)     # the tiles still fill their row
 
 

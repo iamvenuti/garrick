@@ -842,8 +842,8 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
         meta.append("<span>in the thread note</span>")
     if said_late and r["late"] and when is not None:
         meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
-    tick = ('<button class="tick" type="button" aria-label="%s: %s"></button>' % ("Reopen" if r["done"] else "Mark done", E(r["text"][:80]))
-            if actions else "")
+    tick = ('<button class="tick" type="button" title="%s" aria-label="%s: %s"></button>'
+            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(r["text"][:80])) if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
             else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
     return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
@@ -1154,9 +1154,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
         if z["done"]:
             slug = re.sub(r"[^a-z0-9]+", "-", z["zone"].lower()).strip("-")
             body += ('<details class="tgroup donegroup" id="tg-%s-done-today" open><summary>%s<span class="tname">Done today</span>'
-                     '<span class="n">%d</span>%s</summary><div class="trows">%s</div></details>'
-                     % (slug, CHEV, len(z["done"]), '<span class="hint tacts">Tick a box again to reopen it</span>' if actions else "",
-                        "".join(todo_row(r, today, actions) for r in z["done"])))
+                     '<span class="n">%d</span></summary><div class="trows">%s</div></details>'
+                     % (slug, CHEV, len(z["done"]), "".join(todo_row(r, today, actions) for r in z["done"])))
         add = ('<button type="button" class="act primary tadd-open" data-zone="%s" title="Add an action to %s/Todo.md">＋ Add</button>'
                % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
         opener = ('<a class="act" href="%s" title="Open %s/Todo.md">Open Todo.md</a>' % (E(link(z["file"])), E(z["zone"]))
@@ -1172,11 +1171,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
            '<button type="button" data-tf="late">Overdue</button><button type="button" data-tf="nodate">No date</button></div>'
            '<div class="seg sseg" role="group" aria-label="Sort"><button type="button" data-ts="alpha" title="By thread, then by the action">A–Z</button>'
-           '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div>'
-           '<span class="hint">%s</span></div>'
-           % (" hidden" if len(lists) < 2 else "", zones,
-              "Tick to close. Click a date to set it; a dated Inbox line moves to This week, Soon or Waiting on." if actions
-              else "Read from the notes. A preview feature."))
+           '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div></div>'
+           % (" hidden" if len(lists) < 2 else "", zones))      # a box and a date chip explain themselves (#235)
     dialog = add_dialog("".join(add_tree(z["zone"], (projects or {}).get(z["zone"], [])) for z in lists)) if actions else ""
     return '<div id="todolist" class="todotab%s">%s%s%s</div>' % ("" if actions else " ro", bar, panes, dialog)
 
@@ -1804,7 +1800,7 @@ if(sel)[].forEach.call(document.querySelectorAll(sel),function(b){if(!b.disabled
 /* a Todo line's rows by zone and key, its box set to done or not, and its words as the box's label has them, for a card */
 function rows(z,k){return[].filter.call(document.querySelectorAll('.trow'),function(r){return r.dataset.z===z&&r.dataset.k===k})}
 function paint(z,k,d){rows(z,k).forEach(function(r){r.classList.toggle('done',d);var b=r.querySelector('.tick');
-if(b)b.setAttribute('aria-label',(d?'Reopen':'Mark done')+String(b.getAttribute('aria-label')||'').replace(/^[^:]*/,''))})}
+if(b){b.title=d?'Reopen':'Mark done';b.setAttribute('aria-label',b.title+String(b.getAttribute('aria-label')||'').replace(/^[^:]*/,''))}})}
 function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
 return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
@@ -1941,7 +1937,7 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 TODO_CSS = r"""
 .todotab .tbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:14px}
 .todotab .tbar .seg button{flex:none;padding:5px 12px;font-size:12.5px;display:inline-flex;gap:6px;align-items:center;line-height:1.2}
-.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}.todotab .tbar .hint{flex:1;min-width:220px}
+.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}
 .tsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--ink2);font-size:12.5px;margin:0 2px 12px}
 .tsum b{color:var(--ink);font-variant-numeric:tabular-nums}.tsum .bad,.tsum .bad b{color:var(--critical)}
 .tsum-acts{margin-left:auto;display:flex;gap:6px}.tsum .tadd-open{font-size:12px;padding:6px 12px}
@@ -2010,7 +2006,7 @@ return a.dataset.a<b.dataset.a?-1:a.dataset.a>b.dataset.a?1:0});rows.forEach(fun
 todo.querySelectorAll('[data-ts]').forEach(function(b){b.onclick=function(){sort(b.dataset.ts)}});
 sort(st.get('garrick-todo-sort')==='date'?'date':'alpha');zone(st.get('garrick-todo-zone'));
 var f0=st.get('garrick-todo-filter');filt(f0==='late'||f0==='nodate'?f0:'all');
-/* a zone's "Open the list" on the Overview opens the tab on that zone */
+/* a zone's "Open" on the Overview opens the tab on that zone */
 document.addEventListener('click',function(e){var g=e.target.closest&&e.target.closest('[data-tz-go]');if(g)zone(g.dataset.tzGo)},true);
 /* what a button sends: Garrick's request, page_action.py's to carry out */
 function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k};for(var k in more||{})q[k]=more[k];
@@ -2025,7 +2021,7 @@ function twins(r){return[].filter.call(document.querySelectorAll('.trow'),functi
 function onTick(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
 var d=!r.classList.contains('done'),verb=d?'todo-done':'todo-undo';
 if(!(window.GarrickTick&&GarrickTick({verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k}))){if(held(verb,r))return;send(verb,r,null,d?'Ticking it…':'Reopening it…')}
-twins(r).forEach(function(x){var t=x.querySelector('.tick');x.classList.toggle('done',d);if(t)t.setAttribute('aria-label',(d?'Reopen':'Mark done')+t.getAttribute('aria-label').replace(/^[^:]*/,''))})}
+twins(r).forEach(function(x){var t=x.querySelector('.tick');x.classList.toggle('done',d);if(t){t.title=d?'Reopen':'Mark done';t.setAttribute('aria-label',t.title+t.getAttribute('aria-label').replace(/^[^:]*/,''))}})}
 places.forEach(function(el){el.addEventListener('click',onTick)});
 /* the date menu: the date is worked out at the click, so a page built yesterday still means today */
 var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
@@ -7949,10 +7945,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     tb = ""
     for z, t in TD.items():
         scale = max(list(t["counts"].values()) + [1]) * 1.08
-        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open the list</a>' % (E(z), E(z))
+        # one way to the zone's list (#235): the Todo tab, which keeps Open Todo.md for the file
+        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open</a>' % (E(z), E(z))
                   if lists else '<a class="act" href="%s" title="Open %s/Todo.md">Open</a>' % (E(link(t["file"])), E(z)))
-        tb += ('<div class="zt"><b><a%s href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>%s</div>'
-               % (zone_attr(z, ZS), E(link(t["file"])), zone_name(z, ZS), age(t["when"], now), opener))
+        tb += '<div class="zt"><b%s>%s</b>%s</div>' % (zone_attr(z, ZS), zone_name(z, ZS), opener)
         if not t["counts"]:
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():

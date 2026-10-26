@@ -12,6 +12,7 @@ import contextlib
 import datetime as dt
 import html as htmllib
 import io
+import inspect
 import json
 import os
 import plistlib
@@ -56,6 +57,18 @@ class TestTodoTab(StatusCase):
         html = self.page()
         start = html.index('id="todolist"')
         return html, html[start:html.index("</section>", start)]
+
+    def test_the_toolbar_and_done_today_hold_no_how_to(self):
+        _, tab = self.tab()
+        bar = tab[tab.index('<div class="tbar">'):tab.index('<div class="tz"')]
+        self.assertNotIn('class="hint"', bar)                            # the zones, the filters and the sort only (#235)
+        self.assertNotIn("Tick a box again", tab)
+        self.assertRegex(tab, r'<span class="tname">Done today</span><span class="n">1</span></summary>')
+        self.assertIn('<button class="tick" type="button" title="Reopen" aria-label="Reopen: Sent the brief', tab)
+        self.assertIn("b.title=d?'Reopen':'Mark done'", status.WORK_JS)   # and the title follows a tick
+        self.assertIn("t.title=d?'Reopen':'Mark done'", status.TODO_JS)
+        for said in ("Tick to close", "A preview feature"):               # neither form of the hint, in the app or a browser
+            self.assertNotIn(said, inspect.getsource(status.todo_list_card))
 
     def test_grouped_as_the_todo_file_groups_them(self):
         _, tab = self.tab()
@@ -788,7 +801,7 @@ class TestZoneColours(StatusCase):
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
-        self.assertIn('<b><a class="zc zc-teal" href=', html)                              # Open actions
+        self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Open actions
         self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
         self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
 

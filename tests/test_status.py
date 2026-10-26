@@ -2350,7 +2350,10 @@ class TestOpenActions(StatusCase):
         html = self.page()
         start = html.index('id="todo"')
         block = html[start:html.index("</details>", start)]
-        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open the list</a>', block)
+        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open</a>', block)
+        for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
+            self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
+            self.assertNotIn("changed ", zone)
         url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
         self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
         vault = self.page(vault="My Work")

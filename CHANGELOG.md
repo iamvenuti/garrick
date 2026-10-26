@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Two projects on either side of a wall can both keep a `Deliverables/published.md` ledger whose first rows are dated alike. The separator row under the ledger's header holds no words, so the wall check read the shipped header and the first row's date cell as one run of words, and two ledgers whose first rows were both `sent` in the same month, or dated the same day, failed the check and the commit hook as quoting each other. The ledger's header row is now a break, as a Markdown heading already was; only that exact header is one, and wording the rows share is still refused. ([#221](https://github.com/iamvenuti/garrick/issues/221))
+
 ## [0.43.0] - 2026-10-25
 
 Explore's *Preview* is a magnifier on a note's card, and Settings can switch it off.

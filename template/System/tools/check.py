@@ -2766,6 +2766,16 @@ def shingles(tokens: List[str]) -> Iterable[int]:
 
 
 HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
+# The header row of a published ledger's table, as System/templates/published.md
+# ships it and drift.py reads it. Its words are the ledger's structure, as a
+# heading's are, and the separator row under it holds no words, so without a
+# break a run would cross from the header into the first row's date cell and
+# two walled ledgers dated alike would read as quoting each other (#221). Only
+# this exact header is a break: the header of any other table is not.
+LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*\|[ \t]*destination[ \t]*\|"
+                              r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
+# Where no run of words crosses: a Markdown heading, or a ledger's header row.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
 WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
 
 
@@ -2796,11 +2806,13 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     """Every shingle of `text`, links reduced to the words a reader sees (see
     without_link_targets), and no run crossing a Markdown heading: the
     headings of a note are its template's structure ("State of play", "Resume
-    here"), and the words either side of one were not written as one sentence."""
+    here"), and the words either side of one were not written as one sentence.
+    A published ledger's header row is a break in the same way (see
+    LEDGER_HEADER_RE); what its rows hold is read like any other text."""
     text = without_link_targets(text, shared)
     out: set = set()
     last = 0
-    for m in HEADING_RE.finditer(text):
+    for m in STRUCTURE_RE.finditer(text):
         out.update(shingles(words(text[last:m.start()])))
         out.update(shingles(words(m.group(0))))
         last = m.end()

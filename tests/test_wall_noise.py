@@ -1,9 +1,9 @@
 """False alarms the wall check no longer raises: a zone's archive read as a
 project, the code of HTML pages read as wording, a list of links to Knowledge
 pages read as one run of words, files git ignores read as the project's own,
-the published ledger's shipped header read as a quotation, and a party who is
-a person caught through her party's tag. Each test pairs the case that must
-pass with one that must still be found.
+the published ledger's shipped header read as a quotation, alone or running
+into the first row, and a party who is a person caught through her party's
+tag. Each test pairs the case that must pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
 from each other, as in fixtures.py, with Rowan Keeler, Zeta Rossi and Keeler
@@ -257,6 +257,72 @@ class TestPublishedLedger(WallCase):
                          [(r["date"], r["file"], r["authoritative"]) for r in rows])
         self.assertEqual([], bad)
         self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "deliverables"])
+
+
+class TestLedgerHeaderIsNotARun(WallCase):
+    """#221: the separator row under a ledger's header holds no words, so a
+    run of words used to cross from the shipped header into the first row's
+    date cell, and two walled ledgers whose first rows were both `sent` in
+    the same month read as quoting each other. The header is a break now, as
+    a heading is; what the rows hold is still read."""
+
+    def setUp(self):
+        super().setUp()
+        self.shipped = self.root / "System" / "templates" / "published.md"
+        write(self.shipped, TestPublishedLedger.TEMPLATE.read_text(encoding="utf-8"))
+        self.ledgers = {}
+        for project, row in ((self.acme, "| sent 2026-10-03 | `261003 - Pricing memo.md` | `Pricing memo.md` | Dana | here |\n"),
+                             (self.birch, "| sent 2026-10-14 | `261014 - Sizing.md` | `Sizing.md` | Theo | here |\n")):
+            self.ledgers[project] = write(project / "Deliverables" / "published.md",
+                                          self.shipped.read_text(encoding="utf-8") + row)
+
+    def add_row(self, project, row):
+        ledger = self.ledgers[project]
+        ledger.write_text(ledger.read_text(encoding="utf-8") + row, encoding="utf-8")
+
+    def test_first_rows_dated_alike_are_not_a_quotation(self):
+        self.assertEqual([], self.walls())
+
+    def test_so_is_a_thread_first_ledger(self):
+        ledger = self.ledgers.pop(self.birch)
+        moved = self.birch / "Threads" / "Market Sizing" / "Deliverables" / "published.md"
+        write(moved, ledger.read_text(encoding="utf-8"))
+        ledger.unlink()
+        self.assertEqual([], self.walls())
+
+    def test_eight_words_shared_inside_the_rows_are_still_refused(self):
+        """Real wording in a ledger's own cells is still a quotation, however
+        the rows are dated."""
+        cell = "Nordic depot volumes split before the regional board handover"
+        self.add_row(self.acme, "| sent 2026-10-05 | `261005 - Depots.md` | `Depots.md` | %s | here |\n" % cell)
+        self.add_row(self.birch, "| sent 2026-10-16 | `261016 - Regions.md` | `Regions.md` | %s | here |\n" % cell)
+        self.assertEqual({"Zones/Work/Acme Review/Deliverables/published.md",
+                          "Zones/Work/Birch Entry/Deliverables/published.md"},
+                         {f.path for f in self.walls()})
+
+    def test_only_the_ledger_header_is_a_break(self):
+        """Any other table's header still runs into its first row: a table
+        lifted whole from a walled page is caught across that line."""
+        header = "| Item | Region | Volume |\n|---|---|---|\n"
+        row = "| Nordic depot | north | eleven thousand pallets |\n"
+        self.assertTrue(check.runs(header + row) - check.runs(header) - check.runs(row))
+        ledger = "| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+        dated = "| sent 2026-10-03 | `a.md` | `b.md` | Dana | here |\n"
+        self.assertEqual(check.runs(ledger) | check.runs(dated), check.runs(ledger + dated))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_both_ledgers_passes_the_hook(self):
+        texts = {ledger: ledger.read_text(encoding="utf-8") for ledger in self.ledgers.values()}
+        for ledger in texts:
+            ledger.unlink()
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        for ledger, text in texts.items():  # staged, not part of the first commit
+            write(ledger, text)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
 
 
 class TestChangelogIsCommon(WallCase):

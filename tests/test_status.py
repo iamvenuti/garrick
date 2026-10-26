@@ -715,7 +715,7 @@ class TestOpensOnTheWork(StatusCase):
         self.assertNotIn('class="fresh warning', threads)           # no amber, no red for age
         self.assertNotIn('class="fresh critical', threads)
         self.assertIn('class="fresh age mu"', threads)              # a plain bar, and the figure beside it
-        self.assertRegex(threads, r'class="num muted mu" style="text-align:right">\d+d<')
+        self.assertRegex(threads, r'class="num muted mu" style="text-align:right" title="[^"]*">\d+d<')
         self.assertNotIn("aging", threads)
         self.assertNotIn("stale", threads)
         self.assertNotIn("Over 45 days", html)
@@ -752,16 +752,22 @@ class TestOpensOnTheWork(StatusCase):
             self.assertNotIn("no next action", row)
         self.assertNotIn("tnext", status.CSS + status.HOME_CSS + status.TVIEW_CSS)
 
-    def test_the_legend_reads_as_a_line_of_text_beside_its_swatch(self):
-        # From 0.36.0 (#179): every text node and <code> of an entry was a flex item of its own, so the
-        # sentence wrapped into narrow columns. An entry is its swatch and one run of text.
-        legend = re.search(r'<div class="legend mu">(.*?)</div>', self.page(), re.S).group(1)
-        entries = re.findall(r'<span><i[^>]*></i>(<span class="lt">.*?</span>)</span>', legend)
-        self.assertEqual(2, len(entries), legend)
-        self.assertIn("A red <code>todo</code>: an open action is overdue", entries[0])
-        self.assertEqual("", re.sub(r'<span><i[^>]*></i><span class="lt">.*?</span></span>', "", legend))   # nothing loose
-        self.assertIn(".legend>span{display:inline-flex", status.CSS)
-        self.assertNotIn(".legend span{display:inline-flex", status.CSS)                 # not the text's own span
+    def test_no_legend_under_the_list_each_chip_and_figure_says_what_it_means(self):
+        # #228: the legend under the list is gone; a chip or a figure it explained says so when pointed at.
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
+                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
+        html = self.page()
+        threads = self.rows(html, "threads")
+        self.assertNotIn('class="legend', threads)
+        self.assertNotIn("A red <code>todo</code>", threads)
+        self.assertNotIn(".legend .lt", status.CSS)
+        row = self.row(html, "Pricing")
+        todo = re.search(r'<button type="button" class="chip tchip todo late"[^>]*title="([^"]+)"', row).group(1)
+        self.assertIn("late: send the renewal floor", htmllib.unescape(todo))
+        figure = re.search(r'<span class="num muted mu" style="text-align:right" title="([^"]+)">\d+d<', row).group(1)
+        self.assertRegex(figure, r"^\d+ days? since its note moved: a figure, not a fault$")
+        self.assertRegex(threads, r'<div class="thread proj".*?<span class="num muted mu" style="text-align:right" '
+                                  r'title="\d+ days? since its newest thread moved: a figure, not a fault">')
 
     def test_the_chip_sits_on_the_names_line_not_under_it(self):
         # #186: at the name's right, so a row with open actions takes one line; text under a name keeps its own.
@@ -1180,7 +1186,7 @@ class TestThreadCards(StatusCase):
     def test_rows_carry_a_card_not_buttons(self):
         html = self.page()
         start = html.index('<div class="zones">')
-        block = html[start:html.index('<div class="legend', start)]
+        block = html[start:html.index('<p class="hint gsum', start)]
         self.assertEqual(set(re.findall(r'<button type="button" class="(\w+)"', block)), {"pchev"})   # only the folds of a project's threads
         self.assertEqual(block.count("<button"), block.count('class="pchev"'))
         self.assertNotIn("data-tip", block)

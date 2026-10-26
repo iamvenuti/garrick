@@ -276,7 +276,7 @@ class TestGraph(StatusCase):
         graph = html[html.index('id="graph"'):html.index("</details>", html.index('id="graph"'))]
         self.assertLess(graph.index("glegend"), graph.index('id="gsum"'))          # the summary sits under the legend
         self.assertIn("<h2>Explore</h2>", graph)                                   # the graph sits behind Explore
-        self.assertIn('<span class="meta">the graph of every note, and the links between them</span>', graph)
+        self.assertIn('<h2>Explore</h2><span class="meta"></span>', graph)            # folded, it has nothing to report
 
     def test_the_graph_fills_its_card(self):
         js = status.GRAPH_JS
@@ -1899,6 +1899,26 @@ class TestPanels(StatusCase):
         self.assertIn("1 waiting", html)
         self.assertIn("1 item waiting in the inboxes", html)
 
+    def inboxes(self, html):
+        start = html.index('id="inboxes"')
+        return html[start:html.index("</details>", start)]
+
+    def test_process_the_inbox_is_a_button_while_anything_waits(self):
+        self.assertNotIn("data-request", self.inboxes(self.page()))                 # every inbox empty: no button
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        card = self.inboxes(self.page())
+        self.assertIn('<h2>Inboxes</h2><span class="meta"></span>', card)          # no "say …" in the caption (#234)
+        self.assertIn('<div class="gacts"><button class="act" type="button" data-request="process the inbox" data-folder="%s"' % self.root, card)
+        self.assertIn(">Process the Inbox</button>", card)
+        self.assertNotIn('say "process the inbox"', self.page())
+
+    def test_a_request_button_opens_the_menus_assistant_or_copies(self):
+        js = status.JS
+        self.assertIn("var q=t.closest('button[data-request]')", js)
+        self.assertIn("host.postMessage({launch:a,folder:q.dataset.folder,phrase:p})", js)   # the launch the menu's row makes
+        self.assertIn("put(p).then(", js)                                                    # a browser, or no assistant: copied
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                             # the default, else the first switched on
+
     def test_open_actions_skip_the_placeholder_and_done(self):
         write(self.root / "Zones" / "Work" / "Todo.md",
               "# Work\n\n## Inbox\n\n- [ ] <action> · <project or person> · <date>\n- [ ] Send the memo · Acme · 3 March\n\n## Done\n\n- [ ] stray\n")
@@ -1952,6 +1972,14 @@ class TestJobs(StatusCase):
         self.assertIn('id="jobs"', html)
         self.assertIn('class="critical" tabindex="0"', html)
 
+    def test_the_strip_has_no_legend(self):
+        self.heartbeat(0)
+        html = self.page()
+        card = html[html.index('id="jobs"'):html.index("</details>", html.index('id="jobs"'))]
+        self.assertNotIn('class="legend"', card)                         # each cell's tooltip says its day (#232)
+        self.assertNotIn("One cell per day", card)
+        self.assertIn("· no run", card)
+
     def test_day_that_recovered_is_amber(self):
         self.heartbeat(0)
         t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
@@ -1966,6 +1994,13 @@ class TestJobs(StatusCase):
         self.heartbeat(8)
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta">1 failed</span>', html)    # a folded card still says it (#231)
+
+    def test_the_caption_is_empty_when_every_job_is_fine(self):
+        self.heartbeat(0)
+        html = self.page()
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta"></span>', html)
+        self.assertNotIn("heartbeats and logs in", html)
 
     def plists(self, **jobs):
         """A LaunchAgents folder holding one plist per job, each as given."""
@@ -2044,7 +2079,8 @@ class TestJobs(StatusCase):
         self.assertIn(">1 / 10<", html)
         self.assertIn(">1 / 12<", html)                      # a cap the plist leaves out is agent.py's default
         self.assertIn(">$0.50, no cap<", html)               # 0 removes a cap
-        self.assertIn("Caps from the launchd plist of brief.", html)
+        self.assertIn('<div class="m" data-tip="Caps from the launchd plist of brief.">', html)   # in the meters' tooltip (#232)
+        self.assertNotIn('<p class="hint">Caps from', html)
 
     def test_without_a_plist_the_caps_say_where_they_come_from(self):
         self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
@@ -2052,7 +2088,7 @@ class TestJobs(StatusCase):
             html = self.page()
         self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
-        self.assertIn("Caps from the GARRICK_CAP_* settings the page was built with", html)
+        self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
 
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"
@@ -2148,6 +2184,32 @@ class TestWikisAndRepos(StatusCase):
         self.assertIn('<div class="name">Wikis<small>', html[start:html.index("</details>", start)])
 
 
+class TestCaptions(StatusCase):
+    """A card's caption says a state worth acting on, or nothing (#231): never
+    the file, flag or colour behind the card."""
+
+    def metas(self, html):
+        return dict(re.findall(r'<h2>([^<]*)</h2><span class="meta">([^<]*)</span>', html))
+
+    def test_a_healthy_page_has_empty_captions(self):
+        metas = self.metas(self.page())
+        for title in ("Open actions", "Checks", "Repositories", "Wikis"):
+            self.assertEqual("", metas.get(title, ""), title)
+        page = self.page()
+        for said in ("unticked items", "check.py --quick", "a ring means", "newest entry in each log",
+                     "in the zone and meeting inboxes", "run just now"):
+            self.assertNotIn(said, page)
+
+    def test_the_checks_caption_counts_the_findings(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        findings = [{"check": "threads", "severity": "error", "path": "a.md", "message": "x"},
+                    {"check": "threads", "severity": "warning", "path": "b.md", "message": "y"},
+                    {"check": "threads", "severity": "warning", "path": "c.md", "message": "z"}]
+        (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": 1, "warnings": 2, "findings": findings})
+        self.assertEqual("1 error · 2 warnings", self.metas(self.page())["Checks"])
+
+
 class TestChangedFiles(StatusCase):
     """The Repositories card counts changed files and says what they are. It
     never calls them commits, and it offers no way to commit them."""
@@ -2182,7 +2244,8 @@ class TestChangedFiles(StatusCase):
         self.assertIn("Work: 4 changed files", block)
         self.assertIn("<code>Acme Review/Sources/a.csv</code>", block)
         self.assertIn("<code>Acme Review/Threads/Pricing/Pricing notes.md</code>", block)
-        self.assertIn("In Zones/Work.", block)
+        self.assertNotIn("In Zones/Work.", block)
+        self.assertIn('<h2>Repositories</h2><span class="meta">1 with changes</span>', html)
         self.assertNotIn("data-act", block)                                   # nothing here commits
         self.assertNotRegex(block.lower(), r">\s*commit")
 
@@ -2215,8 +2278,10 @@ class TestChangedFiles(StatusCase):
     def test_the_root_repository_is_the_workspace_folder(self):
         out = status.repo_changes(self.root, {"name": "Workspace", "folder": self.root, "dirty": 1,
                                               "changes": [("AGENTS.md", ("unstaged",))]})
-        self.assertIn("In the workspace folder. 1 not staged.", out)
+        self.assertIn("<code>AGENTS.md</code>", out)
         self.assertIn('data-copy="%s"' % self.root, out)
+        self.assertNotIn("In the workspace folder", out)                 # the summary above already counts them (#232)
+        self.assertNotIn("Nothing here commits", out)                    # the docs say it once
 
     def test_a_long_list_is_cut_but_the_count_is_not(self):
         changes = [("f%02d.md" % i, ("untracked",)) for i in range(status.REPO_LIST_CAP + 5)]
@@ -2291,7 +2356,10 @@ class TestOpenActions(StatusCase):
         html = self.page()
         start = html.index('id="todo"')
         block = html[start:html.index("</details>", start)]
-        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open the list</a>', block)
+        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open</a>', block)
+        for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
+            self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
+            self.assertNotIn("changed ", zone)
         url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
         self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
         vault = self.page(vault="My Work")
@@ -2864,7 +2932,9 @@ class TestContextDebt(StatusCase):
         self.assertIn('class="dt"', b)                                     # the threshold, dashed
         self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
         self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
-        self.assertIn("Say &#8220;nurture the meetings&#8221;.", b)
+        self.assertIn('data-request="nurture the meetings" data-folder="%s"' % self.root, b)      # a button, not "Say …" (#234)
+        self.assertIn('>Nurture the meetings</button>', b)
+        self.assertNotIn("Say &#8220;", b)
         for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
             self.fail("a fixed colour in the chart: %s" % colour)
         self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
@@ -2875,7 +2945,8 @@ class TestContextDebt(StatusCase):
         self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
         self.assertIn('<span class="chip"', b)
         self.assertIn(">under 40</span>", b)
-        self.assertIn("Say &#8220;nurture Work&#8221;.", b)
+        self.assertIn('<button class="act dask" type="button" data-request="nurture Work"', b)
+        self.assertIn(">Nurture Work</button>", b)
         self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
 
     def test_left_out_without_a_nurture_that_keeps_it(self):

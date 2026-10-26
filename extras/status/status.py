@@ -842,8 +842,8 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
         meta.append("<span>in the thread note</span>")
     if said_late and r["late"] and when is not None:
         meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
-    tick = ('<button class="tick" type="button" aria-label="%s: %s"></button>' % ("Reopen" if r["done"] else "Mark done", E(r["text"][:80]))
-            if actions else "")
+    tick = ('<button class="tick" type="button" title="%s" aria-label="%s: %s"></button>'
+            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(r["text"][:80])) if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
             else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
     return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
@@ -1093,13 +1093,14 @@ def debt_block(ws: Path, today: dt.date) -> str:
     named = " · ".join("%s %s" % (E(said(sc)[0]), E(str(debt_points(sum(scopes[sc].values()))))) for sc in heavy)
     over = total > threshold
     when = "" if day == today else " as of %s" % day.strftime("%a %d %b")
-    ask = ('<span class="dask">Say &#8220;%s&#8221;.</span>' % E(said(heavy[0])[1])) if heavy and said(heavy[0])[1] else ""
+    phrase = (said(heavy[0])[1] if heavy else "") or ""      # the request that nurtures the heaviest, on a button (#234)
+    button = request_button(phrase[:1].upper() + phrase[1:], phrase, ws, "act dask") if phrase else ""
     return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
             '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p></div>'
             % (E(str(total)), E(when), " late" if over else "",
                E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
                "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
-               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", ask))
+               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button))
 
 
 def debt_points(n):
@@ -1114,7 +1115,7 @@ DEBT_CSS = r"""
 .dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
-.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dask{color:var(--ink2)}
+.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 """
 
 
@@ -1153,9 +1154,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
         if z["done"]:
             slug = re.sub(r"[^a-z0-9]+", "-", z["zone"].lower()).strip("-")
             body += ('<details class="tgroup donegroup" id="tg-%s-done-today" open><summary>%s<span class="tname">Done today</span>'
-                     '<span class="n">%d</span>%s</summary><div class="trows">%s</div></details>'
-                     % (slug, CHEV, len(z["done"]), '<span class="hint tacts">Tick a box again to reopen it</span>' if actions else "",
-                        "".join(todo_row(r, today, actions) for r in z["done"])))
+                     '<span class="n">%d</span></summary><div class="trows">%s</div></details>'
+                     % (slug, CHEV, len(z["done"]), "".join(todo_row(r, today, actions) for r in z["done"])))
         add = ('<button type="button" class="act primary tadd-open" data-zone="%s" title="Add an action to %s/Todo.md">＋ Add</button>'
                % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
         opener = ('<a class="act" href="%s" title="Open %s/Todo.md">Open Todo.md</a>' % (E(link(z["file"])), E(z["zone"]))
@@ -1171,11 +1171,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
            '<button type="button" data-tf="late">Overdue</button><button type="button" data-tf="nodate">No date</button></div>'
            '<div class="seg sseg" role="group" aria-label="Sort"><button type="button" data-ts="alpha" title="By thread, then by the action">A–Z</button>'
-           '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div>'
-           '<span class="hint">%s</span></div>'
-           % (" hidden" if len(lists) < 2 else "", zones,
-              "Tick to close. Click a date to set it; a dated Inbox line moves to This week, Soon or Waiting on." if actions
-              else "Read from the notes. A preview feature."))
+           '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div></div>'
+           % (" hidden" if len(lists) < 2 else "", zones))      # a box and a date chip explain themselves (#235)
     dialog = add_dialog("".join(add_tree(z["zone"], (projects or {}).get(z["zone"], [])) for z in lists)) if actions else ""
     return '<div id="todolist" class="todotab%s">%s%s%s</div>' % ("" if actions else " ro", bar, panes, dialog)
 
@@ -1805,7 +1802,7 @@ if(sel)[].forEach.call(document.querySelectorAll(sel),function(b){if(!b.disabled
 /* a Todo line's rows by zone and key, its box set to done or not, and its words as the box's label has them, for a card */
 function rows(z,k){return[].filter.call(document.querySelectorAll('.trow'),function(r){return r.dataset.z===z&&r.dataset.k===k})}
 function paint(z,k,d){rows(z,k).forEach(function(r){r.classList.toggle('done',d);var b=r.querySelector('.tick');
-if(b)b.setAttribute('aria-label',(d?'Reopen':'Mark done')+String(b.getAttribute('aria-label')||'').replace(/^[^:]*/,''))})}
+if(b){b.title=d?'Reopen':'Mark done';b.setAttribute('aria-label',b.title+String(b.getAttribute('aria-label')||'').replace(/^[^:]*/,''))}})}
 function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
 return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
@@ -1942,7 +1939,7 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 TODO_CSS = r"""
 .todotab .tbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:14px}
 .todotab .tbar .seg button{flex:none;padding:5px 12px;font-size:12.5px;display:inline-flex;gap:6px;align-items:center;line-height:1.2}
-.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}.todotab .tbar .hint{flex:1;min-width:220px}
+.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}
 .tsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--ink2);font-size:12.5px;margin:0 2px 12px}
 .tsum b{color:var(--ink);font-variant-numeric:tabular-nums}.tsum .bad,.tsum .bad b{color:var(--critical)}
 .tsum-acts{margin-left:auto;display:flex;gap:6px}.tsum .tadd-open{font-size:12px;padding:6px 12px}
@@ -2011,7 +2008,7 @@ return a.dataset.a<b.dataset.a?-1:a.dataset.a>b.dataset.a?1:0});rows.forEach(fun
 todo.querySelectorAll('[data-ts]').forEach(function(b){b.onclick=function(){sort(b.dataset.ts)}});
 sort(st.get('garrick-todo-sort')==='date'?'date':'alpha');zone(st.get('garrick-todo-zone'));
 var f0=st.get('garrick-todo-filter');filt(f0==='late'||f0==='nodate'?f0:'all');
-/* a zone's "Open the list" on the Overview opens the tab on that zone */
+/* a zone's "Open" on the Overview opens the tab on that zone */
 document.addEventListener('click',function(e){var g=e.target.closest&&e.target.closest('[data-tz-go]');if(g)zone(g.dataset.tzGo)},true);
 /* what a button sends: Garrick's request, page_action.py's to carry out */
 function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k};for(var k in more||{})q[k]=more[k];
@@ -2026,7 +2023,7 @@ function twins(r){return[].filter.call(document.querySelectorAll('.trow'),functi
 function onTick(e){var b=e.target.closest('.tick');if(!b||!host)return;var r=b.closest('.trow');if(r.classList.contains('pending'))return;
 var d=!r.classList.contains('done'),verb=d?'todo-done':'todo-undo';
 if(!(window.GarrickTick&&GarrickTick({verb:verb,zone:r.dataset.z,file:r.dataset.f,key:r.dataset.k}))){if(held(verb,r))return;send(verb,r,null,d?'Ticking it…':'Reopening it…')}
-twins(r).forEach(function(x){var t=x.querySelector('.tick');x.classList.toggle('done',d);if(t)t.setAttribute('aria-label',(d?'Reopen':'Mark done')+t.getAttribute('aria-label').replace(/^[^:]*/,''))})}
+twins(r).forEach(function(x){var t=x.querySelector('.tick');x.classList.toggle('done',d);if(t){t.title=d?'Reopen':'Mark done';t.setAttribute('aria-label',t.title+t.getAttribute('aria-label').replace(/^[^:]*/,''))}})}
 places.forEach(function(el){el.addEventListener('click',onTick)});
 /* the date menu: the date is worked out at the click, so a page built yesterday still means today */
 var menu=document.createElement('div');menu.className='dmenu';menu.hidden=true;menu.setAttribute('role','menu');document.body.appendChild(menu);var mrow=null;
@@ -3466,6 +3463,14 @@ def copy(label: str, text: str, say: str) -> str:
     return '<button class="act" type="button" data-copy="%s" data-say="%s">%s</button>' % (E(text), E(say), E(label))
 
 
+def request_button(label: str, phrase: str, folder: Path, cls: str = "act") -> str:
+    """A button named for a request, such as Process the Inbox (#234). In the
+    app it opens the assistant the menu's rows open, at `folder`, with the
+    request typed in (JS's data-request); in a browser it copies the request."""
+    return ('<button class="%s" type="button" data-request="%s" data-folder="%s" title="%s">%s</button>'
+            % (cls, E(phrase), E(str(folder)), E("Hand “%s” to your assistant" % phrase), E(label)))
+
+
 # The changelog the workspace was installed with: install.py copies the
 # release's CHANGELOG.md here, so the page shows release notes without
 # fetching anything.
@@ -4193,8 +4198,8 @@ REPO_LIST_CAP = 30   # paths shown per kind; the count above stays exact
 
 def repo_changes(ws: Path, r: dict) -> str:
     """One repository's changed files, by kind, to read and nothing more. No
-    button commits them: another session may be halfway through that work."""
-    where = "the workspace folder" if r["folder"] == ws else r["folder"].relative_to(ws).as_posix()
+    button commits them: another session may be halfway through that work.
+    The docs say so once, rather than every repository with changes (#232)."""
     groups = []
     for kind, label in CHANGE_KINDS:
         paths = [path for path, ks in r["changes"] if kind in ks]
@@ -4205,16 +4210,15 @@ def repo_changes(ws: Path, r: dict) -> str:
         items += '<li class="muted">and %d more</li>' % more if more > 0 else ""
         groups.append('<p class="hint">%s, %d</p><ul class="paths">%s</ul>' % (E(label[:1].upper() + label[1:]), len(paths), items))
     button = copy("Copy the folder's path", str(r["folder"]), "Copied the path of %s." % r["name"])
-    return ('<details class="notes changes"><summary>%s: %s</summary><p class="hint">In %s. %s. '
-            'Nothing here commits: review them in your git tool, or ask your assistant.</p>%s<div class="gacts">%s</div></details>'
-            % (E(r["name"]), E(say_files(r["dirty"])), E(where), E(say_kinds(r["changes"])), "".join(groups), button))
+    return ('<details class="notes changes"><summary>%s: %s</summary>%s<div class="gacts">%s</div></details>'
+            % (E(r["name"]), E(say_files(r["dirty"])), "".join(groups), button))
 
 
-def meter(value: float, cap: float, label: str, right: str) -> str:
+def meter(value: float, cap: float, label: str, right: str, tip: str = "") -> str:
     pct = 0 if not cap else min(100.0, value / cap * 100)
     kind = "critical" if pct >= 90 else "warning" if pct >= 70 else ""
-    return ('<div class="m"><span class="ink2">%s</span><span class="num">%s</span><div class="meter %s"><i style="width:%.1f%%"></i></div></div>'
-            % (E(label), E(right), kind, pct))
+    return ('<div class="m"%s><span class="ink2">%s</span><span class="num">%s</span><div class="meter %s"><i style="width:%.1f%%"></i></div></div>'
+            % (' data-tip="%s"' % E(tip) if tip else "", E(label), E(right), kind, pct))
 
 
 def cost_chart(L: dict) -> str:
@@ -6213,6 +6217,11 @@ if(!host)document.body.classList.add('nohost');      /* a browser cannot act: it
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
+/* The assistant a request goes to, as the app's assistant() picks it for the menu's Process the Inbox: the
+   default for clicking a thread when it is Claude, Codex or cmux, else the first of those switched on; none, null */
+var ASKS={claude:'Claude',codex:'Codex',cmux:'cmux'};
+window.GarrickAssistant=function(){var P=window.GarrickPrefs,on=P?P.launchers():{},d=P?P.def():'note';
+var a=(document.body.dataset.launchers||'').split(',').filter(function(k){return ASKS[k]&&on[k]!==false});return a.indexOf(d)>=0?d:a[0]||null};
 var rb=document.getElementById('rebuild');if(host&&rb){rb.removeAttribute('data-copy');rb.title='Rebuild the page now';
 rb.onclick=function(){host.postMessage({rebuild:true});say('Rebuilding…')}}
 document.addEventListener('click',function(e){var t=e.target.closest?e.target:null;if(!t)return;
@@ -6225,6 +6234,11 @@ if(x.dataset.confirm&&!x.classList.contains('armed')){var was=x.textContent;x.cl
 setTimeout(function(){x.classList.remove('armed');x.textContent=was},4000);return}
 x.classList.remove('armed');if(x.dataset.expect&&window.GarrickExpect)GarrickExpect(x.dataset.expect);
 if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r});say(x.dataset.say);return}
+/* A button named for a request, Process the Inbox or Nurture Work (#234): in the app, to the assistant the menu's
+   rows open, at the folder given, with the request typed in; in a browser, or with no assistant on, copied. */
+var q=t.closest('button[data-request]');if(q){var a=host&&GarrickAssistant(),p=q.dataset.request;
+if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');return}
+put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')},function(){say(p)});return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -7734,9 +7748,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if TD:
         tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
-    tiles += [("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes", "inboxes"),
+    tiles += [("Waiting to be filed", "%d" % waiting, "", "inboxes"),
               ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
-               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found", "checks")]
+               if C and not C.get("failed") else "—", "" if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
         tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
@@ -7928,25 +7942,29 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             lis = "".join('<li>%s<span>%s: %s</span></li>' % (ICON["critical" if f.get("severity") == "error" else "warning"], E(f.get("path", "")), E(f.get("message", ""))) for f in fs)
             body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
                      % (" open" if errs else "", CHEV, E(C["titles"].get(name, name)), counts, lis))
-    checks_card = card("checks", "Checks", "check.py --quick, run as the page was built", debt_block(ws, now.date()) + body)
+    # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
+    found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
+                       (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
+    checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + body)
 
     # ---- open actions and inboxes
     tb = ""
     for z, t in TD.items():
         scale = max(list(t["counts"].values()) + [1]) * 1.08
-        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open the list</a>' % (E(z), E(z))
+        # one way to the zone's list (#235): the Todo tab, which keeps Open Todo.md for the file
+        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open</a>' % (E(z), E(z))
                   if lists else '<a class="act" href="%s" title="Open %s/Todo.md">Open</a>' % (E(link(t["file"])), E(z)))
-        tb += ('<div class="zt"><b><a%s href="%s">%s</a></b><span class="muted" style="font-size:12px">changed %s</span>%s</div>'
-               % (zone_attr(z, ZS), E(link(t["file"])), zone_name(z, ZS), age(t["when"], now), opener))
+        tb += '<div class="zt"><b%s>%s</b>%s</div>' % (zone_attr(z, ZS), zone_name(z, ZS), opener)
         if not t["counts"]:
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
-    todo_card = card("todo", "Open actions", "unticked items in each zone's Todo.md", tb) if TD else ""
+    todo_card = card("todo", "Open actions", "", tb) if TD else ""
     ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
         0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
         "%d waiting" % n if n else "empty") for name, f, n in IB)
-    inbox_card = card("inboxes", "Inboxes", "files waiting to be filed; say \"process the inbox\"", '<div class="tiles">%s</div>' % ib)
+    waits = ('<div class="gacts">%s</div>' % request_button("Process the Inbox", "process the inbox", ws)) if any(n for _, _, n in IB) else ""
+    inbox_card = card("inboxes", "Inboxes", "", '<div class="tiles">%s</div>%s' % (ib, waits))
 
     # ---- jobs and calls, only when the jobs extra is in use
     jobs_card = calls_card = ""
@@ -7965,19 +7983,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                                % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                                if acting and j["name"] in sched and not j["running"] else "")))
-        legend = ('<div class="legend"><span><i class="good"></i>Every run ok</span><span><i class="warning"></i>Some failed, then recovered</span>'
-                  '<span><i class="critical"></i>Ended the day failed, or most runs failed</span><span><i></i>No run</span><span>· One cell per day, last %d days</span></div>' % DAYS)
-        jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
+        behind = sum(1 for j in J if j["state"] == "critical" and j["status"].startswith("late"))   # not run on time
+        failed = sum(1 for j in J if j["state"] == "critical") - behind
+        jobs_card = card("jobs", "Scheduled jobs", " · ".join("%d %s" % (n, w) for n, w in ((failed, "failed"), (behind, "late")) if n),
+                         '<div class="rows jobs">%s</div>' % "".join(rows))     # each cell's tooltip says its day (#232)
     if L:
         c = L["caps"]
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
             return "%s / %s%g" % (text, unit, cap) if cap else "%s, no cap" % text
-        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]))
-             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]))
-             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"))
-             + '<p class="hint">%s</p>' % E(L["caps_from"]))
-        m += '<p class="hint">%s</p>' % E("Each Claude call stops at $%g." % L["budget"] if L["budget"] else
-                                          "No per-call budget: GARRICK_MAX_CALL_USD is 0.")
+        # where the caps were read, in the meters' tooltip; the per-call budget a figure beside them (#232)
+        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
+             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
+             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"])
+             + '<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
+               '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
         def refused(tools):
             """A refused tool the deny list names is red; one no allow rule named is amber."""
@@ -7993,7 +8012,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
                  '<th class="r" title="Turns per call, on average">Turns</th><th>Refused tools</th>'
                  '<th class="r">Failed</th><th class="r">Capped</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
-        calls_card = card("calls", "Assistant calls", "ledger.jsonl, last %d days, list-price cost" % DAYS,
+        calls_card = card("calls", "Assistant calls", "",
                           '<div class="meters">%s</div>%s<div style="margin-top:14px">%s</div>' % (m, cost_chart(L), table))
 
     # ---- repositories and wikis
@@ -8006,7 +8025,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                 "the oldest change made " + age(r["since"], now) if r["dirty"] and r.get("since") else "") if x)),
         ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
         "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
-    repos_card = card("repos", "Repositories", "a ring means files changed since the last commit; amber, for over a day",
+    changed = sum(1 for r in R if r["dirty"])
+    repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",
                       ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
                       if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
@@ -8016,7 +8036,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         return "%s · %s" % (E(w["when"].strftime("%d %b %Y").lstrip("0")), title)
     wr = "".join('<div class="row" style="grid-template-columns:1fr"><div class="name"><a href="%s">%s</a><small style="white-space:normal">%s</small></div></div>' % (
         E(link(w["log"])), E(w["name"]), newest(w)) for w in W)
-    wikis_card = card("wikis", "Wikis", "newest entry in each log", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
+    wikis_card = card("wikis", "Wikis", "", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
 
     # ---- the graph, behind Explore at the foot of the Overview: it keeps every
     # mode it has, and folds shut so the tab opens on the work instead. A
@@ -8038,7 +8058,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         # a select cannot draw an icon in its options, so the chosen place's icon sits over its left edge
         marks = "".join('<span class="gzi%s" data-z="%s" hidden>%s</span>' % (zone_class(z, ZS), E(z), zone_icon(ZS[z]["icon"]))
                         for z in places if ZS.get(z, {}).get("icon"))
-        graph_card = card("graph", "Explore", "the graph of every note, and the links between them",
+        graph_card = card("graph", "Explore", "",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
                           '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'

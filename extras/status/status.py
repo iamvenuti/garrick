@@ -5747,11 +5747,11 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
 """
 
-# The top row both pages share: the mark and name with when the page was built,
-# the tabs, and the controls, pinned while the page scrolls. Each page passes
-# its own tabs and controls.
+# The top row both pages share: the mark and name with how long ago the page was
+# built (the date and time on hover), the tabs, and the controls, pinned while the
+# page scrolls. Each page passes its own tabs and controls.
 def bar(mark_svg: str, name: str, built: str, tabs: str, controls: str) -> str:
-    return ('<header class="bar"><div class="brand">%s<div class="bname"><h1>%s</h1><p>Built %s · <span id="age">just now</span></p></div></div>'
+    return ('<header class="bar"><div class="brand">%s<div class="bname"><h1>%s</h1><p title="Built %s">Built <span id="age">just now</span></p></div></div>'
             '%s%s</header>' % (mark_svg, name, E(built), tabs, controls))
 
 
@@ -6320,7 +6320,7 @@ CATCH_ICON = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true
 
 def catch_button(ws: Path) -> str:
     return ('<button class="cog" type="button" id="open-catchup" aria-label="Catch up" '
-            'title="Catch up: what changed in your threads while you were away">%s</button>' % CATCH_ICON
+            'title="Catch up">%s</button>' % CATCH_ICON
             if catch_lib(ws) is not None else "")
 
 
@@ -6354,10 +6354,7 @@ def catch_dialog(ws: Path, T: Dict[str, dict], desk: bool) -> str:
             % "".join('<option value="%s">%s</option>' % (E(z), E(z)) for z in zones)) if len(zones) > 1 else ""
     return ('<dialog id="catchup" class="catchup" aria-labelledby="catchup-title" data-root="%s" data-default="%s" data-zone="%s"%s>'
             '<h2 id="catchup-title">Catch up</h2>'
-            '<p class="cuwhat">What changed while you were away, thread by thread. Your assistant writes it from the notes, '
-            'their history and the Todo list, and changes nothing.</p>'
-            '<fieldset class="cuperiods"><legend>Since</legend>%s</fieldset>%s'
-            '<p class="cuhint">Only some of it? Tick the projects or threads; none ticked is the whole zone.</p>%s'
+            '<fieldset class="cuperiods"><legend>Since</legend>%s</fieldset>%s%s'
             '<p class="cusaid">Asks: <q id="cu-said"></q></p>'
             '<div class="gacts"><button class="act primary" type="button" id="cu-go">Catch up</button>'
             '<button class="act" type="button" id="cu-cancel">Cancel</button></div></dialog>'
@@ -6368,7 +6365,7 @@ CATCH_CSS = r"""
 /* Catch up (#27): the dialog beside Settings */
 dialog.catchup{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);
 padding:20px 22px;box-shadow:var(--shadow);max-height:calc(100vh - 48px);overflow:auto}dialog.catchup::backdrop{background:rgba(0,0,0,.35)}
-dialog.catchup h2{margin:0 0 6px;font:600 20px/1.2 var(--display)}dialog.catchup .cuwhat,dialog.catchup .cuhint{margin:0 0 10px;font-size:13px;color:var(--ink2)}
+dialog.catchup h2{margin:0 0 12px;font:600 20px/1.2 var(--display)}
 .cuperiods{border:0;margin:0 0 12px;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px}.cuperiods legend{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
 .cuperiod{font-size:13px;display:flex;align-items:center;gap:6px}.cuperiod input,.cuz input{accent-color:var(--accent)}
 .cuzone{display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 10px}.cuzone select{font:inherit;font-size:13px;color:var(--ink);
@@ -6378,7 +6375,8 @@ background:var(--surface);border:1px solid var(--line);border-radius:8px;padding
 """
 
 # The dialog. The request's words are said in one place, phrase(), so what the dialog
-# shows under "Asks" is exactly what the assistant is handed.
+# shows under "Asks" is exactly what the assistant is handed. It goes to JS's
+# GarrickAssistant(), the one rule for which assistant a request opens.
 CATCH_JS = r"""
 (function(){var dlg=document.getElementById('catchup'),host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 if(!dlg)return;var said=document.getElementById('cu-said'),zone=document.getElementById('cu-zone');
@@ -6394,15 +6392,10 @@ function phrase(){var n=names(),p=dlg.querySelector('input[name=cu-period]:check
 return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}
 function paint(){dlg.querySelectorAll('.cuz').forEach(function(u){u.hidden=u.dataset.zone!==shown()});said.textContent=phrase()}
 dlg.addEventListener('change',paint);
-/* the assistant a request goes to, as the app's assistant(): the default for clicking a thread when it is
-   Claude, Codex or cmux, else the first of those switched on; none, and the request is copied */
-function assistant(){var P=window.GarrickPrefs,on=P?P.launchers():{},d=P?P.def():'note';
-var a=(document.body.dataset.launchers||'').split(',').filter(function(k){return LABEL[k]&&on[k]!==false});
-return a.indexOf(d)>=0?d:a[0]||null}
 function open(){dlg.returnValue='';var d=dlg.querySelector('input[name=cu-period][value="'+dlg.dataset.default+'"]');if(d)d.checked=true;
 dlg.querySelectorAll('input[data-cu]').forEach(function(b){b.checked=false});paint();if(!dlg.open)dlg.showModal()}
 function say(s){if(window.GarrickSay)GarrickSay(s)}
-dlg.addEventListener('close',function(){if(dlg.returnValue!=='go')return;var p=phrase(),a=host&&assistant();
+dlg.addEventListener('close',function(){if(dlg.returnValue!=='go')return;var p=phrase(),a=host&&window.GarrickAssistant&&GarrickAssistant();
 if(a){var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m);
 say('Opening '+LABEL[a]+' on “'+p+'”…');return}
 if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})});
@@ -7308,8 +7301,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                          "All clear" if not attn else "%d %s attention" % (len(attn), "thing needs" if len(attn) == 1 else "things need")))
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings: apps to open projects in, '
-                'which Garrick this is, release notes, the view, hidden cards, and how to report a bug">%s</button>%s%s</div>'
+                '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
                 % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
 
     # ---- hero and tiles

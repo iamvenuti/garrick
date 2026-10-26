@@ -622,22 +622,24 @@ class TestWaitSettings(ActionCase):
 
 
 class TestCatchUpSettings(ActionCase):
-    """Settings › Catch up (#27): the default period, checked by briefing.py and kept beside the rest."""
+    """Catch up's default period is no longer a setting the page saves (#226);
+    one already in the settings file stays, beside the rest."""
 
     def path(self):
         return self.root / "System" / "garrick-settings.json"
 
-    def test_saved_checked_and_beside_the_rest(self):
-        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
-        self.assertEqual("Settings saved", self.act(verb="settings", **{"catch-up": {"period": "week"}}))
+    def test_a_period_already_kept_stays_when_the_rest_is_saved(self):
+        write(self.path(), json.dumps({"catch-up": {"period": "week"}}))
+        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux"], default="cmux"))
         saved = json.loads(self.path().read_text())
-        self.assertEqual("cmux", saved["default"])                                   # the rest stays
-        self.assertEqual({"period": "week"}, saved["catch-up"])
+        self.assertEqual("cmux", saved["default"])
+        self.assertEqual({"period": "week"}, saved["catch-up"])                       # honoured, never dropped
 
-    def test_refused_with_the_reason(self):
-        for catch in ({"period": "month"}, {"colour": "Teal"}, "week"):
-            with self.assertRaises(pa.Refused, msg=catch):
-                self.act(verb="settings", **{"catch-up": catch})
+    def test_the_page_cannot_set_it(self):
+        with self.assertRaises(pa.Refused):
+            self.act(verb="settings", **{"catch-up": {"period": "week"}})
+        with self.assertRaises(pa.Refused):
+            pa.save_settings(self.root, {"verb": "settings", "catch-up": {"period": "week"}})
         self.assertFalse(self.path().exists())
 
 

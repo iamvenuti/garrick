@@ -15,8 +15,8 @@ fails is left as it was, and its script and commit do not run.
 Each zone that swept then sends a "Todo refreshed" notice, its counts and
 nothing of its lines, and with --digest its morning summary (`todo.py
 digest`) as the "Todo summary" notice: both through System/tools/
-notifications.py, to wherever Settings › Notifications sends them for that
-zone (a command of yours runs in the zone's folder with GARRICK_ZONE set).
+notifications.py, to this Mac when Settings › Notifications has them on
+(a GARRICK_NOTIFY_CMD command runs in the zone's folder with GARRICK_ZONE set).
 The summary goes also when the zone's call failed, opening with a line that
 says so, since a silent morning reads like a clear one. A Waiting on line
 gets a ⏳ day `todo-chase-days` ahead when its source gives none (7, or 0

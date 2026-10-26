@@ -300,8 +300,8 @@ answers in the conversation and writes a file only on a yes to saving it
    recent one before today, as `--since`. "Since yesterday": `--days 1`.
    "This week": `--period week`, since Monday. "The last five days":
    `--days 5`. "The last two weeks": `--period 14-days`. Nothing said: leave
-   all three out, and the tool takes the period Settings › Catch up on the
-   status page keeps, the last day until it is changed.
+   all three out, and the tool takes the last day, or the period
+   `"catch-up"` in `System/garrick-settings.json` names.
 3. **Gather**, with the folder names the names resolved to:
    ```sh
    python3 System/tools/briefing.py --zone Work --project "Birch Entry" --thread "Acme/Pricing" --since 2026-10-19

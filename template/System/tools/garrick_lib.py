@@ -2016,8 +2016,9 @@ def release_repository(root: PathLike) -> str:
 # status page opens on: the installer writes "simple" for a new workspace,
 # and a workspace without it keeps the page it had; "memory" is Settings ›
 # Memory, how pages fade out of the wikis, which System/tools/fade.py reads;
-# "catch-up" is Settings › Catch up, the period "catch me up" covers by
-# default, which System/tools/briefing.py reads and checks.
+# "catch-up" is the period "catch me up" covers when none is said, which
+# System/tools/briefing.py reads and checks; Settings no longer offers it
+# (#226), so it is set by hand, and a workspace that set it keeps it.
 PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")

@@ -307,9 +307,6 @@ SHAPES = {
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
     "sdReq: 'settings'": {"settings": ("memory",)},      # JS: what Settings closes with, zones and notifications alone,
                                                          # Memory's form assigned to it (#108)
-    # NOTIFY_JS: Send a test and Telegram's Set up…, the settings with them (#110); `more` is merged by
-    # `for(var k in more)`, which no scanner of the literal sees
-    "nact: 'settings'": {"settings": ("test", "token", "find-chat")},
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
     "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
     "park: v": {"park": (), "wake": ()},                 # PANEL_JS park(o): by name, or by file
@@ -359,7 +356,6 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
-           "NOTIFY_JS": {"nact: 'settings'"},
            "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
            "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},

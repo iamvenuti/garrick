@@ -3465,8 +3465,8 @@ def copy(label: str, text: str, say: str) -> str:
 
 
 # The changelog the workspace was installed with: install.py copies the
-# release's CHANGELOG.md here, so the page shows release notes without
-# fetching anything.
+# release's CHANGELOG.md here, so the page knows the release it runs, for
+# About Garrick and the Guide's links, without fetching anything.
 CHANGELOG = ("System", "garrick-changelog.md")
 GEAR = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" '
         'stroke-linejoin="round" d="M8.6 2.5h2.8l.4 2.1 1.5.9 2-.8 1.4 2.4-1.6 1.4v1.8l1.6 1.4-1.4 2.4-2-.8-1.5.9-.4 2.1H8.6l-.4-2.1'
@@ -3478,121 +3478,85 @@ REBUILD = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><
            'stroke-linecap="round" stroke-linejoin="round" d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.4h-3.4"/></svg>')
 
 
-def changelog_sections(text: str) -> List[Tuple[str, str, List[str]]]:
-    """Each `## [name] - date` section of a Keep a Changelog file, with its lines."""
-    out: List[Tuple[str, str, List[str]]] = []
-    for line in text.splitlines():
-        m = re.match(r"^## \[([^\]]+)\](?:\s*-\s*(\S+))?", line)
-        if m:
-            out.append((m.group(1), m.group(2) or "", []))
-        elif out and not re.match(r"^\[[^\]]+\]:\s*\S", line):     # link references stay out
-            out[-1][2].append(line)
-    return out
-
-
 def md_inline(s: str) -> str:
     """A line of Markdown, through guide.py's renderer: a link keeps its text, since the page links only to Garrick."""
     return guide_mod().inline(s)
 
 
-def md_block(lines: List[str]) -> str:
-    """A changelog section, through guide.py's renderer: its ### headings drawn as <h5>, its links as their text."""
-    return guide_mod().blocks("\n".join(lines), shift=2)
+def release_number(ws: Path) -> str:
+    """"Garrick 0.43.0": the release the workspace runs, the newest in its
+    copy of the release notes, through its own garrick_lib. A workspace
+    whose tools cannot say it gets the sentence `check.py --version` gives."""
+    lib = workspace_lib(ws)
+    read = getattr(lib, "workspace_release", None)
+    try:
+        number = read(ws) if callable(read) else ""
+    except Exception:
+        number = ""
+    return "Garrick %s" % number if number else installed_version(ws)
 
 
-def release_notes(text: Optional[str], edge: bool = False) -> str:
-    """The newest release's notes, read from a changelog on this machine. With
-    `edge`, for a workspace that follows main rather than a release, also
-    what is waiting under Unreleased."""
-    if not text:
-        return ""
-    sections = changelog_sections(text)
-    parts = []
-    if edge:
-        waiting = [s for s in sections if s[0].lower() == "unreleased" and any(l.strip() for l in s[2])]
-        if waiting:
-            parts.append(("Coming next, on main", waiting[0][2]))
-    released = [s for s in sections if s[0].lower() != "unreleased"]
-    if released:
-        name, date, lines = released[0]
-        parts.append(("What's new in %s%s" % (name, ", " + date if date else ""), lines))
-    return "".join('<details class="notes"%s><summary>%s</summary><div>%s</div></details>'
-                   % ("", E(title), md_block(lines)) for title, lines in parts)
-
-
-# Where a way past the wall check is reported: GitHub's private advisory form.
-BYPASS = "/security/advisories/new"
-
-
-def about_garrick(version: str, notes: str = "") -> str:
-    """Settings › About Garrick: which Garrick this is, its release notes, and
-    the ways to report a bug, suggest a change, ask, or hear about releases.
-    Each is a link to Garrick's GitHub page, opened in the browser, where
-    nothing is sent until you submit it yourself; the bug form arrives with the
-    version filled in. For someone with no GitHub account, a report to copy and
-    send to whoever set Garrick up. The page never calls out: a newer release
-    is asked for at build, only with the release notice switched on, by
-    System/tools/release.py (release_ask)."""
-    report = ("Garrick bug report\n\nWhich Garrick: %s\n\nWhat happened:\n\nHow to make it happen again:\n\n"
-              "Assistant and its version:\n\nUse invented names (Acme, Birch), never a real client's." % version)
-    # The two forms that publish what you write warn, as their tooltip, what
-    # the paragraph behind the "?" says; a way past the wall check has a row
-    # of its own, so the private report is never deeper than the others.
+def about_garrick(version: str) -> str:
+    """Settings › About Garrick (#227): the release this is, and three links
+    to Garrick's GitHub page, opened in the browser, where nothing is sent
+    until you submit it yourself: the bug form, with the version filled in;
+    an idea; and the release notes. A way past the wall check is reported
+    privately, as SECURITY.md says, and the bug form points there. The page
+    never calls out: a newer release is asked for at build, only with the
+    release notice switched on, by System/tools/release.py (release_ask)."""
     invented = "Use invented names (Acme, Birch), never a real client's."
-    links = [
-        ("Report a bug", "/issues/new?" + urllib.parse.urlencode({"template": "bug.yml", "garrick": version}),
-         "The bug form on GitHub, with this version filled in", invented),
-        ("Report a wrong refusal", "/issues/new?template=wall-check.yml", "The wall check refused something it should allow", invented),
-        ("Report a bypass privately", BYPASS, "A way past the wall check, seen only by the maintainer", ""),
-        ("Suggest a change", "/discussions/new?category=ideas", "Something Garrick should do, or do differently", ""),
-        ("Ask a question", "/discussions/new?category=q-a", "How something works, or how it went for you", ""),
-        ("Announcements", "/discussions/categories/announcements", "News of each release; watch it on GitHub to hear of the next", ""),
-        ("All releases", "/releases", "Every release and what it changed", ""),
-    ]
-    rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b><small>%s</small></a>'
-                   % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label), E(about))
-                   for label, path, about, tip in links)
-    return ('<section class="setsec" id="about-settings">%s<p class="setver" id="garrick-version">%s</p>'
-            '<div class="gacts">%s%s</div>%s<div class="setlinks">%s</div>%s</section>'
-            % (set_head("About Garrick", "about", "Which Garrick this is, what changed in it, and where to report a problem "
-                        "or ask a question."), E(version), copy("Copy version", version, "Copied the version."),
-               copy("Copy a report", report, "Copied a report. Fill it in and send it."), notes, rows,
-               help_text("about", 'These open GitHub in your browser. The page sends nothing: a report goes only when you submit it '
-                         'there. Use invented names (Acme, Birch), never a real client&#39;s. No GitHub account? Copy a report and send '
-                         'it to whoever set Garrick up for you. A way past the wall check: <a href="%s" target="_blank" rel="noopener">'
-                         'report it privately</a>.' % E(PROJECT + BYPASS))))
+    links = [("Report a bug", "/issues/new?" + urllib.parse.urlencode({"template": "bug.yml", "garrick": version}), invented),
+             ("Suggest a change", "/discussions/new?category=ideas", invented),
+             ("Release notes", "/releases", "")]
+    rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b></a>'
+                   % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label)) for label, path, tip in links)
+    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>'
+            '<div class="setlinks">%s</div></section>'
+            % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
+               'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s.'), E(version), rows))
+
+
+# Each row of Opening a thread carries the icon its way carries on Explore's
+# cards (#227): the app's own, which Garrick.app sets as --icon-<key> with
+# .appicons, and Preview's magnifier. A browser, whose cards keep the words,
+# shows none.
+LAUNCH_ICON = '<i class="lico" aria-hidden="true" style="--ic:%s"></i>'
+GLASS = ('<svg class="lico lglass" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6" fill="none" '
+         'stroke="currentColor" stroke-width="1.6"/><path d="M10.2 10.2L14 14" stroke="currentColor" stroke-width="1.8" '
+         'stroke-linecap="round"/></svg>')
 
 
 def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
                      why: Optional[Dict[str, Optional[str]]] = None) -> str:
     """Settings › Opening a thread: the note's own link, then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
-    (what clicking a thread's name does). Explore's Preview has the box alone,
-    after the note's link (#219). A launcher that cannot work here is
-    disabled with the reason on it, before any click rather than after: not
-    installed, or installed without the launcher it opens a folder through.
-    Kept in this viewer's own storage, so the page still writes nothing."""
+    (what clicking a thread's name does), each with its card icon. Explore's
+    Preview has the box alone, after the note's link (#219). A launcher that
+    cannot work here is disabled with the reason on it, before any click
+    rather than after: not installed, or installed without the launcher it
+    opens a folder through. How each app takes the resume phrase is in the
+    docs, not here (#227). Kept in this viewer's own storage, so the page
+    still writes nothing."""
     why = launcher_state() if why is None else why
-    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "The note&#39;s own link")]
-    rows += [(k, VERB[k], k in installed,
-              "Installed" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT)
+    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "",
+             LAUNCH_ICON % ("var(--icon-obsidian,var(--icon-note))" if obsidian else "var(--icon-note)"))]
+    rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
+              LAUNCH_ICON % "var(--icon-%s)" % k)
              for k, _, _, _ in LAUNCHERS]
-    row = ('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> <span>%s<small>%s</small></span></label>'
+    row = ('<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" data-launcher="%s"%s> %s<span>%s%s</span></label>'
            '<label class="launcher-default" title="What clicking a thread does"><input type="radio" name="garrick-default" value="%s"%s> Default</label></div>')
-    html = [row % (k, "" if ok else " disabled", E(label), note, k, "" if ok else " disabled") for k, label, ok, note in rows]
+    html = [row % (k, "" if ok else " disabled", icon, E(label), "<small>%s</small>" % note if note else "", k, "" if ok else " disabled")
+            for k, label, ok, note, icon in rows]
     # Explore's Preview (#219), after the note it reads: a box and no Default, since it opens
     # nothing, and only where the host reads a note for the page, as the card offers it
     html.insert(1, '<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
-                   '<span>Preview<small>Explore&#39;s cards read the note inside Garrick, in the Mac app and Obsidian</small></span></label></div>')
+                   '%s<span>Preview</span></label></div>' % GLASS)
     html = "".join(html)
     return ('<section class="setsec" id="launcher-settings">%s%s%s</section>'
             % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
-                        "thread&#39;s name does."), help_text("launchers", 'Tick what project and thread cards offer; the dot marks what '
-               'clicking a thread&#39;s name does. Apps open from Garrick&#39;s Status.app, which says what opened. Claude starts with the phrase '
-               'that resumes the thread typed in, for you to send, and is started first and waited for when it is not running; Codex and cmux open '
-               'in the folder and say that the phrase is now on the clipboard; Finder, which can take neither, names the phrase instead. A greyed '
-               'row says why it cannot work here. Preview reads the note over Explore without opening anything, so it is never what a click does. '
-               'Saved as you change it.'),
+                        "thread&#39;s name does."), help_text("launchers", 'Tick what project and thread cards offer; Default is what '
+               'clicking a thread&#39;s name does. A greyed row says why it cannot work here. Preview reads the note without opening '
+               'anything. Saved as you change it.'),
                html))
 
 
@@ -3610,13 +3574,15 @@ def follow_settings() -> str:
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
-    rows = "".join('<div class="flagrow"><b>%s</b><span class="chip%s">%s</span><small>%s</small></div>'
-                   % (E(FLAGS[k][0]), " on" if on else "", "on" if on else "off", E(FLAGS[k][1])) for k, on in flags.items())
+    """Settings › Preview features: each flag's name and whether it is on,
+    what it does as the row's tooltip (#227), since it is switched in a file."""
+    rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
+                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", "on" if on else "off") for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
-            % (set_head("Preview features", "preview", "Features that are built but not released yet. They are switched on "
-                        "in a file, not here."), rows, help_text("preview", 'In Garrick&#39;s source but not yet released, '
-               'so they may still change. Switch one on in <code>System/garrick-flags.json</code>, for example '
-               '<code>{"effort": true}</code>, and rebuild the page.')))
+            % (set_head("Preview features", "preview", "Built but not released yet, and switched on in a file."), rows,
+               help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
+               '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
+               'Point at a feature for what it does.')))
 
 
 # The foot of Settings, under the last section: the cards hidden in this
@@ -3655,26 +3621,22 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
-             styles: Optional[Dict[str, dict]] = None, graph: bool = False, sched: Optional[Dict[str, dict]] = None,
+             styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              layout: str = "full", link: Optional["Links"] = None) -> str:
     """The Settings dialog: what Garrick opens on, which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
-    each zone's colour and icon, the menu bar, While you wait; where notices
-    go (`sched`, the jobs' plists, for the ones that override it); how older
-    material fades (`link` opens the written proposal); About Garrick, and
-    the preview features with which are switched on; Reset view at the foot."""
-    stamp = workspace_stamp(ws)
-    try:
-        text = ws.joinpath(*CHANGELOG).read_text(encoding="utf-8")
-    except OSError:
-        text = None
-    notes = release_notes(text, edge=stamp.get("from") in ("clone", "adopted"))
+    each zone's colour and icon, the menu bar, While you wait; which notices
+    this Mac shows; how older material fades (`link` opens the full list);
+    About Garrick, and the preview features with which are switched on;
+    Reset view at the foot. Each section shows its choices and one line at
+    most saying what they are for; how a feature works is behind its "?"
+    and in docs/extras/status-page.md (#227)."""
     filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian"))),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}), menu_settings(),
                       wait_settings(ws)],
-             "tell": [notify_settings(ws, list(zones), styles or {}, sched, CMUXLIB.is_file()), catch_settings(ws)],
+             "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
-             "about": [about_garrick(installed_version(ws), notes), preview_section(preview_flags(ws))]}
+             "about": [about_garrick(release_number(ws)), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
                    % (key, key, E(title), "".join(secs)) for key, title, secs in groups if secs)
@@ -3897,203 +3859,42 @@ def notify_lib(ws: Path):
     return _NL[key]
 
 
-NOTIFY_TOKEN = "python3 System/tools/notifications.py telegram-token"
-NOTIFY_CMUX_TEST = "python3 System/tools/notifications.py test cmux"
-NOTIFY_QUIET = (("send", "Send"), ("hold", "Hold"), ("drop", "Drop"))
-
-
-def notify_overrides(lib, sched: Optional[Dict[str, dict]]) -> Tuple[str, str]:
-    """The line under the simple view about jobs whose launchd plist sets
-    GARRICK_NOTIFY or GARRICK_NOTIFY_CMD, and its tooltip, which names them
-    and the variable. ("", "") when no plist does."""
-    forced = sorted((name, [k for k in lib.override(j.get("env") or {})]) for name, j in (sched or {}).items()
-                    if lib.override(j.get("env") or {}))
-    if not forced:
-        return "", ""
-    line = ("1 scheduled job sends its notices its own way and skips these settings." if len(forced) == 1 else
-            "%d scheduled jobs send their notices their own way and skip these settings." % len(forced))
-    tip = ("%s. Take it out of the job's launchd plist to use these settings."
-           % "; ".join("%s sets %s in its launchd plist" % (n, " and ".join(vs)) for n, vs in forced))
-    return line, tip
-
-
-def notify_settings(ws: Path, zones: List[str], styles: Dict[str, dict], sched: Optional[Dict[str, dict]] = None,
-                    desk: bool = False) -> str:
-    """Settings › Notifications (#110). It opens on four plain choices, the
-    simple view: where to send (this Mac, Telegram, with Set up… for the
-    bot), which of four events to be told about, and quiet hours. Under More
-    options, closed until opened, is everything else, in four groups each
-    with a line saying what it changes: the channels, each tested from here;
-    which events go to which, and what each does in quiet hours; which
-    channels each zone's notices may use, with a Telegram chat of its own;
-    and a command of your own. The simple view drives
-    the form under More options (NOTIFY_JS), whose request is what is saved,
-    as notifications.py's from_simple() says; settings it cannot say
-    (notifications.py's is_simple()) are custom, kept as they are until "Use
-    the simple choices". In the app only: what is chosen goes to
-    page_action.py when Settings closes, or when a test is sent or the bot
-    set up, which save first. `desk` says the cmux extra is here, which
-    brings the cmux channel, the Desk event and "only when away". Jobs whose
-    plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD are counted, since those
-    override what is chosen here, and named in the line's tooltip. The
-    Telegram token never reaches the page: only whether one was stored."""
+def notify_settings(ws: Path, desk: bool = False) -> str:
+    """Settings › Notifications (#110, #227): notices go to this Mac and
+    nowhere else, so the section is the four notices you can be told of,
+    each on or off, the minutes a long task takes, and quiet hours, with
+    what they do in one sentence. A session in cmux gets its notice on its
+    own tab, with no switch for it. In the app only: what is chosen goes to
+    page_action.py when Settings closes (NOTIFY_JS). `desk` says the cmux
+    extra is here, whose Desk replies also get through at night. A job
+    whose plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its own way,
+    which the explanation behind the "?" says, rather than a line of state."""
     lib = notify_lib(ws)
-    if lib is None:
+    if lib is None or not hasattr(lib, "TELL"):
         return ""
     cfg = lib.settings(ws)
-    ch = cfg["channels"]
-    def box(attr, on, label="", extra=""):
-        return '<input type="checkbox" %s%s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "", extra)
-    def row(key, title, about, button):
-        return ('<div class="launcher-row nch"><label class="launcher-choice">%s <span>%s<small>%s</small></span></label>%s</div>'
-                % (box('data-nch="%s"' % key, ch.get(key)), E(title), about, button))
-    def test(key, label):
-        return '<button class="act" type="button" data-ntest="%s" title="Saves these settings, then sends a test">Send a test</button>' % key
-    stored = lib.token_stored(ws)
-    chat = cfg["telegram"]["chat"]
-    rows = row("mac", "This Mac", "A notification in the corner of the screen", test("mac", "This Mac"))
-    if desk:
-        rows += row("cmux", "cmux", "A session in cmux gets its notice on its own tab, in place of the Mac&#39;s",
-                    '<button class="act" type="button" data-copy="%s" data-say="Copied. Run it in a cmux tab: the test lands '
-                    'on that tab.">Copy a test</button>' % E(NOTIFY_CMUX_TEST))
-    rows += row("telegram", "Telegram", "A message from your own bot, on your phone", test("telegram", "Telegram"))
-    rows += ('<div class="nfield"><input type="text" id="n-chat" value="%s" placeholder="Chat ID, such as 123456789" '
-             'aria-label="Telegram chat ID" autocomplete="off" spellcheck="false"><span class="hint ntok">%s</span>'
-             '<button class="act" type="button" data-copy="%s" data-say="Copied. Run it in a terminal and paste the token '
-             'there, where it is not shown.">Copy the token command</button></div>'
-             % (E(chat), "Token kept in this Mac&#39;s keychain since %s" % E(stored) if stored
-                else "No token on this Mac yet", E(NOTIFY_TOKEN)))
-    cmd = row("command", "A command of your own", "Run with the title and the message, as GARRICK_NOTIFY_CMD is",
-              test("command", "Your command"))
-    cmd += ('<div class="nfield"><input type="text" id="n-cmd" value="%s" placeholder="/bin/sh /Users/you/notify.sh" '
-            'aria-label="The command to run" autocomplete="off" spellcheck="false"></div>' % E(cfg["command"]))
-    quiet = lambda name, chosen: ('<select data-nq aria-label="%s in quiet hours">%s</select>' % (E(name), "".join(
-        '<option value="%s"%s>%s</option>' % (v, " selected" if v == chosen else "", label) for v, label in NOTIFY_QUIET)))
-    events = ""
-    for key, label, about in lib.EVENTS:
-        if key == "desk" and not desk:
-            continue
-        e = cfg["events"][key]
-        extra = ""
-        if key == "finished":
-            extra += ('<span class="nafter">after <input type="number" data-nafter min="0" max="%d" value="%d" '
-                      'aria-label="Minutes a turn must run"> min or more</span>' % (lib.AFTER_MAX, e["after"]))
-        if key in lib.SESSION_EVENTS and desk:
-            extra += ('<label class="naway" title="In cmux, nothing while you are looking at that tab">%s only when away</label>'
-                      % box("data-naway", e["away"]))
-        cells = "".join('<td%s>%s</td>' % ("" if ch.get(c) else ' class="noff"',
-                                           box('data-nto="%s"' % c, c in e["to"], "%s to %s" % (label, lib.CHANNEL_LABELS[c])))
-                        for c in lib.CHANNELS)
-        events += ('<tr data-nev="%s"><th scope="row">%s<small>%s</small>%s</th>%s<td>%s</td></tr>'
-                   % (key, E(label), E(about), extra, cells, quiet(label, e["quiet"])))
-    q = cfg["quiet"]
-    # A zone's box for a channel switched off is hidden, not greyed: ticked and
-    # greyed read as broken. Its value stays, for when the channel comes on.
-    zrows = ""
-    for z in zones:
-        zc = cfg["zones"].get(z, {})
-        allowed = zc.get("to", list(lib.CHANNELS))
-        zrows += ('<div class="nzone" data-zone="%s"><span class="zprev%s">%s</span><span class="nzto">%s</span>'
-                  '<input type="text" data-nzchat value="%s" placeholder="Telegram chat ID" aria-label="%s&#39;s own Telegram chat" '
-                  'autocomplete="off" spellcheck="false"%s></div>'
-                  % (E(z), zone_class(z, styles), zone_name(z, styles), "".join(
-                      '<label%s>%s %s</label>' % ("" if ch.get(c) else " hidden",
-                                                  box('data-nzto="%s"' % c, c in allowed, "%s to %s" % (z, lib.CHANNEL_LABELS[c])),
-                                                  {"mac": "Mac", "telegram": "Telegram", "command": "Command"}[c])
-                      for c in lib.CHANNELS), E(zc.get("chat", "")), E(z), "" if ch.get("telegram") else " hidden"))
-    # More options in groups a person can scan (#205), each with a line saying what it changes: the
-    # channels, then each event, each zone, and a command of your own, which is a channel of its own.
-    group = lambda title, about, body: ('<div class="ngroup"><h4 class="nsub">%s</h4><p class="hint ngh">%s</p>%s</div>'
-                                        % (title, about, body))
-    more = ('<details class="nmore" id="notify-more"><summary>More options</summary>%s%s%s%s</details>'
-            % (group("Where notices can go", "Switch each channel on or off. A test saves these settings, then shows a "
-                     "notice arriving there.", '<div class="nchans">%s</div>' % rows),
-               group("Each event", "Which channels each kind of notice goes to, and what it does in quiet hours: sent "
-                     "anyway, held until they end, or dropped.",
-                     '<table class="nev"><thead><tr><th scope="col">Event</th><th scope="col">Mac</th><th scope="col">Telegram</th>'
-                     '<th scope="col">Command</th><th scope="col">In quiet hours</th></tr></thead><tbody>%s</tbody></table>' % events),
-               group("Each zone", "Send a zone&#39;s notices to a chat of its own, or keep a zone off some channels.", zrows)
-               if zrows else "",
-               group("A command of your own", "Runs a program you name with each notice&#39;s title and message, for a "
-                     "channel Garrick does not have. Each event&#39;s Command column says when it runs.", cmd)))
-    line, tip = notify_overrides(lib, sched)
-    help_html = ('Choose where notices go and which ones you get. A notice names the zone or thread and what happened, never what '
-                 'a note or a meeting says, since a phone shows it on a locked screen. &#8220;A session needs me&#8221; and &#8220;a '
-                 'long task finishes&#8221; need hooks in Claude Code or Codex: ask your assistant to set up notifications. More '
-                 'options sets each event, channel and zone on its own, and adds a command of your own. In quiet hours a long task '
-                 'that finishes is not reported at all, rather than held till morning. Saved in <code>%s</code> when '
-                 'you close Settings; a Telegram bot&#39;s token is kept in this Mac&#39;s keychain, never there.' % E(prefs().FILE))
-    if line:
-        help_html += (' A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own '
-                      'way; take the variable out of the plist to use these settings.')
-    simple = notify_simple(lib, cfg, desk, bool(stored), line, tip) if callable(getattr(lib, "from_simple", None)) else ""
-    if not simple:          # a workspace whose notifications.py predates the simple view: More options is all there is
-        more = more.replace('<details class="nmore" id="notify-more">', '<details class="nmore" id="notify-more" open>', 1)
-        more += ('<div class="launcher-row"><label class="launcher-choice">%s <span>Quiet hours<small>What each event does then '
-                 'is its last column</small></span></label><span class="nquiet"><input type="time" id="n-from" value="%s" '
-                 'aria-label="Quiet from"> to <input type="time" id="n-to" value="%s" aria-label="Quiet until"></span></div>'
-                 % (box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"])))
-        if line:
-            more += '<p class="hint nover" title="%s">%s</p>' % (E(tip), E(line))
-    return ('<section class="setsec apponly" id="notify-settings"%s>%s%s%s%s<p class="hint" id="n-said" role="status" hidden></p>'
-            '</section>'
-            % (notify_data(lib, cfg, desk) if simple else "", set_head("Notifications", "notify", "What Garrick tells you "
-               "about, and where: this Mac, your phone, or both."), help_text("notify", help_html),
-               simple, more))
-
-
-def notify_data(lib, cfg: dict, desk: bool) -> str:
-    """What the page's script needs to mirror notifications.py's simple
-    mapping, as the section's attributes: the events the simple view sets,
-    each event's quiet-hours choice there, and whether the settings are
-    custom now, as is_simple() says."""
-    data = {"tell": [e for e, _ in lib.SIMPLE_EVENTS], "follow": list(lib.SIMPLE_FOLLOW), "channels": list(lib.CHANNELS),
-            "send": list(lib.SEND_TO), "quiet": {k: v["quiet"] for k, v in lib.DEFAULT_EVENTS.items()}}
-    return ' data-simple="%s" data-custom="%d"' % (E(json.dumps(data, separators=(",", ":"))), 0 if lib.is_simple(cfg, desk) else 1)
-
-
-def notify_simple(lib, cfg: dict, desk: bool, stored: bool, line: str, tip: str) -> str:
-    """The simple view: Send to, with Telegram's Set up…; Tell me when;
-    quiet hours, with what they do in one sentence; the custom line; and
-    the count of jobs that send their own way."""
-    choices = lib.simple_choices(cfg)
-    chat = cfg["telegram"]["chat"]
-    ready = bool(chat and stored)
     def box(attr, on, label=""):
         return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
-    state = ('<span class="ntgok">Set up</span><button type="button" class="nlink" data-ntgopen aria-expanded="false" '
-             'aria-controls="n-tgset">Change</button>' if ready else
-             '<button type="button" class="act" data-ntgopen aria-expanded="false" aria-controls="n-tgset">Set up&#8230;</button>')
-    send = ('<div class="nsrow"><span class="nslab">Send to</span><span class="nsopts"><label>%s This Mac</label>'
-            '<label>%s My phone (Telegram)</label><span class="ntgstate">%s</span></span></div>'
-            % (box('data-ns="mac"', choices["send"]["mac"]), box('data-ns="telegram"', choices["send"]["telegram"]), state))
-    setup = ('<div class="ntgset" id="n-tgset" hidden><ol>'
-             '<li><span>In Telegram, message @BotFather, send /newbot, and paste the token it gives you.</span>'
-             '<span class="nfield"><input type="password" id="n-token" autocomplete="off" spellcheck="false" '
-             'aria-label="The bot&#39;s token" placeholder="123456789:AA&#8230;"><button class="act" type="button" data-ntok>Save'
-             '</button></span>%s</li>'
-             '<li><span>Now send your bot any message, then press Find my chat.</span><span class="nfield">'
-             '<button class="act" type="button" data-nfind%s>Find my chat</button></span></li></ol></div>'
-             % ('<small class="ntgsaved">A token is kept in this Mac&#39;s keychain; save another to replace it.</small>' if stored else "",
-                "" if stored else ' disabled title="Save the token first"'))
-    after = ('<input type="number" id="n-safter" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
-             % (lib.AFTER_MAX, choices["after"]))
+    after = ('<input type="number" id="n-after" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
+             % (lib.AFTER_MAX, cfg["after"]))
     words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
-    tell = "".join('<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, choices["tell"][e], label if e == "finished" else ""),
-                                              words.get(e, E(label)))
-                   for e, label in lib.SIMPLE_EVENTS)
-    q = choices["quiet"]
-    rule = "At night only &#8220;a session needs me&#8221;%s get%s through; the rest waits until morning." % (
-        (" and the desk", "") if desk else ("", "s"))
-    quiet = ('<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
-             '<span>to</span><input type="time" id="n-to" value="%s" aria-label="Quiet until"></div><p class="hint nsrule">%s</p>'
-             % (box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
-    custom = lib.is_simple(cfg, desk) is False
-    note = ('<p class="ncustom" id="n-custom"%s><span>Your choices are custom, under More options.</span>'
-            '<button class="act" type="button" id="n-usesimple">Use the simple choices</button></p>' % ("" if custom else " hidden"))
-    over = '<p class="hint nover" title="%s">%s</p>' % (E(tip), E(line)) if line else ""
-    return ('<div class="nsimple">%s%s<div class="nsrow"><span class="nslab">Tell me when</span><span class="nsopts nscol">%s'
-            '</span></div>%s%s%s</div>' % (send, setup, tell, quiet, note, over))
+    tell = "".join('<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""),
+                                                          words.get(e, E(label)))
+                   for e, label in lib.TELL)
+    q = cfg["quiet"]
+    rule = "At night only &#8220;a session needs me&#8221;%s get%s through." % ((" and the desk", "") if desk else ("", "s"))
+    help_html = ('A notice names the zone or thread and what happened, never what a note or a meeting says. In cmux it lands on '
+                 'the session&#39;s own tab. &#8220;A session needs me&#8221; and &#8220;a long task finishes&#8221; need hooks in '
+                 'Claude Code or Codex: ask your assistant to set up notifications. With all four off, Garrick sends nothing. '
+                 'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. '
+                 'Saved in <code>%s</code> when you close Settings.' % E(prefs().FILE))
+    return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
+            '<span class="nslab">Tell me when</span><span class="nsopts nscol">%s</span></div>'
+            '<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
+            '<span>to</span><input type="time" id="n-to" value="%s" aria-label="Quiet until"></div><p class="hint nsrule">%s</p>'
+            '</div><p class="hint" id="n-said" role="status" hidden></p></section>'
+            % (set_head("Notifications", "notify", "Notices appear on this Mac."), help_text("notify", help_html),
+               tell, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
 
 
 def script_json(data) -> str:
@@ -5865,7 +5666,7 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .tick{width:18px;height:18px;margin-top:1px;border-radius:5px;border:1.5px solid var(--base);background:var(--raise);cursor:pointer;padding:0;display:grid;place-items:center}
 .tick:hover{border-color:var(--accent)}
 .flagrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
-.flagrow small{grid-column:1/-1;color:var(--muted);font-size:12px}.chip.on{color:var(--good);border-color:var(--good)}
+.flagrow{cursor:help}.chip.on{color:var(--good);border-color:var(--good)}
 #toast{position:fixed;left:50%;bottom:calc(22px + var(--work-h,0px));transform:translateX(-50%);background:var(--ink);color:var(--surface);font-size:13px;padding:9px 14px;border-radius:10px;opacity:0;transition:opacity .15s;pointer-events:none;z-index:10;max-width:90vw}
 @media (hover:none){.head .tools{opacity:1}}
 #tip{position:fixed;pointer-events:none;z-index:9;background:var(--ink);color:var(--surface);font-size:12px;padding:6px 9px;border-radius:7px;max-width:280px;opacity:0}
@@ -5998,8 +5799,9 @@ dialog.settings .setsec{margin-top:26px}dialog.settings .setsec:first-of-type{ma
 #menu-settings .hotkey .act{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;font-size:0;line-height:20px;color:var(--muted);cursor:pointer}
 #menu-settings .hotkey .act::after{content:"\00d7";font-size:15px}#menu-settings .hotkey .act:hover{background:var(--line);color:var(--ink)}
 #menu-settings .hotkey input:placeholder-shown+.act{display:none}
-.launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
-.launcher-choice input:disabled+span{color:var(--muted)}
+.launcher-choice input{width:16px;height:16px;accent-color:var(--accent)}.lico{display:none}
+.appicons .lico{display:inline-block;flex:none;width:20px;height:20px;margin-left:-4px;background:var(--ic) center/20px no-repeat}.appicons svg.lico{width:16px;height:16px;margin:0 2px 0 -2px;color:var(--ink2)}.launcher-choice small{display:block;font-size:12px;color:var(--muted)}
+.launcher-choice input:disabled~span{color:var(--muted)}
 .notes{margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:6px 10px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
 .notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
 .notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
@@ -6035,8 +5837,7 @@ dialog.settings .sethelp{margin:2px 0 6px}
 dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hiddencards .gacts{margin:4px 0 0}.setfoot .hiddencards{margin:0 0 10px}
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
-/* Settings › Notifications: the simple view, four plain choices; then More options, with the channels, a table of
-   events against them, and the zones */
+/* Settings › Notifications: the four notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
 #notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:13px}
 #notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
@@ -6044,42 +5845,11 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 #notify-settings .nsopts{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;flex:1;min-width:0}
 #notify-settings .nsopts.nscol{flex-direction:column;align-items:flex-start;gap:5px}
 #notify-settings .nsimple label{display:inline-flex;align-items:center;gap:6px}
-#notify-settings .nsimple input[type=checkbox],#notify-settings .nmore input[type=checkbox]{accent-color:var(--accent)}
+#notify-settings .nsimple input[type=checkbox]{accent-color:var(--accent)}
 #notify-settings .nsafter{white-space:nowrap}#notify-settings .nsq{align-items:center;gap:6px}#notify-settings .nsrule{margin:-4px 0 0 24px;font-size:12px}
-#notify-settings .ntgstate{display:inline-flex;align-items:center;gap:8px}#notify-settings .ntgok{color:var(--ink2)}
-#notify-settings .ntgok::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:6px;vertical-align:1px}
-#notify-settings .nlink{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--accent);cursor:pointer;text-decoration:underline}
-#notify-settings .ntgset{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:var(--wash)}
-#notify-settings .ntgset ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:10px;font-size:12.5px}
-#notify-settings .ntgset li{display:flex;flex-direction:column;gap:5px}#notify-settings .ntgset .nfield{margin:0}
-#notify-settings .ntgset small{font-size:11.5px;color:var(--muted)}
-#notify-settings input[type=password]{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px;flex:1;min-width:150px}
-#notify-settings .ncustom{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:7px 10px;border-radius:8px;background:var(--wash);font-size:12.5px}
-#notify-settings .nover{margin:0;font-size:12px;cursor:help}
-#notify-settings details.nmore{margin-top:6px;border-top:1px solid var(--line);padding-top:6px}
-#notify-settings details.nmore>summary{cursor:pointer;font-size:12.5px;font-weight:560;color:var(--ink2);list-style:none;padding:3px 0}
-#notify-settings details.nmore>summary::-webkit-details-marker{display:none}
-#notify-settings details.nmore>summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
-#notify-settings details.nmore[open]>summary::before{transform:rotate(90deg)}
-#notify-settings .ngroup{margin-top:4px}#notify-settings .ngh{margin:0 0 4px;font-size:12px}
-#notify-settings .nch{min-height:30px}#notify-settings .nfield{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 6px 28px}
-#notify-settings input[type=text],#notify-settings input[type=time],#notify-settings input[type=number],#notify-settings select{font:inherit;font-size:12.5px;
+#notify-settings input[type=time],#notify-settings input[type=number]{font:inherit;font-size:12.5px;
 color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px}
-#notify-settings .nfield input[type=text]{flex:1;min-width:150px}#notify-settings .ntok{flex-basis:100%;margin:0}
 #notify-settings input[type=number]{width:52px;padding:2px 5px}
-.nev{width:100%;border-collapse:collapse;margin:10px 0 6px;font-size:12.5px}
-.nev th,.nev td{padding:5px 3px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
-.nev thead th{font-size:11px;font-weight:600;color:var(--muted)}.nev thead th:first-child,.nev th[scope=row]{text-align:left}
-.nev th[scope=row]{font-weight:560}.nev th small{display:block;font-size:11.5px;font-weight:400;color:var(--muted)}
-.nev .nafter,.nev .naway{display:block;font-size:11.5px;font-weight:400;color:var(--ink2);margin-top:2px;white-space:nowrap}
-.nev .naway input{vertical-align:-2px;margin:0 3px 0 0}.nev thead th:first-child{width:46%}
-.nev input[type=checkbox],.nzone input[type=checkbox]{accent-color:var(--accent)}.nev select{width:76px;padding:4px 3px}
-.nev td.noff,.nzone label.noff{opacity:.4}
-.nquiet{display:flex;align-items:center;gap:6px;font-size:12.5px}
-#notify-settings .nsub{margin:12px 0 4px;font-size:12px}
-.nzone{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:4px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-.nzone .zprev{flex:1;min-width:90px;font-weight:560}.nzone .nzto{display:flex;gap:8px}.nzone label{display:flex;align-items:center;gap:3px}
-.nzone input[type=text]{width:120px}
 #n-said{margin-top:8px}#n-said.bad{color:var(--critical,#C0392B)}
 """
 
@@ -6255,15 +6025,13 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, Catch up, each only when it changed,
-   or, with `all` (a test of a channel, NOTIFY_JS), a request whatever changed. null when there is nothing. */
-function sdReq(all){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),
-C=window.GarrickCatch,c=!!(C&&C.changed());
-if(!(lpChanged||zChanged||n||w||m||c||all))return null;
+/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed.
+   null when there is nothing. */
+function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
+if(!(lpChanged||zChanged||n||w||m))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
-if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}if(c){q['catch-up']=C.request();C.saved()}
+if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
 lpChanged=zChanged=false;if(n)N.saved();return q}
-window.GarrickSettingsReq=sdReq;
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 /* Settings' list of sections (#205): a link brings its section to the top of the column and gives it the focus,
@@ -6353,117 +6121,21 @@ window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
 """
 
 
-# Settings › Notifications (#110), in the app: the form under More options
-# read into the shape notifications.py keeps, sent with what else Settings
-# changed when it closes (JS's sdReq), and "Send a test", which saves first
-# and names one channel. The simple view above it drives that form: a change
-# there is written into More options as notifications.py's from_simple()
-# says, mirrored here (simpleOf, fromSimple), so More options always shows
-# what will be saved, and the request is built from More options alone. A
-# form the simple view cannot say is custom (the section's data-custom, from
-# is_simple(), then worked out again here whenever More options changes):
-# the simple view then writes nothing until "Use the simple choices". The
-# minutes and the quiet hours are one setting each, shown once or kept in
-# step, so they always apply. Telegram's Set up… saves the token, or finds
-# the chat, through page_action.py, saving the rest first as a test does:
-# the token goes in that one request and nowhere else, and the field is
-# emptied as it goes. The app rebuilds the page after a request, so these
-# reopen Settings at this section and show the reply they kept in this
-# window's sessionStorage, which never holds the request.
-# Runs after WORK_JS, so it wraps the GarrickActed every other script set.
+# Settings › Notifications (#110, #227), in the app: the four boxes, the
+# minutes and quiet hours read into the shape notifications.py keeps, sent
+# with what else Settings changed when it closes (JS's sdReq), where
+# page_action.py checks them through notifications.py's clean().
 NOTIFY_JS = r"""
-(function(){var sec=document.getElementById('notify-settings');if(!sec)return;
-var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,changed=false,
-CHAT=/^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/,TOKEN=/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/,S=null,custom=sec.dataset.custom==='1';
-try{S=JSON.parse(sec.dataset.simple||'null')}catch(x){}
+(function(){var sec=document.getElementById('notify-settings');if(!sec)return;var changed=false;
 function val(id){var e=document.getElementById(id);return e?e.value.trim():''}
-function on(k){var c=sec.querySelector('[data-nch="'+k+'"]');return!!(c&&c.checked)}
-function say(s){if(window.GarrickSay)GarrickSay(s)}
-/* a channel switched off greys its column; in each zone's row its box is hidden, kept for when it comes back on */
-function paint(){['mac','telegram','command'].forEach(function(k){
-sec.querySelectorAll('[data-nto="'+k+'"]').forEach(function(c){var cell=c.closest('td');if(cell)cell.classList.toggle('noff',!on(k))});
-sec.querySelectorAll('[data-nzto="'+k+'"]').forEach(function(c){var l=c.closest('label');if(l)l.hidden=!on(k)})});
-sec.querySelectorAll('[data-nzchat]').forEach(function(t){t.hidden=!on('telegram')})}
-function request(){var ch={};sec.querySelectorAll('[data-nch]').forEach(function(c){ch[c.dataset.nch]=c.checked});
-var ev={};sec.querySelectorAll('tr[data-nev]').forEach(function(r){var e={to:[],quiet:r.querySelector('[data-nq]').value};
-r.querySelectorAll('[data-nto]').forEach(function(c){if(c.checked)e.to.push(c.dataset.nto)});
-var a=r.querySelector('[data-naway]');if(a)e.away=a.checked;
-var f=r.querySelector('[data-nafter]');if(f)e.after=Math.max(0,Math.min(240,parseInt(f.value,10)||0));ev[r.dataset.nev]=e});
-var zs={};sec.querySelectorAll('.nzone').forEach(function(r){var z={to:[]};r.querySelectorAll('[data-nzto]').forEach(function(c){if(c.checked)z.to.push(c.dataset.nzto)});
-var t=r.querySelector('[data-nzchat]');if(t&&t.value.trim())z.chat=t.value.trim();zs[r.dataset.zone]=z});
+function request(){var t={};sec.querySelectorAll('[data-nt]').forEach(function(c){t[c.dataset.nt]=c.checked});
 var qt=document.getElementById('n-quiet');
-return{channels:ch,telegram:{chat:val('n-chat')},command:val('n-cmd'),events:ev,
-quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'},zones:zs}}
+return{tell:t,after:Math.max(0,Math.min(240,parseInt(val('n-after'),10)||0)),
+quiet:{on:!!(qt&&qt.checked),from:val('n-from')||'22:00',to:val('n-to')||'07:00'}}}
 /* what notifications.py's clean() would refuse, said before anything is sent */
-function problem(){var r=request(),chats=[r.telegram.chat];Object.keys(r.zones).forEach(function(z){chats.push(r.zones[z].chat||'')});
-for(var i=0;i<chats.length;i++)if(chats[i]&&!CHAT.test(chats[i]))return'A Telegram chat ID is a number, such as 123456789, or -100 and a number for a group.';
-if(r.channels.telegram&&!chats.some(Boolean))return'Telegram needs a chat ID to send to, or switch it off.';
-if(r.channels.command&&!r.command)return'Name the command to run, or switch it off.';return''}
-/* the simple view, as notifications.py's simple_choices(), from_simple() and is_simple() say */
-function tracked(ch){var t=S.send.filter(function(c){return!!ch[c]});return t.length?t:['mac']}
-function simpleOf(r){var tr=tracked(r.channels),t={};S.tell.forEach(function(e){var x=r.events[e];t[e]=!!x&&tr.some(function(c){return x.to.indexOf(c)>=0})});
-return{send:{mac:!!r.channels.mac,telegram:!!r.channels.telegram},tell:t,after:r.events.finished?r.events.finished.after:2,quiet:r.quiet}}
-function fromSimple(s,r){var o=JSON.parse(JSON.stringify(r)),c=o.channels;c.mac=!!s.send.mac;c.telegram=!!s.send.telegram&&!!o.telegram.chat;
-if('cmux' in c)c.cmux=c.mac;c.command=false;var tr=tracked(c);
-Object.keys(o.events).forEach(function(k){var e=o.events[k],want=S.tell.indexOf(k)>=0?!!s.tell[k]:S.follow.indexOf(k)>=0;
-e.to=S.channels.filter(function(x){return tr.indexOf(x)>=0?want:e.to.indexOf(x)>=0});if(S.quiet[k])e.quiet=S.quiet[k];if('away' in e)e.away=false;
-if('after' in e)e.after=s.after});o.quiet=s.quiet;Object.keys(o.zones).forEach(function(z){o.zones[z]={to:S.channels.slice()}});return o}
-function stable(v){return JSON.stringify(v,function(k,x){if(x&&typeof x==='object'&&!Array.isArray(x)){var o={};Object.keys(x).sort().forEach(function(j){o[j]=x[j]});return o}return x})}
-function isSimple(r){return stable(fromSimple(simpleOf(r),r))===stable(r)}
-function sbox(a){return sec.querySelector('.nsimple [data-'+a+']')}
-function readSimple(){var t={};S.tell.forEach(function(e){var b=sbox('nt="'+e+'"');t[e]=!!(b&&b.checked)});
-var r=request();return{send:{mac:!!(sbox('ns="mac"')||{}).checked,telegram:!!(sbox('ns="telegram"')||{}).checked},tell:t,
-after:Math.max(0,Math.min(240,parseInt(val('n-safter'),10)||0)),quiet:r.quiet}}
-function showSimple(s){['mac','telegram'].forEach(function(k){var b=sbox('ns="'+k+'"');if(b)b.checked=s.send[k]});
-S.tell.forEach(function(e){var b=sbox('nt="'+e+'"');if(b)b.checked=s.tell[e]});var a=document.getElementById('n-safter');if(a)a.value=s.after}
-/* the advanced form set to a full set of settings, as request() reads it back */
-function write(r){sec.querySelectorAll('[data-nch]').forEach(function(c){c.checked=!!r.channels[c.dataset.nch]});
-sec.querySelectorAll('tr[data-nev]').forEach(function(row){var e=r.events[row.dataset.nev];if(!e)return;
-row.querySelectorAll('[data-nto]').forEach(function(c){c.checked=e.to.indexOf(c.dataset.nto)>=0});
-var q=row.querySelector('[data-nq]');if(q)q.value=e.quiet;var a=row.querySelector('[data-naway]');if(a)a.checked=!!e.away;
-var f=row.querySelector('[data-nafter]');if(f&&'after' in e)f.value=e.after});
-sec.querySelectorAll('.nzone').forEach(function(row){var z=r.zones[row.dataset.zone]||{};
-row.querySelectorAll('[data-nzto]').forEach(function(c){c.checked=!z.to||z.to.indexOf(c.dataset.nzto)>=0});
-var t=row.querySelector('[data-nzchat]');if(t)t.value=z.chat||''});paint()}
-function setCustom(c){custom=c;var p=document.getElementById('n-custom');if(p)p.hidden=!c}
-function tgpanel(open){var p=document.getElementById('n-tgset');if(!p)return;p.hidden=!open;
-sec.querySelectorAll('[data-ntgopen]').forEach(function(b){b.setAttribute('aria-expanded',String(open))});if(open){var t=p.querySelector('[data-nfind]:not([disabled])')||document.getElementById('n-token');if(t)t.focus()}}
-/* a change in the simple view goes into More options, unless the settings are custom; the minutes always do */
-function simpleChanged(t){changed=true;
-if(t.matches('[data-ns="telegram"]')&&t.checked&&!val('n-chat')){t.checked=false;tgpanel(true);say('Set up Telegram first: two steps, below.');return}
-var f=sec.querySelector('[data-nafter]');if(t.id==='n-safter'&&f)f.value=Math.max(0,Math.min(240,parseInt(t.value,10)||0));
-if(!custom&&S)write(fromSimple(readSimple(),request()))}
-/* a change in More options: the simple view shows what it now says, and whether it can say all of it */
-function moreChanged(t){changed=true;paint();if(!S)return;var r=request();if(t.matches('[data-nafter]')){var a=document.getElementById('n-safter');if(a)a.value=r.events.finished.after}
-showSimple(simpleOf(r));setCustom(!isSimple(r))}
-sec.addEventListener('change',function(e){var t=e.target;if(t.id==='n-token')return;
-if(t.closest('.nsimple'))simpleChanged(t);else if(t.closest('.nmore'))moreChanged(t);else changed=true;paint()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=text],input[type=number],input[type=time]'))changed=true});
-/* one request to page_action.py: what Settings would save, the notifications as they stand, and `more`, then the reply after the rebuild */
-function nact(more,said){if(!host)return;var bad=problem();if(bad){say(bad);return}
-var q=window.GarrickSettingsReq&&GarrickSettingsReq(true)||{verb:'settings'};
-q.notifications=request();changed=false;
-for(var k in more)q[k]=more[k];try{sessionStorage.setItem('garrick-reopen','notify-settings');if(!more.test)sessionStorage.setItem('garrick-ntg','1')}catch(x){}
-host.postMessage({act:q});say(said)}
-function ntest(ch){nact({test:ch},'Saving, then sending a test…')}
-sec.addEventListener('click',function(e){var b=e.target.closest('[data-ntest]');if(b){e.preventDefault();ntest(b.dataset.ntest);return}
-if(e.target.closest('[data-ntgopen]')){e.preventDefault();var p=document.getElementById('n-tgset');tgpanel(!!(p&&p.hidden));return}
-if(e.target.closest('[data-ntok]')){e.preventDefault();var t=document.getElementById('n-token'),v=t?t.value.trim():'';if(t)t.value='';
-if(!TOKEN.test(v)){say('That is not a bot token: BotFather gives one such as 123456789:AA…');return}nact({token:v},'Keeping the token in the keychain…');return}
-if(e.target.closest('[data-nfind]')){e.preventDefault();nact({'find-chat':true},'Looking for your chat…');return}
-if(e.target.closest('#n-usesimple')){e.preventDefault();write(fromSimple(readSimple(),request()));setCustom(false);changed=true;say('Using the simple choices. Close Settings to save them.')}});
-/* the reply, kept across the rebuild it brings, shown under the section: only what page_action.py said, never what was sent */
-function said(){var s=null;try{s=JSON.parse(sessionStorage.getItem('garrick-ntest')||'null')}catch(x){}
-var p=document.getElementById('n-said');if(!p||!s)return;p.hidden=false;p.textContent=s.say;p.classList.toggle('bad',!s.ok)}
-var was=window.GarrickActed;window.GarrickActed=function(q,a){if(q&&q.verb==='settings'&&(q.test||q.token||q['find-chat'])){
-if(q.token)q.token='';      /* the host hands the request back: the token goes no further than this */
-try{sessionStorage.setItem('garrick-ntest',JSON.stringify({ok:!!(a&&a.ok),say:(a&&a.say)||''}))}catch(x){}said()}
-return was?was.apply(this,arguments):undefined};
-var back=null,tg=null;try{back=sessionStorage.getItem('garrick-reopen');sessionStorage.removeItem('garrick-reopen');tg=sessionStorage.getItem('garrick-ntg');sessionStorage.removeItem('garrick-ntg')}catch(x){}
-if(back&&window.StatusSettings){StatusSettings.open();sec.scrollIntoView({block:'start'});said();
-var s=null;try{s=JSON.parse(sessionStorage.getItem('garrick-ntest')||'null')}catch(x){}if(tg&&!(s&&s.ok&&sec.querySelector('.ntgok')))tgpanel(true)}
-else{try{sessionStorage.removeItem('garrick-ntest')}catch(x){}}
-paint();
+function problem(){var r=request(),t=/^([01]\d|2[0-3]):([0-5]\d)$/;return t.test(r.quiet.from)&&t.test(r.quiet.to)?'':'Quiet hours are times such as 22:00.'}
+sec.addEventListener('change',function(){changed=true});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],input[type=time]'))changed=true});
 window.GarrickNotify={changed:function(){return changed},request:request,problem:problem,saved:function(){changed=false}};
 })();
 """
@@ -6582,14 +6254,14 @@ window.GarrickWait={changed:function(){return changed},request:request,saved:fun
 
 # ---- Catch up (#27) ------------------------------------------------------------------
 # "Catch me up", asked from the page: a button beside Settings opens a small
-# dialog that picks the period (Settings › Catch up keeps the default, the
-# last day until changed) and, if wanted, the projects and threads of one
-# zone, then hands the request to the default assistant at the workspace
+# dialog that picks the period (the last day, unless a "catch-up" key in the
+# settings file says otherwise) and, if wanted, the projects and threads of
+# one zone, then hands the request to the default assistant at the workspace
 # root, as Ask Garrick and Process the Inbox do, or copies it in a browser.
 # System/tools/briefing.py owns the periods, their words and the check; this
-# block only draws them. The menu bar's menu and the panel get the same
-# periods through the menu data (`catchup`). Without briefing.py, all of it
-# is left out.
+# block only draws them. Settings, the menu bar's menu and the panel offer no
+# Catch up of their own (#226): the button, File › Catch Up… and Obsidian's
+# command reach this dialog. Without briefing.py, all of it is left out.
 _CATCH: Dict[Path, object] = {}
 
 
@@ -6614,30 +6286,6 @@ def catch_lib(ws: Path):
                 break
         _CATCH[key] = found
     return _CATCH[key]
-
-
-def catch_periods(lib) -> List[List[str]]:
-    """[key, how Settings names it, the words a request carries] for each period."""
-    return [[k, label, words] for k, label, words in lib.PERIODS]
-
-
-def catch_settings(ws: Path) -> str:
-    """Settings › Catch up: the period a catch-up covers when none is said.
-    In the app only, as the other sections that save are."""
-    lib = catch_lib(ws)
-    if lib is None:
-        return ""
-    chosen = lib.settings(ws)["period"]
-    rows = "".join('<label class="launcher-choice"><input type="radio" name="cu-default" value="%s"%s> <span>%s</span></label>'
-                   % (E(k), " checked" if k == chosen else "", E(label)) for k, label, _ in lib.PERIODS)
-    return ('<section class="setsec apponly" id="catch-settings">%s%s<div class="cuperiods">%s</div></section>'
-            % (set_head("Catch up", "catch", "How far back a catch-up looks when you name no period."),
-               help_text("catch", '&#8220;Catch me up&#8221;, said or typed, or <b>Catch up</b> beside Settings, '
-                         'tells you what changed in a zone&#39;s threads, thread by thread, from their notes, their history and '
-                         'the Todo lists, and changes nothing. A period you name wins: &#8220;since Monday&#8221;, '
-                         '&#8220;this week&#8221;. What it raises and what it leaves out is in <code>System/briefing.md</code>, '
-                         'and yours in <code>System/briefing.local.md</code>. Saved in <code>%s</code>.' % E(prefs().FILE)),
-               rows))
 
 
 CATCH_ICON = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" '
@@ -6692,28 +6340,22 @@ def catch_dialog(ws: Path, T: Dict[str, dict], desk: bool) -> str:
 
 
 CATCH_CSS = r"""
-/* Catch up (#27): the dialog beside Settings, and Settings › Catch up */
+/* Catch up (#27): the dialog beside Settings */
 dialog.catchup{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);
 padding:20px 22px;box-shadow:var(--shadow);max-height:calc(100vh - 48px);overflow:auto}dialog.catchup::backdrop{background:rgba(0,0,0,.35)}
 dialog.catchup h2{margin:0 0 6px;font:600 20px/1.2 var(--display)}dialog.catchup .cuwhat,dialog.catchup .cuhint{margin:0 0 10px;font-size:13px;color:var(--ink2)}
 .cuperiods{border:0;margin:0 0 12px;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px}.cuperiods legend{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
-.cuperiod{font-size:13px;display:flex;align-items:center;gap:6px}.cuperiod input,.cuz input,#catch-settings input{accent-color:var(--accent)}
+.cuperiod{font-size:13px;display:flex;align-items:center;gap:6px}.cuperiod input,.cuz input{accent-color:var(--accent)}
 .cuzone{display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 10px}.cuzone select{font:inherit;font-size:13px;color:var(--ink);
 background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
 .cuz{list-style:none;margin:0 0 10px;padding:0;font-size:13px;max-height:260px;overflow:auto}.cuz ul{list-style:none;margin:0;padding-left:22px}
 .cuz label{display:flex;align-items:center;gap:6px;padding:2px 0}.cusaid{margin:0 0 4px;font-size:12.5px;color:var(--ink2)}
-#catch-settings .cuperiods{display:block}
 """
 
-# The dialog, and Settings › Catch up read back as briefing.py's clean() takes
-# it. The request's words are said in one place, phrase(), so what the dialog
+# The dialog. The request's words are said in one place, phrase(), so what the dialog
 # shows under "Asks" is exactly what the assistant is handed.
 CATCH_JS = r"""
 (function(){var dlg=document.getElementById('catchup'),host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-var sec=document.getElementById('catch-settings'),changed=false;
-if(sec){sec.addEventListener('change',function(){changed=true});
-window.GarrickCatch={changed:function(){return changed},saved:function(){changed=false},
-request:function(){var r=sec.querySelector('input[name=cu-default]:checked');return{period:r?r.value:'day'}}}}
 if(!dlg)return;var said=document.getElementById('cu-said'),zone=document.getElementById('cu-zone');
 var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux'};
 function shown(){return zone?zone.value:dlg.dataset.zone}
@@ -6802,16 +6444,17 @@ def fade_lib(ws: Path):
     return _FADE[ws]
 
 
-def memory_said(c: dict) -> Tuple[str, str]:
-    """A wiki's grades, and what the next pass would move, in words. MEMORY_JS
-    says them the same way when the counts come back for unsaved values."""
+def memory_said(w: str, c: dict) -> str:
+    """One wiki's line: "Meetings: 600 working · 17 dormant · next pass
+    moves 5". MEMORY_JS says it the same way when the counts come back for
+    unsaved values."""
+    grades = "%s: %d working · %d dormant" % (w, c.get("working", 0), c.get("dormant", 0))
+    if c.get("archived"):
+        grades += " · %d archived" % c["archived"]
     if not c.get("on", True):
-        grades = "%d working · %d dormant · %d archived" % (c.get("working", 0), c.get("dormant", 0), c.get("archived", 0))
-        return grades, "Off: nothing fades"
-    moves = [(c.get("to_dormant", 0), "to dormant"), (c.get("to_archive", 0), "to the archive"), (c.get("to_wake", 0), "woken")]
-    said = ", ".join("%d %s" % (n, w) for n, w in moves if n)
-    return ("%d working · %d dormant · %d archived" % (c.get("working", 0), c.get("dormant", 0), c.get("archived", 0)),
-            "Next pass: " + (said or "nothing moves"))
+        return grades + " · off"
+    moves = sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake"))
+    return grades + (" · next pass moves %d" % moves if moves else " · nothing to move")
 
 
 def memory_list(values) -> str:
@@ -6823,136 +6466,85 @@ def said_html(text: str) -> str:
     return re.sub(r"`([^`]+)`", r"<code>\1</code>", E(text))
 
 
-# The three grades and the three steps, said once, in the order they are read.
-MEMORY_GRADES = (("Working", "Read every time: listed in the wiki&#39;s index, and read by every search and briefing."),
-                 ("Dormant", "Put aside: out of the index, but still found when a search reaches back for it, which says so."),
-                 ("Archived", "Kept out of the way: found only when you ask to search the archive."))
-MEMORY_STEPS = (("Save", "Closing Settings saves the rules below. Saving moves nothing."),
-                ("Review", "Ask &#8220;what would fade&#8221;: it writes the list of what the next pass would move, and why. "
-                           "What it would show now is just below."),
-                ("Confirm", "Pages move only when you say yes to that list: &#8220;fade the meetings&#8221; or &#8220;fade the "
-                            "library&#8221;."))
-MEMORY_TO = {"dormant": "to dormant", "archived": "to the archive", "working": "back to working"}
-
-
-def memory_rows(rows: List[dict], kept: bool = False) -> str:
-    """Pages in preview(): a title, its date, where it would go, and why; MEMORY_JS draws them alike."""
-    return "".join('<li><b>%s</b> <span class="mdate">%s</span>%s<small>%s</small></li>'
-                   % (E(str(r.get("title") or r.get("page", ""))), E(str(r.get("date") or "undated")),
-                      "" if kept else ' <span class="mto">%s</span>' % E(MEMORY_TO.get(r.get("to"), "")),
-                      E(("Kept by " if kept else "") + str(r.get("why", "")))) for r in rows)
-
-
-def memory_more(n: int, shown: int) -> str:
-    return "and %d more" % (n - shown) if n > shown else ""
-
-
-def memory_wiki(w: str, c: dict, link: Optional["Links"], ws: Path) -> str:
-    """One wiki's preview: its grades and the next pass in words, then, when
-    the workspace's fade.py has preview(), the pages that would move and the
-    pages active work keeps, each list short, and where the full one is."""
-    grades, nxt = memory_said(c)
-    out = ('<p class="mcount"><b>%s</b> <span data-mc="grades">%s</span><span class="mnext" data-mc="next">%s</span></p>'
-           % (E(w), E(grades), E(nxt)))
-    if "moving" in c:
-        moving, keeping = c.get("moving") or [], c.get("keeping") or []
-        out += ('<ul class="mrows" data-mc="moving"%s>%s</ul><p class="mmore" data-mc="moves"%s>%s</p>'
-                '<p class="mkeptlab" data-mc="keptlab"%s>Old enough to go, but kept for active work</p>'
-                '<ul class="mrows" data-mc="keeping"%s>%s</ul><p class="mmore" data-mc="kept"%s>%s</p>'
-                % ("" if moving else " hidden", memory_rows(moving), "" if c.get("moves", 0) > len(moving) else " hidden",
-                   memory_more(c.get("moves", 0), len(moving)), "" if keeping else " hidden", "" if keeping else " hidden",
-                   memory_rows(keeping, True), "" if c.get("kept", 0) > len(keeping) else " hidden",
-                   memory_more(c.get("kept", 0), len(keeping))))
-    rel = c.get("proposal") or "System/generated/fade/%s.md" % w
-    path = ws / rel
-    named = ('<a href="%s">%s</a>' % (E(link(path)), E(rel))) if link is not None and path.is_file() else "<code>%s</code>" % E(rel)
-    out += ('<p class="hint mfull">The full list, every page with why: %s, %s.</p>'
-            % (named, "as last written; ask &#8220;what would fade&#8221; again for today&#39;s" if path.is_file()
-               else "written when you ask &#8220;what would fade&#8221;"))
-    return '<div class="mwiki" data-mw="%s">%s</div>' % (E(w), out)
-
-
 def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
-    """Settings › Manage older material, the Memory section, read in the
-    order a newcomer needs it: what the three grades mean and that nothing
-    is deleted; the three steps, saving, reviewing and confirming, kept
-    apart; what a pass would do now, per wiki, with the first pages it
-    would move and why and the first that active work keeps, before the
-    rules that decide it; then the rules: on or off per wiki, each kind's
-    months, with its types and domains under Advanced, how age is counted;
-    what keeps a page working; waking; how far search reaches unasked, and
-    the nightly line. How age is counted and what wakes a page are fade.py's
-    own sentences (AGE_SAID, WAKE_SAID), shown as they are, so the page
-    cannot promise what the code does not do; a fade.py older than them,
-    or without preview(), gets the counts alone and no sentence. In the app
-    only, as the other sections that save are."""
+    """Settings › Manage older material, the Memory section (#108), cut to
+    its choices (#227): one line saying what it does; per wiki, the switch
+    that lets old pages fade, each of its kinds' months, and one line of
+    counts, with a link to the full list the last review wrote (`link`).
+    Under one closed Advanced: which pages each kind takes, what keeps a
+    page working, bringing a page back, how far search reaches unasked, and
+    the morning digest's line. How the grades, the steps and age work is
+    behind the "?" and in the docs; how age is counted and what wakes a page
+    are fade.py's own sentences (AGE_SAID, WAKE_SAID), shown as they are, so
+    the page cannot promise what the code does not do. In the app only, as
+    the other sections that save are."""
     lib = fade_lib(ws)
     if lib is None:
         return ""
-    head = set_head("Manage older material", "memory", "Older meetings and reading move out of the way, so today&#39;s work "
-                    "is quicker to find. Nothing is ever deleted, and nothing moves until you say yes.") + help_text("memory", (
-        'How pages fade out of the wikis&#39; working memory, so a question about last week does not start by reading a '
-        'year of calls. A page goes dormant once it is older than its kind&#39;s months, and later moves to the archive. '
-        'A pass is only ever proposed: &#8220;what would fade&#8221; writes the list, and &#8220;fade the meetings&#8221; or '
-        '&#8220;fade the library&#8221; moves exactly that list, on your yes, rewriting every link so nothing breaks. '
-        'Saved in <code>%s</code> under <code>"memory"</code>, when you close Settings.' % E(prefs().FILE)))
+    age = getattr(lib, "AGE_SAID", None)
+    head = set_head("Manage older material", "memory", "Old meetings and reading leave the index after the months set here; "
+                    "nothing is deleted, and nothing moves until you say &#8220;fade the meetings&#8221; or &#8220;fade the "
+                    "library&#8221;.") + help_text("memory", (
+        'A page older than its kind&#39;s months goes dormant: out of the index, still found when a search reaches back. Later '
+        'it moves to the archive, found only when you ask. &#8220;What would fade&#8221; writes the full list; &#8220;fade the '
+        'meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
+        'Saved in <code>%s</code> when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "", E(prefs().FILE))))
     try:
         with tools_path(ws):
             cfg = lib.settings(ws)
-            grades = lib.preview(ws) if callable(getattr(lib, "preview", None)) else lib.counts(ws)
+            grades = lib.counts(ws)
         wikis, kinds, pins = cfg["wikis"], cfg["kinds"], cfg["pins"]
     except Exception as e:
         return ('<section class="setsec apponly" id="memory-settings">%s<p class="hint">Memory cannot be set here: '
-                '<code>System/tools/fade.py</code> did not give its settings (%s). The rest of Settings works as before.</p></section>'
+                '<code>System/tools/fade.py</code> did not give its settings (%s).</p></section>'
                 % (head, E(type(e).__name__)))
     box = lambda attr, on, label: '<input type="checkbox" %s%s aria-label="%s">' % (attr, " checked" if on else "", E(label))
     num = lambda attr, value, low, high, label, off=False: (
         '<input type="number" %s min="%d" max="%d" value="%s" aria-label="%s"%s>'
         % (attr, low, high, E(str(value)), E(label), " disabled" if off else ""))
-    sentence = lambda name: ('<p class="hint msaid">%s</p>' % said_html(getattr(lib, name))
-                             if isinstance(getattr(lib, name, None), str) else "")
-    explain = ('<dl class="mgradesay">%s</dl><p class="hint mwhere">Nothing is ever deleted. Faded pages stay in their wiki: '
-               'dormant ones in its <code>dormant/</code> folder, archived ones in its <code>archive/</code> folder, each beside '
-               'its raw file. Git keeps every move, so any of them can be undone.</p>'
-               % "".join('<div><dt>%s</dt><dd>%s</dd></div>' % g for g in MEMORY_GRADES))
-    steps = '<ol class="msteps">%s</ol>' % "".join('<li><b>%s</b><span>%s</span></li>' % s for s in MEMORY_STEPS)
-    prev = "".join(memory_wiki(w, grades.get(w) or {}, link, ws) for w in MEMORY_WIKIS if w in grades)
-    rows = "".join(
-        '<div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages fade<small>%s</small></span></label></div>'
-        % (box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), w,
-           "Old calls and mail leave the index, then go to its archive" if w == "Meetings"
-           else "Old reading leaves the index, then goes to its archive") for w in MEMORY_WIKIS)
-    kind_rows = ""
-    for name, k in kinds.items():
-        never = k.get("archived") is None
-        dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
-        kind_rows += (
-            '<fieldset class="mkind" data-mkind="%s" data-mwiki="%s"><legend>%s <small>%s</small></legend>'
-            '<div class="mmonths"><label>Dormant after %s months</label>'
-            '<label>Archived after %s months</label><label class="mnever">%s never archived</label></div>'
-            '<details class="madv"><summary>Advanced: which pages this kind takes</summary>'
-            '<label class="mlist">Types <input type="text" data-mk="types" value="%s" placeholder="none" aria-label="%s types"></label>'
-            '<label class="mlist">Domains <input type="text" data-mk="domains" value="%s" placeholder="none" aria-label="%s domains"></label>'
-            '</details></fieldset>'
-            % (E(name), E(str(k.get("wiki", ""))), E(name), E(str(k.get("wiki", ""))),
-               num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
-               num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
-                   "%s: months to archived" % name, never),
-               box('data-mk="never"', never, "%s: never archived" % name),
-               E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("domains"))), E(name)))
+
+    def full_list(w):
+        paths = getattr(lib, "proposal_paths", None)
+        path = paths(ws, w)[0] if callable(paths) else ws / "System" / "generated" / "fade" / ("%s.md" % w)
+        return (' <a class="mfull" href="%s">Full list</a>' % E(link(path))) if link is not None and path.is_file() else ""
+
+    blocks, advanced = "", ""
+    for w in MEMORY_WIKIS:
+        kind_rows = ""
+        for name, k in kinds.items():
+            if k.get("wiki") != w:
+                continue
+            never = k.get("archived") is None
+            dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
+            kind_rows += (
+                '<div class="mkind" data-mkind="%s" data-mwiki="%s"><span class="mkname">%s</span>'
+                '<label>dormant after %s months</label><label>archived after %s</label><label class="mnever">%s never</label></div>'
+                % (E(name), E(w), E(name[:1].upper() + name[1:]),
+                   num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
+                   num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
+                       "%s: months to archived" % name, never),
+                   box('data-mk="never"', never, "%s: never archived" % name)))
+            advanced += ('<div class="mlists" data-mkl="%s"><b>%s</b>'
+                         '<label class="mlist">Types <input type="text" data-mk="types" value="%s" placeholder="none" aria-label="%s types"></label>'
+                         '<label class="mlist">Domains <input type="text" data-mk="domains" value="%s" placeholder="none" aria-label="%s domains"></label></div>'
+                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name),
+                            E(memory_list(k.get("domains"))), E(name)))
+        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages fade'
+                   '</span></label></div>%s%s</div>'
+                   % (E(w), box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), E(w), kind_rows,
+                      '<p class="mcount"><span data-mc="line">%s</span>%s</p>' % (E(memory_said(w, grades[w])), full_list(w))
+                      if w in grades else ""))
     pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
                        for key, said in MEMORY_PINS)
+    wake = getattr(lib, "WAKE_SAID", None)
     nightly = cfg.get("nightly") or {}
     reach = cfg.get("reach", "dormant")
-    return ('<section class="setsec apponly" id="memory-settings">%s%s%s'
-            '<h4 class="nsub">What a review would show now</h4><div class="mgrades" id="m-prev" aria-live="polite">%s</div>'
-            '<p class="hint" id="m-prevsaid">As saved.</p>'
-            '<h4 class="nsub">When pages fade</h4>%s%s<div class="mkinds">%s</div>'
-            '<p class="hint">A kind takes the pages whose <code>type</code> or domain it lists, under Advanced; the lists are '
-            'separated by commas.</p>'
-            '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">Active work is never put aside: while any of '
-            'these holds, a page stays working, however old. Person, organisation and topic pages, and the wiki&#39;s own '
-            'lists, never move.</p><div class="mpins">%s</div>'
+    return ('<section class="setsec apponly" id="memory-settings">%s<div class="mgrades" id="m-prev" aria-live="polite">%s</div>'
+            '<p class="hint" id="m-prevsaid" hidden></p>'
+            '<details class="madv"><summary>Advanced</summary>'
+            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">Its <code>type</code> or domain, separated by commas.</p>%s'
+            '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">While any of these holds, a page stays working, however '
+            'old. Person, organisation and topic pages, and the wiki&#39;s own lists, never move.</p><div class="mpins">%s</div>'
             '<h4 class="nsub">Bringing a page back</h4>'
             '<div class="launcher-row"><label class="launcher-choice">%s <span>Propose bringing back a dormant page that active work links again'
             '<small>Off, only <code>pinned: true</code> brings a page back</small></span></label></div>%s'
@@ -6960,86 +6552,69 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
             '<div class="launcher-row"><span class="mreach">Without being asked, search reads <select id="m-reach" aria-label="How far search reaches unasked">'
             '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select></span></div>'
             '<div class="launcher-row"><label class="launcher-choice">%s <span>Say what would fade in the morning digest'
-            '<small>Once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div></section>'
-            % (head, explain, steps, prev, sentence("AGE_SAID"), rows, kind_rows, pin_rows,
+            '<small>Once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div></details></section>'
+            % (head, blocks, advanced, pin_rows,
                box('id="m-wake"', cfg.get("wake", True) is not False, "Propose bringing back a dormant page that active work links again"),
-               sentence("WAKE_SAID"), " selected" if reach == "working" else "", " selected" if reach != "working" else "",
+               '<p class="hint msaid">%s</p>' % said_html(wake) if isinstance(wake, str) else "",
+               " selected" if reach == "working" else "", " selected" if reach != "working" else "",
                box('id="m-night"', nightly.get("on", True) is not False, "Say what would fade in the morning digest"),
                num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")))
 
 
 MEMORY_CSS = r"""
-/* Settings › Manage older material: the grades and the three steps, what a review would show now, then the rules */
+/* Settings › Manage older material: per wiki its switch, its kinds' months and its count; the rest under Advanced */
 #memory-settings input[type=number]{font:inherit;font-size:12.5px;width:56px;padding:2px 5px;color:var(--ink);background:var(--surface);
 border:1px solid var(--line);border-radius:7px}#memory-settings input[type=number]:disabled{opacity:.45}
 #memory-settings input[type=text],#memory-settings select{font:inherit;font-size:12.5px;padding:2px 6px;color:var(--ink);background:var(--surface);
 border:1px solid var(--line);border-radius:7px;min-width:0}
 #memory-settings input[type=checkbox]{accent-color:var(--accent)}
-.mgradesay{display:grid;gap:4px;margin:6px 0 0;font-size:12.5px}.mgradesay div{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px}
-.mgradesay dt{font-weight:600}.mgradesay dd{margin:0;color:var(--ink2)}
-.msteps{list-style:none;counter-reset:mstep;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 4px;padding:0}
-@media (max-width:599px){.msteps{grid-template-columns:minmax(0,1fr)}}
-.msteps li{counter-increment:mstep;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12.5px;color:var(--ink2);background:var(--wash)}
-.msteps b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}.msteps b::before{content:counter(mstep) ". "}
-.mkinds{display:flex;flex-direction:column;gap:8px;margin:6px 0 4px}.mkind{border:1px solid var(--line);border-radius:9px;padding:6px 10px 8px;margin:0;min-width:0}
-.mkind legend{font-size:12.5px;font-weight:600;padding:0 4px}.mkind legend small{font-weight:400;color:var(--muted)}
-.mmonths{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink2);margin:0 0 4px}.mmonths label{display:flex;align-items:center;gap:5px}
-.madv>summary{display:block;list-style:none;cursor:pointer;font-size:12px;color:var(--muted);padding:2px 0}.madv[open]>summary{color:var(--ink2)}
+.mgrades{display:flex;flex-direction:column;gap:8px}.mwiki{border-bottom:1px solid var(--line);padding-bottom:8px}
+.mkind{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:2px 0 2px 28px;font-size:12.5px;color:var(--ink2)}
+.mkind label{display:flex;align-items:center;gap:5px}.mkname{flex:0 0 92px;font-weight:560;color:var(--ink)}
+.mcount{margin:4px 0 0 28px;font-size:12.5px;color:var(--ink2)}.mcount .mfull{margin-left:6px}
+.madv{margin-top:8px}.madv>summary{display:block;list-style:none;cursor:pointer;font-size:12.5px;font-weight:560;color:var(--ink2);padding:3px 0}
 .madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
 .madv[open]>summary::before{transform:rotate(90deg)}
-.mlist{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);margin-top:4px}.mlist input{flex:1 1 0;width:0;min-width:0}
+.mlists{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:4px 0;font-size:12.5px}.mlists b{flex:0 0 92px;font-weight:560}
+.mlist{display:flex;align-items:center;gap:6px;color:var(--ink2);flex:1 1 160px;min-width:0}.mlist input{flex:1 1 0;width:0;min-width:0}
 .mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:12.5px}
 .mreach,.mafter{font-size:12.5px;color:var(--ink2)}.mreach{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.mreach select{max-width:100%}
-.mafter{white-space:nowrap}.mwhere{margin:8px 0 0}#memory-settings{min-width:0;overflow-wrap:anywhere}
+.mafter{white-space:nowrap}#memory-settings{min-width:0;overflow-wrap:anywhere}
 #memory-settings .msaid,#memory-settings .mlede{margin:6px 0}
-.mgrades{display:flex;flex-direction:column;gap:10px}.mwiki{border-bottom:1px solid var(--line);padding-bottom:8px}
-.mcount{display:flex;flex-wrap:wrap;gap:2px 8px;margin:0;font-size:12.5px}.mcount span{color:var(--ink2)}.mcount .mnext{flex-basis:100%;color:var(--ink)}
-.mrows{list-style:none;margin:6px 0 0;padding:0;font-size:12.5px}.mrows li{padding:3px 0}
-.mrows .mdate{color:var(--muted);font-variant-numeric:tabular-nums}.mrows .mto{color:var(--accent)}.mrows small{display:block;color:var(--muted);font-size:12px}
-.mkeptlab{margin:8px 0 0;font-size:12px;font-weight:600;color:var(--ink2)}.mmore{margin:2px 0 0;font-size:12px;color:var(--muted)}
-#memory-settings .mfull{margin:6px 0 0}
 """
 
 # Read back into the shape fade.py keeps. A number out of range is brought into
 # range here, and a kind's archive months never come before its dormant ones,
 # so nothing the form can hold is refused when Settings closes. In a host that
 # answers `memory-preview` (window.GarrickReadsMemory), a change is counted
-# again from the unsaved values, and the pages listed with it drawn again
-# (memory_rows() draws them alike); elsewhere the counts are the saved ones.
+# again from the unsaved values and each wiki's line said again, as
+# memory_said() says it; elsewhere the counts are the saved ones.
 MEMORY_JS = r"""
 (function(){var sec=document.getElementById('memory-settings');if(!sec||!sec.querySelector('#m-prev'))return;
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,changed=false,timer=null,said=document.getElementById('m-prevsaid');
-var TO={dormant:'to dormant',archived:'to the archive',working:'back to working'};
 function n(e){var v=parseInt(e.value,10);if(isNaN(v))v=parseInt(e.defaultValue,10);return Math.max(+e.min,Math.min(+e.max,v))}
-function list(e){return e.value.split(',').map(function(x){return x.trim()}).filter(function(x){return x})}
+function list(e){return e?e.value.split(',').map(function(x){return x.trim()}).filter(function(x){return x}):[]}
 function request(){var m={wikis:{},kinds:{},pins:{},wake:document.getElementById('m-wake').checked,reach:document.getElementById('m-reach').value,
 nightly:{on:document.getElementById('m-night').checked,min:n(document.getElementById('m-min'))}};
 sec.querySelectorAll('[data-mwikion]').forEach(function(c){m.wikis[c.dataset.mwikion]=c.checked});
 sec.querySelectorAll('[data-mpin]').forEach(function(c){m.pins[c.dataset.mpin]=c.checked});
-sec.querySelectorAll('.mkind').forEach(function(f){var q=function(k){return f.querySelector('[data-mk="'+k+'"]')},d=n(q('dormant'));
-m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(q('types')),domains:list(q('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
+sec.querySelectorAll('.mkind').forEach(function(f){var q=function(k){return f.querySelector('[data-mk="'+k+'"]')},d=n(q('dormant')),
+l=sec.querySelector('[data-mkl="'+f.dataset.mkind+'"]'),t=function(k){return l&&l.querySelector('[data-mk="'+k+'"]')};
+m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(t('types')),domains:list(t('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
 return m}
-function line(c){var g=(c.working||0)+' working · '+(c.dormant||0)+' dormant · '+(c.archived||0)+' archived';if(c.on===false)return[g,'Off: nothing fades'];
-var mv=[[c.to_dormant,'to dormant'],[c.to_archive,'to the archive'],[c.to_wake,'woken']].filter(function(x){return x[0]}).map(function(x){return x[0]+' '+x[1]});
-return[g,'Next pass: '+(mv.join(', ')||'nothing moves')]}
-/* a list of pages, as memory_rows() draws it: the title, its date, where it would go, and why */
-function rows(ul,rs,kept){ul.textContent='';(rs||[]).forEach(function(r){var li=document.createElement('li'),b=document.createElement('b'),d=document.createElement('span'),w=document.createElement('small');
-b.textContent=r.title||r.page||'';d.className='mdate';d.textContent=r.date||'undated';li.appendChild(b);li.appendChild(document.createTextNode(' '));li.appendChild(d);
-if(!kept){var t=document.createElement('span');t.className='mto';t.textContent=TO[r.to]||'';li.appendChild(document.createTextNode(' '));li.appendChild(t)}
-w.textContent=(kept?'Kept by ':'')+(r.why||'');li.appendChild(w);ul.appendChild(li)});ul.hidden=!(rs&&rs.length)}
-function more(p,n,shown){p.textContent=n>shown?'and '+(n-shown)+' more':'';p.hidden=!(n>shown)}
-function paint(counts,pv){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw];if(!c)return;var t=line(c),q=function(k){return w.querySelector('[data-mc="'+k+'"]')};
-q('grades').textContent=t[0];q('next').textContent=t[1];var p=pv&&pv[w.dataset.mw];if(!p||!q('moving'))return;
-rows(q('moving'),p.moving,false);more(q('moves'),p.moves||0,(p.moving||[]).length);rows(q('keeping'),p.keeping,true);
-q('keptlab').hidden=!(p.keeping&&p.keeping.length);more(q('kept'),p.kept||0,(p.keeping||[]).length)})}
-function ask(){if(!host||!window.GarrickReadsMemory){said.textContent='As saved. Closing Settings saves the change, and the page counts again.';return}
-said.textContent='Counting…';clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
+function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' dormant'+(c.archived?' · '+c.archived+' archived':'');
+if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · next pass moves '+mv:' · nothing to move')}
+function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
+if(c&&e)e.textContent=line(w.dataset.mw,c)})}
+function tell(t){said.textContent=t;said.hidden=false}
+function ask(){if(!host||!window.GarrickReadsMemory){tell('Counted as saved; closing Settings saves the change and counts again.');return}
+tell('Counting…');clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
 function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
 a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
 sec.addEventListener('change',function(){changed=true;sync();ask()});
 sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],input[type=text]')){changed=true;ask()}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
-if(out&&out.ok&&out.counts){paint(out.counts,out.preview);said.textContent='With these changes, not saved yet. Nothing moves until you confirm a review.'}else said.textContent=(out&&out.say)||'Could not count.';return}
+if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
 window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){changed=false}};
 })();
@@ -8085,9 +7660,6 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
         md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                         "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
-        catch = catch_lib(ws)
-        if catch is not None:      # Catch up (#27): the periods and the default; the app says the request for the zones it shows
-            md["catchup"] = {"n": "Catch Up", "f": str(ws), "d": catch.settings(ws)["period"], "p": catch_periods(catch)}
     menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
@@ -8132,7 +7704,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                 E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, sched, layout, link),
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

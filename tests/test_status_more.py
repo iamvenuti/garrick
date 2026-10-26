@@ -734,7 +734,7 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        self.assertIn("if(!(lpChanged||zChanged||n||w||m||c||all))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+        self.assertIn("if(!(lpChanged||zChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
                       "if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();", status.JS)
 
 

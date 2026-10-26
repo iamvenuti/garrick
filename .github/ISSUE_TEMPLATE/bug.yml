@@ -6,6 +6,8 @@ body:
     attributes:
       value: |
         Please use invented names (Acme, Birch) in everything you paste. Never paste a real client's names, notes or transcripts into an issue.
+
+        Found a way past the wall check? Do not post it here: report it privately, as [SECURITY.md](https://github.com/iamvenuti/garrick/blob/main/SECURITY.md) says.
   - type: textarea
     id: what
     attributes:

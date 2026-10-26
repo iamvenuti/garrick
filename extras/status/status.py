@@ -7723,9 +7723,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if TD:
         tiles.append(("Open actions", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
-    tiles += [("Waiting to be filed", "%d" % waiting, "in the zone and meeting inboxes", "inboxes"),
+    tiles += [("Waiting to be filed", "%d" % waiting, "", "inboxes"),
               ("Check", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
-               if C and not C.get("failed") else "—", "run just now" if C else "check.py not found", "checks")]
+               if C and not C.get("failed") else "—", "" if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
         tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
@@ -7922,7 +7922,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             lis = "".join('<li>%s<span>%s: %s</span></li>' % (ICON["critical" if f.get("severity") == "error" else "warning"], E(f.get("path", "")), E(f.get("message", ""))) for f in fs)
             body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
                      % (" open" if errs else "", CHEV, E(C["titles"].get(name, name)), counts, lis))
-    checks_card = card("checks", "Checks", "check.py --quick, run as the page was built", debt_block(ws, now.date()) + body)
+    # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
+    found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
+                       (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
+    checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + body)
 
     # ---- open actions and inboxes
     tb = ""
@@ -7936,7 +7939,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             tb += '<p class="muted" style="font-size:12px;margin:2px 0">Nothing open.</p>'
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
-    todo_card = card("todo", "Open actions", "unticked items in each zone's Todo.md", tb) if TD else ""
+    todo_card = card("todo", "Open actions", "", tb) if TD else ""
     ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
         0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
         "%d waiting" % n if n else "empty") for name, f, n in IB)
@@ -7961,7 +7964,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                if acting and j["name"] in sched and not j["running"] else "")))
         legend = ('<div class="legend"><span><i class="good"></i>Every run ok</span><span><i class="warning"></i>Some failed, then recovered</span>'
                   '<span><i class="critical"></i>Ended the day failed, or most runs failed</span><span><i></i>No run</span><span>· One cell per day, last %d days</span></div>' % DAYS)
-        jobs_card = card("jobs", "Scheduled jobs", "heartbeats and logs in %s" % folder.name, '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
+        behind = sum(1 for j in J if j["state"] == "critical" and j["status"].startswith("late"))   # not run on time
+        failed = sum(1 for j in J if j["state"] == "critical") - behind
+        jobs_card = card("jobs", "Scheduled jobs", " · ".join("%d %s" % (n, w) for n, w in ((failed, "failed"), (behind, "late")) if n),
+                         '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
     if L:
         c = L["caps"]
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
@@ -7987,7 +7993,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
                  '<th class="r" title="Turns per call, on average">Turns</th><th>Refused tools</th>'
                  '<th class="r">Failed</th><th class="r">Capped</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
-        calls_card = card("calls", "Assistant calls", "ledger.jsonl, last %d days, list-price cost" % DAYS,
+        calls_card = card("calls", "Assistant calls", "",
                           '<div class="meters">%s</div>%s<div style="margin-top:14px">%s</div>' % (m, cost_chart(L), table))
 
     # ---- repositories and wikis
@@ -8000,7 +8006,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                 "the oldest change made " + age(r["since"], now) if r["dirty"] and r.get("since") else "") if x)),
         ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
         "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
-    repos_card = card("repos", "Repositories", "a ring means files changed since the last commit; amber, for over a day",
+    changed = sum(1 for r in R if r["dirty"])
+    repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",
                       ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
                       if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
@@ -8010,7 +8017,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         return "%s · %s" % (E(w["when"].strftime("%d %b %Y").lstrip("0")), title)
     wr = "".join('<div class="row" style="grid-template-columns:1fr"><div class="name"><a href="%s">%s</a><small style="white-space:normal">%s</small></div></div>' % (
         E(link(w["log"])), E(w["name"]), newest(w)) for w in W)
-    wikis_card = card("wikis", "Wikis", "newest entry in each log", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
+    wikis_card = card("wikis", "Wikis", "", '<div class="rows">%s</div>' % wr if wr else '<p class="muted">No wiki logs found.</p>')
 
     # ---- the graph, behind Explore at the foot of the Overview: it keeps every
     # mode it has, and folds shut so the tab opens on the work instead. A
@@ -8032,7 +8039,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         # a select cannot draw an icon in its options, so the chosen place's icon sits over its left edge
         marks = "".join('<span class="gzi%s" data-z="%s" hidden>%s</span>' % (zone_class(z, ZS), E(z), zone_icon(ZS[z]["icon"]))
                         for z in places if ZS.get(z, {}).get("icon"))
-        graph_card = card("graph", "Explore", "the graph of every note, and the links between them",
+        graph_card = card("graph", "Explore", "",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
                           '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
                           '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'

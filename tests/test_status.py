@@ -276,7 +276,7 @@ class TestGraph(StatusCase):
         graph = html[html.index('id="graph"'):html.index("</details>", html.index('id="graph"'))]
         self.assertLess(graph.index("glegend"), graph.index('id="gsum"'))          # the summary sits under the legend
         self.assertIn("<h2>Explore</h2>", graph)                                   # the graph sits behind Explore
-        self.assertIn('<span class="meta">the graph of every note, and the links between them</span>', graph)
+        self.assertIn('<h2>Explore</h2><span class="meta"></span>', graph)            # folded, it has nothing to report
 
     def test_the_graph_fills_its_card(self):
         js = status.GRAPH_JS
@@ -1960,6 +1960,13 @@ class TestJobs(StatusCase):
         self.heartbeat(8)
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta">1 failed</span>', html)    # a folded card still says it (#231)
+
+    def test_the_caption_is_empty_when_every_job_is_fine(self):
+        self.heartbeat(0)
+        html = self.page()
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta"></span>', html)
+        self.assertNotIn("heartbeats and logs in", html)
 
     def plists(self, **jobs):
         """A LaunchAgents folder holding one plist per job, each as given."""
@@ -2142,6 +2149,32 @@ class TestWikisAndRepos(StatusCase):
         self.assertIn('<div class="name">Wikis<small>', html[start:html.index("</details>", start)])
 
 
+class TestCaptions(StatusCase):
+    """A card's caption says a state worth acting on, or nothing (#231): never
+    the file, flag or colour behind the card."""
+
+    def metas(self, html):
+        return dict(re.findall(r'<h2>([^<]*)</h2><span class="meta">([^<]*)</span>', html))
+
+    def test_a_healthy_page_has_empty_captions(self):
+        metas = self.metas(self.page())
+        for title in ("Open actions", "Checks", "Repositories", "Wikis"):
+            self.assertEqual("", metas.get(title, ""), title)
+        page = self.page()
+        for said in ("unticked items", "check.py --quick", "a ring means", "newest entry in each log",
+                     "in the zone and meeting inboxes", "run just now"):
+            self.assertNotIn(said, page)
+
+    def test_the_checks_caption_counts_the_findings(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        findings = [{"check": "threads", "severity": "error", "path": "a.md", "message": "x"},
+                    {"check": "threads", "severity": "warning", "path": "b.md", "message": "y"},
+                    {"check": "threads", "severity": "warning", "path": "c.md", "message": "z"}]
+        (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": 1, "warnings": 2, "findings": findings})
+        self.assertEqual("1 error · 2 warnings", self.metas(self.page())["Checks"])
+
+
 class TestChangedFiles(StatusCase):
     """The Repositories card counts changed files and says what they are. It
     never calls them commits, and it offers no way to commit them."""
@@ -2177,6 +2210,7 @@ class TestChangedFiles(StatusCase):
         self.assertIn("<code>Acme Review/Sources/a.csv</code>", block)
         self.assertIn("<code>Acme Review/Threads/Pricing/Pricing notes.md</code>", block)
         self.assertIn("In Zones/Work.", block)
+        self.assertIn('<h2>Repositories</h2><span class="meta">1 with changes</span>', html)
         self.assertNotIn("data-act", block)                                   # nothing here commits
         self.assertNotRegex(block.lower(), r">\s*commit")
 

@@ -1946,6 +1946,14 @@ class TestJobs(StatusCase):
         self.assertIn('id="jobs"', html)
         self.assertIn('class="critical" tabindex="0"', html)
 
+    def test_the_strip_has_no_legend(self):
+        self.heartbeat(0)
+        html = self.page()
+        card = html[html.index('id="jobs"'):html.index("</details>", html.index('id="jobs"'))]
+        self.assertNotIn('class="legend"', card)                         # each cell's tooltip says its day (#232)
+        self.assertNotIn("One cell per day", card)
+        self.assertIn("· no run", card)
+
     def test_day_that_recovered_is_amber(self):
         self.heartbeat(0)
         t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
@@ -2045,7 +2053,8 @@ class TestJobs(StatusCase):
         self.assertIn(">1 / 10<", html)
         self.assertIn(">1 / 12<", html)                      # a cap the plist leaves out is agent.py's default
         self.assertIn(">$0.50, no cap<", html)               # 0 removes a cap
-        self.assertIn("Caps from the launchd plist of brief.", html)
+        self.assertIn('<div class="m" data-tip="Caps from the launchd plist of brief.">', html)   # in the meters' tooltip (#232)
+        self.assertNotIn('<p class="hint">Caps from', html)
 
     def test_without_a_plist_the_caps_say_where_they_come_from(self):
         self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
@@ -2053,7 +2062,7 @@ class TestJobs(StatusCase):
             html = self.page()
         self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
-        self.assertIn("Caps from the GARRICK_CAP_* settings the page was built with", html)
+        self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
 
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"
@@ -2209,7 +2218,7 @@ class TestChangedFiles(StatusCase):
         self.assertIn("Work: 4 changed files", block)
         self.assertIn("<code>Acme Review/Sources/a.csv</code>", block)
         self.assertIn("<code>Acme Review/Threads/Pricing/Pricing notes.md</code>", block)
-        self.assertIn("In Zones/Work.", block)
+        self.assertNotIn("In Zones/Work.", block)
         self.assertIn('<h2>Repositories</h2><span class="meta">1 with changes</span>', html)
         self.assertNotIn("data-act", block)                                   # nothing here commits
         self.assertNotRegex(block.lower(), r">\s*commit")
@@ -2243,8 +2252,10 @@ class TestChangedFiles(StatusCase):
     def test_the_root_repository_is_the_workspace_folder(self):
         out = status.repo_changes(self.root, {"name": "Workspace", "folder": self.root, "dirty": 1,
                                               "changes": [("AGENTS.md", ("unstaged",))]})
-        self.assertIn("In the workspace folder. 1 not staged.", out)
+        self.assertIn("<code>AGENTS.md</code>", out)
         self.assertIn('data-copy="%s"' % self.root, out)
+        self.assertNotIn("In the workspace folder", out)                 # the summary above already counts them (#232)
+        self.assertNotIn("Nothing here commits", out)                    # the docs say it once
 
     def test_a_long_list_is_cut_but_the_count_is_not(self):
         changes = [("f%02d.md" % i, ("untracked",)) for i in range(status.REPO_LIST_CAP + 5)]

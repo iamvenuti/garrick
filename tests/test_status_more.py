@@ -268,10 +268,13 @@ class TestSpend(StatusCase):
         with self.plists(GARRICK_MAX_CALL_USD="2"):
             html = self.page()
         self.assertIn('<td class="r">5.5</td>', self.calls(html))
-        self.assertIn("Each Claude call stops at $2.", html)
+        self.assertIn('<span class="ink2">Per call</span><span class="num">$2 max</span>', self.calls(html))   # a figure, not a sentence (#232)
+        self.assertNotIn("Each Claude call stops at", html)
         self.assertIn("$2 max per call", html)
         with self.plists(GARRICK_MAX_CALL_USD="0"):
-            self.assertIn("no per-call budget", self.page())
+            html = self.page()
+            self.assertIn("no per-call budget", html)
+            self.assertIn('<span class="ink2">Per call</span><span class="num">no cap</span>', self.calls(html))
 
     def test_a_call_stopped_at_its_budget_needs_attention(self):
         self.ledger({"job": "brief", "cost_usd": 2.0, "subtype": "error_max_budget_usd", "exit": 1})

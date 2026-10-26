@@ -4191,8 +4191,8 @@ REPO_LIST_CAP = 30   # paths shown per kind; the count above stays exact
 
 def repo_changes(ws: Path, r: dict) -> str:
     """One repository's changed files, by kind, to read and nothing more. No
-    button commits them: another session may be halfway through that work."""
-    where = "the workspace folder" if r["folder"] == ws else r["folder"].relative_to(ws).as_posix()
+    button commits them: another session may be halfway through that work.
+    The docs say so once, rather than every repository with changes (#232)."""
     groups = []
     for kind, label in CHANGE_KINDS:
         paths = [path for path, ks in r["changes"] if kind in ks]
@@ -4203,16 +4203,15 @@ def repo_changes(ws: Path, r: dict) -> str:
         items += '<li class="muted">and %d more</li>' % more if more > 0 else ""
         groups.append('<p class="hint">%s, %d</p><ul class="paths">%s</ul>' % (E(label[:1].upper() + label[1:]), len(paths), items))
     button = copy("Copy the folder's path", str(r["folder"]), "Copied the path of %s." % r["name"])
-    return ('<details class="notes changes"><summary>%s: %s</summary><p class="hint">In %s. %s. '
-            'Nothing here commits: review them in your git tool, or ask your assistant.</p>%s<div class="gacts">%s</div></details>'
-            % (E(r["name"]), E(say_files(r["dirty"])), E(where), E(say_kinds(r["changes"])), "".join(groups), button))
+    return ('<details class="notes changes"><summary>%s: %s</summary>%s<div class="gacts">%s</div></details>'
+            % (E(r["name"]), E(say_files(r["dirty"])), "".join(groups), button))
 
 
-def meter(value: float, cap: float, label: str, right: str) -> str:
+def meter(value: float, cap: float, label: str, right: str, tip: str = "") -> str:
     pct = 0 if not cap else min(100.0, value / cap * 100)
     kind = "critical" if pct >= 90 else "warning" if pct >= 70 else ""
-    return ('<div class="m"><span class="ink2">%s</span><span class="num">%s</span><div class="meter %s"><i style="width:%.1f%%"></i></div></div>'
-            % (E(label), E(right), kind, pct))
+    return ('<div class="m"%s><span class="ink2">%s</span><span class="num">%s</span><div class="meter %s"><i style="width:%.1f%%"></i></div></div>'
+            % (' data-tip="%s"' % E(tip) if tip else "", E(label), E(right), kind, pct))
 
 
 def cost_chart(L: dict) -> str:
@@ -7962,22 +7961,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                                ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                                % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                                if acting and j["name"] in sched and not j["running"] else "")))
-        legend = ('<div class="legend"><span><i class="good"></i>Every run ok</span><span><i class="warning"></i>Some failed, then recovered</span>'
-                  '<span><i class="critical"></i>Ended the day failed, or most runs failed</span><span><i></i>No run</span><span>· One cell per day, last %d days</span></div>' % DAYS)
         behind = sum(1 for j in J if j["state"] == "critical" and j["status"].startswith("late"))   # not run on time
         failed = sum(1 for j in J if j["state"] == "critical") - behind
         jobs_card = card("jobs", "Scheduled jobs", " · ".join("%d %s" % (n, w) for n, w in ((failed, "failed"), (behind, "late")) if n),
-                         '<div class="rows jobs">%s</div>%s' % ("".join(rows), legend))
+                         '<div class="rows jobs">%s</div>' % "".join(rows))     # each cell's tooltip says its day (#232)
     if L:
         c = L["caps"]
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
             return "%s / %s%g" % (text, unit, cap) if cap else "%s, no cap" % text
-        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]))
-             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]))
-             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"))
-             + '<p class="hint">%s</p>' % E(L["caps_from"]))
-        m += '<p class="hint">%s</p>' % E("Each Claude call stops at $%g." % L["budget"] if L["budget"] else
-                                          "No per-call budget: GARRICK_MAX_CALL_USD is 0.")
+        # where the caps were read, in the meters' tooltip; the per-call budget a figure beside them (#232)
+        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
+             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
+             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"])
+             + '<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
+               '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
         def refused(tools):
             """A refused tool the deny list names is red; one no allow rule named is amber."""

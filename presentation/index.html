@@ -597,7 +597,192 @@ body.editing .editable {
     </section>
 
     <!-- ============================================================
-         8. THE TWO DIMENSIONS
+         8. TWO GRAPHS AND A TREE: the whole idea in one picture
+         ============================================================ -->
+    <section class="slide slide--navy" data-title="Context is all you need" style="padding:0; align-items:center; justify-content:center; background:#161F28;">
+      <svg class="tg reveal" style="height:1080px; width:auto; display:block;" viewBox="0 0 1120 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Context is all you need. Articles and reports are ingested into the Knowledge brain, a graph of what you read, linked by topic. Recordings and mail are ingested into the Meetings brain, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Three streams, one from each, meet in your assistant, which starts already set up. Two graphs and a tree, so you never set up the same context twice.">
+  <style>
+    .tg { --tg-ground: #161F28; --tg-surface: #202C39; --tg-line: #33465A; --tg-ink: #F5F0E6; --tg-muted: #A9B2BC; --tg-faint: #7C8794;
+          --tg-knowledge: #8EB1F5; --tg-meetings: #E8B96A; --tg-files: #8DCB9C;
+          --tg-display: 'Baskervville', 'Libre Baskerville', Baskerville, Georgia, serif; --tg-body: 'DM Sans', Arial, sans-serif; }
+    .tg-ground { fill: var(--tg-ground); }
+    .tg-dot { fill: var(--tg-line); opacity: 0.55; }
+    .tg-wordmark { font: 600 26px var(--tg-display); fill: var(--tg-ink); }
+    .tg-title { font: 600 46px var(--tg-display); fill: var(--tg-ink); }
+    .tg-title-em { font-style: italic; font-weight: 400; }
+    .tg-name { font: 700 17px var(--tg-body); fill: var(--tg-ink); }
+    .tg-sub { font: 400 13px var(--tg-body); fill: var(--tg-muted); }
+    .tg-verb { font: 700 11px var(--tg-body); letter-spacing: 0.14em; fill: var(--tg-faint); }
+    .tg-input { font: 500 13px var(--tg-body); fill: var(--tg-muted); }
+    .tg-row { font: 400 14px var(--tg-body); fill: var(--tg-ink); }
+    .tg-row-on { font: 700 14px var(--tg-body); fill: var(--tg-files); }
+    .tg-zone { font: 700 16px var(--tg-body); fill: var(--tg-ink); }
+    .tg-hub { font: 700 15px var(--tg-body); fill: var(--tg-ink); }
+    .tg-foot { font: 400 24px var(--tg-display); fill: var(--tg-ink); }
+    .tg-brain { fill: var(--tg-surface); stroke: var(--tg-ink); stroke-width: 1.4; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: 0.95; }
+    .tg-fold { fill: none; stroke: var(--tg-ink); stroke-width: 1.2; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: 0.7; }
+    .tg-edge { stroke-width: 1.3; opacity: 0.5; vector-effect: non-scaling-stroke; }
+    .tg-k .tg-edge { stroke: var(--tg-knowledge); }
+    .tg-m .tg-edge { stroke: var(--tg-meetings); }
+    .tg-k .tg-node { fill: var(--tg-knowledge); }
+    .tg-m .tg-node { fill: var(--tg-meetings); }
+    .tg-page { fill: var(--tg-surface); stroke: var(--tg-muted); stroke-width: 1.4; }
+    .tg-in { fill: none; stroke: var(--tg-faint); stroke-width: 2; }
+    .tg-ah-faint { fill: var(--tg-faint); }
+    .tg-stream { fill: none; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 9; animation: tg-flow 1.4s linear infinite; }
+    .tg-stream.tg-k { stroke: var(--tg-knowledge); }
+    .tg-stream.tg-m { stroke: var(--tg-meetings); }
+    .tg-stream.tg-f { stroke: var(--tg-files); }
+    .tg-ah-k { fill: var(--tg-knowledge); }
+    .tg-ah-m { fill: var(--tg-meetings); }
+    .tg-ah-f { fill: var(--tg-files); }
+    @keyframes tg-flow { to { stroke-dashoffset: -22; } }
+    @media (prefers-reduced-motion: reduce) { .tg-stream { animation: none; } }
+    .tg-panel { fill: var(--tg-surface); stroke: var(--tg-line); stroke-width: 1.5; }
+    .tg-guide { stroke: var(--tg-line); stroke-width: 1.5; }
+    .tg-folder { fill: rgba(141, 203, 156, 0.18); stroke: var(--tg-files); stroke-width: 1; }
+    .tg-file { fill: var(--tg-surface); stroke: var(--tg-files); stroke-width: 1.3; }
+    .tg-row-bg { fill: rgba(141, 203, 156, 0.16); stroke: var(--tg-files); stroke-width: 1; stroke-opacity: 0.5; }
+    .tg-ring { fill: none; stroke-width: 6; stroke-linecap: round; }
+    .tg-ring.tg-k { stroke: var(--tg-knowledge); }
+    .tg-ring.tg-m { stroke: var(--tg-meetings); }
+    .tg-ring.tg-f { stroke: var(--tg-files); }
+    .tg-core { fill: var(--tg-surface); }
+  </style>
+  <defs>
+    <pattern id="tg-dotgrid" width="24" height="24" patternUnits="userSpaceOnUse"><circle class="tg-dot" cx="2" cy="2" r="1"/></pattern>
+    <radialGradient id="tg-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8EB1F5" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#8EB1F5" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="tg-soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="tg-ah-faint" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="tg-ah-faint" d="M0 0 L10 5 L0 10 Z"/></marker>
+    <marker id="tg-ah-k" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="tg-ah-k" d="M0 0 L10 5 L0 10 Z"/></marker>
+    <marker id="tg-ah-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="tg-ah-m" d="M0 0 L10 5 L0 10 Z"/></marker>
+    <marker id="tg-ah-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="tg-ah-f" d="M0 0 L10 5 L0 10 Z"/></marker>
+    <!-- a brain in side view, facing left: frontal lobe, crown, occipital, cerebellum, stem, temporal lobe -->
+    <g id="tg-brain">
+      <path class="tg-brain" d="M20 95 C5 70 15 30 55 18 C80 2 130 2 160 20 C190 35 200 70 188 92 C196 108 186 126 168 124 C158 128 148 124 142 118 L139 150 L123 150 L121 117 C100 123 70 124 55 114 C40 118 22 112 20 95 Z"/>
+      <path class="tg-fold" d="M146 116 C160 104 176 100 189 94"/>
+      <path class="tg-fold" d="M152 120 C164 112 176 110 186 108"/>
+    </g>
+    <g id="tg-pages">
+      <rect class="tg-page" x="8" y="0" width="34" height="44" rx="3"/>
+      <rect class="tg-page" x="0" y="8" width="34" height="44" rx="3"/>
+    </g>
+    <path id="tg-folder" class="tg-folder" d="M0 3 H6 L8 5 H18 V16 H0 Z"/>
+    <path id="tg-file" class="tg-file" d="M2 0 H11 L15 4 V18 H2 Z"/>
+  </defs>
+
+  <rect class="tg-ground" width="1120" height="700"/>
+  <rect width="1120" height="700" fill="url(#tg-dotgrid)"/>
+  <circle cx="560" cy="366" r="220" fill="url(#tg-glow)"/>
+
+  <text class="tg-title" x="20" y="72">Context is <tspan class="tg-title-em">all you need.</tspan></text>
+  <g transform="translate(968,36)">
+    <g transform="scale(0.5)"><path fill="#F5F0E6" d="M22.75 6V58H8.5C7.12 58 6 56.88 6 55.5V8.5C6 7.12 7.12 6 8.5 6ZM26.75 32H58V55.5C58 56.88 56.88 58 55.5 58H26.75Z"/><path fill="#8EB1F5" d="M26.75 6H55.5C56.88 6 58 7.12 58 8.5V28H26.75Z"/></g>
+    <text class="tg-wordmark" x="40" y="25">Garrick</text>
+  </g>
+
+  <g transform="translate(0,34)">
+    <!-- Knowledge: ingestion into a graph -->
+    <use href="#tg-pages" x="30" y="150"/>
+    <text class="tg-input" x="20" y="226">Articles, reports</text>
+    <path class="tg-in" d="M84 176 H178" marker-end="url(#tg-ah-faint)"/>
+    <text class="tg-verb" x="100" y="166">INGEST</text>
+    <g class="tg-k" transform="translate(186,82) scale(1.2)">
+      <use href="#tg-brain"/>
+      <line class="tg-edge" x1="45" y1="65" x2="80" y2="35"/>
+      <line class="tg-edge" x1="80" y1="35" x2="125" y2="28"/>
+      <line class="tg-edge" x1="125" y1="28" x2="160" y2="50"/>
+      <line class="tg-edge" x1="80" y1="35" x2="105" y2="68"/>
+      <line class="tg-edge" x1="125" y1="28" x2="105" y2="68"/>
+      <line class="tg-edge" x1="45" y1="65" x2="72" y2="95"/>
+      <line class="tg-edge" x1="105" y1="68" x2="72" y2="95"/>
+      <line class="tg-edge" x1="105" y1="68" x2="142" y2="84"/>
+      <line class="tg-edge" x1="160" y1="50" x2="142" y2="84"/>
+      <line class="tg-edge" x1="160" y1="50" x2="176" y2="78"/>
+      <line class="tg-edge" x1="142" y1="84" x2="176" y2="78"/>
+      <line class="tg-edge" x1="72" y1="95" x2="108" y2="106"/>
+      <line class="tg-edge" x1="142" y1="84" x2="108" y2="106"/>
+      <g filter="url(#tg-soft)">
+        <circle class="tg-node" cx="45" cy="65" r="5"/><circle class="tg-node" cx="80" cy="35" r="5.5"/>
+        <circle class="tg-node" cx="125" cy="28" r="5"/><circle class="tg-node" cx="160" cy="50" r="5"/>
+        <circle class="tg-node" cx="105" cy="68" r="6.5"/><circle class="tg-node" cx="72" cy="95" r="4.5"/>
+        <circle class="tg-node" cx="142" cy="84" r="5"/><circle class="tg-node" cx="176" cy="78" r="4"/>
+        <circle class="tg-node" cx="108" cy="106" r="4"/>
+      </g>
+    </g>
+    <text class="tg-name" x="303" y="300" text-anchor="middle">Knowledge</text>
+    <text class="tg-sub" x="303" y="318" text-anchor="middle">what you read, linked by topic</text>
+
+    <!-- Meetings: ingestion into a graph -->
+    <use href="#tg-pages" x="30" y="436"/>
+    <text class="tg-input" x="20" y="512">Recordings, mail</text>
+    <path class="tg-in" d="M84 462 H178" marker-end="url(#tg-ah-faint)"/>
+    <text class="tg-verb" x="100" y="452">INGEST</text>
+    <g class="tg-m" transform="translate(186,368) scale(1.2)">
+      <use href="#tg-brain"/>
+      <line class="tg-edge" x1="40" y1="70" x2="75" y2="40"/>
+      <line class="tg-edge" x1="75" y1="40" x2="130" y2="32"/>
+      <line class="tg-edge" x1="75" y1="40" x2="100" y2="72"/>
+      <line class="tg-edge" x1="130" y1="32" x2="100" y2="72"/>
+      <line class="tg-edge" x1="130" y1="32" x2="165" y2="60"/>
+      <line class="tg-edge" x1="165" y1="60" x2="140" y2="95"/>
+      <line class="tg-edge" x1="100" y1="72" x2="140" y2="95"/>
+      <line class="tg-edge" x1="40" y1="70" x2="65" y2="100"/>
+      <line class="tg-edge" x1="65" y1="100" x2="100" y2="72"/>
+      <line class="tg-edge" x1="100" y1="72" x2="112" y2="108"/>
+      <line class="tg-edge" x1="140" y1="95" x2="112" y2="108"/>
+      <g filter="url(#tg-soft)">
+        <circle class="tg-node" cx="40" cy="70" r="5"/><circle class="tg-node" cx="75" cy="40" r="5"/>
+        <circle class="tg-node" cx="130" cy="32" r="5.5"/><circle class="tg-node" cx="100" cy="72" r="6.5"/>
+        <circle class="tg-node" cx="165" cy="60" r="5"/><circle class="tg-node" cx="140" cy="95" r="5"/>
+        <circle class="tg-node" cx="65" cy="100" r="4.5"/><circle class="tg-node" cx="112" cy="108" r="4"/>
+      </g>
+    </g>
+    <text class="tg-name" x="303" y="586" text-anchor="middle">Meetings</text>
+    <text class="tg-sub" x="303" y="604" text-anchor="middle">what was said, linked by who and what</text>
+
+    <!-- Your files: a folder tree -->
+    <rect class="tg-panel" x="700" y="200" width="400" height="318" rx="8"/>
+    <line class="tg-guide" x1="733" y1="244" x2="733" y2="430"/>
+    <line class="tg-guide" x1="759" y1="284" x2="759" y2="350"/>
+    <line class="tg-guide" x1="785" y1="364" x2="785" y2="390"/>
+    <use href="#tg-folder" x="724" y="223"/><text class="tg-zone" x="750" y="236">Work</text>
+    <use href="#tg-folder" x="750" y="263"/><text class="tg-row" x="776" y="276">Kestle chair launch</text>
+    <use href="#tg-folder" x="776" y="303"/><text class="tg-row" x="802" y="316">Sources</text>
+    <use href="#tg-folder" x="776" y="343"/><text class="tg-row" x="802" y="356">Deliverables</text>
+    <rect class="tg-row-bg" x="796" y="378" width="294" height="28" rx="4"/>
+    <use href="#tg-file" x="804" y="382"/><text class="tg-row-on" x="826" y="396">Launch email.docx</text>
+    <use href="#tg-folder" x="750" y="423"/><text class="tg-row" x="776" y="436">Spring trade show</text>
+    <use href="#tg-folder" x="724" y="473"/><text class="tg-zone" x="750" y="486">Personal</text>
+    <text class="tg-name" x="900" y="552" text-anchor="middle">Your files</text>
+    <text class="tg-sub" x="900" y="570" text-anchor="middle">what you're working on, by subject</text>
+
+    <!-- Three streams meet in the assistant -->
+    <path class="tg-stream tg-k" d="M428 170 C480 180 500 250 514 284" marker-end="url(#tg-ah-k)"/>
+    <path class="tg-stream tg-m" d="M428 456 C480 446 500 414 514 380" marker-end="url(#tg-ah-m)"/>
+    <path class="tg-stream tg-f" d="M796 392 C700 392 672 332 632 332" marker-end="url(#tg-ah-f)"/>
+    <circle class="tg-core" cx="560" cy="332" r="52"/>
+    <path class="tg-ring tg-k" d="M498.2 326.6 A62 62 0 0 1 586.2 275.8"/>
+    <path class="tg-ring tg-f" d="M595.6 281.2 A62 62 0 0 1 595.6 382.8"/>
+    <path class="tg-ring tg-m" d="M586.2 388.2 A62 62 0 0 1 498.2 337.4"/>
+    <text class="tg-hub" x="560" y="327" text-anchor="middle">Your</text>
+    <text class="tg-hub" x="560" y="346" text-anchor="middle">assistant</text>
+    <text class="tg-sub" x="560" y="420" text-anchor="middle">starts already set up</text>
+
+    <text class="tg-foot" x="560" y="650" text-anchor="middle">Two graphs and a tree, so you never set up the same context twice.</text>
+  </g>
+</svg>
+      <aside class="notes">The whole idea in one picture. What you read and what was said are ingested into two graphs, the Knowledge and Meetings wikis, linked by topic and by who said what. What you make sits in one tree, your folders, by subject. Your assistant draws on all three, so it starts already set up instead of being told again. Be straight that a new install starts both wikis empty: someone who never records a meeting or files an article may only ever have the tree.</aside>
+    </section>
+
+    <!-- ============================================================
+         9. THE TWO DIMENSIONS
          ============================================================ -->
     <section class="slide slide--cream" data-title="Two things Garrick does">
       <p class="kicker reveal">Why the return can be trusted</p>
@@ -611,7 +796,7 @@ body.editing .editable {
     </section>
 
     <!-- ============================================================
-         9. BEAT 6: the four stages
+         10. BEAT 6: the four stages
          ============================================================ -->
     <section class="slide slide--cream" data-title="One memory, walled use">
       <p class="kicker reveal">The context life cycle</p>
@@ -631,7 +816,7 @@ body.editing .editable {
     </section>
 
     <!-- ============================================================
-         10. BEAT 7: yours
+         11. BEAT 7: yours
          ============================================================ -->
     <section class="slide slide--cream" data-title="Yours, in plain files">
       <p class="kicker reveal">Where it lives</p>
@@ -651,7 +836,7 @@ body.editing .editable {
     </section>
 
     <!-- ============================================================
-         11. TRY IT ON AN INVENTED WEEK
+         12. TRY IT ON AN INVENTED WEEK
          ============================================================ -->
     <section class="slide slide--cream" data-title="Try it on an invented week first">
       <p class="kicker reveal">Before your own work</p>
@@ -666,7 +851,7 @@ body.editing .editable {
     </section>
 
     <!-- ============================================================
-         12. CLOSE
+         13. CLOSE
          ============================================================ -->
     <section class="slide slide--navy slide--statement" data-title="Two pieces of work, one month">
       <p class="kicker reveal">Yours to try</p>
@@ -682,7 +867,7 @@ body.editing .editable {
 <!-- Deck chrome: counter, dot navigation, keyboard hint, all outside the
      scaled stage so they stay a fixed size regardless of window size. -->
 <div class="deck-controls">
-  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">12</span></span>
+  <span class="deck-counter"><span id="slideCurrent">1</span> / <span id="slideTotal">13</span></span>
   <span class="deck-dots" id="deckDots"></span>
   <span class="kbd-hint">→ / space next · ← previous · N notes · E edit</span>
 </div>

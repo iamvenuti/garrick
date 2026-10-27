@@ -2,6 +2,10 @@
 
 What the assistant knows about your work is spread over many places in Garrick: the wikis, the thread notes, `System/context.md`, each zone's `Todo.md` and the assistant's own memory. This page shows how they fit together, in four stages. Each stage says what happens, which file or tool does it, and where the detail is. It repeats none of that detail.
 
+![Context is all you need. Articles and reports are ingested into Knowledge, a graph of what you read, linked by topic. Recordings and mail are ingested into Meetings, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Your assistant draws on all three and starts already set up. Two graphs and a tree, so you never set up the same context twice.](assets/two-graphs-and-a-tree.png)
+
+The content itself sits in two graphs and a tree. The two wikis are the graphs: what comes in is ingested into them, and their pages link to one another by topic, person and organisation. Your zones are the tree: folders by subject, a project inside a zone and a piece of work inside a project. The rest of this page is how the three are filled, kept true, used and let go.
+
 All four stages work under one rule: [one memory, walled use](principles.md#one-memory-walled-use). Every conversation is kept in one place, so you can find your own record. The walls apply where material is *used*, not where it is stored. The zones, the parties and the declared walls in `System/context.md` are what each stage reads. They are not a stage of their own.
 
 | Stage | What it does | What does it |

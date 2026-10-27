@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **Two graphs and a tree.** One picture of where Garrick keeps your context: what you read and what was said are ingested into two graphs, the Knowledge and Meetings wikis, and what you're working on sits in one tree of folders, by subject. Your assistant draws on all three. It is in the README under the three things Garrick holds, at the top of [How Garrick keeps context](docs/context.md), and as slide 8 of the deck, titled "Context is all you need". The source is `docs/assets/two-graphs-and-a-tree.html`, rendered to the PNG beside it.
+
 ## [0.44.0] - 2026-10-26
 
 The window says less: Settings shows the choices, the cards show their state, notices go to this Mac only, and Catch up lives in the window.

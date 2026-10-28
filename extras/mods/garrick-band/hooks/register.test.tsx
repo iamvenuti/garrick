@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { buildIndex, cut, fileHref, label, launcherSettings, linkify, lookup, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, plain, promptLine, resumePrompt, rootOf, stepLine, switchedOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { buildIndex, fileHref, FULL, label, launcherSettings, linkify, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, switchedOff, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -31,14 +31,11 @@ describe('parsing', () => {
     expect(label('Wikis/Meetings')).toBe('Wikis › Meetings')
   })
 
-  test('plain strips links and emphasis', () => {
-    expect(plain('**Bold** [[a/b|shown]] and [[c/d]] `code`')).toBe('Bold shown and d code')
-  })
-
-  test('reads status, lead and stops at the next heading', () => {
+  test('reads status and the Resume here block, and stops at the next heading', () => {
     const parsed = parseNote(NOTE)
     expect(parsed.status).toBe('active')
-    expect(parsed.lead).toBe('Where it stands, 6 October. The term sheet is ready, see the sheet.')
+    expect(parsed.heading).toBe('Resume here')
+    expect(parsed.resume).toMatch(/^\*\*Where it stands, 6 October\.\*\*/)
     expect(parsed.resume).toContain('Live artifact')
     expect(parsed.resume).not.toContain('Older entry')
   })
@@ -51,7 +48,7 @@ describe('parsing', () => {
     const parsed = parseNote('---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned on 2 October.\n')
     expect(parsed.status).toBe('done')
     expect(parsed.heading).toBe('Outcome')
-    expect(parsed.lead).toBe('Signed on 2 October.')
+    expect(parsed.resume).toBe('Signed on 2 October.')
   })
 
   test('the prompts name the thread and its note', () => {
@@ -60,18 +57,30 @@ describe('parsing', () => {
     expect(wrapPrompt(n)).toMatch(/^Wrap Acme: rewrite the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
   })
 
-  test('the mark is 6×3 cells of three u32 words each', () => {
-    expect(atob(markCells()).length).toBe(6 * 3 * 3 * 4)
+  test('the mark is 4×2 cells, as tall as the band, of three u32 words each', () => {
+    expect(MARK).toEqual({ columns: 4, rows: 2 })
+    expect(atob(markCells()).length).toBe(4 * 2 * 3 * 4)
   })
 
   test('the mark is the cabinet: walls in the text colour, the open compartment blue', () => {
     const bytes = Uint8Array.from(atob(markCells()), (c) => c.charCodeAt(0))
     const words = new Uint32Array(bytes.buffer)
-    const cell = (row: number, col: number) => Array.from(words.slice((row * 6 + col) * 3, (row * 6 + col) * 3 + 3))
+    const cell = (row: number, col: number) => Array.from(words.slice((row * 4 + col) * 3, (row * 4 + col) * 3 + 3))
     expect(cell(0, 0)).toEqual([0x2588, 0x01000000, 0x01000000])   // the spine
-    expect(cell(0, 2)).toEqual([0x20, 0x01000000, 0x01000000])     // the wall
-    expect(cell(0, 3)).toEqual([0x2588, 0x3d73e0, 0x01000000])     // the open compartment
-    expect(cell(1, 4)).toEqual([0x2584, 0x01000000, 0x01000000])   // the wall above the closed one
+    expect(cell(1, 0)).toEqual([0x2588, 0x01000000, 0x01000000])
+    expect(cell(0, 1)).toEqual([0x20, 0x01000000, 0x01000000])     // the wall beside it
+    expect(cell(0, 2)).toEqual([0x2580, 0x3d73e0, 0x01000000])     // the open compartment, the wall under it
+    expect(cell(0, 3)).toEqual([0x2580, 0x3d73e0, 0x01000000])
+    expect(cell(1, 2)).toEqual([0x2588, 0x01000000, 0x01000000])   // the closed one
+    expect(cell(1, 3)).toEqual([0x2588, 0x01000000, 0x01000000])
+  })
+
+  test('the context used: a whole percentage, or none', () => {
+    expect(percentOf({ percent: 42 })).toBe(42)
+    expect(percentOf({ percent: 60.4 })).toBe(60)
+    expect(percentOf({})).toBeNull()
+    expect(percentOf(null)).toBeNull()
+    expect(FULL).toBe(60)
   })
 })
 
@@ -106,11 +115,11 @@ describe('band', () => {
       const band = await $.ui.mount({ ...BAND, surface })
 
       expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
-      for (const key of ['resume', 'wrap', 'clear', 'note']) expect(await band.find({ key })).toBeDefined()
-      expect(await band.find({ key: 'finder' })).toBeUndefined()
+      for (const key of ['wrap', 'clear']) expect(await band.find({ key })).toBeDefined()
+      for (const key of ['resume', 'note', 'finder']) expect(await band.find({ key })).toBeUndefined()
     })
 
-    test(`Resume and Wrap submit the thread's prompt on ${surface}`, async ($, on) => {
+    test(`Wrap submits the thread's prompt on ${surface}`, async ($, on) => {
       const submitted: string[] = []
       on('prompt.submit', async (_$, e: any) => {
         submitted.push(e.text)
@@ -119,11 +128,9 @@ describe('band', () => {
       await inThread($, on, NOTE)
       const band = await $.ui.mount({ ...BAND, surface })
 
-      await band.press({ key: 'resume' })
       await band.press({ key: 'wrap' })
-      expect(submitted).toHaveLength(2)
-      expect(submitted[0]).toMatch(/^Open Acme: read the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
-      expect(submitted[1]).toMatch(/^Wrap Acme:/)
+      expect(submitted).toHaveLength(1)
+      expect(submitted[0]).toMatch(/^Wrap Acme: rewrite the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
     })
 
     test(`Clear runs /clear on ${surface}`, async ($, on) => {
@@ -144,8 +151,83 @@ describe('band', () => {
     await inThread($, on, '---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned on 2 October.\n')
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
-    expect(await band.find({ key: 'resume' })).toBeDefined()
+    expect(await band.find({ key: 'clear' })).toBeDefined()
     expect(await band.find({ key: 'wrap' })).toBeUndefined()
+  })
+
+  test('two lines: the place, then the buttons at one weight, with no Resume line', async ($, on) => {
+    await inThread($, on, NOTE, ['/usr/bin/open', '/Applications/Obsidian.app', `${ROOT}/Zones/Work/.obsidian`])
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear', 'finder', 'obsidian'])
+    for (const b of await band.findAll({ type: 'Button' })) expect(b.props.dimColor).toBeFalsy()
+    expect(await band.find({ text: /Where it stands/ })).toBeUndefined()
+  })
+
+  test('no prompt or step under the place, and no line under the buttons, during a long turn', async ($, on) => {
+    const clock = mock.clock(on)
+    const ran: string[][] = []
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
+    })
+    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
+    on('tool.call', async () => ({ result: '' }))
+    on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
+    await inThread($, on, NOTE, [`${ROOT}/System/tools/next_up.py`])
+    await $.turn.start({ text: 'Fix the pricing table', turnId: 't2' } as any)
+    await $.prompt.submit({ text: 'Fix the **pricing** table' } as any)
+    await $.tool.call({ tool: 'Edit', file_path: '/v/x/sheet.md', old_string: 'a', new_string: 'b' } as any).catch(() => undefined)
+    await clock.advance(120_000)
+    const working = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } })
+    expect(await working.find({ text: /pricing/ })).toBeUndefined()
+    expect(await working.find({ text: /Editing sheet\.md/ })).toBeUndefined()
+    expect(await working.find({ text: /While you wait/ })).toBeUndefined()
+    expect(ran.filter(r => r.some(a => a.endsWith('next_up.py')))).toEqual([])
+    expect((await $.command.run({ command: 'garrick', args: 'next' } as any)).text).toBe(waitOff)
+  })
+})
+
+describe('context used', () => {
+  // What $.session.usage() answers, its percent read from `at` each time.
+  function usage(on: any, at: { percent?: number }) {
+    on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 200_000, ...at }, rateLimits: [] } }) as any)
+  }
+  const shown = async ($: any) => (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ type: 'Text', text: /^\d+%$/ })
+
+  test('dimmed at 60, red at 61, read again after every turn', async ($, on) => {
+    const at: { percent?: number } = { percent: 60 }
+    usage(on, at)
+    await inThread($, on, NOTE)
+    const sixty = await shown($)
+    expect(sixty?.text).toBe('60%')
+    expect(sixty?.props.dimColor).toBe(true)
+    expect(sixty?.props.color).toBeUndefined()
+    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ text: /active · 60%/ })).toBeDefined()
+
+    at.percent = 61
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+    const over = await shown($)
+    expect(over?.text).toBe('61%')
+    expect(over?.props.color).toBe('red')
+    expect(over?.props.dimColor).toBeFalsy()
+  })
+
+  test('nothing while the API has no figure', async ($, on) => {
+    const at: { percent?: number } = {}
+    usage(on, at)
+    await inThread($, on, NOTE)
+    expect(await shown($)).toBeUndefined()
+    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ text: /%/ })).toBeUndefined()
+  })
+
+  test('outside a thread too, after the place', async ($, on) => {
+    usage(on, { percent: 12 })
+    on('session.root', async () => ({ value: `${ROOT}/System` }))
+    on('session.cwd', async () => ({ value: `${ROOT}/System` }))
+    on('fs.exists', async (_$, e: any) => ({ value: e.path === `${ROOT}/System/rules.md` }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    expect((await shown($))?.text).toBe('12%')
   })
 })
 
@@ -166,7 +248,7 @@ describe('outside a project', () => {
     on('turn.complete', async () => ({ text: '' }))
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ key: 'resume' })).toBeUndefined()
+    expect(await band.find({ key: 'wrap' })).toBeUndefined()
     expect(await band.find({ key: 'finder' })).toBeDefined()
     await band.press({ key: 'obsidian' })
     expect(JSON.stringify(ran)).toContain(obsidianUrl(`${ROOT}/Wikis/Meetings/wiki/index.md`))
@@ -185,7 +267,7 @@ describe('outside a project', () => {
     expect(await band.find({ key: 'obsidian' })).toBeUndefined()
   })
 
-  test('shows the place with no Resume line', async ($, on) => {
+  test('shows the place and Clear', async ($, on) => {
     on('session.root', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
     on('session.cwd', async () => ({ value: `${ROOT}/Wikis/Meetings` }))
     on('fs.exists', async (_$, e: any) => ({ value: e.path === `${ROOT}/System/rules.md` }))
@@ -200,7 +282,6 @@ describe('outside a project', () => {
     } as any)
 
     expect(await band.find({ text: /Wikis › Meetings/ })).toBeDefined()
-    expect(await band.find({ key: 'resume' })).toBeUndefined()
     expect(await band.find({ key: 'wrap' })).toBeUndefined()
     expect(await band.find({ key: 'clear' })).toBeDefined()
   })
@@ -280,12 +361,11 @@ describe('a project kept in threads', () => {
     return submitted
   }
 
-  test('names its live threads, resumes them all, and wraps the one worked on', async ($, on) => {
+  test('/garrick resume resumes its live threads, and Wrap wraps the one worked on', async ($, on) => {
     const submitted = await atProject($, on)
+    expect((await $.command.run({ command: 'garrick', args: 'resume' } as any)).text).toBe('Resuming Acme.')
+    await clock.advance(100)
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ text: /2 threads: Pricing, Renewal/ })).toBeDefined()
-    expect(await band.find({ key: 'note' })).toBeDefined()
-    await band.press({ key: 'resume' })
     await band.press({ key: 'wrap' })
     expect(submitted[0]).toBe('Open Acme: read the Resume here block of each of its live threads (`Zones/Work/Acme/Threads/Pricing/Pricing.md`, `Zones/Work/Acme/Threads/Renewal/Renewal.md`) and tell me in a sentence or two for each where it stands and the next action.')
     expect(submitted[1]).toBe('Wrap Acme: wrap the thread this session worked on, and the hub `Zones/Work/Acme/Acme.md` too if its status changed. If the session touched no thread, say so and stop.')
@@ -306,11 +386,11 @@ describe('show and hide', () => {
     await inThread($, on, NOTE)
     const mount = () => $.ui.mount({ ...BAND, surface: 'terminal' })
     expect((await $.command.run({ command: 'garrick', args: 'hide' } as any)).text).toMatch(/hidden/)
-    expect(await (await mount()).find({ key: 'resume' })).toBeUndefined()
+    expect(await (await mount()).find({ key: 'wrap' })).toBeUndefined()
     expect((await $.command.run({ command: 'garrick' } as any)).text).toMatch(/^Garrick band shown/)
-    expect(await (await mount()).find({ key: 'resume' })).toBeDefined()
+    expect(await (await mount()).find({ key: 'wrap' })).toBeDefined()
     expect((await $.command.run({ command: 'garrick' } as any)).text).toMatch(/^Garrick band shown/)  // never a toggle
-    expect(await (await mount()).find({ key: 'resume' })).toBeDefined()
+    expect(await (await mount()).find({ key: 'wrap' })).toBeDefined()
   })
 
   test('any action brings a hidden band back', async ($, on) => {
@@ -318,7 +398,35 @@ describe('show and hide', () => {
     await inThread($, on, NOTE)
     await $.command.run({ command: 'garrick', args: 'hide' } as any)
     await $.command.run({ command: 'garrick', args: 'note' } as any).catch(() => undefined)
-    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ key: 'resume' })).toBeDefined()
+    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ key: 'wrap' })).toBeDefined()
+  })
+})
+
+describe('/garrick resume and note, off the band', () => {
+  test('/garrick resume submits the thread\'s prompt', async ($, on) => {
+    const clock = mock.clock(on)
+    const submitted: string[] = []
+    on('prompt.submit', async (_$: any, e: any) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    await inThread($, on, NOTE)
+    expect((await $.command.run({ command: 'garrick', args: 'resume' } as any)).text).toBe('Resuming Acme.')
+    await clock.advance(100)
+    expect(submitted[0]).toMatch(/^Open Acme: read the Resume here block in `Zones\/Work\/Acme\/Acme.md`/)
+  })
+
+  test('/garrick note opens the Resume here pane', async ($, on) => {
+    const opened: any[] = []
+    on('ui.open', async (_$: any, e: any) => {
+      opened.push(e)
+      return { value: undefined } as any
+    })
+    on('ui.render', ENGINE)
+    await inThread($, on, NOTE)
+    expect((await $.command.run({ command: 'garrick', args: 'note' } as any)).text).toBe('Resume here pane opened.')
+    const pane = await $.ui.mount({ plugin: 'garrick-band', surface: 'terminal', component: 'Pane', requestId: 'garrick-resume', props: {} } as any)
+    expect(await pane.find({ text: /Where it stands/ })).toBeDefined()
   })
 })
 
@@ -436,52 +544,6 @@ describe('Settings › Opening a thread', () => {
   })
 })
 
-describe('activity', () => {
-  test('the band shows the last prompt and the step it is on', async ($, on) => {
-    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
-    on('tool.call', async () => ({ result: '' }))
-    await inThread($, on, NOTE)
-    await $.prompt.submit({ text: '\n  Fix the **pricing** table\nand more' } as any)
-    await $.tool.call({ tool: 'Edit', file_path: '/v/x/sheet.md', old_string: 'a', new_string: 'b' } as any).catch(() => undefined)
-    const working = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } })
-    expect(await working.find({ text: /Fix the pricing table/ })).toBeDefined()
-    expect(await working.find({ text: /Editing sheet\.md/ })).toBeDefined()
-    expect(await working.find({ text: /Where it stands/ })).toBeUndefined()
-  })
-
-  test('a prompt that opens with the harness\'s own reminder shows the user\'s words (#187)', async ($, on) => {
-    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
-    await inThread($, on, NOTE)
-    await $.prompt.submit({ text: '<system-reminder>\nThe date is today.\n</system-reminder>\n<system-reminder>Step 2</system-reminder>\n  Fix the **pricing** table\nand more' } as any)
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ text: /Fix the pricing table/ })).toBeDefined()
-    expect(await band.find({ text: /system-reminder/ })).toBeUndefined()
-    await $.prompt.submit({ text: '<system-reminder>only this</system-reminder>\n' } as any)
-    const back = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await back.find({ text: /Where it stands/ })).toBeDefined()
-  })
-
-  test('before any prompt the band shows the Resume line', async ($, on) => {
-    await inThread($, on, NOTE)
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ text: /Where it stands/ })).toBeDefined()
-  })
-
-  test('steps and prompts in a few words', () => {
-    expect(promptLine('\n\n  Open **Acme**: read [[a/b|the note]]\nsecond')).toBe('Open Acme: read the note')
-    expect(promptLine('<system-reminder>\nA reminder.\n</system-reminder>\nOpen **Acme**')).toBe('Open Acme')
-    expect(promptLine('<system-reminder>only</system-reminder>')).toBe('')
-    expect(promptLine('Compare <b>this</b> and that')).toBe(plain('Compare <b>this</b> and that'))
-    expect(stepLine({ tool: 'Bash', command: 'npm test', description: 'Run the tests' })).toBe('Run the tests')
-    expect(stepLine({ tool: 'Bash', command: 'ls -la\npwd' })).toBe('$ ls -la')
-    expect(stepLine({ tool: 'Read', file_path: '/v/a/b.md' })).toBe('Reading b.md')
-    expect(stepLine({ tool: 'Grep', pattern: 'TODO' })).toBe('Searching for TODO')
-    expect(stepLine({ tool: 'mcp__claude_ai_Gmail__search_threads' })).toBe('Gmail: search threads')
-    expect(cut('abcdefghij', 5)).toBe('abcd…')
-    expect(cut('abc', 5)).toBe('abc')
-  })
-})
-
 describe('pane', () => {
   test('wikilinks become links to their file, or their label', () => {
     const resolve = (t: string) => (t === 'Acme/Deliverables/x' ? '/v/Zones/Work/Acme/Deliverables/x.md' : null)
@@ -492,7 +554,7 @@ describe('pane', () => {
   })
 })
 
-describe('while you wait', () => {
+describe('while you wait, a preview', () => {
   const PICKS = [
     { id: 'due:1', rule: 2, source: 'due', say: 'Renewal: Reply on the renewal dates (Birch, due today)', zone: 'Personal', project: 'Birch', thread: 'Renewal',
       note: 'Zones/Personal/Birch/Threads/Renewal/Renewal.md', tick: { verb: 'todo-done', zone: 'Personal', file: 'Todo.md', key: 'k1' } },
@@ -504,8 +566,9 @@ describe('while you wait', () => {
   const WORKING = { ...BAND, surface: 'terminal', props: { ...BAND.props, isWorking: true } }
 
   // A thread in Work with next_up.py and page_action.py installed; every
-  // command the band runs is recorded, and next_up.py answers PICKS.
-  async function waiting($: any, on: any, settings: object | null = null, extra: string[] = []) {
+  // command the band runs is recorded, and next_up.py answers PICKS. The
+  // preview is switched on unless `flags` says otherwise.
+  async function waiting($: any, on: any, settings: object | null = null, extra: string[] = [], flags: object | string | null = { 'while-you-wait': true }) {
     const clock = mock.clock(on)
     const ran: { argv: string[]; stdin?: string }[] = []
     const submitted: string[] = []
@@ -527,7 +590,13 @@ describe('while you wait', () => {
     on('fs.exists', async (_$: any, e: any) => ({
       value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, `${ROOT}/System/tools/next_up.py`, `${ROOT}/System/status/page_action.py`, '/usr/bin/open', ...extra].includes(e.path),
     }))
-    on('fs.read', async (_$: any, e: any) => ({ value: e.path.endsWith('garrick-settings.json') ? JSON.stringify(settings ?? {}) : NOTE }))
+    on('fs.read', async (_$: any, e: any) => {
+      if (e.path.endsWith('garrick-flags.json')) {
+        if (flags === null) throw new Error('no such file')
+        return { value: typeof flags === 'string' ? flags : JSON.stringify(flags) }
+      }
+      return { value: e.path.endsWith('garrick-settings.json') ? JSON.stringify(settings ?? {}) : NOTE }
+    })
     on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
     on('turn.complete', async () => ({ text: '' }))
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer' })
@@ -535,6 +604,28 @@ describe('while you wait', () => {
     const end = () => $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
     const garrick = async (args: string) => (await $.command.run({ command: 'garrick', args } as any)).text
     return { clock, ran, submitted, start, end, garrick }
+  }
+
+  test('the flag: only a true in System/garrick-flags.json switches it on', () => {
+    expect(previewOn('{"while-you-wait": true}', 'while-you-wait')).toBe(true)
+    for (const text of [null, '{}', '{"while-you-wait": false}', '{"while-you-wait": "yes"}', '["while-you-wait"]', 'not json']) {
+      expect(previewOn(text, 'while-you-wait')).toBe(false)
+    }
+  })
+
+  for (const [what, flags] of [['no flags file', null], ['the flag off', { 'while-you-wait': false }], ['a file that does not read', '{"while']] as const) {
+    test(`with ${what}: no line, and the four words say it is a preview`, async ($, on) => {
+      const w = await waiting($, on, null, [], flags as any)
+      await w.start()
+      await w.clock.advance(120_000)
+      const band = await $.ui.mount(WORKING)
+      expect(await band.find({ text: /While you wait/ })).toBeUndefined()
+      expect(await band.find({ key: 'wait-open' })).toBeUndefined()
+      expect(w.ran.filter(r => r.argv[1]!.endsWith('next_up.py'))).toHaveLength(0)
+      for (const word of ['next', 'open', 'tick', 'later']) expect(await w.garrick(word)).toBe(waitOff)
+      expect(w.ran.filter(r => r.argv[1]!.endsWith('page_action.py'))).toHaveLength(0)
+      expect(await band.find({ key: 'wrap' })).toBeDefined()                // the band itself is as before
+    })
   }
 
   test('settings: the defaults, what is saved, and what does not read', () => {
@@ -546,7 +637,7 @@ describe('while you wait', () => {
 
   test('next_up.py is asked for the session zone, never the thread the session is in', () => {
     const n = { path: '/v/Zones/Work/Acme/Threads/Pricing/Pricing.md', rel: 'Zones/Work/Acme/Threads/Pricing/Pricing.md', where: '', title: 'Pricing',
-      status: 'active', heading: null, lead: null, resume: null, finder: true, obsidian: false, threads: [] }
+      status: 'active', heading: null, resume: null, finder: true, obsidian: false, threads: [] }
     expect(rootOf(n)).toBe('/v')
     expect(zoneOf(n.rel)).toBe('Work')
     expect(nextUpArgv(n)).toEqual(['python3', '/v/System/tools/next_up.py', '--root', '/v', '--zone', 'Work', '--exclude', 'Zones/Work/Acme/Threads/Pricing'])

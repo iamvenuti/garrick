@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Activity, Note, Thread, Wait, WaitPick } from '../types'
+import type { Note, Thread, Wait, WaitPick } from '../types'
 
 // Garrick blue, from docs/assets/garrick-mark.svg.
 const BLUE = 0x3d73e0
@@ -10,20 +10,22 @@ const PANE = 'garrick-resume'
 
 const note = atom({ plugin: 'garrick-band', key: 'note' } as const, null)
 const isHidden = atom({ plugin: 'garrick-band', key: 'isHidden' } as const, false)
-const activity = atom({ plugin: 'garrick-band', key: 'activity' } as const, null)
+const used = atom({ plugin: 'garrick-band', key: 'used' } as const, null)
 const wait = atom({ plugin: 'garrick-band', key: 'wait' } as const, null)
 
-// The mark, the cabinet, as a 6×3 cell tile: a 6×6 grid of half-block pixels,
-// two to a cell. The spine and the closed compartment are drawn in the
-// terminal's own text colour, so they read on light and dark; the open one is
-// blue. A gap of one pixel is the wall.
-const CABINET = ['II BBB', 'II BBB', 'II    ', 'II III', 'II III', 'II III']
+// The mark, the cabinet, as a 4×2 cell tile, as tall as the band's two lines:
+// a 4×4 grid of half-block pixels, two to a cell, each pixel about square. The
+// spine and the closed compartment are drawn in the terminal's own text colour,
+// so they read on light and dark; the open one is blue. A gap of one pixel is
+// the wall.
+const CABINET = ['I BB', 'I   ', 'I II', 'I II']
+export const MARK = { columns: CABINET[0]!.length, rows: CABINET.length / 2 }
 
 export function markCells(): string {
   const colour = (p: string) => (p === 'B' ? BLUE : DEFAULT)
   const words: number[] = []
-  for (let row = 0; row < 6; row += 2) {
-    for (let col = 0; col < 6; col++) {
+  for (let row = 0; row < CABINET.length; row += 2) {
+    for (let col = 0; col < MARK.columns; col++) {
       const up = CABINET[row]![col]!
       const down = CABINET[row + 1]![col]!
       if (up === ' ' && down === ' ') words.push(0x20, DEFAULT, DEFAULT)
@@ -51,30 +53,32 @@ export function label(relative: string): string {
     .join(' › ')
 }
 
-export function plain(markdown: string): string {
-  return markdown
-    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
-    .replace(/\[\[([^\]]+)\]\]/g, (_, target: string) => basename(target))
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\*\*|__|`/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// The frontmatter status, the Resume here block, its heading and its first paragraph.
-export function parseNote(text: string): Pick<Note, 'status' | 'heading' | 'lead' | 'resume'> {
+// The frontmatter status, the Resume here block and its heading.
+export function parseNote(text: string): Pick<Note, 'status' | 'heading' | 'resume'> {
   const status = /^---\n[\s\S]*?^status:\s*(\S+)[\s\S]*?^---$/m.exec(text)?.[1] ?? null
   const match = /^### (Resume here|Outcome)\s*$/m.exec(text)
-  if (match === null) return { status, heading: null, lead: null, resume: null }
+  if (match === null) return { status, heading: null, resume: null }
   const start = match.index
 
   const body = text.slice(start).replace(/^### .*\n/, '')
   const end = body.search(/^#{2,3} /m)
   const resume = (end < 0 ? body : body.slice(0, end)).trim()
-  const lead = resume.split(/\n\s*\n/).find(p => !p.startsWith('|')) ?? null
 
-  return { status, heading: match[1]!, lead: lead === null ? null : plain(lead), resume }
+  return { status, heading: match[1]!, resume }
 }
+
+// How full the context window is, as a whole percentage: the status line's own
+// figure, from $.session.usage()'s plain call, which counts no tokens. Null
+// before the live window's first response, in a new session or one just
+// compacted, when the API has none.
+export function percentOf(context: { percent?: number } | null | undefined): number | null {
+  const p = context?.percent
+
+  return typeof p === 'number' && Number.isFinite(p) ? Math.round(p) : null
+}
+
+// Above this the figure is red: the point where it is time to wrap and clear.
+export const FULL = 60
 
 // What the band's buttons say to the assistant, in the person's own words, so
 // the rules' "Open X" and "wrap X" phrases apply.
@@ -97,65 +101,6 @@ export function projectWrapPrompt(n: Note): string {
 
 export function wrapPrompt(n: Note): string {
   return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.`
-}
-
-// --- What the session is doing --------------------------------------------
-// The prompt as one line: its first line with text in it, markup stripped.
-// A tag block the harness puts before what the user typed, such as
-// <system-reminder>…</system-reminder>, is never the user's: every such block
-// at the start is skipped (#187), and a prompt that is nothing else is ''.
-const LEADING_TAG = /^\s*<([A-Za-z][\w-]*)(?:\s[^<>]*)?>[\s\S]*?<\/\1\s*>/
-
-export function userText(text: string): string {
-  let rest = text
-  for (let m = LEADING_TAG.exec(rest); m !== null; m = LEADING_TAG.exec(rest)) rest = rest.slice(m[0].length)
-
-  return rest
-}
-
-export function promptLine(text: string): string {
-  const line = userText(text).split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
-
-  return plain(line)
-}
-
-// One tool call as a few words: what it touches, not how.
-export function stepLine(e: Record<string, any>): string {
-  const tool = String(e.tool ?? '')
-  const file = e.file_path ?? e.notebook_path
-  const first = (v: unknown) => String(v ?? '').split('\n')[0]!.trim()
-  switch (tool) {
-    case 'Bash':
-      return e.description ? first(e.description) : `$ ${first(e.command)}`
-    case 'Read':
-      return `Reading ${basename(String(file ?? ''))}`
-    case 'Edit':
-    case 'NotebookEdit':
-      return `Editing ${basename(String(file ?? ''))}`
-    case 'Write':
-      return `Writing ${basename(String(file ?? ''))}`
-    case 'Grep':
-    case 'Glob':
-      return `Searching for ${first(e.pattern)}`
-    case 'Agent':
-    case 'Task':
-      return `Agent: ${first(e.description)}`
-    case 'Skill':
-      return `Skill: ${first(e.skill)}`
-    case 'WebSearch':
-      return `Searching the web for ${first(e.query)}`
-    case 'WebFetch':
-      return `Fetching ${first(e.url).replace(/^https?:\/\//, '').split('/')[0]}`
-  }
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
-  if (mcp) return `${mcp[1]!.replace(/^claude_ai_/, '').replace(/_/g, ' ')}: ${mcp[2]!.replace(/_/g, ' ')}`
-
-  return tool
-}
-
-// The prompt cut to leave room for the step after it on one row.
-export function cut(text: string, room: number): string {
-  return text.length <= room ? text : text.slice(0, Math.max(1, room - 1)).trimEnd() + '…'
 }
 
 // The Resume block for the pane: wikilinks become links to the file they name,
@@ -195,9 +140,8 @@ async function findNote($: any): Promise<Note | null> {
 
     const parsed = parseNote(text)
     const threads = parsed.resume === null ? await liveThreads($, folder, root) : []
-    const lead = threads.length ? `${threads.length === 1 ? 'Thread' : `${threads.length} threads`}: ${threads.map(t => t.title).join(', ')}` : parsed.lead
 
-    return { path, rel, where, title: basename(folder), ...parsed, lead, threads, ...(await openers($, chain, folder, (await launchers($, root)).on)) }
+    return { path, rel, where, title: basename(folder), ...parsed, threads, ...(await openers($, chain, folder, (await launchers($, root)).on)) }
   }
   // No thread note above the folder (System/, the root, a wiki): nothing to
   // resume or wrap, but Finder still shows the folder and, in a wiki, Obsidian
@@ -210,7 +154,7 @@ async function findNote($: any): Promise<Note | null> {
 
   return {
     path: target, rel: target.slice(root.length + 1), where: where || 'Home', title: where || 'Home',
-    status: null, heading: null, lead: null, resume: null,
+    status: null, heading: null, resume: null,
     finder: open.finder, obsidian: open.obsidian && target === index, threads: [],
   }
 }
@@ -308,9 +252,15 @@ async function opener($: any, args: string[], app: string) {
 const finder = ($: any, n: Note) => opener($, ['-R', n.path], 'Finder')
 const obsidian = ($: any, n: Note) => opener($, [obsidianUrl(n.path)], 'Obsidian')
 
+async function measure($: any) {
+  const usage = await $.session.usage().catch(() => null)
+  await update($, used, () => percentOf(usage?.context))
+}
+
 async function refresh($: any) {
   const found = await findNote($).catch(() => null)
   await update($, note, () => found)
+  await measure($)
 }
 
 // --- Clickable paths -------------------------------------------------------
@@ -440,6 +390,26 @@ export function waitSettings(text: string | null): { on: boolean; threshold: num
 
   return { on, threshold }
 }
+
+// Parked since #247 as a preview feature: off unless System/garrick-flags.json
+// switches it on, {"while-you-wait": true}, read as status.py's preview_flags()
+// reads it, so only a true counts and a file that does not read leaves it off.
+// Off, no line shows and the four words say so.
+export const WAIT_FLAG = 'while-you-wait'
+export const waitOff = 'While you wait is a preview feature, and it is off. "while-you-wait": true in System/garrick-flags.json switches it on.'
+
+export function previewOn(text: string | null, flag: string): boolean {
+  try {
+    const data = text === null ? null : JSON.parse(text)
+
+    return data !== null && typeof data === 'object' && !Array.isArray(data) && data[flag] === true
+  } catch {
+    return false
+  }
+}
+
+const waitPreview = async ($: any, root: string) =>
+  previewOn((await $.fs.read(`${root}/System/garrick-flags.json`).catch(() => null)) as string | null, WAIT_FLAG)
 
 // The workspace root a note was found under, and the zone of the session.
 export const rootOf = (n: Note) => (n.rel === '' ? n.path : n.path.slice(0, n.path.length - n.rel.length - 1))
@@ -623,11 +593,10 @@ export const register: Register = on => {
     // waiting for the turn to end.
     await $.command.register({
       name: 'garrick',
-      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note; while a turn runs, "next", "open", "tick" or "later" for what it suggests',
+      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note; with the While you wait preview on, "next", "open", "tick" or "later" for what it suggests',
       argumentHint: '[hide|resume|wrap|note|finder|obsidian|next|open|tick|later]',
       immediate: true,
     })
-    await update($, activity, () => null)
     await update($, wait, () => null)
     await refresh($)
     await reindex($).catch(() => undefined)
@@ -635,7 +604,8 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The main loop's turn: the While you wait line, once it has run past the threshold.
+  // The main loop's turn: the While you wait line, once it has run past the
+  // threshold, where the preview is switched on.
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       running = e.turnId
@@ -643,42 +613,18 @@ export const register: Register = on => {
       timer = null
       await update($, wait, () => null).catch(() => undefined)
       const n = await read($, note)
-      const text = n === null ? null : ((await $.fs.read(`${rootOf(n)}/System/garrick-settings.json`).catch(() => null)) as string | null)
+      const previewed = n !== null && (await waitPreview($, rootOf(n)))
+      const text = previewed ? ((await $.fs.read(`${rootOf(n)}/System/garrick-settings.json`).catch(() => null)) as string | null) : null
       const chosen = waitSettings(text)
       const turnId = e.turnId
-      if (n !== null && chosen.on) timer = $.clock.after(chosen.threshold * 1000, () => void offer($, turnId).catch(() => undefined))
+      if (previewed && chosen.on) timer = $.clock.after(chosen.threshold * 1000, () => void offer($, turnId).catch(() => undefined))
     }
 
     return next(e)
   })
 
-  // The note may have been rewritten by the turn (thread-wrap, an edit), and
-  // files may have been added.
-  on('prompt.submit', async ($, e, next) => {
-    const prompt = promptLine(e.text)
-    if (prompt !== '') await update($, activity, () => ({ prompt, step: null })).catch(() => undefined)
-    // Nothing but the harness's own blocks: the band goes back to the Resume line, as before any prompt.
-    else if (e.text.trim() !== '') await update($, activity, () => null).catch(() => undefined)
-
-    return next(e)
-  })
-
-  // The main conversation's calls only: a subagent's would flicker past.
-  on('tool.call', async ($, e, next) => {
-    if ((e as any).agentId === undefined) {
-      const step = stepLine(e as any)
-      await update($, activity, a => (a === null ? null : { ...a, step })).catch(() => undefined)
-    }
-
-    return next(e)
-  })
-
-  on('command.run', { command: 'clear' }, async ($, e, next) => {
-    await update($, activity, () => null).catch(() => undefined)
-
-    return next(e)
-  })
-
+  // The note may have been rewritten by the turn (thread-wrap, an edit), files
+  // may have been added, and the context has grown.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       timer?.cancel()
@@ -692,11 +638,19 @@ export const register: Register = on => {
       for (const t of due) said.push(await tick($, t.pick, t.root).catch(() => 'A tick did not go through.'))
       if (was !== null || said.length) $.ui.toast(['The turn has finished.', ...said].join(' '))
     }
-    await update($, activity, a => (a === null ? null : { ...a, step: null }))
     await refresh($)
     await reindex($).catch(() => undefined)
 
     return next(e)
+  })
+
+  // After a compaction the API has no figure until the next response, so the
+  // band shows none rather than the one from before.
+  on('session.compact', async ($, e, next) => {
+    const done = await next(e)
+    await measure($).catch(() => undefined)
+
+    return done
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
@@ -718,11 +672,15 @@ export const register: Register = on => {
     await update($, isHidden, () => false)
     const shown = 'Garrick band shown. If it is folded under [+], ctrl+x ctrl+a opens it.'
     if (arg === '' || arg === 'show') return { text: shown }
-    if (arg === 'next') return { text: await waitNext($) }
-    if (arg === 'open') return { text: await waitOpen($) }
-    if (arg === 'tick') return { text: await waitTick($) }
-    if (arg === 'later') return { text: await waitLater($) }
     const current = await read($, note)
+    if (['next', 'open', 'tick', 'later'].includes(arg)) {
+      if (current === null || !(await waitPreview($, rootOf(current)))) return { text: waitOff }
+      if (arg === 'next') return { text: await waitNext($) }
+      if (arg === 'open') return { text: await waitOpen($) }
+      if (arg === 'tick') return { text: await waitTick($) }
+
+      return { text: await waitLater($) }
+    }
     if (arg === 'finder' || arg === 'obsidian') {
       if (current === null || current.path === '') return { text: 'No project or thread note above this folder.' }
       const switched = (await launchers($, rootOf(current))).on
@@ -753,16 +711,23 @@ export const register: Register = on => {
     const current = await read($, note)
     if (e.props.hasSurvey || current === null || (await read($, isHidden))) return next(e)
 
-    const doing = await read($, activity)
+    const percent = await read($, used)
+    // Only ever set where the preview is on: offer() runs from turn.start's timer.
     const offered = e.props.isWorking ? shownPick(await read($, wait)) : null
     const { Box, Text, Button, ...rest } = $.ui.resolve(e)
     const Raster = (rest as any).Raster
+    // Without Raster, the same cabinet in two rows of text.
     const mark = Raster ? (
-      <Raster key="mark" columns={6} rows={3} cells={markCells()} />
+      <Raster key="mark" columns={MARK.columns} rows={MARK.rows} cells={markCells()} />
     ) : (
-      <Text>█<Text color="#3d73e0">▀</Text></Text>
+      <Box flexDirection="column">
+        <Text>█ <Text color="#3d73e0">▀▀</Text></Text>
+        <Text>█ ██</Text>
+      </Box>
     )
 
+    // Two lines: where the session is, then what can be done there, every
+    // button at one weight. While you wait, a preview, adds its line between.
     return (
       <Box flexDirection="row" gap={1}>
         {mark}
@@ -772,20 +737,11 @@ export const register: Register = on => {
             <Text dimColor> · </Text>
             <Text bold>{current.where}</Text>
             {current.status && <Text color={STATUS_COLOR[current.status] ?? 'gray'}> {current.status}</Text>}
+            {percent !== null && <Text dimColor> · </Text>}
+            {percent !== null && (
+              <Text {...(percent > FULL ? { color: 'red' } : { dimColor: true })}>{percent}%</Text>
+            )}
           </Text>
-          {doing === null ? (
-            <Text dimColor wrap="truncate-end">
-              {current.lead ?? 'No Resume here block above this folder.'}
-            </Text>
-          ) : (
-            <Text wrap="truncate-end">
-              <Text color="#3d73e0">› </Text>
-              <Text dimColor={!e.props.isWorking}>
-                {e.props.isWorking && doing.step ? cut(doing.prompt, Math.floor(e.props.bodyColumns * 0.5)) : doing.prompt}
-              </Text>
-              {e.props.isWorking && doing.step && <Text dimColor> · {doing.step}</Text>}
-            </Text>
-          )}
           {offered !== null && (
             <Box flexDirection="row" gap={1}>
               <Box flexShrink={1}>
@@ -802,14 +758,12 @@ export const register: Register = on => {
             </Box>
           )}
           <Box flexDirection="row" gap={2}>
-            {resumable(current) && <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />}
             {resumable(current) && current.status !== 'done' && (
               <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
             )}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
-            {resumable(current) && <Button key="note" label="Note" hotkey="n" plain dimColor onPress={() => void openNote($, current)} />}
-            {current.finder && <Button key="finder" label="Finder" hotkey="f" plain dimColor onPress={() => void finder($, current)} />}
-            {current.obsidian && <Button key="obsidian" label="Obsidian" hotkey="o" plain dimColor onPress={() => void obsidian($, current)} />}
+            {current.finder && <Button key="finder" label="Finder" hotkey="f" plain onPress={() => void finder($, current)} />}
+            {current.obsidian && <Button key="obsidian" label="Obsidian" hotkey="o" plain onPress={() => void obsidian($, current)} />}
           </Box>
         </Box>
       </Box>

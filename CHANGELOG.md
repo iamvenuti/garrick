@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-28
+
+A project or thread made in a session reaches the status page in seconds, two checkpoints on either side of a wall no longer fail the commit, and one picture shows where Garrick keeps your context.
+
 ### Added
 
 - **Two graphs and a tree.** One picture of where Garrick keeps your context: what you read and what was said are ingested into two graphs, the Knowledge and Meetings wikis, and what you're working on sits in one tree of folders, by subject. Your assistant draws on all three. It is in the README under the three things Garrick holds, at the top of [How Garrick keeps context](docs/context.md), and as slide 8 of the deck, titled "Context is all you need". The source is `docs/assets/two-graphs-and-a-tree.html`, rendered to the PNG beside it.
@@ -997,7 +1001,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/iamvenuti/garrick/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/iamvenuti/garrick/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/iamvenuti/garrick/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/iamvenuti/garrick/compare/v0.41.0...v0.42.0

@@ -1807,6 +1807,9 @@ def cmux_act(ws: Path, req: dict) -> str:
 # ---- projects and threads: made, renamed and deleted through scaffold.py -------
 
 NAME_MAX = 80
+# Set for scaffold.py, which then asks for no build of the page itself: the
+# app builds it after this reply. garrick_lib's CALLER_BUILDS_PAGE (#243).
+CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
 
 
 def field(req: dict, key: str, required: bool = True) -> Optional[str]:
@@ -1831,7 +1834,8 @@ def scaffold(ws: Path, *args) -> str:
         raise Refused("System/tools/scaffold.py is missing")
     try:
         r = subprocess.run([sys.executable, str(tool), "--root", str(ws)] + list(args), capture_output=True, text=True,
-                           timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL)
+                           timeout=COMMIT_TIMEOUT + GIT_TIMEOUT, stdin=subprocess.DEVNULL,
+                           env=dict(os.environ, **{CALLER_BUILDS_PAGE: "1"}))
     except subprocess.TimeoutExpired:
         raise Refused("scaffold.py was still running after %s, most likely in the wall check of its commit, and was "
                       "stopped; its change may be left staged, so look at git status in the zone before trying again"

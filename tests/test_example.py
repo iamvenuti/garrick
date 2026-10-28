@@ -38,7 +38,9 @@ if str(TOOLS) not in sys.path:
 
 from garrick_lib import load_context, parse_frontmatter, work_folder  # noqa: E402
 
-ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+# GARRICK_CALLER_BUILDS_PAGE: scaffold.py starts no build of the status page in the background (#243).
+ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+           GARRICK_CALLER_BUILDS_PAGE="1")
 ENV.pop("GIT_DIR", None)
 TODAY = datetime.date(2026, 10, 20)          # a Tuesday
 DRIVE = "Quillfield Shared"

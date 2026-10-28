@@ -91,6 +91,7 @@ from garrick_lib import (  # noqa: E402
     INBOX,
     memory_folders,
     parse_frontmatter_text,
+    status_command,
     workspace_root,
 )
 
@@ -100,7 +101,6 @@ MAX_BYTES = 5_000_000
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December")
 INGEST = ("System", "skills", "meetings", "ingest.py")
-STATUS = ("System", "status", "status.py")
 
 
 @dataclass
@@ -407,10 +407,9 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 done.commits.append((_rel(root, repo) if repo != root else ".", said))
             else:
                 done.refused.append((_rel(root, repo) if repo != root else ".", said))
-    status = root.joinpath(*STATUS)
-    if rebuild and status.is_file():
-        r = subprocess.run([sys.executable, str(status), "--workspace", str(root)], capture_output=True, text=True,
-                           timeout=300)
+    status = status_command(root) if rebuild else None
+    if status:
+        r = subprocess.run(status, capture_output=True, text=True, timeout=300)
         if r.returncode == 0:
             done.rebuilt.append("System/generated/status.html")
     return done

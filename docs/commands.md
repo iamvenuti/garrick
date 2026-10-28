@@ -82,6 +82,8 @@ python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Sup
 
 The script checks names before it creates anything: letters and digits, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, nothing a folder could not hold or the spoken grammar already uses, and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken. A name that does not say how it is said, such as "Q4 Planning", is made and then asked about, so its note can carry the form to hear for it in `spoken:`; `--spoken "fourth quarter planning"` gives it straight away.
 
+With the [status page](extras/status-page.md) in place, the script then starts a build of it in the background, so the new project or thread is on the Threads card within seconds; several commands in a row make one build.
+
 The script does not commit. Each zone is its own git repository, so commit there:
 
 ```sh

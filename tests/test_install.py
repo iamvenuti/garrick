@@ -86,9 +86,10 @@ class Sandbox:
                              "[commit]\n\tgpgsign = false\n[maintenance]\n\tautoDetach = false\n")
         # The first build of the status page looks for Claude Code's command-line
         # tool; GARRICK_CLAUDE names one that is not there, so it looks nowhere else.
+        # GARRICK_CALLER_BUILDS_PAGE: scaffold.py starts no build of it in the background (#243).
         self.env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_GLOBAL=str(gitconfig),
                         GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1",
-                        GARRICK_CLAUDE=str(base / "no-claude"))
+                        GARRICK_CLAUDE=str(base / "no-claude"), GARRICK_CALLER_BUILDS_PAGE="1")
         if not page:
             self.env["GARRICK_INSTALL_NO_PAGE"] = "1"
         else:

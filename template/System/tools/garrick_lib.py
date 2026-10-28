@@ -47,6 +47,8 @@ functions below keep their signatures:
     stamp_parties(data, tags) -> bytes; stamped_parties(data) -> [tag]
     parties_for_domain(context, domain) -> [tag]
     is_webmail(domain) -> bool
+    status_command(root, settle=None) -> [str] or None
+    detach(cmd) -> bool
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
@@ -1962,6 +1965,38 @@ def simple_home(root: PathLike) -> bool:
     """Whether the workspace opens on the simple home, `"home": "simple"` in
     the settings file. One without the key keeps the full page it had."""
     return read_settings(root).get("home") == "simple"
+
+
+# The status page's builder, where the installer or the status extra put it.
+# A tool that changes what the page shows builds it, or asks for a build, so
+# the page does not wait for the app, the menu or the evening's schedule.
+STATUS_BUILDER = ("System", "status", "status.py")
+# Set for a tool by a caller that builds the page itself once the tool is
+# done: page_action.py, whose app rebuilds after every reply. The tool then
+# asks for no build of its own, so one request makes one page (#243).
+CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
+
+
+def status_command(root: PathLike, settle: Optional[float] = None) -> Optional[List[str]]:
+    """The command that builds `root`'s status page, or None where the status
+    extra is not installed. With `settle`, the build waits that many seconds
+    and goes ahead only if no later one was asked for: a burst makes one page."""
+    builder = Path(root).joinpath(*STATUS_BUILDER)
+    if not builder.is_file():
+        return None
+    return ([sys.executable or "python3", str(builder), "--workspace", str(root)]
+            + (["--settle", "%g" % settle] if settle else []))
+
+
+def detach(cmd: List[str]) -> bool:
+    """Start `cmd` in a session of its own, reading and writing nothing, and
+    return at once, without waiting on it: whether it started."""
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, close_fds=True)
+    except OSError:
+        return False
+    return True
 
 
 def release_notice_on(root: PathLike) -> bool:

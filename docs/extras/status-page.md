@@ -209,7 +209,7 @@ A workspace installed with the simple home, as every new one is, has it already:
    python3 System/jobs/job.py status --cwd ~/Garrick -- \
      python3 System/status/status.py --workspace ~/Garrick
    ```
-   `extras/status/garrick.status.plist` runs that every evening at 23:30. Where several things may ask for a build at once, such as a hook at the end of each session, add `--settle 10`: each request waits ten seconds and builds only if no later one came meanwhile, so a burst makes one page. A build whose `status.py` is replaced while it runs, as an update can during that wait, writes nothing and builds again from the new file, so the page is always the one the code on disk draws.
+   `extras/status/garrick.status.plist` runs that every evening at 23:30. Where several things may ask for a build at once, such as a hook at the end of each session, add `--settle 10`: each request waits ten seconds and builds only if no later one came meanwhile, so a burst makes one page. `scaffold.py` does this itself: after it adds a zone, makes, renames or deletes a project or a thread, parks, wakes or undoes, it starts a settled build in the background, so what a session made is on the page within seconds. A request from the page starts none, since the app rebuilds after it. A build whose `status.py` is replaced while it runs, as an update can during that wait, writes nothing and builds again from the new file, so the page is always the one the code on disk draws.
 
 The page says how old it is, and turns its banner red when it is more than a day and a half old, so a schedule that stopped is not mistaken for a quiet week.
 

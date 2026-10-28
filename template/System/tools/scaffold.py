@@ -72,6 +72,12 @@ carries the source its kind needs, items are replaced by id and removed only
 by `drop`, and `{"read": true, ...}` writes nothing and answers with what the
 note holds. It never writes `Todo.md` and never commits: the wrap does those.
 
+Where the status page is installed, `zone`, `project`, `thread`, `rename`, a
+confirmed `delete`, `park`, `wake` and `undo` then start a build of it in the
+background, with `--settle 10`, so a run of them makes one page. Nothing that
+only reads or refuses asks for one, nor a request from the page, whose app
+builds it after the reply (GARRICK_CALLER_BUILDS_PAGE).
+
 On success prints what it did in lines that can be read aloud; on refusal, one
 line saying why, and exits 1. `checkpoint` prints JSON either way.
 """
@@ -90,6 +96,7 @@ sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
+    CALLER_BUILDS_PAGE,
     CHECKPOINT_KINDS,
     CHECKPOINT_LABELS,
     CHECKPOINT_ONE,
@@ -102,6 +109,7 @@ from garrick_lib import (  # noqa: E402
     ZONE_TODO,
     GitError,
     checkpoint_item_line,
+    detach,
     git,
     hooks_path,
     init_repo,
@@ -124,6 +132,7 @@ from garrick_lib import (  # noqa: E402
     skill_links,
     spoken_clash,
     spoken_of,
+    status_command,
     strip_tag,
     table_row,
     tag_for,
@@ -135,6 +144,30 @@ from garrick_lib import (  # noqa: E402
 
 class Refusal(Exception):
     pass
+
+
+# The verbs that change what the status page shows. After one, the page is
+# asked for a build in the background, which waits PAGE_SETTLE seconds for
+# another request first, so a run of commands makes one page (#243).
+PAGE_VERBS = ("zone", "project", "thread", "rename", "delete", "park", "wake", "undo")
+PAGE_SETTLE = 10
+
+
+def ask_for_page(root, args):
+    """Start a build of the status page, and return without waiting on it, so
+    a thread a session made is on the Threads card in seconds instead of at
+    the next rebuild. Nothing for a verb that only reads (`--check`, a delete
+    not confirmed), nothing where the status extra is not installed, and
+    nothing under page_action.py, whose app builds the page after its reply."""
+    if args.command not in PAGE_VERBS or getattr(args, "check", False):
+        return
+    if args.command == "delete" and args.confirm is None:
+        return
+    if os.environ.get(CALLER_BUILDS_PAGE):
+        return
+    cmd = status_command(root, settle=PAGE_SETTLE)
+    if cmd:
+        detach(cmd)
 
 
 def ph(key):
@@ -1590,6 +1623,7 @@ def main(argv=None):
                "rename": cmd_rename, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
                "wake": cmd_park}[args.command]
         print(run(root, args, today))
+        ask_for_page(root, args)
     except Refusal as exc:
         print(exc, file=sys.stderr)
         return 1

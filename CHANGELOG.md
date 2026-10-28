@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **Two graphs and a tree.** One picture of where Garrick keeps your context: what you read and what was said are ingested into two graphs, the Knowledge and Meetings wikis, and what you're working on sits in one tree of folders, by subject. Your assistant draws on all three. It is in the README under the three things Garrick holds, at the top of [How Garrick keeps context](docs/context.md), and as slide 8 of the deck, titled "Context is all you need". The source is `docs/assets/two-graphs-and-a-tree.html`, rendered to the PNG beside it.
 
+### Changed
+
+- The overview diagram shows what Garrick holds: what you're working on, what was said and what you read, each feeding its own part of the record (your pieces of work, Meetings and Knowledge), with documents, mail, transcripts and articles filed into them. The old single box for mail, files and recordings is gone, and the thread boxes are pieces of work. The guard's arrow now says what the code does: the rules apply to the whole record, and the commit check runs in every zone, not in the wikis. Colour now shows who owns each box, Garrick, third-party tools, your content or what comes in, with a legend.
+
 ## [0.44.0] - 2026-10-26
 
 The window says less: Settings shows the choices, the cards show their state, notices go to this Mac only, and Catch up lives in the window.

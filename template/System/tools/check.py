@@ -61,6 +61,8 @@ from garrick_lib import (  # noqa: E402
     CHECKPOINT_DAYS,
     CHECKPOINT_HEADING,
     CHECKPOINT_LABELS,
+    CHECKPOINT_SAID,
+    CHECKPOINT_UNCONFIRMED,
     CONTEXT_TABLES,
     INBOX,
     LOCAL_HEADER,
@@ -2774,8 +2776,23 @@ HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
 # this exact header is a break: the header of any other table is not.
 LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*\|[ \t]*destination[ \t]*\|"
                               r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
-# Where no run of words crosses: a Markdown heading, or a ledger's header row.
-STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
+# What `scaffold.py checkpoint` writes around a person's items: the block's two
+# markers, and the line under the opening one, which carries the generated time
+# and CHECKPOINT_SAID. No shared file holds that sentence, so two checkpoints in
+# walled projects read as quoting each other on it alone (#225). Each is a break
+# that is not read at all, as the item's id and kind are: an item is read on its
+# own, as the words after its kind and before its id.
+CHECKPOINT_WRITTEN_RE = re.compile(
+    r"(?m)^[ \t]*<!--[ \t]*/?garrick-checkpoint\b[^\n]*-->[ \t]*$"
+    r"|^[ \t]*%s[^*\n]*\.\*\*[ \t]+%s[ \t]*$" % (re.escape(CHECKPOINT_UNCONFIRMED), re.escape(CHECKPOINT_SAID)))
+CHECKPOINT_ITEM_RE = re.compile(
+    r"(?m)^[ \t]*- \*\*(?:%s)\*\*(?P<item>[^\n]*?)<!--[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]*-->[ \t]*$"
+    % "|".join(re.escape(label) for label in CHECKPOINT_LABELS.values()))
+# Where no run of words crosses: a Markdown heading, a ledger's header row, or
+# what a checkpoint writes; of the last, only an item's own words are read.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s|(?P<written>%s)|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:],
+                                                            CHECKPOINT_WRITTEN_RE.pattern[4:],
+                                                            CHECKPOINT_ITEM_RE.pattern[4:]))
 WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
 
 
@@ -2808,13 +2825,18 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     headings of a note are its template's structure ("State of play", "Resume
     here"), and the words either side of one were not written as one sentence.
     A published ledger's header row is a break in the same way (see
-    LEDGER_HEADER_RE); what its rows hold is read like any other text."""
+    LEDGER_HEADER_RE); what its rows hold is read like any other text. So is
+    what a checkpoint's tool writes (see CHECKPOINT_WRITTEN_RE), which is
+    never read, and each of its items, read without its kind and its id."""
     text = without_link_targets(text, shared)
     out: set = set()
     last = 0
     for m in STRUCTURE_RE.finditer(text):
         out.update(shingles(words(text[last:m.start()])))
-        out.update(shingles(words(m.group(0))))
+        if m.group("item") is not None:
+            out.update(shingles(words(m.group("item"))))
+        elif m.group("written") is None:
+            out.update(shingles(words(m.group(0))))
         last = m.end()
     out.update(shingles(words(text[last:])))
     return out

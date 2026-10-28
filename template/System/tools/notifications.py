@@ -2,67 +2,49 @@
 """notifications.py: the one way Garrick tells you something.
 
     python3 System/tools/notifications.py send <event> <title> <message> [--zone Work]
-    python3 System/tools/notifications.py test <mac|cmux|telegram|command>
+    python3 System/tools/notifications.py test <mac|cmux>
     python3 System/tools/notifications.py flush        send what quiet hours held, if they are over
     python3 System/tools/notifications.py hook         what an assistant's hook runs, its event on stdin
     python3 System/tools/notifications.py hooks [--install | --uninstall]   Needs you and Finished, for Claude Code and Codex
-    python3 System/tools/notifications.py telegram-token [--forget]         keep the bot's token in the keychain
-    python3 System/tools/notifications.py telegram-chat     find the chat that last wrote to the bot, keep it, switch Telegram on
 
 Every sender calls send(): the scheduled jobs (job.py), the todo sweep, the
-cmux desk, and the session hooks. Where a notice goes is set on the status
-page, Settings › Notifications, and kept under `notifications` in
-System/garrick-settings.json, committed with the workspace:
+cmux desk, and the session hooks. Notices go to this Mac and nowhere else
+(#227). Which ones is set on the status page, Settings › Notifications, and
+kept under `notifications` in System/garrick-settings.json, committed with
+the workspace:
 
-    {"channels": {"mac": true, "cmux": true, "telegram": false, "command": false},
-     "telegram": {"chat": "123456789"},
-     "command": "/bin/sh /Users/<you>/notify.sh",
-     "events": {"needs-you": {"to": ["mac"], "quiet": "send", "away": false},
-                "finished": {"to": ["mac"], "quiet": "drop", "away": false, "after": 2}, ...},
-     "quiet": {"on": true, "from": "22:00", "to": "07:00"},
-     "zones": {"Personal": {"to": ["mac", "telegram"], "chat": "987654321"}}}
+    {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "job-failed": true},
+     "after": 2,
+     "quiet": {"on": true, "from": "22:00", "to": "07:00"}}
 
-**Events** (EVENTS) are what happened; **channels** are where it goes:
+**Events** (EVENTS) are what happened. Settings offers four of them (TELL),
+each on or off, and the minutes a turn must run before Finished is sent.
+Job idle and the Desk (FOLLOW) are sent whenever any of the four is on, so
+four boxes left empty mean no notice at all; Todo refreshed is never sent.
 
-- `mac`, a notification on this Mac. For a session running in cmux, with
-  the cmux channel on, cmux's own notification takes its place, so the
-  notice lands on that session's tab.
-- `telegram`, a message from your bot, through the Bot API's sendMessage,
-  standard library only. The bot's token is a secret: it lives in the macOS
-  keychain (`telegram-token` puts it there, read from the terminal or from
-  standard input, never from an argument, and so does Settings' Set up…,
-  through the status page's page_action.py), never in the settings file, a
-  log or this page. The chat is one ID, or one per zone. `telegram-chat`
-  finds it: the private chat that last wrote to the bot, through getUpdates.
-- `command`, a command of yours, run as `<command> <title> <message>` with
-  GARRICK_NOTIFY_EVENT, GARRICK_NOTIFY_KIND, GARRICK_JOB, GARRICK_EXIT and,
-  for a notice about one zone, GARRICK_ZONE and GARRICK_ZONE_DIR set, in that
-  zone's folder: what job.py's GARRICK_NOTIFY_CMD has always been given.
+A notice from a session running in cmux lands on that session's own tab,
+through cmux's own notification; anything else, or a cmux that will not
+take it, is a notification in the corner of the screen.
 
-Each event goes to the channels it lists that are switched on, and a notice
-about one zone only to the channels that zone allows. **Quiet hours** (22:00
-to 07:00 unless set otherwise) hold each event to its choice: `send` anyway,
-`hold` it for the morning, or `drop` it. A held notice goes out with the
-first notice, flush or session prompt after the quiet hours end. `away`, for
-Needs you and Finished, sends nothing while you are looking at that very
-cmux tab; it is offered for cmux alone, the one place that can be asked.
+**Quiet hours** (22:00 to 07:00 unless set otherwise) hold each event to its
+choice in QUIET: Needs you and the Desk are sent anyway, Finished is
+dropped, the rest are held for the morning. A held notice goes out with the
+first notice, flush or session prompt after the quiet hours end.
 
 **What a notice says** is short and plain: the zone or thread, what
-happened, never the content of a note or a meeting, since a phone shows it
-on a locked screen. Finished says only that a session is done, in which
-thread and after how long.
-
-**The simple view.** Settings opens on four plain choices: where to send
-(this Mac, Telegram), which of four events to be told about, the minutes a
-long task takes, and quiet hours. simple_choices() reads them out of the
-settings and from_simple() gives the settings they mean; settings are
-"simple" (is_simple) when the two agree, and anything else is custom, kept
-as it is under More options until you ask for the simple choices again.
+happened, never the content of a note or a meeting. Finished says only
+that a session is done, in which thread and after how long.
 
 **An override.** GARRICK_NOTIFY=1 or GARRICK_NOTIFY_CMD in a sender's
 environment, as a job's launchd plist may set them, keep working exactly as
-before for that sender, and these settings do not apply to it: the status
-page counts the plists that do this, and names them in a tooltip.
+before for that sender, and these settings do not apply to it. Settings no
+longer offers a command of its own; GARRICK_NOTIFY_CMD is how to run one.
+
+**Older settings.** Keys an older Garrick saved here (`channels`,
+`telegram`, `command`, `zones`, and each event's `to`, `quiet` and `away`)
+are read only for what still means something: an event that went to this
+Mac is on, and this Mac switched off turns every event off. The rest is
+ignored, and goes the next time Settings saves.
 
 **The hooks.** `hooks --install` adds this file's `hook` to Claude Code's
 UserPromptSubmit, Notification and Stop events (~/.claude/settings.json),
@@ -74,8 +56,8 @@ and does nothing for a session outside this workspace or for a headless job
 (GARRICK_HEADLESS=1).
 
 What it keeps for itself, never committed, is in
-System/generated/notifications/: the notices quiet hours hold, when each
-session's turn began, and the day a Telegram token was stored on this Mac.
+System/generated/notifications/: the notices quiet hours hold, and when each
+session's turn began.
 
 Standard library only, Python 3.9 or later.
 """
@@ -92,9 +74,6 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -105,60 +84,46 @@ SETTINGS = ("System", "garrick-settings.json")      # garrick_lib.SETTINGS; a te
 KEY = "notifications"
 STATE = ("System", "generated", "notifications")
 
-# (name, label, what it is). The order is the order Settings lists them in.
+# (name, label, what it is).
 EVENTS = (
     ("needs-you", "Needs you", "A session is waiting: a permission to give, a question, an idle prompt"),
     ("finished", "Finished", "A session has ended its turn, after running longer than the minutes set"),
     ("todo-refreshed", "Todo refreshed", "The nightly sweep has run: lines added, folded, expired"),
-    ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: overdue, due today, chases due"),
+    ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: what is late and what is due today"),
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
     ("job-idle", "Job idle", "A job has run cleanly but done nothing for days"),
     ("desk", "Desk", "The cmux desk starting the day or shutting down"),
 )
 EVENT_NAMES = tuple(e[0] for e in EVENTS)
 LABELS = {e[0]: e[1] for e in EVENTS}
-SESSION_EVENTS = ("needs-you", "finished")       # from a session: cmux may stand in for the Mac, "away" applies
-CHANNELS = ("mac", "telegram", "command")         # what an event can list
-SWITCHES = ("mac", "cmux", "telegram", "command")  # what can be switched on
-CHANNEL_LABELS = {"mac": "This Mac", "cmux": "cmux", "telegram": "Telegram", "command": "Your command"}
+SESSION_EVENTS = ("needs-you", "finished")       # from a session: cmux takes the Mac's place
+# What Settings offers, in its order and its words: each event on or off.
+TELL = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
+        ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"))
+TELL_NAMES = tuple(e for e, _ in TELL)
+FOLLOW = ("job-idle", "desk")                    # sent while any of TELL is on
 QUIET_CHOICES = ("send", "hold", "drop")
-DEFAULT_EVENTS = {
-    "needs-you": {"to": ["mac"], "quiet": "send"},
-    "finished": {"to": ["mac"], "quiet": "drop", "after": 2},
-    "todo-refreshed": {"to": [], "quiet": "hold"},
-    "todo-summary": {"to": None, "quiet": "hold"},          # Telegram once it is set up, else this Mac
-    "job-failed": {"to": list(CHANNELS), "quiet": "hold"},
-    "job-idle": {"to": ["mac"], "quiet": "hold"},
-    "desk": {"to": ["mac"], "quiet": "send"},
-}
+QUIET = {"needs-you": "send", "finished": "drop", "todo-refreshed": "hold", "todo-summary": "hold",
+         "job-failed": "hold", "job-idle": "hold", "desk": "send"}
 # job.py's kinds, as GARRICK_NOTIFY_KIND has always carried them, and the event each is.
 KINDS = {"failed": "job-failed", "recovered": "job-failed", "message": "job-failed", "idle": "job-idle",
          "digest": "todo-summary", "refreshed": "todo-refreshed"}
+AFTER = 2
 AFTER_MAX = 240
-CHAT = re.compile(r"^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$")
-TOKEN = re.compile(r"^\d{3,20}:[A-Za-z0-9_-]{20,100}$")
 CLOCK = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
-COMMAND_MAX = 400
 HELD_MAX = 50
 HELD_HOURS = 24
 TURN_DAYS = 2
-TELEGRAM_API = "https://api.telegram.org/bot%s/sendMessage"
-TELEGRAM_UPDATES = "https://api.telegram.org/bot%s/getUpdates"
-TELEGRAM_TEXT = 3500
-TIMEOUT = 8            # seconds a channel may take: Telegram, cmux, osascript
+TIMEOUT = 8            # seconds a channel may take: cmux, osascript
 COMMAND_TIMEOUT = 60   # what job.py has always given a notifier
-KEYCHAIN_SERVICE = "Garrick Telegram bot"
-KEYCHAIN_ACCOUNT = "garrick"
 CMUX_APPS = ("/Applications/cmux.app/Contents/Resources/bin/cmux", "~/Applications/cmux.app/Contents/Resources/bin/cmux")
-CMUX_BUNDLE = "com.cmuxterm.app"
 HOOK_TIMEOUT = 10
 CLAUDE_HOOKS = ("UserPromptSubmit", "Notification", "Stop")
 CODEX_HOOKS = ("UserPromptSubmit", "Stop")       # Codex has no event for a session waiting on you
 
-# The ways out, as module attributes, so a test puts fakes in their place and
-# nothing reaches the network, the keychain or this Mac's notifications.
+# The way out, as a module attribute, so a test puts a fake in its place and
+# nothing reaches this Mac's notifications.
 _run = subprocess.run
-_urlopen = urllib.request.urlopen
 
 
 # --------------------------------------------------------------------------- where
@@ -193,123 +158,61 @@ def saved(ws: Path) -> object:
     return data.get(KEY) if isinstance(data, dict) else None
 
 
-def zones_of(ws: Path) -> List[str]:
-    folder = ws / "Zones"
-    return sorted(z.name for z in folder.iterdir() if z.is_dir() and not z.name.startswith((".", "_"))) \
-        if folder.is_dir() else []
-
-
 def settings(ws: Path) -> dict:
     """The settings, every part filled in: what was saved where it reads,
     the defaults for the rest. Never raises; an unreadable part is its default."""
     return normal(saved(ws))
 
 
+def _minutes_ok(a) -> bool:
+    return isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= AFTER_MAX
+
+
 def normal(raw) -> dict:
+    """{"tell": {event: on}, "after": minutes, "quiet": {"on", "from", "to"}},
+    from what was saved, in this shape or an older Garrick's."""
     raw = raw if isinstance(raw, dict) else {}
-    ch = raw.get("channels") if isinstance(raw.get("channels"), dict) else {}
-    tg = raw.get("telegram") if isinstance(raw.get("telegram"), dict) else {}
-    chat = tg.get("chat") if isinstance(tg.get("chat"), str) and CHAT.match(tg.get("chat", "")) else ""
-    command = raw.get("command") if isinstance(raw.get("command"), str) else ""
-    channels = {"mac": ch.get("mac", True) is not False, "cmux": ch.get("cmux", True) is not False,
-                "telegram": ch.get("telegram") is True, "command": ch.get("command") is True and bool(command.strip())}
-    zones = {}
-    for zone, z in (raw.get("zones") or {}).items() if isinstance(raw.get("zones"), dict) else ():
-        if not isinstance(z, dict):
-            continue
-        entry = {}
-        if isinstance(z.get("to"), list):
-            entry["to"] = [c for c in CHANNELS if c in z["to"]]
-        if isinstance(z.get("chat"), str) and CHAT.match(z["chat"]):
-            entry["chat"] = z["chat"]
-        zones[str(zone)] = entry
-    if channels["telegram"] and not (chat or any(z.get("chat") for z in zones.values())):
-        channels["telegram"] = False            # nowhere to send it
-    events = {}
-    given = raw.get("events") if isinstance(raw.get("events"), dict) else {}
-    for name in EVENT_NAMES:
-        d, g = DEFAULT_EVENTS[name], given.get(name) if isinstance(given.get(name), dict) else {}
-        to = g.get("to") if isinstance(g.get("to"), list) else d["to"]
-        if to is None:                          # the summary: Telegram once it is set up, else this Mac
-            to = ["telegram"] if channels["telegram"] else ["mac"]
-        e = {"to": [c for c in CHANNELS if c in to],
-             "quiet": g.get("quiet") if g.get("quiet") in QUIET_CHOICES else d["quiet"],
-             "away": g.get("away") is True and name in SESSION_EVENTS}
-        if name == "finished":
-            after = g.get("after", d["after"])
-            e["after"] = after if isinstance(after, int) and not isinstance(after, bool) and 0 <= after <= AFTER_MAX else d["after"]
-        events[name] = e
+    given = raw.get("tell") if isinstance(raw.get("tell"), dict) else None
+    events = raw.get("events") if isinstance(raw.get("events"), dict) else {}
+    if given is not None:
+        tell = {e: given.get(e, True) is not False for e in TELL_NAMES}
+    else:                                       # an older Garrick's: an event that went to this Mac is on
+        ch = raw.get("channels") if isinstance(raw.get("channels"), dict) else {}
+        mac = ch.get("mac", True) is not False
+        tell = {}
+        for e in TELL_NAMES:
+            g = events.get(e) if isinstance(events.get(e), dict) else {}
+            to = g.get("to") if isinstance(g.get("to"), list) else ["mac"]
+            tell[e] = mac and "mac" in to
+    after = raw.get("after")
+    if not _minutes_ok(after):
+        old = events.get("finished") if isinstance(events.get("finished"), dict) else {}
+        after = old.get("after") if _minutes_ok(old.get("after")) else AFTER
     q = raw.get("quiet") if isinstance(raw.get("quiet"), dict) else {}
     quiet = {"on": q.get("on", True) is not False,
              "from": q.get("from") if isinstance(q.get("from"), str) and CLOCK.match(q["from"]) else "22:00",
              "to": q.get("to") if isinstance(q.get("to"), str) and CLOCK.match(q["to"]) else "07:00"}
-    return {"channels": channels, "telegram": {"chat": chat}, "command": command, "events": events,
-            "quiet": quiet, "zones": zones}
+    return {"tell": tell, "after": after, "quiet": quiet}
 
 
 class Invalid(ValueError):
     """A setting the page sent that cannot be kept, in words."""
 
 
-def clean(given, zones: Optional[List[str]] = None) -> dict:
+def clean(given) -> dict:
     """The settings as the page sends them, checked strictly, in the shape
-    they are saved in. Raises Invalid with the reason. A zone no longer in
-    the workspace is left out, as Settings › Zones does."""
+    they are saved in. Raises Invalid with the reason."""
     if not isinstance(given, dict):
         raise Invalid("not a set of notification settings")
-    unknown = sorted(set(given) - {"channels", "telegram", "command", "events", "quiet", "zones"})
+    unknown = sorted(set(given) - {"tell", "after", "quiet"})
     if unknown:
         raise Invalid("not a notification setting: %s" % ", ".join(unknown))
-    out: dict = {}
-    ch = given.get("channels", {})
-    if not isinstance(ch, dict) or set(ch) - set(SWITCHES) or not all(isinstance(v, bool) for v in ch.values()):
-        raise Invalid("not a set of channels, each on or off")
-    out["channels"] = {k: ch.get(k, k in ("mac", "cmux")) for k in SWITCHES}
-    tg = given.get("telegram", {})
-    if not isinstance(tg, dict) or set(tg) - {"chat"}:
-        raise Invalid("not a Telegram chat")
-    chat = (tg.get("chat") or "").strip() if isinstance(tg.get("chat", ""), str) else None
-    if chat is None or (chat and not CHAT.match(chat)):
-        raise Invalid("a Telegram chat ID is a number, such as 123456789, or -100 and a number for a group")
-    out["telegram"] = {"chat": chat}
-    command = given.get("command", "")
-    if not isinstance(command, str) or len(command) > COMMAND_MAX or "\n" in command:
-        raise Invalid("a command is one line of up to %d characters" % COMMAND_MAX)
-    try:
-        shlex.split(command)
-    except ValueError:
-        raise Invalid("the command does not read: a quote is not closed")
-    out["command"] = command.strip()
-    if out["channels"]["command"] and not out["command"]:
-        raise Invalid("name the command to run, or switch it off")
-    events = given.get("events", {})
-    if not isinstance(events, dict) or set(events) - set(EVENT_NAMES):
-        raise Invalid("not an event Garrick sends: %s" % ", ".join(sorted(set(events) - set(EVENT_NAMES)))
-                      if isinstance(events, dict) else "not a set of events")
-    out["events"] = {}
-    for name, e in events.items():
-        allowed = {"to", "quiet"} | ({"away"} if name in SESSION_EVENTS else set()) | ({"after"} if name == "finished" else set())
-        if not isinstance(e, dict) or set(e) - allowed:
-            raise Invalid("not a choice for %s" % LABELS[name])
-        entry = {}
-        if "to" in e:
-            if not isinstance(e["to"], list) or set(e["to"]) - set(CHANNELS):
-                raise Invalid("not a list of channels for %s" % LABELS[name])
-            entry["to"] = [c for c in CHANNELS if c in e["to"]]
-        if "quiet" in e:
-            if e["quiet"] not in QUIET_CHOICES:
-                raise Invalid("in quiet hours, %s is sent, held or dropped" % LABELS[name])
-            entry["quiet"] = e["quiet"]
-        if "away" in e:
-            if not isinstance(e["away"], bool):
-                raise Invalid("not a choice for %s" % LABELS[name])
-            entry["away"] = e["away"]
-        if "after" in e:
-            a = e["after"]
-            if not isinstance(a, int) or isinstance(a, bool) or not 0 <= a <= AFTER_MAX:
-                raise Invalid("Finished waits from 0 to %d minutes" % AFTER_MAX)
-            entry["after"] = a
-        out["events"][name] = entry
+    tell = given.get("tell", {})
+    if not isinstance(tell, dict) or set(tell) - set(TELL_NAMES) or not all(isinstance(v, bool) for v in tell.values()):
+        raise Invalid("not a set of notices, each on or off")
+    after = given.get("after", AFTER)
+    if not _minutes_ok(after):
+        raise Invalid("a long task is from 0 to %d minutes" % AFTER_MAX)
     q = given.get("quiet", {})
     if not isinstance(q, dict) or set(q) - {"on", "from", "to"}:
         raise Invalid("not a time for quiet hours")
@@ -318,45 +221,8 @@ def clean(given, zones: Optional[List[str]] = None) -> dict:
     for k in ("from", "to"):
         if k in q and not (isinstance(q[k], str) and CLOCK.match(q[k])):
             raise Invalid("quiet hours are times such as 22:00")
-    out["quiet"] = {"on": q.get("on", True), "from": q.get("from", "22:00"), "to": q.get("to", "07:00")}
-    zs = given.get("zones", {})
-    if not isinstance(zs, dict):
-        raise Invalid("not a choice for each zone")
-    out["zones"] = {}
-    for zone, z in zs.items():
-        if not isinstance(z, dict) or set(z) - {"to", "chat"}:
-            raise Invalid("not a choice for %s" % zone)
-        if zones is not None and zone not in zones:
-            continue
-        entry = {}
-        if "to" in z:
-            if not isinstance(z["to"], list) or set(z["to"]) - set(CHANNELS):
-                raise Invalid("not a list of channels for %s" % zone)
-            entry["to"] = [c for c in CHANNELS if c in z["to"]]
-        c = z.get("chat", "")
-        if not isinstance(c, str) or (c.strip() and not CHAT.match(c.strip())):
-            raise Invalid("%s's Telegram chat is not a chat ID" % zone)
-        if c.strip():
-            entry["chat"] = c.strip()
-        out["zones"][zone] = entry
-    if out["channels"]["telegram"] and not (chat or any(z.get("chat") for z in out["zones"].values())):
-        raise Invalid("Telegram needs a chat ID to send to, or switch it off")
-    return out
-
-
-def request_of(cfg: dict) -> dict:
-    """Settings as settings() gives them, in the shape clean() takes: what
-    the page would send for them."""
-    events = {}
-    for name, e in cfg["events"].items():
-        entry = {"to": list(e["to"]), "quiet": e["quiet"]}
-        if name in SESSION_EVENTS:
-            entry["away"] = bool(e.get("away"))
-        if name == "finished":
-            entry["after"] = e["after"]
-        events[name] = entry
-    return {"channels": dict(cfg["channels"]), "telegram": {"chat": cfg["telegram"]["chat"]}, "command": cfg["command"],
-            "events": events, "quiet": dict(cfg["quiet"]), "zones": {z: dict(v) for z, v in cfg["zones"].items()}}
+    return {"tell": {e: tell.get(e, True) for e in TELL_NAMES}, "after": after,
+            "quiet": {"on": q.get("on", True), "from": q.get("from", "22:00"), "to": q.get("to", "07:00")}}
 
 
 def _garrick_lib(ws: Path):
@@ -375,94 +241,16 @@ def _garrick_lib(ws: Path):
 def keep(ws: Path, cfg: dict) -> dict:
     """Save these settings, checked as the page's are, leaving the rest of
     the settings file as it is. What was saved, in clean()'s shape."""
-    out = clean(request_of(cfg), zones_of(ws))
+    out = clean(cfg)
     _garrick_lib(ws).save_preferences(ws, {KEY: out})
     return out
 
 
-# --------------------------------------------------------------------------- the simple view
-# Settings › Notifications opens on four plain choices; everything above is
-# under More options. The simple view is one mapping, defined here once and
-# mirrored by the page's script: simple_choices() reads the choices out of a
-# full set of settings, from_simple() gives the full set they mean.
-#
-#   Send to       the mac and telegram switches. With the cmux extra (`desk`)
-#                 the cmux switch follows this Mac's: a session in cmux gets
-#                 its notice on its own tab.
-#   Tell me when  SIMPLE_EVENTS: on, the event goes to every Send to channel
-#                 switched on; off, to none of them. SIMPLE_FOLLOW go wherever
-#                 Send to does, SIMPLE_OFF nowhere.
-#   Quiet hours   one switch and two times; what each event does in them is
-#                 DEFAULT_EVENTS' choice: Needs you sent, Finished dropped,
-#                 the Desk's replies sent, the rest held till morning.
-#
-# Not in it, so set only under More options: the command channel (off), a
-# choice per event, "only when away" (off), and anything about a zone (no
-# restriction, no chat of its own). A channel switched off keeps what each
-# event said for it, since nothing goes there; when no Send to channel is on,
-# this Mac's column is the one the boxes set.
-SEND_TO = ("mac", "telegram")
-SIMPLE_EVENTS = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
-                 ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"))
-SIMPLE_FOLLOW = ("job-idle", "desk")
-SIMPLE_OFF = ("todo-refreshed",)
-
-
-def _tracked(channels: dict) -> List[str]:
-    """The Send to channels the simple boxes set: those switched on, else this Mac's."""
-    return [c for c in SEND_TO if channels.get(c)] or ["mac"]
-
-
-def simple_choices(cfg: dict) -> dict:
-    """The simple view's choices, as settings() gives the settings:
-    {"send": {"mac", "telegram"}, "tell": {event: on}, "after": minutes,
-    "quiet": {"on", "from", "to"}}. For settings that are custom, the
-    nearest the simple view can show."""
-    tracked = _tracked(cfg["channels"])
-    return {"send": {c: bool(cfg["channels"].get(c)) for c in SEND_TO},
-            "tell": {e: any(c in cfg["events"][e]["to"] for c in tracked) for e, _ in SIMPLE_EVENTS},
-            "after": cfg["events"]["finished"]["after"],
-            "quiet": dict(cfg["quiet"])}
-
-
-def from_simple(choices: dict, cfg: dict, desk: bool = False) -> dict:
-    """The full settings the simple choices mean, starting from `cfg`
-    (settings() shape): what it holds that the simple view does not decide
-    (the Telegram chat, your command, a switched-off channel's column) is
-    kept; what the simple view leaves out is set to its plain value."""
-    out = json.loads(json.dumps(cfg))
-    ch = out["channels"]
-    ch["mac"] = bool(choices["send"].get("mac"))
-    ch["telegram"] = bool(choices["send"].get("telegram")) and bool(out["telegram"]["chat"])
-    if desk:
-        ch["cmux"] = ch["mac"]
-    ch["command"] = False
-    tracked = _tracked(ch)
-    tell = dict((e, bool(choices["tell"].get(e))) for e, _ in SIMPLE_EVENTS)
-    for name, e in out["events"].items():
-        want = tell[name] if name in tell else name in SIMPLE_FOLLOW
-        e["to"] = [c for c in CHANNELS if (want if c in tracked else c in e["to"])]
-        e["quiet"] = DEFAULT_EVENTS[name]["quiet"]
-        e["away"] = False
-        if name == "finished":
-            after = choices.get("after", e["after"])
-            e["after"] = after if isinstance(after, int) and not isinstance(after, bool) and 0 <= after <= AFTER_MAX else e["after"]
-    q = choices.get("quiet") or {}
-    out["quiet"] = {"on": q.get("on", True) is not False,
-                    "from": q["from"] if isinstance(q.get("from"), str) and CLOCK.match(q["from"]) else out["quiet"]["from"],
-                    "to": q["to"] if isinstance(q.get("to"), str) and CLOCK.match(q["to"]) else out["quiet"]["to"]}
-    out["zones"] = {z: ({"to": list(CHANNELS)} if "to" in v else {}) for z, v in out["zones"].items()}
-    return out
-
-
-def is_simple(cfg: dict, desk: bool = False) -> bool:
-    """Whether the simple view says all there is to say about these settings."""
-    return from_simple(simple_choices(cfg), cfg, desk) == cfg
-
-
-def has_desk(ws: Path) -> bool:
-    """Whether the cmux extra is in the workspace, as the status page asks it of the page's own folder."""
-    return (ws / "System" / "cmux" / "cmuxlib.py").is_file()
+def wanted(cfg: dict, event: str) -> bool:
+    """Whether this event is sent at all, as the settings stand."""
+    if event in cfg["tell"]:
+        return cfg["tell"][event]
+    return event in FOLLOW and any(cfg["tell"].values())
 
 
 # --------------------------------------------------------------------------- the legacy override
@@ -518,9 +306,9 @@ def hold(ws: Path, notice: dict, now: dt.datetime) -> None:
 
 def flush(ws: Path, cfg: Optional[dict] = None, now: Optional[dt.datetime] = None, env=None, log=None,
           prefix: str = "notifications") -> int:
-    """Send what quiet hours held, once they are over: each to the channels
-    its event and zone allow now. A notice held longer than HELD_HOURS is
-    let go. How many went."""
+    """Send what quiet hours held, once they are over: each whose event is
+    still switched on. A notice held longer than HELD_HOURS is let go. How
+    many went."""
     path = _held_file(ws)
     if not path.is_file():
         return 0
@@ -539,37 +327,20 @@ def flush(ws: Path, cfg: Optional[dict] = None, now: Optional[dt.datetime] = Non
             continue
         if now.timestamp() - float(n.get("at") or 0) > HELD_HOURS * 3600:
             continue
-        to = route(cfg, n["event"], n.get("zone"))
-        if to and deliver(ws, cfg, n, to, env=env, log=log, prefix=prefix, session=False):
+        if wanted(cfg, n["event"]) and deliver(ws, n, env=env, log=log, prefix=prefix, session=False):
             sent += 1
     return sent
 
 
 # --------------------------------------------------------------------------- sending
 
-def route(cfg: dict, event: str, zone: Optional[str]) -> List[str]:
-    """The channels a notice goes to: its event's, switched on, and allowed by its zone."""
-    to = [c for c in cfg["events"][event]["to"] if cfg["channels"].get(c)]
-    z = cfg["zones"].get(zone) if zone else None
-    if z and "to" in z:
-        to = [c for c in to if c in z["to"]]
-    if "telegram" in to and not chat_for(cfg, zone):
-        to.remove("telegram")
-    return to
-
-
-def chat_for(cfg: dict, zone: Optional[str]) -> str:
-    z = cfg["zones"].get(zone) if zone else None
-    return (z or {}).get("chat") or cfg["telegram"]["chat"]
-
-
 def send(event: str, title: str, message: str, zone: Union[str, Path, None] = None, root=None,
          kind: Optional[str] = None, job: str = "", code: Optional[int] = None, log=None,
          prefix: str = "notifications", now: Optional[dt.datetime] = None, env=None) -> bool:
-    """Send one notice wherever the settings say. `zone` is a zone's name or
-    its folder. `log`, a file open for writing, gets a line for a channel
-    that failed; a failure never raises. True when it went somewhere, or
-    was held for after quiet hours."""
+    """Send one notice to this Mac, if the settings want it. `zone` is a
+    zone's name or its folder, which only GARRICK_NOTIFY_CMD is told. `log`,
+    a file open for writing, gets a line when it failed; a failure never
+    raises. True when it went, or was held for after quiet hours."""
     if event in KINDS and event not in EVENT_NAMES:
         kind, event = kind or event, KINDS[event]
     if event not in EVENT_NAMES:
@@ -584,19 +355,16 @@ def send(event: str, title: str, message: str, zone: Union[str, Path, None] = No
     ws = workspace(root, env)
     if ws is None:
         return False
-    if zone_dir is None and zone_name and (ws / "Zones" / zone_name).is_dir():
-        zone_dir = ws / "Zones" / zone_name
     cfg = settings(ws)
     now = now or dt.datetime.now()
     try:
         flush(ws, cfg, now, env, log, prefix)
     except Exception:
         pass                    # what was held waits for the next one
-    to = route(cfg, event, zone_name)
-    if not to:
+    if not wanted(cfg, event):
         return False
     if is_quiet(cfg, now):
-        choice = cfg["events"][event]["quiet"]
+        choice = QUIET[event]
         if choice == "drop":
             return False
         if choice == "hold":
@@ -605,30 +373,15 @@ def send(event: str, title: str, message: str, zone: Union[str, Path, None] = No
                 return True
             except OSError:
                 return False
-    if event in SESSION_EVENTS and cfg["events"][event]["away"] and cfg["channels"]["cmux"] and looking(env):
-        return False
-    return deliver(ws, cfg, notice, to, zone_dir=zone_dir, env=env, log=log, prefix=prefix,
-                   session=event in SESSION_EVENTS)
+    return deliver(ws, notice, env=env, log=log, prefix=prefix, session=event in SESSION_EVENTS)
 
 
-def deliver(ws: Path, cfg: dict, notice: dict, to: List[str], zone_dir: Optional[Path] = None, env=None, log=None,
-            prefix: str = "notifications", session: bool = False) -> bool:
-    env = os.environ if env is None else env
-    if zone_dir is None and notice.get("zone") and (ws / "Zones" / notice["zone"]).is_dir():
-        zone_dir = ws / "Zones" / notice["zone"]
-    went = False
-    for channel in to:
-        if channel == "mac":
-            problem = local(notice["title"], notice["message"], env, cmux=session and cfg["channels"]["cmux"])
-        elif channel == "telegram":
-            problem = telegram(chat_for(cfg, notice.get("zone")), text_of(notice))
-        else:
-            problem = command(cfg["command"], notice, zone_dir, env)
-        if problem:
-            say(log, "%s: %s %s" % (prefix, "the notifier" if channel == "command" else CHANNEL_LABELS[channel], problem))
-        else:
-            went = True
-    return went
+def deliver(ws: Path, notice: dict, env=None, log=None, prefix: str = "notifications", session: bool = False) -> bool:
+    """To this Mac: on a session's own cmux tab when it runs in cmux, else the Mac's own."""
+    problem = local(notice["title"], notice["message"], env, cmux=session)
+    if problem:
+        say(log, "%s: this Mac %s" % (prefix, problem))
+    return not problem
 
 
 def legacy(notice: dict, zone_dir: Optional[Path], env, log, prefix: str) -> bool:
@@ -651,12 +404,6 @@ def say(log, line: str) -> None:
         log.write(line + "\n")
     else:
         sys.stderr.write(line + "\n")
-
-
-def text_of(notice: dict) -> str:
-    """One message for a chat: the title, then what happened, unless it already says it."""
-    title, message = notice["title"], notice["message"]
-    return message if message.startswith(title) else "%s\n%s" % (title, message)
 
 
 # --------------------------------------------------------------------------- the channels
@@ -697,8 +444,8 @@ def in_cmux(env=None) -> bool:
 
 def local(title: str, message: str, env=None, cmux: bool = False) -> str:
     """This Mac: cmux's notification on the session's own tab, for a session
-    in cmux with that channel on, else the Mac's own. A cmux that will not
-    take it falls back to the Mac's."""
+    in cmux, else the Mac's own. A cmux that will not take it falls back to
+    the Mac's."""
     env = os.environ if env is None else env
     if cmux and in_cmux(env):
         try:
@@ -709,31 +456,6 @@ def local(title: str, message: str, env=None, cmux: bool = False) -> str:
         except (OSError, subprocess.TimeoutExpired):
             pass
     return mac(title, message)
-
-
-def looking(env=None) -> bool:
-    """Whether you are looking at the session this runs in: cmux in front,
-    with this session's tab the one in focus. Asked of cmux alone; anything
-    that does not answer counts as away, so the notice goes."""
-    env = os.environ if env is None else env
-    if not in_cmux(env):
-        return False
-    try:
-        r = _run([cmux_binary(env), "identify", "--json"], capture_output=True, text=True, timeout=3,
-                 env=dict(env), stdin=subprocess.DEVNULL)
-        data = json.loads(r.stdout) if r.returncode == 0 else {}
-        caller = (data.get("caller") or {}).get("surface_ref")
-        focused = (data.get("focused") or {}).get("surface_ref")
-        if not caller or caller != focused:
-            return False
-        front = _run(["lsappinfo", "front"], capture_output=True, text=True, timeout=3)
-        asn = (front.stdout or "").strip()
-        if front.returncode != 0 or not asn:
-            return False
-        info = _run(["lsappinfo", "info", "-only", "bundleid", asn], capture_output=True, text=True, timeout=3)
-        return CMUX_BUNDLE in (info.stdout or "")
-    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
-        return False
 
 
 def command(cmd: str, notice: dict, zone_dir: Optional[Path], env=None) -> str:
@@ -760,174 +482,19 @@ def command(cmd: str, notice: dict, zone_dir: Optional[Path], env=None) -> str:
     return ""
 
 
-# --------------------------------------------------------------------------- Telegram
+# --------------------------------------------------------------------------- a test
 
-def token() -> Optional[str]:
-    """The bot's token from the macOS keychain, or None. Never logged."""
-    if sys.platform != "darwin":
-        return None
-    try:
-        r = _run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"],
-                 capture_output=True, text=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    found = (r.stdout or "").strip()
-    return found if r.returncode == 0 and TOKEN.match(found) else None
-
-
-def store_token(value: str, ws: Optional[Path] = None) -> None:
-    """Keep the bot's token in the login keychain. It reaches `security`
-    on its standard input, never as an argument, so no process list shows
-    it. Raises Invalid when it is not a token, OSError when it did not keep."""
-    value = value.strip()
-    if not TOKEN.match(value):
-        raise Invalid("that is not a bot token: BotFather gives one such as 123456789:AA… ")
-    if sys.platform != "darwin":
-        raise OSError("the keychain is only on a Mac")
-    line = 'add-generic-password -U -s "%s" -a "%s" -w "%s"\n' % (KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, value)
-    r = _run(["security", "-i"], input=line, capture_output=True, text=True, timeout=30)
-    if r.returncode != 0 or token() != value:
-        raise OSError("the keychain did not keep it")
-    if ws is not None:
-        _write_json(state_dir(ws) / "telegram.json", {"stored": dt.date.today().isoformat()})
-
-
-def forget_token(ws: Optional[Path] = None) -> bool:
-    gone = False
-    if sys.platform == "darwin":
-        r = _run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT],
-                 capture_output=True, text=True, timeout=TIMEOUT)
-        gone = r.returncode == 0
-    if ws is not None:
-        try:
-            (state_dir(ws) / "telegram.json").unlink()
-        except OSError:
-            pass
-    return gone
-
-
-def token_stored(ws: Path) -> Optional[str]:
-    """The day a token was stored on this Mac, as this file recorded it,
-    without reading the keychain: what the status page shows. None if never."""
-    found = _read_json(state_dir(ws) / "telegram.json", {}).get("stored")
-    return found if isinstance(found, str) else None
-
-
-def scrub(text: str, secret: Optional[str]) -> str:
-    return text.replace(secret, "<token>") if secret else text
-
-
-def telegram(chat: str, text: str, tok: Optional[str] = None) -> str:
-    """sendMessage to one chat, plain text. "" when Telegram took it."""
-    if not chat:
-        return "has no chat ID to send to"
-    tok = tok or token()
-    if not tok:
-        return "has no bot token in the keychain: run python3 System/tools/notifications.py telegram-token"
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text[:TELEGRAM_TEXT],
-                                   "disable_web_page_preview": "true"}).encode("utf-8")
-    req = urllib.request.Request(TELEGRAM_API % tok, data=data, method="POST")
-    try:
-        with _urlopen(req, timeout=TIMEOUT) as r:
-            body = json.loads(r.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as e:
-        try:
-            body = json.loads(e.read().decode("utf-8") or "{}")
-        except Exception:
-            body = {}
-        return scrub("said no: %s" % (body.get("description") or "HTTP %d" % e.code), tok)
-    except Exception as e:          # no network, a timeout, a certificate: say what, never the URL
-        reason = getattr(e, "reason", None) or type(e).__name__
-        return scrub("could not be reached: %s" % reason, tok)
-    if not isinstance(body, dict) or body.get("ok") is not True:
-        return scrub("said no: %s" % ((body or {}).get("description") or "no reason given"), tok)
-    return ""
-
-
-def latest_chat(tok: Optional[str] = None) -> Tuple[str, str]:
-    """The private chat that last wrote to the bot, through getUpdates:
-    (its ID, "") or ("", why not, after "Telegram"). ("", "") when nobody has
-    written to it lately: Telegram keeps a bot's messages for a day."""
-    tok = tok or token()
-    if not tok:
-        return "", "has no bot token in the keychain yet: save the token first"
-    req = urllib.request.Request(TELEGRAM_UPDATES % tok, data=urllib.parse.urlencode({"timeout": "0"}).encode("utf-8"),
-                                 method="POST")
-    try:
-        with _urlopen(req, timeout=TIMEOUT) as r:
-            body = json.loads(r.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as e:
-        try:
-            body = json.loads(e.read().decode("utf-8") or "{}")
-        except Exception:
-            body = {}
-        return "", scrub("said no: %s" % (body.get("description") or "HTTP %d" % e.code), tok)
-    except Exception as e:          # no network, a timeout, a certificate: say what, never the URL
-        return "", scrub("could not be reached: %s" % (getattr(e, "reason", None) or type(e).__name__), tok)
-    if not isinstance(body, dict) or body.get("ok") is not True or not isinstance(body.get("result"), list):
-        return "", scrub("said no: %s" % ((body if isinstance(body, dict) else {}).get("description") or "no reason given"), tok)
-    found = ""
-    for u in sorted((u for u in body["result"] if isinstance(u, dict)), key=lambda u: u.get("update_id") or 0):
-        msg = u.get("message") or u.get("edited_message")
-        chat = msg.get("chat") if isinstance(msg, dict) else None
-        if isinstance(chat, dict) and chat.get("type") == "private" and isinstance(chat.get("id"), int) \
-                and not isinstance(chat.get("id"), bool):
-            found = str(chat["id"])
-    return found, ""
-
-
-SET_UP_TEST = "Garrick\nTelegram is set up: the notices you switch on in Settings come here."
-
-
-def set_up_chat(ws: Path, desk: Optional[bool] = None) -> Tuple[bool, str]:
-    """Telegram's step 2 from the page, or `telegram-chat`: find the chat
-    that last wrote to the bot, keep it as the chat, switch Telegram on, and
-    send a test there. Settings that were simple stay simple, with Telegram
-    added to Send to; custom ones only have the channel switched on.
-    (whether the chat was kept, what to say)."""
-    chat, problem = latest_chat()
-    if problem:
-        return False, "Telegram %s." % problem
-    if not chat:
-        return False, "No message found: send your bot any message in Telegram, then press Find my chat again."
-    desk = has_desk(ws) if desk is None else desk
-    cfg = settings(ws)
-    simple = is_simple(cfg, desk)
-    cfg["telegram"]["chat"] = chat
-    if simple:
-        choices = simple_choices(cfg)
-        choices["send"]["telegram"] = True
-        cfg = from_simple(choices, cfg, desk)
-    else:
-        cfg["channels"]["telegram"] = True
-    keep(ws, cfg)
-    problem = telegram(chat, SET_UP_TEST)
-    if problem:
-        return True, "Found your chat and switched Telegram on, but the test did not go: Telegram %s." % problem
-    return True, "Found your chat and switched Telegram on. A test message went to it."
-
-
-# --------------------------------------------------------------------------- a test from the page
-
-def test(ws: Path, channel: str, env=None) -> str:
-    """Send a test on one channel, as the settings now stand, whatever the
-    events and quiet hours say. "" when it went, else why it did not."""
+def test(channel: str, env=None) -> str:
+    """Send a test, whatever the settings and quiet hours say: to this Mac,
+    or (`cmux`) to the cmux tab this runs in. "" when it went, else why not."""
     env = os.environ if env is None else env
-    cfg = settings(ws)
-    title, message = "Test", "A test from Garrick's Settings. Notices on this channel will look like this."
+    title, message = "Test", "A test from Garrick. Notices will look like this."
     if channel == "mac":
         return mac(title, message)
     if channel == "cmux":
         if not in_cmux(env):
             return "runs only from a session inside cmux"
         return local(title, message, env, cmux=True)
-    if channel == "telegram":
-        chat = cfg["telegram"]["chat"] or next((z["chat"] for z in cfg["zones"].values() if z.get("chat")), "")
-        return telegram(chat, "Garrick\n" + message)
-    if channel == "command":
-        if not cfg["command"]:
-            return "has no command to run"
-        return command(cfg["command"], {"event": "test", "kind": "test", "title": title, "message": message}, None, env)
     return "is not a channel"
 
 
@@ -1031,7 +598,7 @@ def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float
             f.unlink()
         except OSError:
             pass
-        after = settings(ws)["events"]["finished"]["after"]
+        after = settings(ws)["after"]
         if now - began < after * 60:
             return
         dispatch({"event": "finished", "title": "Finished",
@@ -1154,8 +721,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("title")
     s.add_argument("message")
     s.add_argument("--zone")
-    t = sub.add_parser("test", help="send a test on one channel")
-    t.add_argument("channel", choices=SWITCHES)
+    t = sub.add_parser("test", help="send a test to this Mac, or to the cmux tab this runs in")
+    t.add_argument("channel", choices=("mac", "cmux"))
     sub.add_parser("flush", help="send what quiet hours held, if they are over")
     sub.add_parser("hook", help="one hook event from Claude Code or Codex, on standard input")
     d = sub.add_parser("deliver")                # the hook's own sender, a notice on standard input
@@ -1164,10 +731,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     g = h.add_mutually_exclusive_group()
     g.add_argument("--install", action="store_true")
     g.add_argument("--uninstall", action="store_true")
-    k = sub.add_parser("telegram-token", help="keep the Telegram bot's token in the keychain, typed or piped in")
-    k.add_argument("--forget", action="store_true", help="remove it from the keychain")
-    c = sub.add_parser("telegram-chat", help="find the chat that last wrote to the bot, keep it and switch Telegram on")
-    for p in (s, t, h, k, c, sub.choices["flush"]):
+    for p in (s, t, h, sub.choices["flush"]):
         p.add_argument("--root", help="the workspace; default the one this file is in, or GARRICK_WORKSPACE")
     a = ap.parse_args(argv)
 
@@ -1196,14 +760,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.cmd == "send":
         went = send(a.event, a.title, a.message, a.zone, root=ws)
         if not went:
-            print("notifications: nothing sent: no channel is on for %s%s, or it is quiet hours"
+            print("notifications: nothing sent: %s%s is switched off, or it is quiet hours"
                   % (LABELS[a.event], " in %s" % a.zone if a.zone else ""), file=sys.stderr)
         return 0
     if a.cmd == "test":
-        problem = test(ws, a.channel)
-        print("A test went to %s." % {"mac": "this Mac", "command": "your command"}.get(a.channel, CHANNEL_LABELS[a.channel])
-              if not problem else
-              "%s %s" % (CHANNEL_LABELS[a.channel], problem), file=sys.stdout if not problem else sys.stderr)
+        problem = test(a.channel)
+        where = "this Mac" if a.channel == "mac" else "cmux"
+        print("A test went to %s." % where if not problem else "%s %s" % (where[:1].upper() + where[1:], problem),
+              file=sys.stdout if not problem else sys.stderr)
         return 0 if not problem else 1
     if a.cmd == "flush":
         print("%d held notice(s) sent" % flush(ws))
@@ -1222,30 +786,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         if a.install and "codex" in found:
             print("In Codex, run /hooks and trust the new hooks: Codex skips a hook until you do.")
         return 0
-    if a.cmd == "telegram-token":
-        if a.forget:
-            print("Removed from the keychain." if forget_token(ws) else "There was no token in the keychain.")
-            return 0
-        if sys.stdin.isatty():
-            import getpass
-            value = getpass.getpass("The bot's token from BotFather (not shown as you paste it): ")
-        else:
-            value = sys.stdin.readline()
-        try:
-            store_token(value, ws)
-        except (Invalid, OSError) as e:
-            print("notifications: %s" % e, file=sys.stderr)
-            return 1
-        print("Kept in the keychain as \"%s\". Now send your bot any message, then run "
-              "python3 System/tools/notifications.py telegram-chat." % KEYCHAIN_SERVICE)
-        return 0
-    if a.cmd == "telegram-chat":
-        try:
-            ok, said = set_up_chat(ws)
-        except (Invalid, OSError) as e:
-            ok, said = False, "notifications: %s" % e
-        print(said, file=sys.stdout if ok else sys.stderr)
-        return 0 if ok else 1
     return 64
 
 

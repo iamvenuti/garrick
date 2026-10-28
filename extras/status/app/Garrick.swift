@@ -451,7 +451,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var menuHeard: (at: Date, data: Bool, zones: Int, count: Int)?   // when the page last said it, with rows or not, and how often since launch
 	var pageLoaded: Date?             // when the page last finished loading
 	var settingsAsked: Date?          // Settings asked for from the menu or the panel, opened at the next load within a minute
-	var catchAsked: Date?             // Catch up's choices asked for from the menu or the panel, opened the same way
 	var pageErrors: [[String: Any]] = []   // the page's script errors since, where and of what kind
 	let launched = Date()
 	var again = false                 // a rebuild asked for during one: one more after it
@@ -1286,7 +1285,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return out
 	}
 
-	// The menu: a field, Process the Inbox, Catch Up, then the shown zone's projects.
+	// The menu: a field, Process the Inbox, then the shown zone's projects.
 	// Hovering one opens its actions and its threads; hovering a thread opens
 	// its actions. Clicking a project or a thread itself runs its default.
 	func fill(_ menu: NSMenu) {
@@ -1312,7 +1311,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		} else if text.isEmpty, let inbox = inboxItem() {
 			menu.addItem(inbox)
 		}
-		if text.isEmpty, let catchUp = catchItem() { menu.addItem(catchUp) }
 		menu.addItem(.separator())
 		for (n, zone) in shownZones().enumerated() {
 			if n > 0 { menu.addItem(.separator()) }
@@ -1553,76 +1551,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// MARK: catch up (#27)
-	// "Catch me up" from the menu and the panel, handed to the default
-	// assistant at the workspace root as Process the Inbox hands its phrase:
-	// "catch me up on Work since yesterday", for the zones the menu shows, in
-	// one of the periods System/tools/briefing.py names (`catchup` in the
-	// page's menu data), the one Settings › Catch up keeps ticked. Narrowing it
-	// to projects or threads is the window's: Choose… brings it forward with
-	// its Catch up open, as Settings… brings Settings.
-	func catchUp() -> (title: String, folder: String, def: String, periods: [[String]], app: String)? {
-		guard let row = (menuState?["data"] as? [String: Any])?["catchup"] as? [String: Any],
-		      let folder = row["f"] as? String, let app = assistant() else { return nil }
-		let periods = (row["p"] as? [[Any]] ?? []).compactMap { p -> [String]? in
-			let said = p.compactMap { $0 as? String }
-			return said.count == 3 ? said : nil
-		}
-		guard !periods.isEmpty else { return nil }
-		return (row["n"] as? String ?? "Catch Up", folder, row["d"] as? String ?? "day", periods, app)
-	}
-
-	// The request, as the page's dialog says it: the zones shown, joined by "and", then the period's words.
-	func catchPhrase(_ words: String) -> String {
-		let zones = shownZones().compactMap { $0["z"] as? String }.filter { !$0.isEmpty }
-		return "catch me up" + (zones.isEmpty ? "" : " on " + zones.joined(separator: " and ")) + " " + words
-	}
-
-	func lowerFirst(_ s: String) -> String { s.prefix(1).lowercased() + s.dropFirst() }
-
-	func catchItem() -> NSMenuItem? {
-		guard let c = catchUp() else { return nil }
-		let item = NSMenuItem(title: c.title, action: nil, keyEquivalent: "")
-		let def = c.periods.first { $0[0] == c.def } ?? c.periods[0]
-		let text = NSMutableAttributedString(string: c.title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-		text.append(NSAttributedString(string: "  " + lowerFirst(def[1]),
-		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
-		item.attributedTitle = text
-		show(item, symbol("clock.arrow.circlepath"))
-		let sub = NSMenu()
-		for p in c.periods {
-			let phrase = catchPhrase(p[2])
-			let one = NSMenuItem(title: p[1], action: #selector(catchUpRow(_:)), keyEquivalent: "")
-			one.target = self
-			one.representedObject = ["k": c.app, "f": c.folder, "w": phrase]
-			one.state = p[0] == c.def ? .on : .off
-			one.toolTip = c.app == "cmux" && deskReady()
-				? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
-				: "Opens \(label(["k": c.app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
-			sub.addItem(one)
-		}
-		sub.addItem(.separator())
-		let choose = NSMenuItem(title: "Choose Projects or Threads…", action: #selector(showCatchUp(_:)), keyEquivalent: "")
-		choose.target = self
-		sub.addItem(choose)
-		item.submenu = sub
-		return item
-	}
-
-	@objc func catchUpRow(_ sender: NSMenuItem) {
-		guard let r = sender.representedObject as? [String: String], let k = r["k"], let f = r["f"] else { return }
-		if checking { return heard.append("menu:catchup") }
-		launch(k, f, phrase: r["w"] ?? "")
-	}
-
-	// The window forward with its Catch up open: a page not loaded yet, or
-	// reloaded by the rebuild that coming forward can start, opens it once loaded.
-	@objc func showCatchUp(_ sender: Any? = nil) {
-		if checking { return heard.append("catchup:choose") }
-		showWindow()
-		catchAsked = Date()
-		if pageLoaded != nil && !web.isLoading { openCatchUp(nil) }
-	}
-
+	// File › Catch Up… opens the page's own dialog, which picks the period and
+	// the projects or threads. The menu and the panel leave it out (#226): a
+	// row with nothing of its own to show takes a line from the rows that do.
 	@objc func openCatchUp(_ sender: Any?) { web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()") }
 
 	// MARK: the panel
@@ -1640,15 +1571,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if checking { return self.heard.append("panel:inbox") }
 				self.launch(k, f, phrase: act["w"] ?? "")
 			}
-		}
-		m.catchUp = catchUp().map { c in
-			let def = c.periods.first { $0[0] == c.def } ?? c.periods[0]
-			let zones = shownZones().compactMap { $0["z"] as? String }.filter { !$0.isEmpty }.joined(separator: " and ")
-			return PanelCatch(title: c.title, note: (zones.isEmpty ? "" : zones + ", ") + lowerFirst(def[1]), run: { [weak self] in
-				guard let self else { return }
-				if checking { return self.heard.append("panel:catchup") }
-				self.launch(c.app, c.folder, phrase: self.catchPhrase(def[2]))
-			}, choose: { [weak self] in self?.showCatchUp() })
 		}
 		m.awakeLabel = "Keep Awake" + awakeState()
 		m.awakeHeld = !held.isEmpty
@@ -2148,10 +2070,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				settingsAsked = nil
 				if -asked.timeIntervalSinceNow < 60 { openSettings(nil) }
 			}
-			if let asked = catchAsked {
-				catchAsked = nil
-				if -asked.timeIntervalSinceNow < 60 { openCatchUp(nil) }
-			}
 			return
 		}
 		web.evaluateJavaScript("""
@@ -2184,12 +2102,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "?")")
 					} else {
 						print("inbox: none")
-					}
-					if let c = m.items.first(where: { $0.submenu?.items.contains { $0.action == #selector(self.catchUpRow(_:)) } == true }),
-					   let first = c.submenu?.items.first(where: { $0.state == .on }) {
-						print("catch up: \((first.representedObject as? [String: String])?["w"] ?? "?"), via \((first.representedObject as? [String: String])?["k"] ?? "?")")
-					} else {
-						print("catch up: none")
 					}
 					// The field: a thread's name finds it and Return opens it; words that find nothing ask.
 					let first = self.shownZones().flatMap { $0["p"] as? [[String: Any]] ?? [] }
@@ -2366,18 +2278,9 @@ struct PanelInbox {
 	let run: () -> Void
 }
 
-// Catch Up (#27): the default period for the zones shown, and Choose… for the window's dialog.
-struct PanelCatch {
-	let title: String
-	let note: String
-	let run: () -> Void
-	let choose: () -> Void
-}
-
 final class PanelModel: ObservableObject {
 	@Published var zones: [PanelZone] = []
 	@Published var inbox: PanelInbox?
-	@Published var catchUp: PanelCatch?
 	@Published var trouble = false
 	@Published var mark = NSImage()
 	@Published var awakeLabel = "Keep Awake"
@@ -2582,23 +2485,6 @@ struct PanelView: View {
 						.padding(.horizontal, 8).padding(.vertical, 5)
 						.contentShape(Rectangle())
 						.onTapGesture { model.perform(inbox.run) }
-						Divider().padding(.vertical, 4)
-					}
-					if let c = model.catchUp, query.isEmpty {
-						HStack(alignment: .firstTextBaseline, spacing: 6) {
-							Image(systemName: "clock.arrow.circlepath").frame(width: 12)
-							VStack(alignment: .leading, spacing: 2) {
-								Text(c.title).font(.system(size: 13, weight: .medium))
-								Text(c.note).font(.system(size: 11)).foregroundColor(.secondary)
-							}
-							Spacer()
-							Button("Choose…") { model.perform(c.choose) }
-								.buttonStyle(.borderless).font(.system(size: 11))
-								.help("Pick the period, and the projects or threads, in Garrick's window")
-						}
-						.padding(.horizontal, 8).padding(.vertical, 5)
-						.contentShape(Rectangle())
-						.onTapGesture { model.perform(c.run) }
 						Divider().padding(.vertical, 4)
 					}
 					ForEach(model.zones) { zone in
@@ -2806,7 +2692,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		let rows = model.zones.reduce(0) { n, z in
 			n + max(1, z.rows.count) + z.rows.reduce(0) { $0 + (model.unfolded.contains($1.id) ? $1.threads.count : 0) }
 		}
-		return 24 + 36 + (model.inbox == nil ? 0 : 52) + (model.catchUp == nil ? 0 : 46) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
+		return 24 + 36 + (model.inbox == nil ? 0 : 52) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
 	}
 
 	// Where it rests open on a screen, where it slides from, and the room its curves and the notch take.

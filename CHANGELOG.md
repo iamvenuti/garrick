@@ -4,9 +4,38 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **Two graphs and a tree.** One picture of where Garrick keeps your context: what you read and what was said are ingested into two graphs, the Knowledge and Meetings wikis, and what you're working on sits in one tree of folders, by subject. Your assistant draws on all three. It is in the README under the three things Garrick holds, at the top of [How Garrick keeps context](docs/context.md), and as slide 8 of the deck, titled "Context is all you need". The source is `docs/assets/two-graphs-and-a-tree.html`, rendered to the PNG beside it.
+
 ### Changed
 
 - The overview diagram shows what Garrick holds: what you're working on, what was said and what you read, each feeding its own part of the record (your pieces of work, Meetings and Knowledge), with documents, mail, transcripts and articles filed into them. The old single box for mail, files and recordings is gone, and the thread boxes are pieces of work. The guard's arrow now says what the code does: the rules apply to the whole record, and the commit check runs in every zone, not in the wikis. Colour now shows who owns each box, Garrick, third-party tools, your content or what comes in, with a legend.
+
+## [0.44.0] - 2026-10-26
+
+The window says less: Settings shows the choices, the cards show their state, notices go to this Mac only, and Catch up lives in the window.
+
+### Changed
+
+- **Settings shows the choices, and leaves the explanations to the docs.** Settings still read as a manual: on a workspace of three zones it showed about 1,250 words with every explanation folded away, most of them saying how a feature works rather than what you can choose. It now shows about 440. Each section opens with one sentence at most, and a line that only reported state is gone; the "?" beside each heading and the [status page docs](docs/extras/status-page.md#settings) hold the rest. ([#227](https://github.com/iamvenuti/garrick/issues/227))
+  - *Opening a thread*: each row carries the icon it carries on Explore's cards, in the Mac app; how each app takes the resume phrase is in the docs.
+  - *Manage older material*: per wiki, its switch, each kind's months and one line of counts with a link to the full list the last review wrote; what keeps a page working, bringing a page back, each kind's types and domains, search and the digest line are under one closed *Advanced*.
+  - *About Garrick*: the release number and three links, *Report a bug*, *Suggest a change* and *Release notes*. A way past the wall check is still reported privately, as `SECURITY.md` says, and the bug form now points there.
+  - *Preview features*: what each does is the row's tooltip.
+- **Notices go to this Mac and nowhere else.** *Notifications* is four choices, the minutes a long task takes, and quiet hours. A session in cmux still gets its notice on its own tab, with no switch for it. Telegram is gone, with its bot set-up and `telegram-token` and `telegram-chat`; so are the per-zone routing, *A command of your own* and *More options*. A job whose launchd plist sets `GARRICK_NOTIFY` or `GARRICK_NOTIFY_CMD` keeps working exactly as before, and `GARRICK_NOTIFY_CMD` is now the way to send a notice somewhere of your own. Settings saved by an older Garrick still read: an event that went to this Mac stays on, and the `telegram`, `zones`, `command` and `channels` keys are ignored, then dropped the next time Settings saves. A Telegram bot token an older Garrick kept in the keychain stays there until you remove it: `security delete-generic-password -s "Garrick Telegram bot"`. `notifications.py` no longer reaches the network. ([#227](https://github.com/iamvenuti/garrick/issues/227))
+- **Catch up lives in the window.** The menu bar's menu and the edge panel no longer offer *Catch Up*, and Settings has no Catch up section: the row had nothing of its own to show, and a named period ("since Monday", "this week") already wins. With none named, a catch-up covers the last day; a `"catch-up"` key already in `System/garrick-settings.json` is still honoured. The clock beside the cog, *File › Catch Up…* and *Garrick: Catch up* in Obsidian stay. ([#226](https://github.com/iamvenuti/garrick/issues/226))
+- **The header and the Catch up dialog name things instead of describing them.** Pointing at the cog says *Settings* and at the clock *Catch up*, as the theme buttons beside them say a word or three. The Catch up dialog drops its opening paragraph and its hint about ticking; what is left is the period, the zone, the projects and threads, the request it will send and its two buttons. Under the name the header shows how long ago the page was built, and the date and time when you point at it. ([#236](https://github.com/iamvenuti/garrick/issues/236))
+- **The Threads card ends at its list.** The legend under it is gone: the `todo` and `check` chips say what they mean when you point at them, and so now does the days figure. The usage footer is one line, "Last 30 days: N active · $N at list price · N sessions"; the split and how it is counted are that line's tooltip and in the [docs](docs/extras/status-page.md). ([#228](https://github.com/iamvenuti/garrick/issues/228))
+- **A card's caption shows its state, or nothing.** The grey line beside each card's title described how the card is built (a file, a flag, a colour key). It now says what is wrong, when something is: *Scheduled jobs* "N failed", *Checks* "N errors · N warnings", *Repositories* "N with changes". The tiles lose the sublines that explained rather than reported. What the captions said is in the docs. ([#231](https://github.com/iamvenuti/garrick/issues/231))
+- **The Status cards drop their footnotes.** The job strip has no legend, since each cell says what happened that day when you point at it. *Assistant calls* puts where its caps come from in the meters' tooltip and shows the per-call budget as a fourth figure. An opened repository lists its files and *Copy the folder's path*, without the line repeated for every repository. ([#232](https://github.com/iamvenuti/garrick/issues/232))
+- **A button where the page said "say …".** The *Inboxes* card has *Process the Inbox* at its foot while anything waits, and the Checks card's context-debt line ends in a button named for the request, such as *Nurture Work*. In the app they open the same assistant the menu's rows open; in a browser they copy the phrase. ([#234](https://github.com/iamvenuti/garrick/issues/234))
+- **The Todo tab without its how-to lines.** The toolbar's hint and *Done today*'s "Tick a box again to reopen it" are gone; a box says *Mark done* or *Reopen* when you point at it. On the Overview, each zone's line has one way to its list, *Open*, and no "changed … ago". ([#235](https://github.com/iamvenuti/garrick/issues/235))
+- **One word for a late action, and each tile named as its card.** An action whose due date has passed, or whose `#waiting` chase date has come, is "late" everywhere: the Threads card's counts, the Todo tab's line, filter and red dot, and Explore's legend. Those counts no longer include a thread whose only problem is a check finding; its `check` chip still shows it. The tiles are *Todo*, *Inboxes* and *Checks*, the Overview's *Open actions* card is *Todo*, and the simple home says "All clear" and "N things need attention", as the Status tab does. ([#233](https://github.com/iamvenuti/garrick/issues/233))
+
+### Fixed
+
+- Two projects on either side of a wall can both keep a `Deliverables/published.md` ledger whose first rows are dated alike. The separator row under the ledger's header holds no words, so the wall check read the shipped header and the first row's date cell as one run of words, and two ledgers whose first rows were both `sent` in the same month, or dated the same day, failed the check and the commit hook as quoting each other. The ledger's header row is now a break, as a Markdown heading already was; only that exact header is one, and wording the rows share is still refused. ([#221](https://github.com/iamvenuti/garrick/issues/221))
 
 ## [0.43.0] - 2026-10-25
 
@@ -963,7 +992,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/iamvenuti/garrick/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/iamvenuti/garrick/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/iamvenuti/garrick/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/iamvenuti/garrick/compare/v0.40.1...v0.41.0

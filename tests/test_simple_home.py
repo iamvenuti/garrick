@@ -211,6 +211,18 @@ class TestWhoSeesIt(HomeCase):
             self.assertIn('<h2 class="sh-h">%s' % heading, html)
         self.assertIn('placeholder="Ask something, or start new work"', html)
 
+    def test_the_dot_says_what_the_status_tab_says(self):
+        # #233: one all-clear and one count, on the dot and on the Status tab's hero.
+        html = self.page()
+        self.assertIn('<span class="sh-dw">All clear</span>', html)
+        self.assertIn("All clear</div>", html)
+        write(self.work / "Inbox" / "a.txt", "a mail\n")
+        html = self.page()
+        self.assertIn('<span class="sh-dw">1 thing needs attention</span>', html)
+        self.assertIn('<div class="lbl">thing needs attention</div>', html)
+        for gone in ("All well", "to look at"):
+            self.assertNotIn(gone, html)
+
     def test_the_full_page_says_nothing_of_a_notes_words_still(self):
         self.settings({})
         html = self.page()
@@ -264,7 +276,7 @@ class TestYourWork(HomeCase):
                   "- [ ] [[Interviews]]: Send Theo the notes 📅 %s" % day(-1))
         w = self.works()
         self.assertEqual("2 owed, 1 due %s" % thursday.strftime("%A"), status.owed_said(w["Acme Review"]["owed"], TODAY))
-        self.assertEqual("1 owed, overdue", status.owed_said(w["Birch Entry, Interviews"]["owed"], TODAY))
+        self.assertEqual("1 owed, late", status.owed_said(w["Birch Entry, Interviews"]["owed"], TODAY))
         self.assertEqual("", status.owed_said(w["Birch Entry, Market Sizing"]["owed"], TODAY))
         self.assertIn("2 owed, 1 due %s" % thursday.strftime("%A"), rows(self.page())[0][2])
 

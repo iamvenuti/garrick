@@ -12,6 +12,7 @@ import contextlib
 import datetime as dt
 import html as htmllib
 import io
+import inspect
 import json
 import os
 import plistlib
@@ -57,6 +58,18 @@ class TestTodoTab(StatusCase):
         start = html.index('id="todolist"')
         return html, html[start:html.index("</section>", start)]
 
+    def test_the_toolbar_and_done_today_hold_no_how_to(self):
+        _, tab = self.tab()
+        bar = tab[tab.index('<div class="tbar">'):tab.index('<div class="tz"')]
+        self.assertNotIn('class="hint"', bar)                            # the zones, the filters and the sort only (#235)
+        self.assertNotIn("Tick a box again", tab)
+        self.assertRegex(tab, r'<span class="tname">Done today</span><span class="n">1</span></summary>')
+        self.assertIn('<button class="tick" type="button" title="Reopen" aria-label="Reopen: Sent the brief', tab)
+        self.assertIn("b.title=d?'Reopen':'Mark done'", status.WORK_JS)   # and the title follows a tick
+        self.assertIn("t.title=d?'Reopen':'Mark done'", status.TODO_JS)
+        for said in ("Tick to close", "A preview feature"):               # neither form of the hint, in the app or a browser
+            self.assertNotIn(said, inspect.getsource(status.todo_list_card))
+
     def test_grouped_as_the_todo_file_groups_them(self):
         _, tab = self.tab()
         names = re.findall(r'<span class="tname">([^<]*)</span>', tab)
@@ -66,7 +79,7 @@ class TestTodoTab(StatusCase):
         work = tab[tab.index('<div class="tz" data-zone="Work"'):]
         self.assertLess(work.index("Book the room"), work.index("Send the revised terms"))      # A-Z: no thread first
         self.assertIn("<b>5</b> open", work)
-        self.assertIn("<b>2</b> overdue or due a chase", work)                                 # a chase is late on its day
+        self.assertIn("<b>2</b> late</span>", work)                                     # a chase is late on its day
         self.assertIn("<b>2</b> without a date", work)                            # the room, and the clause in its note
         self.assertIn("highest priority", work)
         self.assertIn("in the thread note", work)
@@ -114,7 +127,7 @@ class TestTodoTab(StatusCase):
         self.assertIn("window.TodoPending=function(z,target,date,text)", status.TODO_JS)
         self.assertIn("if(window.TodoPending)TodoPending(z,target,date,text)", status.JS)
         _, tab = self.tab()
-        self.assertIn('<button class="tdate overdue" type="button"', tab)
+        self.assertIn('<button class="tdate late" type="button"', tab)
         self.assertIn("＋ date", tab)
 
     def test_a_browser_shows_no_buttons(self):
@@ -268,10 +281,13 @@ class TestSpend(StatusCase):
         with self.plists(GARRICK_MAX_CALL_USD="2"):
             html = self.page()
         self.assertIn('<td class="r">5.5</td>', self.calls(html))
-        self.assertIn("Each Claude call stops at $2.", html)
+        self.assertIn('<span class="ink2">Per call</span><span class="num">$2 max</span>', self.calls(html))   # a figure, not a sentence (#232)
+        self.assertNotIn("Each Claude call stops at", html)
         self.assertIn("$2 max per call", html)
         with self.plists(GARRICK_MAX_CALL_USD="0"):
-            self.assertIn("no per-call budget", self.page())
+            html = self.page()
+            self.assertIn("no per-call budget", html)
+            self.assertIn('<span class="ink2">Per call</span><span class="num">no cap</span>', self.calls(html))
 
     def test_a_call_stopped_at_its_budget_needs_attention(self):
         self.ledger({"job": "brief", "cost_usd": 2.0, "subtype": "error_max_budget_usd", "exit": 1})
@@ -734,7 +750,7 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        self.assertIn("if(!(lpChanged||zChanged||n||w||m||c||all))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+        self.assertIn("if(!(lpChanged||zChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
                       "if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();", status.JS)
 
 
@@ -785,7 +801,7 @@ class TestZoneColours(StatusCase):
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
-        self.assertIn('<b><a class="zc zc-teal" href=', html)                              # Open actions
+        self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Todo
         self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
         self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
 
@@ -1955,7 +1971,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
-        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Open actions, unnamed, ahead of what was put back
+        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Todo, unnamed, ahead of what was put back
         self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):

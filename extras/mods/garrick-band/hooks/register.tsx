@@ -253,7 +253,13 @@ const finder = ($: any, n: Note) => opener($, ['-R', n.path], 'Finder')
 const obsidian = ($: any, n: Note) => opener($, [obsidianUrl(n.path)], 'Obsidian')
 
 async function measure($: any) {
-  const usage = await $.session.usage().catch(() => null)
+  // A Claude Code older than the usage call shows no figure rather than failing the turn.
+  let usage = null
+  try {
+    usage = await $.session.usage()
+  } catch {
+    usage = null
+  }
   await update($, used, () => percentOf(usage?.context))
 }
 

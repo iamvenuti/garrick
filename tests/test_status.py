@@ -1130,11 +1130,12 @@ class TestSelfContained(StatusCase):
                 os.environ["GARRICK_JOBS_DIR"] = old
         return err.getvalue()
 
-    def test_writes_nothing_but_itself(self):
+    def test_writes_nothing_but_itself_and_its_flags(self):
         before = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
         self.run_main()
         after = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
-        self.assertEqual({"System/generated", "System/generated/status.html"}, after - before)
+        self.assertEqual({"System/generated", "System/generated/status.html", "System/generated/status.flags.json"},
+                         after - before)
         self.assertEqual(set(), before - after)
         self.assertEqual([], list(self.jobs.iterdir()))
 

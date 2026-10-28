@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A page that `scaffold.py` or `correct.py` rebuilds keeps the app's flags.** Both built the status page with `--workspace` alone, so a workspace whose Mac app or Obsidian plugin passes `--also`, `--moved`, `--no-graph`, `--no-cmux` or `--obsidian` got a page drawn without them after every new project, thread or correction: the extra folder gone, links to moved notes broken again, the graph back. Each build now stores the flags that shape the page in `System/generated/status.flags.json`, never committed, and the new `--same-flags` builds with them; both tools pass it. The last build to store wins, a build by hand without `--same-flags` is unchanged, and with nothing stored it builds as before. ([#246](https://github.com/iamvenuti/garrick/issues/246))
+
 ## [0.45.0] - 2026-10-28
 
 A project or thread made in a session reaches the status page in seconds, two checkpoints on either side of a wall no longer fail the commit, and one picture shows where Garrick keeps your context.

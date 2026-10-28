@@ -2,7 +2,7 @@
 """The status page for a Garrick workspace. An optional extra.
 
     python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
-                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...]
+                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
@@ -14,13 +14,14 @@ thread in the list for the same actions. Every card can be dragged elsewhere
 or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
-already keep, and writes nothing but itself. It runs no server, loads nothing
-from the network and carries no third-party script. Delete it and nothing is
-lost: every fact on it lives in a file you own. Each panel says where its
-numbers come from and how old they are. The one call out is the release
-notice, off until System/garrick-settings.json switches it on: then a build
-starts System/tools/release.py, at most once a day and without waiting for it,
-and Needs attention names a newer Garrick once GitHub has said there is one.
+already keep, and writes nothing but itself and the flags it was built with.
+It runs no server, loads nothing from the network and carries no third-party
+script. Delete it and nothing is lost: every fact on it lives in a file you
+own. Each panel says where its numbers come from and how old they are. The
+one call out is the release notice, off until System/garrick-settings.json
+switches it on: then a build starts System/tools/release.py, at most once a
+day and without waiting for it, and Needs attention names a newer Garrick
+once GitHub has said there is one.
 
 **It lives in `System/generated/status.html`**, the folder for pages a tool
 rebuilds. The page is the one place that shows every zone at once, so that
@@ -69,6 +70,10 @@ System/garrick-flags.json switches them on. With the cmux extra beside this fold
 (../cmux/cmuxlib.py), the page shows which projects and threads have a
 session open, and its buttons can drive the desk. `--settle` lets a burst of
 build requests make one page; `--also` and `--moved` reach effort.py.
+Each build stores the flags that shape the page beside it, in
+status.flags.json, and `--same-flags` builds with those, so a page that
+scaffold.py or correct.py rebuilds looks as the app or the plugin last drew
+it (#246). It cannot be given with those flags; the last build to store wins.
 A build whose status.py is replaced while it runs, as an update replaces it
 during a `--settle` wait, writes nothing and builds again from the new file,
 so the page is always drawn by the status.py on disk.
@@ -7813,6 +7818,37 @@ def write_page(out: Path, text: str) -> None:
         raise
 
 
+# The options that shape the page. A build stores the ones it was given beside
+# the page, and a build with --same-flags draws with them, as scaffold.py's and
+# correct.py's do: the page a tool rebuilds stays as the app or the plugin
+# last drew it, whatever flags they pass (#246).
+PAGE_FLAGS = ("obsidian", "no_obsidian", "no_cmux", "no_graph", "also", "moved")
+
+
+def flags_file(out: Path) -> Path:
+    """Where the flags of the page at `out` are kept: beside it, never committed."""
+    return out.with_name(out.stem + ".flags.json")
+
+
+def page_words(args: argparse.Namespace, moved: Dict[str, str]) -> List[str]:
+    """The command-line words that gave this build its page flags."""
+    words = ["--obsidian", args.obsidian] if args.obsidian else []
+    words += [f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux),
+                              ("--no-graph", args.no_graph)) if on]
+    return (words + [w for a in args.also for w in ("--also", a)]
+            + [w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n))])
+
+
+def stored_words(path: Path) -> List[str]:
+    """The page flags the last build stored, or [] where none did or the file
+    is not one a build wrote."""
+    try:
+        words = json.loads(path.read_text(encoding="utf-8")).get("args")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return words if isinstance(words, list) and all(isinstance(w, str) for w in words) else []
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build the status page for a Garrick workspace.")
     ap.add_argument("--workspace", help="the workspace folder (default: GARRICK_WORKSPACE, or the folder this runs in)")
@@ -7829,7 +7865,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="for effort: a folder the workspace used to live in, read as the workspace (repeatable)")
     ap.add_argument("--moved", action="append", default=[], metavar="OLD=NEW",
                     help="for effort: a folder renamed or moved, its old path and its path in the workspace now (repeatable)")
+    ap.add_argument("--same-flags", action="store_true", help="build with the page flags the last build stored, as a tool's "
+                    "rebuild does; not with --obsidian, --no-obsidian, --no-cmux, --no-graph, --also or --moved")
     args = ap.parse_args(argv)
+    given = ["--" + k.replace("_", "-") for k in PAGE_FLAGS if getattr(args, k)]
+    if args.same_flags and given:
+        ap.error("--same-flags builds with the flags the last build stored; leave out %s" % ", ".join(given))
     ws = find_workspace(args.workspace)
     generated = ws / "System" / "generated"
     out = Path(args.out).expanduser() if args.out else generated / "status.html"
@@ -7848,6 +7889,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     if args.settle and args.settle > 0 and not settle(out.with_name(out.name + ".settle"), args.settle):
         return 0                              # a later request builds it
+    if args.same_flags:                       # read after the wait, so a build made meanwhile counts
+        try:
+            kept = ap.parse_args(stored_words(flags_file(out)))
+        except SystemExit:
+            print("status: %s does not hold flags a build stored; built without them." % flags_file(out), file=sys.stderr)
+            kept = ap.parse_args([])
+        for k in PAGE_FLAGS:
+            setattr(args, k, getattr(kept, k))
     out.parent.mkdir(parents=True, exist_ok=True)
     prefs().migrate(ws)          # choices a Garrick before 0.25.0 left in System/generated/, kept where they belong
     vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
@@ -7867,6 +7916,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if STARTED is not None and own_stamp() != STARTED:
         return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
     write_page(out, page)
+    if not args.same_flags:                   # a build that used the stored flags leaves them to the build that stored them
+        try:
+            write_page(flags_file(out), json.dumps({"args": page_words(args, moved)}, ensure_ascii=False) + "\n")
+        except OSError as e:
+            print("status: the flags this page was built with were not kept (%s); a tool's rebuild draws it without them." % e,
+                  file=sys.stderr)
     release_ask(ws)
     print(out)
     if args.open:

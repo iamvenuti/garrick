@@ -1979,12 +1979,14 @@ CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
 
 def status_command(root: PathLike, settle: Optional[float] = None) -> Optional[List[str]]:
     """The command that builds `root`'s status page, or None where the status
-    extra is not installed. With `settle`, the build waits that many seconds
-    and goes ahead only if no later one was asked for: a burst makes one page."""
+    extra is not installed. It builds with the flags the last build stored
+    (--same-flags), so the page keeps the app's or the plugin's flags (#246).
+    With `settle`, the build waits that many seconds and goes ahead only if
+    no later one was asked for: a burst makes one page."""
     builder = Path(root).joinpath(*STATUS_BUILDER)
     if not builder.is_file():
         return None
-    return ([sys.executable or "python3", str(builder), "--workspace", str(root)]
+    return ([sys.executable or "python3", str(builder), "--workspace", str(root), "--same-flags"]
             + (["--settle", "%g" % settle] if settle else []))
 
 

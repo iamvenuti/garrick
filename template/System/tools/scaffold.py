@@ -74,9 +74,10 @@ note holds. It never writes `Todo.md` and never commits: the wrap does those.
 
 Where the status page is installed, `zone`, `project`, `thread`, `rename`, a
 confirmed `delete`, `park`, `wake` and `undo` then start a build of it in the
-background, with `--settle 10`, so a run of them makes one page. Nothing that
-only reads or refuses asks for one, nor a request from the page, whose app
-builds it after the reply (GARRICK_CALLER_BUILDS_PAGE).
+background, with `--settle 10`, so a run of them makes one page, and with
+`--same-flags`, so it keeps the flags the app or the plugin last built it
+with. Nothing that only reads or refuses asks for one, nor a request from
+the page, whose app builds it after the reply (GARRICK_CALLER_BUILDS_PAGE).
 
 On success prints what it did in lines that can be read aloud; on refusal, one
 line saying why, and exits 1. `checkpoint` prints JSON either way.

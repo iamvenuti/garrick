@@ -12,6 +12,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - The overview diagram shows what Garrick holds: what you're working on, what was said and what you read, each feeding its own part of the record (your pieces of work, Meetings and Knowledge), with documents, mail, transcripts and articles filed into them. The old single box for mail, files and recordings is gone, and the thread boxes are pieces of work. The guard's arrow now says what the code does: the rules apply to the whole record, and the commit check runs in every zone, not in the wikis. Colour now shows who owns each box, Garrick, third-party tools, your content or what comes in, with a legend.
 
+### Fixed
+
+- Two projects on either side of a wall can both keep a checkpoint. Every checkpoint opens with the line `scaffold.py checkpoint` writes, its time and a fixed sentence saying what the block is, and no shared file holds that sentence, so the wall check read it as wording: two checkpoints in walled projects, or a note that quoted the line, failed the check and the commit hook as quoting each other, and the only ways past were to delete the checkpoint or skip the hook. What the tool writes is no longer read: the block's markers, that line, and each item's kind and id. The words of each item are still read, one item at a time, so an item that quotes a walled meeting or project file is still refused. ([#225](https://github.com/iamvenuti/garrick/issues/225))
+
 ## [0.44.0] - 2026-10-26
 
 The window says less: Settings shows the choices, the cards show their state, notices go to this Mac only, and Catch up lives in the window.

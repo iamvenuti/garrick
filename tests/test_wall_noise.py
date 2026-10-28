@@ -2,8 +2,8 @@
 project, the code of HTML pages read as wording, a list of links to Knowledge
 pages read as one run of words, files git ignores read as the project's own,
 the published ledger's shipped header read as a quotation, alone or running
-into the first row, and a party who is a person caught through her party's
-tag. Each test pairs the case that must pass with one that must still be found.
+into the first row, the line a checkpoint's tool writes read as wording, and a
+party who is a person caught through her party's tag. Each test pairs the case that must pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
 from each other, as in fixtures.py, with Rowan Keeler, Zeta Rossi and Keeler
@@ -12,12 +12,14 @@ added where a party is a person.
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import sys
 import unittest
 
-from fixtures import HAVE_GIT, git, meeting_page, write
-from test_walls_deterministic import REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
+from fixtures import HAVE_GIT, TOOLS, git, meeting_page, write
+from test_walls_deterministic import ENV, REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 
@@ -320,6 +322,102 @@ class TestLedgerHeaderIsNotARun(WallCase):
         _real_repo(zone)
         for ledger, text in texts.items():  # staged, not part of the first commit
             write(ledger, text)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+
+class TestCheckpointIsNotWording(WallCase):
+    """#225: every checkpoint opens with the line its tool writes, the time it
+    was written and a fixed sentence that no shared file holds, so two
+    checkpoints in walled projects read as quoting each other on that line
+    alone. What the tool writes is not read now, nor are an item's kind and
+    id; the words of each item still are."""
+
+    ACME = [{"kind": "considering", "text": "dropping tier three for the smaller accounts"},
+            {"kind": "incomplete", "text": "the rebate column is half filled"}]
+    BIRCH = [{"kind": "next", "text": "rerun the survey weighting for the coastal towns", "by": "user"},
+             {"kind": "action", "text": "ask Theo for the census extract"}]
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)  # what the tool takes for installed
+
+    def note(self, project):
+        thread = "Pricing" if project == self.acme else "Market Sizing"
+        return project / "Threads" / thread / (thread + ".md")
+
+    def tool(self, project, now, **fields):
+        """`scaffold.py checkpoint`, run as a session runs it."""
+        req = {"verb": "checkpoint", "zone": "Work", "project": project.name, "thread": self.note(project).parent.name}
+        req.update(fields)
+        done = subprocess.run([sys.executable, str(TOOLS / "scaffold.py"), "--root", str(self.root), "checkpoint",
+                               "--now", now], input=json.dumps(req), capture_output=True, text=True, env=ENV)
+        self.assertEqual("", done.stderr)
+        return json.loads(done.stdout)
+
+    def checkpoint(self, project, now, items):
+        read = self.tool(project, now, read=True)
+        reply = self.tool(project, now, base=read["base"], prev=read["key"], items=items)
+        self.assertTrue(reply["wrote"], reply)
+
+    def both(self, acme_at, birch_at, acme=ACME, birch=BIRCH):
+        self.checkpoint(self.acme, acme_at, acme)
+        self.checkpoint(self.birch, birch_at, birch)
+
+    def test_two_checkpoints_are_not_a_quotation(self):
+        for acme_at, birch_at in (("2026-03-14T14:32:10+01:00", "2026-03-14T14:32:10+01:00"),
+                                  ("2026-03-14T14:32:10+01:00", "2026-03-20T09:05:00+01:00"),
+                                  ("2026-03-14T14:32:10+01:00", "2026-05-02T17:40:00+02:00")):
+            with self.subTest(acme=acme_at, birch=birch_at):
+                for project in (self.acme, self.birch):
+                    text = self.note(project).read_text(encoding="utf-8")
+                    self.note(project).write_text(text.split("\n### Checkpoint\n")[0], encoding="utf-8")
+                self.both(acme_at, birch_at)
+                self.assertIn("Recorded since the resume point above", self.note(self.birch).read_text(encoding="utf-8"))
+                self.assertEqual([], self.walls())
+
+    def test_a_note_that_quotes_the_line_is_not_a_quotation_either(self):
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        line = next(l for l in self.note(self.acme).read_text(encoding="utf-8").splitlines()
+                    if l.startswith("**Unconfirmed, "))
+        write(self.birch / "Threads" / "Market Sizing" / "Notes.md", "Left as it was:\n\n%s\n" % line)
+        self.assertEqual([], self.walls())
+
+    def test_what_the_tool_writes_is_no_run_of_words(self):
+        before = check.runs(self.note(self.acme).read_text(encoding="utf-8"))
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", [{"kind": "incomplete", "text": "half done"}])
+        self.assertEqual(before, check.runs(self.note(self.acme).read_text(encoding="utf-8")))
+        item = "the rebate column for the northern accounts is still half filled"
+        self.assertEqual(check.runs(item), check.runs("- **Incomplete** %s <!-- i -->\n" % item))
+
+    def test_eight_words_quoted_from_a_walled_meeting_in_an_item_are_refused(self):
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
+              meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", SECRET + "."))
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-14T14:32:10+01:00",
+                  acme=[{"kind": "considering", "text": SECRET.lower()}])
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md"}, {f.path for f in self.walls()})
+
+    def test_eight_words_quoted_from_a_walled_project_file_in_an_item_are_refused(self):
+        write(self.birch / "Threads" / "Market Sizing" / "Notes.md", SECRET + "\n")
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-20T09:05:00+01:00",
+                  acme=[{"kind": "incomplete", "text": "the clause that says " + SECRET.lower()}])
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"},
+                         {f.path for f in self.walls()})
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_both_checkpoints_passes_the_hook(self):
+        before = {self.note(p): self.note(p).read_text(encoding="utf-8") for p in (self.acme, self.birch)}
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-14T16:05:00+01:00")
+        after = {note: note.read_text(encoding="utf-8") for note in before}
+        for note, text in before.items():
+            write(note, text)
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        for note, text in after.items():  # staged, not part of the first commit
+            write(note, text)
         git(zone, "add", "-A")
         res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
         self.assertEqual((0, ""), (res.returncode, res.stderr))

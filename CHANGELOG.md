@@ -10,6 +10,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- Building the demo or the worked example no longer leaves page builds running after it. Since 0.45.0, each project and thread `scaffold.py` made started a status page build in the background, and in a workspace with the status page those builds went on writing into the new workspace after the build had finished; `examples/demo/build.py` and `examples/example-work/build.py` now ask `scaffold.py` for none, as `page_action.py` does. ([#243](https://github.com/iamvenuti/garrick/issues/243))
 - **A page that `scaffold.py` or `correct.py` rebuilds keeps the app's flags.** Both built the status page with `--workspace` alone, so a workspace whose Mac app or Obsidian plugin passes `--also`, `--moved`, `--no-graph`, `--no-cmux` or `--obsidian` got a page drawn without them after every new project, thread or correction: the extra folder gone, links to moved notes broken again, the graph back. Each build now stores the flags that shape the page in `System/generated/status.flags.json`, never committed, and the new `--same-flags` builds with them; both tools pass it. The last build to store wins, a build by hand without `--same-flags` is unchanged, and with nothing stored it builds as before. ([#246](https://github.com/iamvenuti/garrick/issues/246))
 
 ## [0.45.0] - 2026-10-28

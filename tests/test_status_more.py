@@ -728,6 +728,87 @@ class TestEffortFolders(StatusCase):
         self.assertIn("--moved", kw["flags"])
 
 
+class TestSameFlags(StatusCase):
+    """#246: each build stores the flags that shape the page beside it, and a
+    build with --same-flags, as scaffold.py and correct.py ask for, draws with
+    them. Obsidian's vaults and the launchers are this test's own."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.jobs / "status.html"
+        self.stored = self.jobs / "status.flags.json"
+        for name, value in (("obsidian_vaults", []), ("launchers_installed", ())):
+            p = mock.patch.object(status, name, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def main(self, *args, build=None):
+        """status.main()'s exit code and the keywords build() was given, or None where it was not called."""
+        with mock.patch.object(status, "build", side_effect=build, return_value="<html></html>") as b, \
+                mock.patch.object(status, "release_ask"), contextlib.redirect_stdout(io.StringIO()):
+            code = status.main(["--workspace", str(self.root), "--out", str(self.out), *args])
+        return code, (b.call_args.kwargs if b.called else None)
+
+    def test_a_tool_build_draws_with_the_flags_the_last_build_stored(self):
+        real = status.build
+        draw = lambda *a, **kw: real(*a, now=self.now, folder=self.jobs, **kw)
+        _, first = self.main("--no-obsidian", "--no-graph", "--also", "/old/place", "--moved", "A=B", build=draw)
+        self.assertEqual({"args": ["--no-obsidian", "--no-graph", "--also", "/old/place", "--moved", "A=B"]},
+                         json.loads(self.stored.read_text(encoding="utf-8")))
+        kept = self.stored.read_text(encoding="utf-8")
+        code, again = self.main("--same-flags", build=draw)
+        self.assertEqual(0, code)
+        for k in ("also", "moved", "flags", "show_graph", "vaults"):
+            self.assertEqual(first[k], again[k], k)
+        self.assertEqual(("/old/place",), again["also"])
+        self.assertEqual({"A": "B"}, again["moved"])
+        self.assertFalse(again["show_graph"])
+        rebuild = htmllib.unescape(re.search(r'id="rebuild"[^>]*data-copy="([^"]*)"', self.out.read_text(encoding="utf-8")).group(1))
+        for words in ("--no-obsidian", "--also /old/place", "--moved A=B", "--no-graph"):
+            self.assertIn(words, rebuild)                         # the page's own rebuild command names them
+        self.assertEqual(kept, self.stored.read_text(encoding="utf-8"))      # used, not stored again
+
+    def test_with_nothing_stored_it_builds_as_the_workspace_alone_does(self):
+        _, alone = self.main()
+        self.stored.unlink()
+        code, same = self.main("--same-flags")
+        self.assertEqual(0, code)
+        self.assertEqual(alone, same)
+        self.assertFalse(self.stored.exists())                    # and stores nothing
+        self.stored.write_text("not json", encoding="utf-8")       # a file no build wrote counts as none
+        self.assertEqual(alone, self.main("--same-flags")[1])
+        self.stored.write_text('{"args": ["--obsidian"]}', encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(alone, self.main("--same-flags")[1])
+        self.assertIn("built without them", err.getvalue())
+
+    def test_the_last_build_wins_and_a_build_by_hand_stores_its_own(self):
+        self.main("--no-cmux", "--also", "/old")
+        self.main("--no-graph")
+        self.assertEqual({"args": ["--no-graph"]}, json.loads(self.stored.read_text(encoding="utf-8")))
+        self.main()
+        self.assertEqual({"args": []}, json.loads(self.stored.read_text(encoding="utf-8")))
+        self.assertEqual(True, self.main("--same-flags")[1]["show_graph"])
+
+    def test_it_is_refused_with_the_flags_it_would_replace(self):
+        for given in (["--no-graph"], ["--also", "/old"], ["--obsidian", "Vault"], ["--moved", "A=B"]):
+            with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as stop:
+                self.main("--same-flags", *given)
+            self.assertEqual(2, stop.exception.code)
+            self.assertIn("--same-flags", err.getvalue())
+
+    def test_with_settle_the_flags_are_read_after_the_wait_and_a_burst_makes_one_page(self):
+        self.main("--no-graph")
+        app = lambda marker, seconds: (self.stored.write_text('{"args": ["--no-cmux"]}', encoding="utf-8"), True)[1]
+        with mock.patch.object(status, "settle", side_effect=app) as s:
+            _, kw = self.main("--same-flags", "--settle", "10")
+        self.assertEqual(self.out.with_name("status.html.settle"), s.call_args.args[0])
+        self.assertTrue(kw["show_graph"])                          # what the app stored during the wait
+        self.assertEqual(("--no-cmux",), kw["flags"])
+        with mock.patch.object(status, "settle", return_value=False):
+            self.assertIsNone(self.main("--same-flags", "--settle", "10")[1])     # a later request builds it
+
+
 class TestSharedLauncherSettings(StatusCase):
     def test_embedded_when_saved(self):
         self.assertNotIn('id="launch-settings"', self.page())

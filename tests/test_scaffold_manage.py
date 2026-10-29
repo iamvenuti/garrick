@@ -924,7 +924,7 @@ class TestThePageIsAskedFor(ManageCase):
         spec = importlib.util.spec_from_file_location("garrick_scaffold_page", str(self.root / "System" / "tools" / "scaffold.py"))
         self.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.tool)
-        self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--settle", "10"]
+        self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags", "--settle", "10"]
 
     def run_it(self, *args, stdin=""):
         """scaffold.py's exit code, its stderr, and every command it started."""
@@ -988,6 +988,17 @@ class TestThePageIsAskedFor(ManageCase):
             pa.scaffold(self.root, "thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal")
         self.assertEqual("1", ran.call_args.kwargs["env"]["GARRICK_CALLER_BUILDS_PAGE"])
         self.assertEqual(os.environ["HOME"], ran.call_args.kwargs["env"]["HOME"])      # the rest of the environment kept
+
+    def test_correct_builds_the_page_with_the_flags_the_last_build_stored(self):
+        """#246: the page a tool rebuilds keeps the flags the app or the plugin built it with."""
+        self.freight.write_text(self.freight.read_text(encoding="utf-8") + "\nLantern Ltd ships it.\n", encoding="utf-8")
+        import correct                       # the repository's own; fixtures puts the tools folder on sys.path
+        hits = correct.find_hits(self.root, "Lantern Ltd", "Lantern Group")
+        ran = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(correct.subprocess, "run", return_value=ran) as run:
+            done = correct.apply(self.root, "Lantern Ltd", "Lantern Group", hits=hits, commit=False)
+        self.assertEqual(["System/generated/status.html"], done.rebuilt)
+        self.assertEqual([self.build[:-2]], [c.args[0] for c in run.call_args_list])
 
     def test_without_the_status_extra_nothing_happens_and_nothing_is_said(self):
         self.builder.unlink()

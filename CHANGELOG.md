@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-29
+
+The band is two lines and shows how full the context is, While you wait is parked as a preview, and a page a tool rebuilds keeps the app's flags.
+
 ### Changed
 
 - **The Garrick band is two lines, and says how full the context is** ([#247](https://github.com/iamvenuti/garrick/issues/247)). The band took three lines and a 6×3 mark, and its second line repeated what the session already shows: the Resume here paragraph that "open X" brings into the conversation anyway, then your last prompt and the step the assistant was on, which Claude Code prints above it. Now it is the place line, then the buttons, beside a 4×2 mark as tall as the two. The place line ends with how full the context window is, as a whole percentage: dimmed up to 60%, red above it, when it is time to wrap and clear. It is the status line's own figure, from the mods API's plain usage call, which counts no tokens, read again after every turn; before the first reply and just after a compaction there is none, and the band shows none. The buttons are *Wrap*, *Clear* and *Finder*, with *Obsidian* where it was offered, all at one weight: *Resume* and *Note* drew in the text colour beside dimmed ones, which read as two kinds with nothing saying why. *Resume* and *Note* leave the band, and `/garrick resume` and `/garrick note` still do what they did. *While you wait* (#111) is parked as a preview feature, `while-you-wait` in `System/garrick-flags.json`, off unless you switch it on: off, the band shows no suggestion line during a long turn, `/garrick next`, `open`, `tick` and `later` say the feature is off, and Settings shows no *While you wait* section. What was saved there is kept, and "what's next" answers as before.
@@ -1010,7 +1014,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/iamvenuti/garrick/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/iamvenuti/garrick/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/iamvenuti/garrick/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/iamvenuti/garrick/compare/v0.42.0...v0.43.0

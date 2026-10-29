@@ -81,7 +81,7 @@ The cmux extra adds a ninth, `desk`, below.
 - **Phone access** reaches the workspace through the assistants' own remote features. See [Phone access](extras/phone-access.md).
 - **Scheduled jobs** run the check, a script or an assistant on a schedule, under a deny profile and spend caps. See [Scheduled jobs](extras/scheduled-jobs.md).
 - **Ways in** fetch mail into a zone's inbox without doing it by hand, and a **meeting recorder** feeds the Meetings inbox. See [Ways in](extras/ways-in.md) and [A meeting recorder](extras/meeting-recorder.md).
-- **The Garrick band** is a Claude Code mod that shows the current thread and its resume point above the prompt. See [the Garrick band](../extras/mods/README.md).
+- **The Garrick band** is a Claude Code mod that shows the current thread, its status and how full the context is above the prompt, with buttons to wrap and clear. See [the Garrick band](../extras/mods/README.md).
 - **The zone guard** is above, under the guards.
 
 #### The status page's actions

@@ -5,7 +5,6 @@ export type Note = {
   title: string
   status: string | null
   heading: string | null
-  lead: string | null
   resume: string | null
   // Where the note can be opened: Finder (macOS's `open`) and Obsidian, when
   // it is installed and the note sits in a vault; each only while Settings ›
@@ -22,12 +21,6 @@ export type Thread = {
   rel: string
   heading: string | null
   resume: string
-}
-
-// The last prompt of the session and the step the assistant is on.
-export type Activity = {
-  prompt: string
-  step: string | null
 }
 
 // One thing to do while a long turn runs, as System/tools/next_up.py ranks it.
@@ -59,6 +52,7 @@ export type Wait = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'garrick-band': { note: Note | null; isHidden: boolean; activity: Activity | null; wait: Wait | null }
+    // used: how full the context window is, a whole percentage, or null while the API has no figure.
+    'garrick-band': { note: Note | null; isHidden: boolean; used: number | null; wait: Wait | null }
   }
 }

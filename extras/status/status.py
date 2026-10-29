@@ -705,6 +705,9 @@ FLAGS = {
                "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
     "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
             "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
+    "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
+                       "elsewhere, with /garrick next, open, tick and later, and its section in Settings. Off, neither shows; "
+                       "\"what's next\" answers either way."),
 }
 
 
@@ -6208,7 +6211,11 @@ def wait_settings(ws: Path) -> str:
     """Settings › While you wait: on or off, how long a turn runs before the
     band offers anything, same zone only, which sources count and in what
     order, and when a parked or an unwrapped thread is old enough to name.
-    In the app only, as the other sections that save are."""
+    In the app only, as the other sections that save are. A preview feature
+    since #247, so only while System/garrick-flags.json switches it on; what
+    is saved stays as it is either way."""
+    if not preview_flags(ws).get("while-you-wait"):
+        return ""
     lib = wait_lib(ws)
     if lib is None:
         return ""

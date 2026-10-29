@@ -1465,7 +1465,12 @@ class TestSettingsLayout(StatusCase):
 
 
 class TestWaitSettings(StatusCase):
-    """Settings › While you wait (#111): next_up.py's keys, drawn and read back."""
+    """Settings › While you wait (#111): next_up.py's keys, drawn and read back,
+    while its preview flag is on (#247)."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
 
     def section(self):
         html = self.page()
@@ -1509,6 +1514,17 @@ class TestWaitSettings(StatusCase):
         self.assertIn(status.WAIT_CSS.strip()[:60], page)
         self.assertIn("window.GarrickWait=", page)
         self.assertEqual(1, page.count('id="wait-settings"'))
+
+    def test_left_out_while_the_preview_is_off(self):
+        for flags in ({}, {"while-you-wait": False}, {"while-you-wait": "yes"}):
+            write(self.root / "System" / "garrick-flags.json", json.dumps(flags))
+            page = self.page()
+            self.assertNotIn('id="wait-settings"', page)
+            self.assertRegex(page, r'While you wait</b><span class="chip">off</span>')
+        (self.root / "System" / "garrick-flags.json").unlink()
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {"on": False, "threshold": 120}}))
+        self.assertNotIn('id="wait-settings"', self.page())                # what was saved is kept, not shown
+        self.assertEqual(120, self.lib().settings(self.root)["threshold"])
 
     def test_left_out_without_next_up(self):
         with mock.patch.object(status, "wait_lib", lambda ws: None):
@@ -1738,7 +1754,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)

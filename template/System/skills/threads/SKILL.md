@@ -247,7 +247,8 @@ Listing reads frontmatter only. It never opens a Resume here block.
 
 One thing worth doing elsewhere while a long turn runs, or at any moment
 between two pieces of work. It is the same list the Garrick band shows while a
-turn runs, from the same script, so the answer here is the band's first pick:
+turn runs when its `while-you-wait` preview is on, from the same script, so the
+answer here is the band's first pick:
 
 ```sh
 python3 System/tools/next_up.py --zone <the session's zone> --exclude <the thread note in focus>

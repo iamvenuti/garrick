@@ -244,7 +244,11 @@ const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focu
 const resume = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? resumePrompt(n) : projectResumePrompt(n), asUser: true })
 const resumable = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0)
 const wrap = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? wrapPrompt(n) : projectWrapPrompt(n), asUser: true })
-const clear = ($: any) => $.command.run({ command: 'clear' })
+// The cleared conversation's figure is not the new one's: none until its first reply.
+const clear = async ($: any) => {
+  await $.command.run({ command: 'clear' })
+  await update($, used, () => null)
+}
 async function opener($: any, args: string[], app: string) {
   const { exitCode } = await $.process.run(['/usr/bin/open', ...args])
   if (exitCode !== 0) $.ui.toast(`${app} did not open the note.`)
@@ -657,6 +661,16 @@ export const register: Register = on => {
     await measure($).catch(() => undefined)
 
     return done
+  })
+
+  // A /clear, typed or from the band, ends the conversation and goes on in a
+  // new one with no session.start; so does a resume. The new conversation has
+  // no figure until its first reply, so the band shows none rather than the
+  // old one's, which may be red and tell the person to clear again.
+  on('session.end', async ($, e, next) => {
+    await update($, used, () => null).catch(() => undefined)
+
+    return next(e)
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {

@@ -220,6 +220,59 @@ describe('context used', () => {
     expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ text: /%/ })).toBeUndefined()
   })
 
+  test("a typed /clear empties the figure until the new conversation's first reply", async ($, on) => {
+    const at: { percent?: number } = { percent: 78 }
+    usage(on, at)
+    on('session.end', async (_$: any, e: any) => ({ sessionId: e.sessionId }))
+    await inThread($, on, NOTE)
+    expect((await shown($))?.props.color).toBe('red')
+
+    await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as any)
+    expect(await shown($)).toBeUndefined()
+    expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ text: /Work › Acme/ })).toBeDefined()
+
+    at.percent = 3
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+    expect((await shown($))?.text).toBe('3%')
+  })
+
+  test("the band's Clear empties the figure", async ($, on) => {
+    usage(on, { percent: 78 })
+    on('command.run', async () => ({}))
+    await inThread($, on, NOTE)
+    expect((await shown($))?.text).toBe('78%')
+
+    await (await $.ui.mount({ ...BAND, surface: 'terminal' })).press({ key: 'clear' })
+    expect(await shown($)).toBeUndefined()
+  })
+
+  test('after a compaction there is no figure until the next reply', async ($, on) => {
+    const at: { percent?: number } = { percent: 70 }
+    usage(on, at)
+    const summary = { role: 'user', text: 'Summary of the conversation so far.', toolUses: [] }
+    on('session.compact', async () => ({ messages: [summary] }) as any)
+    await inThread($, on, NOTE)
+    expect((await shown($))?.text).toBe('70%')
+
+    delete at.percent
+    await $.session.compact({ trigger: 'manual', messages: [summary, summary] } as any)
+    expect(await shown($)).toBeUndefined()
+
+    at.percent = 9
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+    expect((await shown($))?.text).toBe('9%')
+  })
+
+  test('a Claude Code without the usage call shows the band with no figure', async ($, on) => {
+    on('session.usage', async () => {
+      throw new Error('no such operation: session.usage')
+    })
+    await inThread($, on, NOTE)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
+    expect(await band.find({ text: /%/ })).toBeUndefined()
+  })
+
   test('outside a thread too, after the place', async ($, on) => {
     usage(on, { percent: 12 })
     on('session.root', async () => ({ value: `${ROOT}/System` }))

@@ -14,7 +14,7 @@ Above the prompt, two lines beside the mark:
 ```
 
 - The Garrick mark, a 4×2 tile of terminal cells drawn with half blocks, as tall as the two lines, so the terminal needs no image support.
-- `Garrick · <Zone> › <Project> › <Thread>`, with the note's `status` in colour: green for active, yellow for parked, grey for done. Then how full the context window is, as a whole percentage: dimmed up to 60%, red above it, the point where it is time to wrap and clear. It is the status line's own figure, from the mods API's plain usage call, which costs nothing and counts no tokens, and it is read again after every turn. Before a session's first reply, and just after a compaction, there is no figure yet, and the band shows none.
+- `Garrick · <Zone> › <Project> › <Thread>`, with the note's `status` in colour: green for active, yellow for parked, grey for done. Then how full the context window is, as a whole percentage: dimmed up to 60%, red above it, the point where it is time to wrap and clear. It is the status line's own figure, from the mods API's plain usage call, which costs nothing and counts no tokens, and it is read again after every turn. Before a session's first reply, from *Clear* or `/clear` until the new conversation's first reply, and just after a compaction, there is no figure yet, and the band shows none.
 - A row of buttons, all at one weight. Click one, or press ctrl+x tab to reach the band and then its letter:
   - *Wrap* (`w`) asks the assistant to rewrite the Resume here block and add today's dated entry, the rules' "wrap X". A finished thread has no Wrap.
   - *Clear* (`c`) runs `/clear`, which starts a new conversation in the same folder. The band stays. `/resume` brings back the conversation you cleared.

@@ -2236,9 +2236,13 @@ def repos(ws: Path) -> List[dict]:
     for name, folder in places:
         if not (folder / ".git").exists():
             continue
+        # --no-optional-locks: the page only reads, so git status never takes
+        # index.lock to refresh the index, and a commit a session makes in the
+        # same moment never finds it held.
         def git(*args):
             try:
-                proc = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, timeout=30)
+                proc = subprocess.run(["git", "--no-optional-locks", "-C", str(folder), *args], capture_output=True,
+                                      text=True, timeout=30)
             except (OSError, subprocess.TimeoutExpired):
                 return None
             return proc.stdout if proc.returncode == 0 else None
@@ -7973,7 +7977,8 @@ def main(argv: Optional[List[str]] = None) -> int:
               "so keep it where git and the wall check leave it alone." % out, file=sys.stderr)
     if inside and (ws / ".git").exists():
         try:
-            probe = subprocess.run(["git", "-C", str(ws), "check-ignore", "-q", "--no-index", "System/generated/status.html"],
+            probe = subprocess.run(["git", "--no-optional-locks", "-C", str(ws), "check-ignore", "-q", "--no-index",
+                                    "System/generated/status.html"],
                                    capture_output=True, text=True)
         except OSError:                       # no git on this PATH: nothing to check against
             probe = None
@@ -7982,6 +7987,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     if args.settle and args.settle > 0 and not settle(out.with_name(out.name + ".settle"), args.settle):
         return 0                              # a later request builds it
+    if not (ws / "System").is_dir():          # deleted during the wait: build nothing, and make no folder again
+        print("status: %s is no longer a workspace; nothing built." % ws, file=sys.stderr)
+        return 1
     if args.same_flags:                       # read after the wait, so a build made meanwhile counts
         try:
             kept = ap.parse_args(stored_words(flags_file(out)))

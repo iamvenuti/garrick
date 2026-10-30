@@ -155,6 +155,15 @@ class ClassificationTest(Base):
         self.assertEqual("attribution", item["kind"])
         self.assertIn("is it active, parked or done?", item["question"])
 
+    def test_a_meetings_question_with_no_zone_is_asked_as_attribution(self):
+        write(self.wikis / "Meetings" / "questions" / "261015 - floor.md",
+              "---\ntype: question\nasked: 2026-10-15\nstatus: open\nparties: [acme]\n---\n\n"
+              "**Acme: which volume floor holds?**\n")
+        _, out = self.run_tool("list")
+        item = self.by_path(out["items"], "questions/261015 - floor.md")[0]
+        self.assertEqual("attribution", item["kind"])
+        self.assertEqual("Which zone does 261015 - floor belong to?", item["question"])
+
     def test_done_without_an_outcome_is_asked_not_fixed(self):
         text = thread_note("Acme Review", "Pricing", "acme", status="complete")
         write(self.pricing, text)

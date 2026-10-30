@@ -840,6 +840,128 @@ class TestKnowledge(CheckCase):
         self.assertFinds("knowledge", "error")
 
 
+
+def wiki_question(fields="zone: Work\nparties: [acme]\n", status="open", bold=True,
+                  pages='["[[wiki/sources/260310-acme-kickoff]]"]', body="The Acme pages give both figures."):
+    """A wiki question (#224), in the Needs you form, with what a wiki adds."""
+    ask = "Acme: which volume floor holds, 400 pallets or 500?"
+    return ("---\ntype: question\nasked: 2026-03-12\nstatus: %s\n%sorigin: \"[[raw/260310-acme-kickoff]]\"\n"
+            "pages: %s\n---\n\n%s\n\n%s\n\n- [400 pallets] The floor is 400\n- [500 pallets] The floor moved to 500\n"
+            % (status, fields, pages, "**%s**" % ask if bold else ask, body))
+
+
+class TestWikiQuestions(CheckCase):
+    """A question an ingest or a lint finds only the user can answer is a file
+    in the wiki's questions/ (#224), held to the Needs you rules; a Meetings
+    question carries a zone and parties, and the walls read it as a page."""
+
+    def setUp(self):
+        super().setUp()
+        self.asked = self.meetings / "questions"
+        self.kasked = self.root / "Wikis" / "Knowledge" / "questions"
+
+    def messages(self, path):
+        return sorted(f.message for f in self.findings("questions") if f.path == path)
+
+    def test_a_meetings_question_as_written_passes(self):
+        write(self.asked / "260312 - volume-floor.md", wiki_question())
+        for name in ("questions", "meetings", "walls", "links", "knowledge", "raw"):
+            self.assertClean(name)
+
+    def test_one_with_no_zone_or_no_parties_warns(self):
+        write(self.asked / "260312 - no-zone.md", wiki_question("parties: [acme]\n"))
+        write(self.asked / "260312 - no-parties.md", wiki_question("zone: Work\n"))
+        self.assertEqual(["unfinished: no zone; nothing on it may be used in a project"],
+                         self.messages("Wikis/Meetings/questions/260312 - no-zone.md"))
+        self.assertEqual(["unfinished: no parties; nothing on it may be used in a project"],
+                         self.messages("Wikis/Meetings/questions/260312 - no-parties.md"))
+        self.assertFalse(self.findings("questions", "error"))
+        self.assertClean("meetings")       # a question is not a meeting page: no name or type to fix
+        self.assertEqual("No problems, two warnings. Two things need fixing in question files.",
+                         check.report_ear(check.run_checks(self.root, quick=True)))
+        (self.asked / "260312 - no-zone.md").unlink()
+        self.assertEqual("No problems, one warning. One Meetings question has no parties.",
+                         check.report_ear(check.run_checks(self.root, quick=True)))
+
+    def test_every_check_can_be_said_aloud_in_a_group(self):
+        self.assertEqual([], [c for c, _ in check.CHECKS if c not in check.EAR_GROUP])
+
+    def test_an_unknown_party_and_both_sides_of_a_wall_are_named(self):
+        write(self.asked / "260312 - cedar.md", wiki_question("zone: Work\nparties: [cedar]\n"))
+        write(self.asked / "260312 - both.md", wiki_question("zone: Work\nparties: [acme, birch]\n"))
+        self.assertFinds("questions", "error", "party `cedar` is not a tag", "Wikis/Meetings/questions/260312 - cedar.md")
+        self.assertFinds("questions", "warning", "names both acme and birch, which a wall keeps apart, so no project "
+                         "of either may use it; ask it once for each side", "Wikis/Meetings/questions/260312 - both.md")
+
+    def test_a_knowledge_question_with_no_parties_passes(self):
+        write(self.kasked / "260312 - failover-figure.md",
+              wiki_question("", pages='["[[wiki/sources/supply-chain-report]]"]'))
+        self.assertClean("questions")
+        self.assertClean("knowledge")
+
+    def test_a_knowledge_question_with_a_zone_or_parties_is_refused_as_any_knowledge_file(self):
+        write(self.kasked / "260312 - failover-figure.md",
+              wiki_question(pages='["[[wiki/sources/supply-chain-report]]"]'))
+        self.assertFinds("knowledge", "error", "carries `parties` and `zone`")
+        self.assertClean("questions")      # no zone or parties is asked of a Knowledge question
+
+    def test_a_malformed_one_fails_as_a_needs_you_file_would(self):
+        broken = [("a", "pending", True), ("b", "later", True), ("c", "open", False)]
+        box = self.acme / "Threads" / "Pricing" / "Needs you"
+        for name, status, bold in broken:
+            write(self.asked / ("%s.md" % name), wiki_question(status=status, bold=bold))
+            write(self.kasked / ("%s.md" % name), wiki_question("", status=status, bold=bold, pages="[]"))
+            write(box / ("%s.md" % name), wiki_question(status=status, bold=bold))
+        write(self.asked / "d.md", wiki_question().replace("type: question", "type: meeting"))
+        write(box / "d.md", wiki_question().replace("type: question", "type: meeting"))
+        for name in "abcd":
+            home = [m.replace("the home", "Garrick") for m in
+                    self.messages("Zones/Work/Acme Review/Threads/Pricing/Needs you/%s.md" % name)]
+            self.assertTrue(home)
+            self.assertEqual(home, self.messages("Wikis/Meetings/questions/%s.md" % name))
+            if name != "d":
+                self.assertEqual(home, self.messages("Wikis/Knowledge/questions/%s.md" % name))
+        self.assertIn("`status` is 'pending'; Garrick reads open, answered, later",
+                      self.messages("Wikis/Meetings/questions/a.md"))
+        self.assertIn("no bold line to ask, so Garrick leaves it out", self.messages("Wikis/Meetings/questions/c.md"))
+
+    def test_a_project_may_not_link_a_question_across_a_wall(self):
+        write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n",
+                                                                     pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - birch-lease]].\n")
+        self.assertFinds("walls", "error", "a wall stands between acme and birch",
+                         "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+
+    def test_nor_an_unfinished_one(self):
+        write(self.asked / "260312 - floor.md", wiki_question("parties: [acme]\n"))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - floor]].\n")
+        self.assertFinds("walls", "error", "unfinished")
+
+    def test_wording_from_a_question_across_a_wall_is_refused(self):
+        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
+        write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n", body=quote + "."))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
+        self.assertFinds("walls", "error", "repeats wording from meeting 260312 - birch-lease")
+
+    def test_a_question_on_the_near_side_never_vouches_for_wording(self):
+        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
+        page = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        page.write_text(page.read_text().replace("Decisions.", quote + "."))
+        write(self.asked / "260312 - lease.md", wiki_question(body=quote + "."))   # filed for acme
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
+        self.assertFinds("walls", "error", "repeats wording from meeting 260312-birch-kickoff")
+
+    def test_a_question_citing_a_meeting_across_its_wall_warns(self):
+        write(self.asked / "260312 - floor.md", wiki_question(pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
+        self.assertFinds("questions", "warning", "cites 260312-birch-kickoff, a meeting with birch, but is written "
+                         "for acme, across a wall", "Wikis/Meetings/questions/260312 - floor.md")
+
+    def test_the_wiki_lint_counts_no_question_as_a_page(self):
+        import wiki_lint  # noqa: E402
+        before = wiki_lint.lint(self.meetings)
+        write(self.asked / "260312 - floor.md", wiki_question())
+        self.assertEqual(before, wiki_lint.lint(self.meetings))
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestRaw(CheckCase):
     def setUp(self):

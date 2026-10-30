@@ -14,6 +14,7 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
+      questions/        one file per question only you can answer
       dormant/          pages faded out of working memory, and their raw records,
         wiki/ raw/        at the same paths below
       archive/          pages faded further, in no index; read only when asked
@@ -80,6 +81,24 @@ updated: YYYY-MM-DD
 ```
 
 Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
+
+## A question
+
+When an ingest or a lint finds something only you can settle, such as who decides, which version is live, or whether a figure still holds, it writes `questions/<YYMMDD> - <slug>.md` and adds no line to the page:
+
+```yaml
+---
+type: question
+asked: YYYY-MM-DD
+status: open                 # open, answered or later
+zone: <zone name>
+parties: [<tag>]             # the parties of the pages it comes from
+origin: "[[raw/<YYMMDD-slug>]]"
+pages: ["[[wiki/sources/<YYMMDD-slug>]]"]
+---
+```
+
+Then the question as one bold line, why it matters, and the options, if there are any, as `- [<label>] <what the pages would then say>`. `origin` is the record that raised it; `pages` are the pages the answer would change. A question carries the zone and parties of what it is about, and the walls read it as they read a page.
 
 ## Rules
 

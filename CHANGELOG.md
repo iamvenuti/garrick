@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **A question from the wikis is a file** ([#224](https://github.com/iamvenuti/garrick/issues/224), point 1). When an ingest or a lint found something only you could settle, such as who decides or which of two figures holds, it ended up as a line under an *Open* heading on the page, and nothing read it back. The `meetings` and `knowledge` skills now write it as `Wikis/<Wiki>/questions/<YYMMDD> - <slug>.md`, in the form of a *Needs you* question (`type: question`, `asked`, `status`, the bold line, why it matters, the options), with `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change, and leave the page as it is. A Meetings question also carries `zone:` and `parties:`; a Knowledge question carries neither, as nothing in Knowledge does. Both wikis' templates gain the `questions/` folder, and each schema describes the file. `check.py` holds a wiki question to the same rules as a *Needs you* question, through the same code, under its *Questions* heading, and warns about a Meetings question with no zone or parties, an unknown zone, an unknown party or both sides of a wall, as it does a meeting page; Nurture asks those as attribution. The walls read a Meetings question as they read a meeting page: a project may not link one or repeat eight words from one across a wall, or while it is unfinished, and a question that cites a meeting walled from its parties is warned about. A question restates a record and is not one, so it claims no raw record and its wording never clears a quotation that a walled meeting holds. Answering, the panel and the other points of #224 come later.
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

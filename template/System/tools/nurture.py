@@ -12,7 +12,7 @@ It adds no checks of its own. Its sources are the existing tools, each run
 as it runs for anyone: `check.py --json`, `wiki_lint.py --json` for each
 wiki, and `drift.py --json`. A new kind of problem gets a check in
 `check.py` first, and this sorts it. The wikis' *Lint* stays a report that
-changes nothing: this runs its script part, and the `nurture` skill runs its
+changes no page: this runs its script part, and the `nurture` skill runs its
 reading part.
 
 A scope is a path from the workspace's top: a zone (`Zones/Work`), a project
@@ -843,7 +843,7 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
     msg, c = item.message, item.check
     name = Path(item.path).stem
     q = None
-    if c == "meetings":
+    if c == "meetings" or (c == "questions" and item.path.startswith("Wikis/Meetings/")):
         if msg.startswith("unfinished: no "):
             q = "Which %s does %s belong to?" % ("zone and parties" if "zone or parties" in msg else msg[15:].split(";")[0], name)
             item.proposal = meeting_zone(ctx, item)

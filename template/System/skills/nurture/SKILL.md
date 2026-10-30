@@ -260,7 +260,8 @@ name.
 - **It adds no checks.** It sorts what `check.py`, `wiki_lint.py` and
   `drift.py` find. A new kind of problem gets a check first.
 - **It never replaces the wikis' *Lint*.** "Lint the meetings" and "lint the
-  library" work as they always have, and change nothing.
+  library" work as they always have, and change no page: what only the
+  user can settle becomes a question file.
 - **It never repeats walled material**, in the conversation, the report or
   a commit message.
 - **It never guesses** a zone, a party or a wiki, and never applies an

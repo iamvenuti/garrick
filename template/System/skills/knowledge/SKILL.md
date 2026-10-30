@@ -38,6 +38,7 @@ All paths are relative to the workspace root.
 | Every page, newest first | `Wikis/Knowledge/wiki/index.md` |
 | Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Knowledge/dormant/wiki/`, `Wikis/Knowledge/archive/wiki/` |
 | One line per ingest, newest first | `Wikis/Knowledge/wiki/log.md` |
+| A question only the user can answer | `Wikis/Knowledge/questions/<YYMMDD> - <slug>.md` |
 | Schema (wins over this file) | `Wikis/Knowledge/AGENTS.md` |
 
 `Wikis/` is its own git repository, shared by Knowledge and Meetings. A
@@ -158,6 +159,10 @@ project, never here.
    - no page yet: create `wiki/entities/<slug>.md` (schema below).
    A source naming several vendors gets an entity page per vendor, not one
    shared page: a claim belongs to the one that made it.
+   **Something only the user can settle**, such as a figure that disagrees
+   with an earlier source, with nothing to say which holds, is not a line
+   on the page. Write it as a question file, as *A question for the user*
+   says.
 8. **Re-read `wiki/index.md` right before you add to it.** Another session
    may have ingested something since you last looked. Add a row for the
    source and for any concept or entity page you created, newest first. For a
@@ -170,8 +175,8 @@ project, never here.
    instead, holding the same.
 10. **Commit, in the Wikis repository.** Stage only what this ingest wrote:
     the raw file, the source page, any concept and entity pages touched, the
-    index and the log. Never `git add -A`, and never a Meetings file in the
-    same commit.
+    index, the log and any question file. Never `git add -A`, and never a
+    Meetings file in the same commit.
     ```sh
     git -C Wikis add -- Knowledge/raw/<slug>.* Knowledge/wiki/sources/<slug>.md \
       Knowledge/wiki/concepts/<concept>.md Knowledge/wiki/entities/<entity>.md \
@@ -259,11 +264,23 @@ detail rather than reading it out.
 
 Written: the same, then each source page linked, and its confidence.
 
+## A question for the user
+
+One file per question, `Wikis/Knowledge/questions/<YYMMDD> - <slug>.md`, in
+the form the `meetings` skill's *A question for the user* gives: `type:
+question`, `asked`, `status: open`, `origin` (the raw file that raised it)
+and `pages` (the pages the answer would change), then the question as one
+bold line, why it matters, and the options, if there are any. It carries no
+`zone` and no `parties`, as no file in Knowledge does, and names nobody's
+conversation. One question per file, and none that a file in `questions/`
+already asks. The page gets no *Open* line, and changes only once the user
+answers.
+
 ## Lint: "lint the library", "lint knowledge"
 
 A wiki that grows by ingest drifts in ways no file check sees. On request,
 or once a month if the user asks for that, read it for them and report. The
-lint changes nothing: the user picks what to fix, and each fix is then an
+lint changes no page: the user picks what to fix, and each fix is then an
 ordinary edit.
 
 1. **What a script can find**, first:
@@ -286,8 +303,11 @@ ordinary edit.
    kind, each finding with its pages linked and a suggested fix in a line.
    Nothing found under a heading says so. It names no party, as every
    Knowledge page does not.
-4. **Commit** it in the Wikis repository, alone, and say how many findings
-   of each kind there are.
+4. **A finding only the user can settle**, such as a contradiction no
+   later source decides, is also a question file, as *A question for the
+   user* says. The report links it.
+5. **Commit** the report and the question files in the Wikis repository,
+   and nothing else, and say how many findings of each kind there are.
 
 Spoken: "Four things in the library: two pages disagree on failover times,
 one claim rests only on its vendor, and two orphans. The report has the

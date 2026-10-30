@@ -101,7 +101,7 @@ import sys
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -161,6 +161,8 @@ REACH = ("working", "dormant")
 LINK = re.compile(r"(!?\[\[)([^\[\]|#\n]+)((?:#[^\[\]|\n]*)?)((?:\|[^\[\]\n]*)?)(\]\])")
 OBSIDIAN = re.compile(r"(obsidian://open\?(?:[^\s)&]*&)*?file=)([^&\s)#]+)")
 OPEN_LINE = re.compile(r"^\s*[-*+] \[ \]")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+INLINE_CODE = re.compile(r"`[^`\n]*`")
 DONE_WORDS = ("done", "closed", "complete", "completed", "finished")
 PARKED_WORDS = ("parked", "paused", "pause", "on-hold", "on hold", "onhold", "hold", "dormant", "suspended",
                 "deferred")
@@ -503,15 +505,44 @@ class Links:
         return sorted(set(out))
 
 
+def fenced(lines: List[str]) -> List[bool]:
+    """For each line, whether it belongs to a fenced code block, its fences
+    included. A fence of ``` or ~~~ closes on a line of the same character,
+    at least as long; one never closed runs to the end, as Obsidian has it."""
+    out, fence = [], ""
+    for line in lines:
+        m = FENCE.match(line)
+        if not fence:
+            if m and not (m.group(1)[0] == "`" and "`" in line[m.end():]):
+                fence = m.group(1)
+            out.append(bool(fence))
+            continue
+        out.append(True)
+        if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[m.end():].strip():
+            fence = ""
+    return out
+
+
+def outside_code(line: str, fn: Callable[[str], str]) -> str:
+    """`line` with `fn` applied to each stretch of it outside inline code."""
+    parts, codes = INLINE_CODE.split(line), INLINE_CODE.findall(line) + [""]
+    return "".join(fn(part) + code for part, code in zip(parts, codes))
+
+
 def links_in(text: str) -> Iterable[Tuple[int, str]]:
-    """(line number, target as written) for every wikilink and obsidian:// link."""
-    for n, line in enumerate(text.split("\n")):
-        if "[[" in line:
-            for m in LINK.finditer(line):
-                yield n, m.group(2)
-        if "obsidian://" in line:
-            for m in OBSIDIAN.finditer(line):
-                yield n, urllib.parse.unquote(m.group(2))
+    """(line number, target as written) for every wikilink and obsidian://
+    link. One in a code block, fenced or inline, is text and not a link."""
+    lines = text.split("\n")
+    for n, (line, code) in enumerate(zip(lines, fenced(lines))):
+        if code:
+            continue
+        for part in INLINE_CODE.split(line):
+            if "[[" in part:
+                for m in LINK.finditer(part):
+                    yield n, m.group(2)
+            if "obsidian://" in part:
+                for m in OBSIDIAN.finditer(part):
+                    yield n, urllib.parse.unquote(m.group(2))
 
 
 def note_status(path: Path) -> str:
@@ -1146,11 +1177,14 @@ def relink(text: str, moved: Dict[str, str], links: Links, here: str) -> str:
     else, pointed at where it went. Going dormant or to the archive, every
     such link is written with the grade's folder, so that a link written
     afresh later can be told from it; waking, a link that still lands on the
-    page is left as it is."""
+    page is left as it is. A link in a code block, fenced or inline, is
+    text and is left as it is too."""
     if "[[" not in text and "obsidian://" not in text:
         return text
     lines = text.split("\n")
-    for n, line in enumerate(lines):
+    for n, (line, code) in enumerate(zip(lines, fenced(lines))):
+        if code:
+            continue
         table = line.lstrip().startswith("|")
 
         def one(m):
@@ -1175,11 +1209,14 @@ def relink(text: str, moved: Dict[str, str], links: Links, here: str) -> str:
             target, _ = respell(written, hits[0], moved[hits[0]], "")
             return m.group(1) + urllib.parse.quote(target)
 
-        if "[[" in line:
-            line = LINK.sub(one, line)
-        if "obsidian://" in line:
-            line = OBSIDIAN.sub(url, line)
-        lines[n] = line
+        def both(part):
+            if "[[" in part:
+                part = LINK.sub(one, part)
+            if "obsidian://" in part:
+                part = OBSIDIAN.sub(url, part)
+            return part
+
+        lines[n] = outside_code(line, both)
     return "\n".join(lines)
 
 
@@ -1190,12 +1227,8 @@ def waking(new: str) -> bool:
 
 def drop_lines(text: str, leaving: Set[str], links: Links) -> str:
     """`text` without the lines that link a page in `leaving`: a list's rows."""
-    keep = []
-    for line in text.split("\n"):
-        hits = {h for _, w in links_in(line) for h in links.resolve(w)}
-        if not (hits & leaving):
-            keep.append(line)
-    return "\n".join(keep)
+    gone = {n for n, w in links_in(text) if set(links.resolve(w)) & leaving}
+    return "\n".join(line for n, line in enumerate(text.split("\n")) if n not in gone)
 
 
 def index_row(page: Page) -> str:

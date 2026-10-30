@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fading leaves a link in a code block as it was written.** `fade.py apply` pointed every link to a page that faded at its new place, inside fenced code blocks and inline code too, so a wiki's `AGENTS.local.md` that showed the frontmatter with a real page as its example came back teaching `[[dormant/wiki/...]]`. The same example also counted as use, so it could hold a page in working memory or wake it. A link inside a ``` or ~~~ fence, or inside inline code, is now text: fading neither rewrites it nor counts it, as the wall check already strips inline code before it reads links. ([#256](https://github.com/iamvenuti/garrick/issues/256))
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

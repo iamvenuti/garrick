@@ -392,6 +392,9 @@ class TestVaultGraph(StatusCase):
         self.assertEqual(-1, by["Pricing"]["g"])                                # no group takes it: grey
         self.assertNotIn("g", by["Acme kick-off"])                             # a wiki with no vault of its own keeps the kinds
         self.assertIn("n.g===-1?G.other", status.GRAPH_JS)
+        html = self.page()
+        self.assertIn('<span data-g="-1"><i style="background:%s"></i>No group</span>' % status.OTHER, html)   # grey keyed (#250)
+        self.assertIn("></i>Projects</button>", html)                          # and each kind still a toggle
 
     def test_the_legend_names_each_group_as_a_person_would(self):
         cases = [
@@ -453,7 +456,8 @@ class TestVaultGraph(StatusCase):
         self.assertEqual("concept", kind[by["safety-stock"]["k"]])                 # by its type
         self.assertEqual("entity", kind[by["fictus-cloud"]["k"]])
         self.assertEqual("other notes", kind[by["odd"]["k"]])                      # a type the model does not know
-        self.assertEqual("other notes", kind[by["Stray"]["k"]])                    # an entity has no place in Meetings
+        self.assertEqual("entity", kind[by["Stray"]["k"]])                         # a model kind, in any wiki (#250)
+        self.assertEqual(0, by["Stray"]["c"])                                     # but the hubs of Meetings are its people
         long = by["A very long report title about pallets, lanes, freight and the winter that came"]
         self.assertEqual("source", kind[long["k"]])
         self.assertTrue(long["n"].endswith("…") and len(long["n"]) <= 41, long["n"])
@@ -462,9 +466,9 @@ class TestVaultGraph(StatusCase):
         idx = {t: data["nodes"].index(by[t]) for t in ("lane-capacity", "safety-stock", "fictus-cloud")}
         pairs = {(a, b): w for a, b, w in data["ce"]}
         self.assertEqual(1, pairs[tuple(sorted((idx["lane-capacity"], idx["safety-stock"])))])   # one source cites both
-        self.assertEqual({"Meetings": "People", "Knowledge": "Concepts and entities"}, data["cl"])
+        self.assertNotIn("cl", data)                                              # no view button to label (#250)
         self.assertEqual("all", data["modes"]["Knowledge"])
-        self.assertIn("function modeFor(z){return st.get('garrick-graph-mode-'+z)", status.GRAPH_JS)
+        self.assertIn("var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub", status.GRAPH_JS)
 
     def test_any_note_in_a_project_opens_where_its_card_would(self):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Call notes.md", "# Call notes\n")
@@ -1687,6 +1691,206 @@ class TestRowsLightTheGraph(StatusCase):
         self.assertEqual([True, False, False, False], json.loads(done.stdout))            # a parked thread stays off the graph
 
 
+class TestKindsFromPages(StatusCase):
+    """#250: a type Garrick's model does not know, shared by enough pages of one wiki, is a kind of its own."""
+
+    def meetings(self, domains=("Freight", "Customs", "Ports"), more=()):
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        for name in domains:
+            write(m / "domains" / (name.lower() + ".md"), "---\ntitle: %s\ntype: domain\n---\n" % name)
+        for t, names in more:
+            for name in names:
+                write(m / "notes" / (name.lower() + ".md"), "---\ntitle: %s\ntype: %s\n---\n" % (name, t))
+        write(m / "entities" / "fictus.md", "---\ntitle: Fictus Cloud\ntype: entity\n---\n\nSee [[freight]].\n")
+        write(m / "entities" / "brightline.md", "---\ntitle: Brightline\ntype: entity\n---\n")
+        write(m / "notes" / "memo-1.md", "---\ntitle: Memo one\ntype: memo\n---\n")
+        write(m / "notes" / "memo-2.md", "---\ntitle: Memo two\ntype: memo\n---\n")
+        write(m / "notes" / "loose.md", "# Loose\n")
+        html = self.page()
+        data = graph_data(html)
+        return html, data, {n.get("N", n["n"]): n for n in data["nodes"]}
+
+    def test_three_pages_of_a_type_make_a_kind(self):
+        html, data, by = self.meetings()
+        kind, keys = dict(data["kinds"]), data["keys"]
+        self.assertEqual(3, status.KIND_FROM_PAGES)
+        self.assertEqual(len(status.KINDS), data["known"])
+        domain = by["Freight"]["k"]
+        self.assertEqual(("domain", "domain"), (kind[domain], keys[domain]))
+        self.assertGreaterEqual(domain, data["known"])                          # after the shipped kinds
+        self.assertEqual({domain}, {by[n]["k"] for n in ("Freight", "Customs", "Ports")})
+        self.assertIn(data["colors"][domain], status.PAGE_COLOURS)
+        self.assertEqual(0, by["Freight"]["c"])                                 # not a hub: it starts hidden
+        self.assertEqual("entity", kind[by["Fictus Cloud"]["k"]])               # a model kind is reused, in any wiki
+        self.assertEqual(keys.index("entity"), by["Brightline"]["k"])
+        for name in ("Memo one", "Memo two", "loose"):
+            self.assertEqual("other notes", kind[by[name]["k"]], name)          # too rare, or no type at all
+        self.assertNotIn("memo", keys)
+        self.assertIn('<button type="button" data-k="%d" aria-pressed="true"><i style="background:%s"></i>Domains</button>'
+                      % (domain, data["colors"][domain]), html)
+        self.assertIn("></i>Entities</button>", html)
+
+    def test_two_pages_are_not_enough(self):
+        _, data, by = self.meetings(domains=("Freight", "Customs"))
+        self.assertNotIn("domain", data["keys"])
+        self.assertEqual("other notes", dict(data["kinds"])[by["Freight"]["k"]])
+        self.assertEqual(len(status.KINDS), len(data["colors"]))
+
+    def test_a_kind_keeps_its_colour(self):
+        _, data, by = self.meetings()
+        colour = data["colors"][by["Freight"]["k"]]
+        self.assertEqual(colour, graph_data(self.page())["colors"][by["Freight"]["k"]])     # from one build to the next
+        # Kinds that come later, before it and after it by name, one wanting its colour: it keeps it.
+        _, data, by = self.meetings(more=(("area", ("North", "South", "East")), ("theme", ("Cost", "Speed", "Risk"))))
+        self.assertEqual(colour, data["colors"][by["Freight"]["k"]])
+        found = [data["colors"][by[n]["k"]] for n in ("Freight", "North", "Cost")]
+        self.assertEqual(3, len(set(found)))                                     # each its own
+
+    def test_the_palette_stands_apart(self):
+        shipped = {c.lower() for _, _, c in status.KINDS}
+        rings = set(re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups())
+        self.assertEqual(len(status.PAGE_COLOURS), len(set(status.PAGE_COLOURS)))
+        self.assertFalse({c.lower() for c in status.PAGE_COLOURS} & (shipped | rings | {status.BRAND.lower()}))
+
+        def lum(h):
+            c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            c = [x / 12.92 if x <= .04045 else ((x + .055) / 1.055) ** 2.4 for x in c]
+            return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+        surfaces = re.findall(r"--surface:(#[0-9a-f]{6})", status.CSS)
+        self.assertGreaterEqual(len(set(surfaces)), 2)                           # the light card and the dark one
+        for c in status.PAGE_COLOURS:
+            for bg in set(surfaces):
+                a, b = sorted((lum(c), lum(bg)))
+                self.assertGreaterEqual((b + .05) / (a + .05), 2.9, (c, bg))
+
+    def test_the_legend_says_a_kind_as_a_filter_does(self):
+        for word, said in (("domain", "Domains"), ("case study", "Case studies"), ("process", "Processes"),
+                           ("person", "People"), ("note", "Other notes"), ("mail", "Mail")):
+            self.assertEqual(said, status.plural(word))
+
+
+# GRAPH_JS with its legend's buttons, the find box and the count beside it
+# real enough to press: each step clicks a kind, types, presses a key, clicks
+# the count or picks a place, and says which notes the graph draws, which
+# kinds are pressed, what the count says, the card open and what is stored.
+FILTER_HARNESS = r"""
+const vm = require("vm");
+const [js, data, chips, saved, steps] = JSON.parse(process.argv[1]);
+const any = new Proxy(function () {}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "length" ? 0 : any,
+                                        apply: () => any, construct: () => any });
+const store = Object.assign({}, saved || {});
+const attr = function (k, v) { this.attrs[k] = String(v); };
+const kinds = chips.map(([k, said]) => ({ dataset: { k: String(k) }, textContent: said, hidden: false, attrs: {}, setAttribute: attr,
+                                          classList: { toggle: () => {} }, onclick: null }));
+const on = {};
+const box = { value: "", addEventListener: (t, fn) => { on[t] = fn; } };
+const more = { hidden: true, textContent: "", onclick: null };
+const pop = { hidden: true, innerHTML: "", addEventListener: () => {} };
+const sel = { value: "", onchange: null, options: [], selectedIndex: 0, className: "",
+              parentNode: { querySelectorAll: () => [], classList: { toggle: () => {} } } };
+const byId = { "graph-data": { textContent: data }, gfind: box, gfmore: more, gpop: pop };
+const ctx = { JSON, String, Array, Object, Math, Date, performance: { now: () => 0 },
+              localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+              document: new Proxy({}, { get: (t, k) => k === "getElementById" ? (id) => byId[id] || any
+                                                       : k === "querySelectorAll" ? (s) => s === ".glegend [data-k]" ? kinds : []
+                                                       : k === "querySelector" ? (s) => s === ".gzsel" ? sel
+                                                         : (s.match(/^\.glegend \[data-k="(\d+)"\]$/) || [])[1] ? kinds.filter((c) => s.indexOf('"' + c.dataset.k + '"') > 0)[0] : any
+                                                       : any }),
+              Panel: { esc: (s) => String(s), head: (o) => "<h4>" + o.n + "</h4>", acts: () => "" },
+              requestAnimationFrame: () => 0, setTimeout: () => 0, addEventListener: () => {},
+              matchMedia: () => ({ matches: true }), IntersectionObserver: any, ResizeObserver: any, MutationObserver: any,
+              getComputedStyle: () => any, location: any, navigator: any, innerWidth: 800, innerHeight: 600, devicePixelRatio: 1 };
+ctx.window = ctx;
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+const G = ctx.window.GarrickGraph, nodes = JSON.parse(data).nodes;
+const look = () => {
+  const drawn = nodes.filter((n) => G.focus(n.u)).map((n) => n.N || n.n); G.focus(null);
+  const h4 = !pop.hidden && (pop.innerHTML.match(/<h4>(.*?)<\/h4>/) || [])[1];
+  return { place: G.place(), drawn: drawn.sort(), pressed: kinds.filter((c) => !c.hidden && c.attrs["aria-pressed"] === "true").map((c) => c.textContent),
+           offered: kinds.filter((c) => !c.hidden).map((c) => c.textContent), more: more.hidden ? "" : more.textContent, card: h4 || null,
+           box: box.value, store: Object.fromEntries(Object.entries(store).filter(([k]) => k.indexOf("garrick-graph-kinds-") === 0)) };
+};
+const out = [look()];
+for (const [op, arg] of steps) {
+  if (op === "click") kinds.filter((c) => c.textContent === arg)[0].onclick();
+  else if (op === "type") { box.value = arg; on.input(); }
+  else if (op === "key") on.keydown({ key: arg, preventDefault: () => {}, stopPropagation: () => {} });
+  else if (op === "more") more.onclick();
+  else if (op === "pick") { sel.value = arg; sel.onchange(); }
+  out.push(look());
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTheLegendFiltersAndTheBoxFinds(StatusCase):
+    """#250: each kind in the legend shows or hides it, kept per place; the box finds a note by its name."""
+
+    def setUp(self):
+        super().setUp()
+        k = self.root / "Wikis" / "Knowledge" / "wiki"
+        write(k / "entities" / "fictus-cloud.md", "---\ntitle: Fictus Cloud\ntype: entity\n---\n")
+        write(k / "entities" / "orvieto.md", "---\ntitle: Örviéto Labs\ntype: entity\n---\n")
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        for name in ("Freight", "Customs", "Ports"):
+            write(m / "domains" / (name.lower() + ".md"), "---\ntitle: %s domain\ntype: domain\n---\n" % name)
+        write(m / "people" / "jose-perez.md", "---\ntitle: José Pérez\ntype: person\n---\n")
+
+    def run_js(self, *steps, saved=None):
+        html = self.page()
+        data = re.search(r'<script type="application/json" id="graph-data">(.*?)</script>', html, re.S).group(1)
+        legend = html[html.index('class="legend glegend"'):]
+        chips = [[int(k), said] for k, said in re.findall(r'data-k="(\d+)" aria-pressed="true"><i[^>]*></i>([^<]+)</button>', legend)]
+        done = subprocess.run(["node", "-e", FILTER_HARNESS, json.dumps([status.GRAPH_JS, data, chips, saved or {}, [list(s) for s in steps]])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_kind_is_shown_or_hidden_and_kept_for_its_place(self):
+        out = self.run_js(("pick", "Knowledge"), ("click", "Concepts"), ("pick", "Work"), ("pick", "Knowledge"),
+                          saved={"garrick-graph-kinds-Knowledge": '["concept","entity"]'})
+        self.assertEqual(["Concepts", "Entities"], out[1]["pressed"])
+        self.assertEqual(["Concepts", "Entities", "Sources"], sorted(out[1]["offered"]))   # every kind the place has
+        self.assertEqual(["Fictus Cloud", "resilience", "Örviéto Labs"], out[1]["drawn"])
+        self.assertEqual(["Entities"], out[2]["pressed"])                        # entities without concepts
+        self.assertEqual(["Fictus Cloud", "Örviéto Labs"], out[2]["drawn"])
+        self.assertEqual({"garrick-graph-kinds-Knowledge": '["entity"]'}, out[2]["store"])
+        self.assertEqual(["Entities"], out[4]["pressed"])                        # back on the place, as it was left
+        out = self.run_js(("pick", "Knowledge"), ("click", "Sources"), saved={"garrick-graph-kinds-Knowledge": '["concept"]'})
+        self.assertEqual(["Supply chains", "resilience"], out[2]["drawn"])     # concepts with their sources
+
+    def test_a_place_opens_as_its_old_view_left_it(self):
+        core = self.run_js(("pick", "Meetings"), saved={"garrick-graph-mode-Meetings": "core"})[1]
+        self.assertEqual(["People"], core["pressed"])                           # its hubs
+        self.assertEqual(["Dana Whitlock", "José Pérez"], core["drawn"])
+        every = self.run_js(("pick", "Meetings"), saved={"garrick-graph-mode-Meetings": "all"})[1]
+        self.assertIn("Domains", every["pressed"])                              # Everything: every kind, those from the pages too
+        small = self.run_js(("pick", "Meetings"))[1]
+        self.assertEqual(["Meetings", "People"], sorted(small["pressed"]))     # a small place: the model's kinds
+        self.assertNotIn("Domains", small["pressed"])                           # a kind from the pages starts hidden
+        self.assertIn("Domains", small["offered"])
+
+    def test_the_box_finds_by_name_whatever_the_accents(self):
+        out = self.run_js(("pick", "Meetings"), ("type", "j"), ("type", "jose"), ("key", "Enter"), ("type", "ports"),
+                          ("more",), ("key", "Escape"), ("pick", "Knowledge"))
+        self.assertEqual("", out[2]["more"])                                    # one letter finds nothing
+        self.assertEqual("José Pérez", out[4]["card"])                          # Enter opens the first match
+        self.assertEqual("1 more in Domains", out[5]["more"])                   # a match in a kind not shown
+        self.assertIn("Domains", out[6]["pressed"])                             # and the count shows it
+        self.assertIn("Ports domain", out[6]["drawn"])
+        self.assertEqual("", out[6]["more"])
+        self.assertEqual("", out[7]["box"])                                     # Escape clears
+        out = self.run_js(("pick", "Knowledge"), ("type", "orvi"), ("key", "Enter"), ("type", "ORVIETO"), ("pick", "Work"))
+        self.assertEqual("Örviéto Labs", out[3]["card"])
+        self.assertEqual("", out[5]["box"])                                     # a change of place clears it
+
+    def test_a_linked_note_not_drawn_brings_its_kind(self):
+        self.assertIn("if(!ks[m.k]){ks[m.k]=1;keep()}", status.GRAPH_JS)
+        self.assertIn("if(m.z!==zsel){if(!cardZone(m.z))held=true;show(m.z)}", status.GRAPH_JS)
+
+
 # FOLLOW_JS against a page status.py wrote, with the zones' boxes made up
 # rather than laid out, a clock that moves only when told, and a graph that
 # records what it is asked to follow: the steps scroll, hover, click, wait or
@@ -1825,7 +2029,7 @@ class TestExploreFollowsTheZoneInView(StatusCase):
         self.assertEqual(["Work"], out["followed"])                             # Studio went by
         out = self.follow(self.STACKED, ("scroll", 650), ("wait", 120), ("scroll", 0), ("wait", 1000))
         self.assertEqual([], out["followed"])                                   # back where it started: nothing changes
-        out = self.follow(self.STACKED, ("wait", 1000), ("scroll", 40), ("wait", 1000), place="*")
+        out = self.follow(self.STACKED, ("wait", 1000), ("scroll", 40), ("wait", 1000), place="Meetings")
         self.assertEqual([], out["followed"])                                   # the zone in view as the page opens is not a change
 
     def test_side_by_side_a_hover_or_an_open_sets_it(self):
@@ -1874,14 +2078,18 @@ class TestExploreFollowsTheZoneInView(StatusCase):
         reload = self.places(saved={"garrick-graph-place": "Studio"})[0]
         self.assertEqual(("Studio", ["Studio", "Personal", "Work"]), (reload["place"], reload["order"]))   # the pick, not the zone last followed
 
-    def test_all_or_a_wiki_pauses_following_until_the_page_reloads(self):
-        for pick in ("*", "Meetings"):
-            with self.subTest(pick=pick):
-                out = self.places(("pick", pick), ("follow", "Studio"), ("pick", "Personal"), ("follow", "Studio"))
-                self.assertEqual((False, pick), (out[2]["ret"], out[2]["place"]))
-                self.assertEqual((False, "Personal"), (out[4]["ret"], out[4]["place"]))
-                again = self.places(("follow", "Studio"), saved={"garrick-graph-place": pick})
-                self.assertEqual((True, "Studio", pick), (again[1]["ret"], again[1]["place"], again[1]["stored"]))
+    def test_a_wiki_pauses_following_until_the_page_reloads(self):
+        out = self.places(("pick", "Meetings"), ("follow", "Studio"), ("pick", "Personal"), ("follow", "Studio"))
+        self.assertEqual((False, "Meetings"), (out[2]["ret"], out[2]["place"]))
+        self.assertEqual((False, "Personal"), (out[4]["ret"], out[4]["place"]))
+        again = self.places(("follow", "Studio"), saved={"garrick-graph-place": "Meetings"})
+        self.assertEqual((True, "Studio", "Meetings"), (again[1]["ret"], again[1]["place"], again[1]["stored"]))
+
+    def test_a_stored_all_or_a_place_gone_opens_on_work(self):
+        for saved in ("*", "Gone"):                                             # All went in #250
+            with self.subTest(saved=saved):
+                out = self.places(saved={"garrick-graph-place": saved})[0]
+                self.assertEqual(("Work", "Work", saved), (out["place"], out["shows"], out["stored"]))
 
 
 class TestSettingsFromTheMenu(unittest.TestCase):

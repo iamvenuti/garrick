@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **Explore shows one place at a time, filters by kind from its legend, and finds a note by name** ([#250](https://github.com/iamvenuti/garrick/issues/250)). The place drop-down lists the zones under *Zones*, Work first, and the wikis under *Wikis*, and has no *All*: zones never link into each other, so it drew separate islands with too many notes to read. A browser that stored *All*, or a place no longer there, opens on Work, or on the first zone when there is no Work, and the Mac app's menu does the same. The two view buttons, *Projects and threads* (*People*, *Concepts and entities* on a wiki) and *Everything*, are gone: each kind in the legend is a button that shows or hides it, so Knowledge can show its entities without its concepts, or its concepts with their sources. The kinds shown are kept for each place, and a place opens as its old view was left. A `type:` that Garrick's model does not know, shared by at least three pages of one wiki, is a kind of its own, named after the type (*Domains* for `type: domain`), coloured from six new colours kept from one build to the next, and hidden until you show it; a page whose type names a kind the model has, such as `type: entity` in Meetings, takes that kind in any wiki. *Other notes* keeps only untyped pages and rarer types. *Find a note*, a box on the graph's bar, matches note names from the second letter, ignoring case and accents: the matches keep their colour and names while the rest dim, `Enter` centres and opens each in turn, a match in a hidden kind is counted beside the box with one click to show it, and `Esc` clears it. A linked note on a card that the graph does not draw now shows its kind, or its place, when clicked.
+
 ## [0.46.0] - 2026-10-29
 
 The band is two lines and shows how full the context is, While you wait is parked as a preview, and a page a tool rebuilds keeps the app's flags.

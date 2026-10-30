@@ -178,7 +178,7 @@ class TestGraph(StatusCase):
         rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
         self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
         self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
-        self.assertIn('<i style="background:%s"></i>Mail</span>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
+        self.assertIn('<i style="background:%s"></i>Mail</button>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
 
     def test_inboxes_raw_and_catalogues_stay_out(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Note.md", "# A dropped note\n")
@@ -217,14 +217,25 @@ class TestGraph(StatusCase):
         self.assertFalse({"Todo", "AGENTS"} & names)
         self.assertNotIn("open actions", [label for _, label in data["kinds"]])
 
-    def test_legend_lists_only_drawn_kinds(self):
+    def test_the_legend_is_the_filter(self):
         html = self.page()
         data = graph_data(html)
         self.assertEqual(sorted({n["k"] for n in data["nodes"]}), [i for i, _ in data["kinds"]])
         legend = html[html.index('class="legend glegend"'):]
         legend = legend[:legend.index("</div>")]
-        self.assertEqual([str(i) for i, _ in data["kinds"]], re.findall(r'data-k="(\d+)"', legend))
-        self.assertIn("drawn[s.dataset.k]", status.GRAPH_JS)    # and in the browser, only what the view draws
+        # every kind a toggle, named as a filter reads (#250)
+        self.assertEqual([str(i) for i, _ in data["kinds"]], re.findall(r'<button type="button" data-k="(\d+)" aria-pressed="true">', legend))
+        self.assertIn("></i>Threads</button>", legend)
+        self.assertIn("></i>Other notes</button>", legend)
+        self.assertIn("Next action late</span>", legend)                   # states, not kinds: no toggle
+        self.assertIn("Parked</span>", legend)
+        self.assertNotIn("data-m=", html)                                   # the two view buttons are gone
+        self.assertNotIn("gseg", html)
+        js = status.GRAPH_JS
+        self.assertIn("s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false')", js)   # every kind the place has
+        self.assertIn("if(ks[k])delete ks[k];else ks[k]=1;keep();redo()", js)
+        self.assertIn("st.set('garrick-graph-kinds-'+zsel,", js)            # kept for each place
+        self.assertNotIn("mode='all'", js)
 
     def test_parked_threads_and_their_notes_are_marked(self):
         sizing = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing"
@@ -266,13 +277,19 @@ class TestGraph(StatusCase):
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
 
     def test_a_place_at_a_time_work_first(self):
+        write(self.root / "Zones" / "Personal" / "House" / "House.md", project_hub("Personal", "House", ""))
         html = self.page()
         bar = html[html.index('<select class="gzsel" aria-label="Place">'):html.index("</select>")]
         places = re.findall(r'<option value="([^"]*)"', bar)                      # a drop-down, not a row of buttons
         self.assertEqual("Work", places[0])
-        self.assertEqual("*", places[-1])                                         # and All, last
+        self.assertNotIn("*", places)                                             # no All (#250)
         self.assertIn("Meetings", places)                                         # a wiki is a place too
-        self.assertIn("(zsel==='*'||n.z===zsel)", status.GRAPH_JS)
+        groups = re.findall(r'<optgroup label="([^"]+)">(.*?)</optgroup>', bar)
+        self.assertEqual(["Zones", "Wikis"], [g for g, _ in groups])             # zones, then wikis, each under its heading
+        self.assertEqual(["Work", "Personal"], re.findall(r'value="([^"]*)"', groups[0][1]))
+        self.assertEqual({"Meetings", "Knowledge"}, set(re.findall(r'value="([^"]*)"', groups[1][1])))
+        self.assertIn("n.z===zsel}", status.GRAPH_JS)
+        self.assertNotIn("'*'", status.GRAPH_JS)
         graph = html[html.index('id="graph"'):html.index("</details>", html.index('id="graph"'))]
         self.assertLess(graph.index("glegend"), graph.index('id="gsum"'))          # the summary sits under the legend
         self.assertIn("<h2>Explore</h2>", graph)                                   # the graph sits behind Explore
@@ -292,9 +309,9 @@ class TestGraph(StatusCase):
     def test_names_do_not_cover_each_other(self):
         js = status.GRAPH_JS
         # Placed in order: the note in focus, its links, projects, threads, the rest.
-        self.assertIn("var w=n===f?0:f&&near[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1", js)
+        self.assertIn("var w=n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1", js)   # a match found as its links are (#250)
         self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
-        self.assertIn("if(got<0&&(n===f||n.h)){got=0", js)            # the focus and projects are never left out
+        self.assertIn("if(got<0&&(n===f||n.h||few&&M[n.i])){got=0", js)   # the focus, projects and a few matches are never left out
         self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top
 
     def test_large_workspaces_stay_quick(self):

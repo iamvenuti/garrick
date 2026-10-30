@@ -2368,24 +2368,62 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("person", "person", "#13a38a"), ("source", "source", "#7c9a2d"), ("concept", "concept", "#8c6d1f"),
          ("entity", "entity", "#4b6584")]
 
-# Each place's kinds come from Garrick's own model of it, and nothing else: a
-# page whose type and folder the model does not know is drawn as other notes.
-# The core view of a place is its hubs: a zone's projects and threads, the
-# people in Meetings, the concepts and entities in Knowledge.
-CORE_LABEL = {"Meetings": "People", "Knowledge": "Concepts and entities"}
+# Each place's kinds come from Garrick's own model of it first: a page whose
+# type names a kind of the model's wikis takes it in any wiki, so a Meetings
+# page of `type: entity` is an entity. A type the model does not know, shared
+# by at least KIND_FROM_PAGES pages of one wiki, is a kind of its own, named
+# from the type (`domain`, Domains), coloured from PAGE_COLOURS (#250). Any
+# other page is drawn as other notes. A place opens on its hubs: a zone's
+# projects and threads, the people in Meetings, the concepts and entities in
+# any other wiki.
+WIKI_KINDS = ("meeting", "mail", "person", "source", "concept", "entity")
+HUBS = {"": ("project", "thread"), "Meetings": ("person",), "*": ("concept", "entity")}
+KIND_FROM_PAGES = 3
+# Colours for the kinds found from pages, after KINDS's: none near a shipped
+# kind's, amber, red or another of these, and each at least 2.9 to 1 against
+# the card in both themes. A type keeps the colour its name hashes to, or the
+# next one free, so a kind does not change colour when another one comes.
+PAGE_COLOURS = ("#00a3c4", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
+# How the legend names each kind: plural, as a filter reads (#250).
+KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", "meeting": "Meetings", "mail": "Mail",
+             "person": "People", "source": "Sources", "concept": "Concepts", "entity": "Entities"}
 WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
 
 
 def wiki_kind(wiki: str, kind: str, parts: tuple, source_type: str = "source") -> str:
     if wiki == "Meetings":
-        return kind if kind in ("meeting", "mail", "person") else "note"
+        return kind if kind in WIKI_KINDS else "note"
     if kind in (source_type, "source") and (not parts or parts[0] == "sources"):
         return "source"
     if kind == "concept" or (parts and parts[0] == "concepts" and kind in ("", "concept")):
         return "concept"
     if kind == "entity" or (parts and parts[0] == "entities" and kind in ("", "entity")):
         return "entity"
-    return "note"
+    return kind if kind in ("meeting", "mail", "person") else "note"
+
+
+def plural(word: str) -> str:
+    """A kind as the legend says it: `domain` reads "Domains", `case study` "Case studies"."""
+    w = KIND_SAID.get(word)
+    if w:
+        return w
+    w = word[:-1] + "ies" if re.search(r"[^aeiou]y$", word) else word + "es" if re.search(r"(s|x|z|ch|sh)$", word) else word + "s"
+    return w[:1].upper() + w[1:]
+
+
+def page_kinds(found: Dict[str, Dict[str, int]]) -> List[Tuple[str, str, str]]:
+    """The kinds found from pages (#250): each type no model kind takes that
+    KIND_FROM_PAGES pages of one wiki share, by name, as KINDS lists them."""
+    types = sorted({t for counts in found.values() for t, c in counts.items() if c >= KIND_FROM_PAGES})
+    taken: Dict[int, str] = {}
+    out = []
+    for t in types:
+        at = int(hashlib.sha1(t.encode("utf-8")).hexdigest(), 16) % len(PAGE_COLOURS)
+        free = [(at + i) % len(PAGE_COLOURS) for i in range(len(PAGE_COLOURS)) if (at + i) % len(PAGE_COLOURS) not in taken]
+        slot = free[0] if free else at            # more kinds than colours: two share one
+        taken[slot] = t
+        out.append((t, t, PAGE_COLOURS[slot]))
+    return out
 
 
 def short_label(title: str, limit: int = WIKI_LABEL) -> str:
@@ -2556,6 +2594,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     by_rel = {r: p for p, r in rel.items()}
     nodes, index = [], {}
     kinds = [k for k, _, _ in KINDS]
+    found: Dict[str, Dict[str, int]] = {}             # wiki -> type no model kind takes -> its pages (#250)
+    typed_at: List[Tuple[int, str, str]] = []
     lib, source_type = workspace_lib(ws), "source"
     try:
         if lib is not None and callable(getattr(lib, "knowledge_schema", None)):
@@ -2573,6 +2613,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         in_zone = root.parent.name == "Zones"
         project = parts[0] if len(parts) > 1 and in_zone else ""
         wiki = root.parent.name if not in_zone else ""
+        typed = kind
         if wiki:
             kind = wiki_kind(wiki, kind, parts, source_type)
         elif kind == "project" or (len(parts) == 2 and parts[1] == parts[0] + ".md"):
@@ -2596,7 +2637,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
         index[path] = len(nodes)
         title = as_text(fm.get("title")).strip() or path.stem
-        hub = kind in ("project", "thread", "person", "concept", "entity")
+        hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
+        typed = re.sub(r"[^\w -]+", "", typed).strip() if wiki and kind == "note" else ""
+        if typed and typed not in kinds:
+            seen = found.setdefault(wiki, {})
+            seen[typed] = seen.get(typed, 0) + 1
+            typed_at.append((len(nodes), wiki, typed))      # a kind of its own once enough pages share it (#250)
         nodes.append({"n": short_label(title) if wiki else title, "k": kinds.index(kind), "z": place, "p": project,
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
@@ -2633,6 +2679,11 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             nodes[-1]["pa"] = [place, path.relative_to(root).as_posix()]   # what Park and Wake act on
         if actions and kind == "thread" and in_zone and folder_thread and path.name == folder_thread + ".md":
             nodes[-1]["oc"] = [place, path.relative_to(root).as_posix()]   # what Open in Claude continues (#180)
+    every = KINDS + page_kinds(found)
+    keys = [k for k, _, _ in every]
+    for i, wiki, typed in typed_at:
+        if found[wiki][typed] >= KIND_FROM_PAGES:
+            nodes[i]["k"] = keys.index(typed)
     by_base: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
@@ -2653,8 +2704,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             if hit is not None and hit != path:
                 a, b = index[path], index[hit]
                 edges.add((min(a, b), max(a, b)))
-    used = sorted({n["k"] for n in nodes if "g" not in n}
-                  | ({kinds.index("note")} if any(n.get("g") == -1 for n in nodes) else set()))
+    used = sorted({n["k"] for n in nodes})        # a kind is a filter even where a vault's groups colour it (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
     # people in the same meeting, two concepts cited by the same source. The
     # third number is how many pages do.
@@ -2674,11 +2724,10 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     counts: Dict[str, int] = {}
     for n in nodes:
         counts[n["z"]] = counts.get(n["z"], 0) + 1
-    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in KINDS], "other": OTHER,
-            "kinds": [[i, KINDS[i][1]] for i in used], "groups": groups,
+    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in every], "other": OTHER,
+            "kinds": [[i, every[i][1]] for i in used], "keys": keys, "known": len(KINDS), "groups": groups,
             "mode": "all" if len(nodes) <= 150 else "core",
             "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
-            "cl": {z: CORE_LABEL[z] for z in wikis if z in CORE_LABEL},
             "pr": {place: root.relative_to(ws).as_posix() for place, root in places},
             "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
 
@@ -5713,7 +5762,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.gwrap canvas.drag{cursor:grabbing}.gwrap canvas.hot{cursor:pointer}
 .gbar{position:absolute;left:10px;top:10px;right:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}
 .gbar.gcorner{left:auto;top:auto;bottom:10px;justify-content:flex-end}.gbar>*{pointer-events:auto}
-.gbar .gseg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px}
+.gbar .gfind{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px;width:150px;min-width:0}
 .gbar button{border:0;background:none;color:var(--ink2);font:inherit;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer}
 .gbar button.on{background:var(--wash);color:var(--ink)}.gbar>button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 9px}
 .gpop,.tcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:12.5px}
@@ -5735,6 +5784,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
 .gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
+.glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
+.glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}.glegend>button.nog>i{background:var(--muted)!important}
+.glegend>button[aria-pressed="false"]>i{background:none!important;border:1.5px solid var(--muted)}
 .live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
@@ -6935,17 +6987,26 @@ var G=JSON.parse(src.textContent),wrap=cv.parentNode,ctx=cv.getContext('2d'),pop
 var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
 var places=[];G.nodes.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z)});
-/* which place the graph shows: the one asked for last, else Work when there is one, else everything */
-var zsel=st.get('garrick-graph-place');if(zsel!=='*'&&places.indexOf(zsel)<0)zsel=places.indexOf('Work')>=0?'Work':'*';
-/* the Threads card leads with the zone the graph shows, the others after it by name; everything, or a wiki, puts them all by name */
+/* which place the graph shows: the one asked for last, else Work when there is one, else the first. All went in #250,
+   so a window that stored it, *, falls back too */
+var zsel=st.get('garrick-graph-place');if(places.indexOf(zsel)<0)zsel=places.indexOf('Work')>=0?'Work':places[0]||'';
+/* the Threads card leads with the zone the graph shows, the others after it by name; a wiki puts them all by name */
 function leadZone(z){var box=document.querySelector('.tview .zones');if(!box)return;
 var all=[].slice.call(box.children).filter(function(d){return d.matches('details.zone[data-zone]')});
 all.sort(function(a,b){var x=a.dataset.zone,y=b.dataset.zone;return (x===z?0:1)-(y===z?0:1)||x.localeCompare(y)});
 all.forEach(function(d){box.appendChild(d)})}leadZone(zsel);
 /* Following the zone in view on the Threads card (#142, FOLLOW_JS) changes the graph and the drop-down for this page
-   only. Picking All or a wiki, which the card cannot be in, pauses it until the page reloads. */
+   only. Picking a wiki, which the card cannot be in, pauses it until the page reloads. */
 var held=false;function cardZone(z){return[].some.call(document.querySelectorAll('.tview .zones>details.zone[data-zone]'),function(d){return d.dataset.zone===z})}
-function modeFor(z){return st.get('garrick-graph-mode-'+z)||(G.modes&&G.modes[z])||G.mode}var mode=modeFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1';
+/* The kinds shown, kept for each place (#250): the ones last chosen in its legend; else as the view #250 replaced
+   was left, every kind for Everything and the hubs for the other; else the hubs, or every kind the model knows where
+   the place is small (G.modes) or has no hub. A kind found from the pages starts hidden. */
+function kindsFor(z){var o={},s=st.get('garrick-graph-kinds-'+z),m=st.get('garrick-graph-mode-'+z),all={},hub={},model={},k;
+G.nodes.forEach(function(n){if(n.z!==z)return;all[n.k]=1;if(n.c)hub[n.k]=1;if(n.k<G.known)model[n.k]=1});
+if(s)try{JSON.parse(s).forEach(function(x){var i=G.keys.indexOf(x);if(i>=0)o[i]=1});return o}catch(e){}
+var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub;for(k in pick)return pick;for(k in model)return model;return all}
+function keep(){st.set('garrick-graph-kinds-'+zsel,JSON.stringify(Object.keys(ks).map(function(k){return G.keys[k]})))}
+var ks=kindsFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1',q='',mt={},hits=[],hi=-1,more={};
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -6981,15 +7042,17 @@ function anchors(){var A=spots(V,E);V.forEach(function(n){var a=A[n.z]||[0,0];n.
 function zmark(zs){var o=zs.options[zs.selectedIndex],w=zs.parentNode,on=false;zs.className='gzsel'+(o&&o.className?' '+o.className:'');
 w.querySelectorAll('.gzi').forEach(function(i){i.hidden=i.dataset.z!==zs.value;on=on||!i.hidden});w.classList.toggle('hasi',on)}
 /* parked threads and projects stay off the graph unless asked for, as in the lists */
-function visible(n){return(mode==='all'||n.c)&&(parked||!n.s)&&(zsel==='*'||n.z===zsel)}
-function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(mode==='all'?G.edges:G.edges.concat(G.ce||[])).filter(function(e){return on[e[0]]&&on[e[1]]});
+function visible(n){return!!ks[n.k]&&(parked||!n.s)&&n.z===zsel}
+/* With only hubs drawn, two are joined where one page links both (ce, from graph()); with any other kind drawn, the
+   lines are the notes' own links (#250) */
+function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(V.every(function(n){return n.c})?G.edges.concat(G.ce||[]):G.edges).filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
-var drawn={},dg={};V.forEach(function(n){if(n.g>=0)dg[n.g]=1;else drawn[n.g===-1?OTHERK:n.k]=1});
-document.querySelectorAll('.glegend [data-k]').forEach(function(s){s.hidden=!drawn[s.dataset.k]});
+/* the legend offers every kind the place has, pressed when shown, and keys the colour groups drawn */
+var have={},dg={},grp=false;N.forEach(function(n){if(n.z===zsel&&(parked||!n.s)){have[n.k]=1;if(n.g!=null)grp=true}});V.forEach(function(n){if(n.g!=null)dg[n.g]=1});
+document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false');s.classList.toggle('nog',grp)});
 document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mode);if(b.dataset.m==='core')b.textContent=(G.cl&&G.cl[zsel])||'Projects and threads'});
 var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
-var sum=document.getElementById('gsum');if(sum)sum.textContent=(zsel==='*'?'Every zone and wiki':zsel)+' · '+V.length+' notes, '+E.length+' links · names only'}
+var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+' notes, '+E.length+' links · names only';seek()}
 /* Every note pushes every other away, which costs the square of the notes a
    step. Past BIG notes a quadtree stands in for each far group by its centre,
    which keeps a step near n log n; near notes still push one by one. */
@@ -7035,23 +7098,22 @@ if(now){scale=k;px=x;py=y;return false}var going=Math.abs(k-scale)>scale*.001||M
 scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08;return going}
 function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
 /* a note in a vault with colour groups of its own takes its group's colour, or grey; elsewhere its kind's */
-var OTHERK=G.colors.indexOf(G.other);
 function fill(n){return n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:n.g===-1?G.other:G.colors[n.k]||C['--muted']}
 /* a ring for a thread whose own next action is late (lt), never for age alone */
 function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
-var f=sel||hover,near={};if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
+var f=sel||hover,near={},M=q?mt:null;if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
 var P={};V.forEach(function(n){P[n.i]=toScreen(n)});
 E.forEach(function(e){var a=P[e[0]],b=P[e[1]],hot=f&&(e[0]===f.i||e[1]===f.i);
-ctx.globalAlpha=f&&!hot?.12:(N[e[0]].s||N[e[1]].s)?.25:.55;ctx.strokeStyle=hot?C['--accent']:C['--base'];ctx.lineWidth=hot?1.6:1;
+ctx.globalAlpha=f&&!hot||!f&&M&&!(M[e[0]]&&M[e[1]])?.12:(N[e[0]].s||N[e[1]].s)?.25:.55;ctx.strokeStyle=hot?C['--accent']:C['--base'];ctx.lineWidth=hot?1.6:1;
 ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()});
 var zs=Math.max(.7,Math.min(1.6,scale));
-V.forEach(function(n){var p=P[n.i],r=n.r*zs;ctx.globalAlpha=f&&!near[n.i]?.15:n.s?.3:1;
+V.forEach(function(n){var p=P[n.i],r=n.r*zs;ctx.globalAlpha=f&&!near[n.i]||!f&&M&&!M[n.i]?.15:n.s?.3:1;
 ctx.fillStyle=fill(n);ctx.beginPath();ctx.arc(p[0],p[1],r,0,6.283);ctx.fill();
 var rc=ring(n);if(rc){ctx.strokeStyle=rc;ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(p[0],p[1],r+3.2,0,6.283);ctx.stroke()}
 if(n===sel){ctx.strokeStyle=C['--ink'];ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+(rc?6.4:3),0,6.283);ctx.stroke()}});
 ctx.textAlign='left';ctx.textBaseline='top';ctx.lineJoin='round';
-names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=f&&!near[n.i]?.2:n.s?.45:1;ctx.font=l.font;
+names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=f&&!near[n.i]||!f&&M&&!M[n.i]?.2:n.s?.45:1;ctx.font=l.font;
 ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,l.x,l.y);ctx.fillStyle=l.big?C['--ink']:C['--ink2'];ctx.fillText(n.n,l.x,l.y)});
 ctx.globalAlpha=1}
 /* Which names to draw, and where. They are placed most wanted first: the note
@@ -7062,8 +7124,8 @@ ctx.globalAlpha=1}
    had while that stays free, so names do not hop as the graph moves. The
    list comes back least wanted first, so the most wanted is drawn on top. */
 var FONT='system-ui,-apple-system,sans-serif';
-function names(P,f,near,zs){var want=[],out=[],cells={};
-V.forEach(function(n){var w=n===f?0:f&&near[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1;if(w<0)n.lp=-1;else want.push([w,n])});
+function names(P,f,near,zs){var want=[],out=[],cells={},M=q?mt:null,few=M&&hits.length<=20;
+V.forEach(function(n){var w=n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1;if(w<0)n.lp=-1;else want.push([w,n])});
 want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
 function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
 function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}
@@ -7073,7 +7135,7 @@ var w=lw[font],h=big?14:13,r=n.r*zs+(ring(n)?6:3),at=[[p[0]-w/2,p[1]+r+1],[p[0]-
 tries=n.lp>=0?[n.lp,0,1,2,3]:[0,1,2,3],pad=n.lp>=0?-1:1,got=-1,box=null;
 for(var i=0;i<tries.length&&got<0;i++){var x=Math.max(2,Math.min(W-w-2,at[tries[i]][0])),y=at[tries[i]][1],b=[x-2-pad,y-pad,x+w+2+pad,y+h+pad];
 if(free(b)){got=tries[i];box=[x,y,b]}}
-if(got<0&&(n===f||n.h)){got=0;box=[Math.max(2,Math.min(W-w-2,at[0][0])),at[0][1]];box.push([box[0]-2,box[1],box[0]+w+2,box[1]+h])}
+if(got<0&&(n===f||n.h||few&&M[n.i])){got=0;box=[Math.max(2,Math.min(W-w-2,at[0][0])),at[0][1]];box.push([box[0]-2,box[1],box[0]+w+2,box[1]+h])}
 n.lp=got;if(got<0)return;each(box[2],function(k){(cells[k]||(cells[k]=[])).push(box[2])});out.push({n:n,x:box[0],y:box[1],font:font,big:big})});
 return out.reverse()}
 /* One frame. The loop runs only while something moves: the layout settling,
@@ -7117,21 +7179,37 @@ function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];ret
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;
 var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
-var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+(m.s&&!parked?'parked':'everything')+'</small>')+'</button>'}).join('');
+var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true;wake()}
 function glide(tx,ty){var sx=px,sy=py,t0=performance.now();glides++;wake();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g);else glides--})(t0)}
 pop.addEventListener('click',function(e){if(e.target.closest('.x'))return close();
-var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(!(mode==='all'||m.c)){mode='all';st.set('garrick-graph-mode-'+zsel,mode)}
+/* a linked note not drawn is shown: its place, as following shows one, and its kind (#250) */
+var b=e.target.closest('button[data-i]');if(b){var m=N[+b.dataset.i];if(!visible(m)){if(m.z!==zsel){if(!cardZone(m.z))held=true;show(m.z)}if(!ks[m.k]){ks[m.k]=1;keep()}
 if(m.s&&!parked){parked=true;st.set('garrick-graph-parked','1');parkBtn()}rebuild();alpha=Math.max(alpha,.3)}select(m,true)}});
 /* Escape closes the card, unless a preview is open over it: that Escape is the preview's (NOTE_JS) */
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sel&&!(window.GarrickNote&&GarrickNote.shown()))close()});
-function show(z){zsel=z;mode=modeFor(z);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
+function redo(){if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}
+function show(z){zsel=z;ks=kindsFor(z);if(fq)fq.value='';q='';hi=-1;redo()}
 /* a pick is stored, leads the card (#72) and is what a reload opens on */
 var zsl=document.querySelector('.gzsel');if(zsl)zsl.onchange=function(){var z=zsl.value;st.set('garrick-graph-place',z);leadZone(z);if(!cardZone(z))held=true;show(z)};
-document.querySelectorAll('.gseg:not(.gzone) button').forEach(function(b){b.onclick=function(){mode=b.dataset.m;st.set('garrick-graph-mode-'+zsel,mode);if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()}});
+/* the legend is the filter: a kind's button shows or hides it, kept for the place (#250) */
+document.querySelectorAll('.glegend [data-k]').forEach(function(b){b.onclick=function(){var k=+b.dataset.k;if(ks[k])delete ks[k];else ks[k]=1;keep();redo()}});
+/* Find a note (#250): from the second letter, the notes whose name holds what is typed, whatever its case and accents,
+   keep their colour and their names, and the rest dim. Enter goes to each in turn and opens its card; Escape clears.
+   A match in a kind not shown is counted beside the box, and the count shows that kind. Nothing is stored. */
+function fold(s){return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
+function kindSaid(k){var b=document.querySelector('.glegend [data-k="'+k+'"]');return b&&b.textContent||G.keys[k]}
+function seek(){mt={};hits=[];more={};if(q)N.forEach(function(n){if(n.z!==zsel||!(parked||!n.s)||fold(n.N||n.n).indexOf(q)<0)return;if(ks[n.k]){mt[n.i]=1;hits.push(n)}else more[n.k]=(more[n.k]||0)+1});
+hits.sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||(a.N||a.n).localeCompare(b.N||b.n)});
+var mk=Object.keys(more),c=0;mk.forEach(function(k){c+=more[k]});if(fm){fm.hidden=!c;fm.textContent=c?c+' more in '+(mk.length===1?kindSaid(mk[0]):mk.length+' hidden kinds'):''}wake()}
+var fq=document.getElementById('gfind'),fm=document.getElementById('gfmore');
+if(fq){fq.value='';fq.addEventListener('input',function(){var v=fold(fq.value.trim());q=v.length>=2?v:'';hi=-1;seek()});
+fq.addEventListener('keydown',function(e){if(e.isComposing)return;if(e.key==='Enter'){e.preventDefault();if(hits.length){hi=(hi+1)%hits.length;select(hits[hi],true)}}
+else if(e.key==='Escape'&&(fq.value||q)){e.preventDefault();e.stopPropagation();fq.value='';q='';hi=-1;seek()}})}
+if(fm)fm.onclick=function(){Object.keys(more).forEach(function(k){ks[k]=1});keep();redo()};
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};
@@ -7626,23 +7704,31 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        legend = "".join('<span data-k="%d"><i style="background:%s"></i>%s</span>' % (i, GR["colors"][i], E({"project": "Projects"}.get(label, label[:1].upper() + label[1:]))) for i, label in GR["kinds"])
+        # each kind a toggle that shows or hides it, and a vault's colour groups a key beside them (#250)
+        legend = "".join('<button type="button" data-k="%d" aria-pressed="true"><i style="background:%s"></i>%s</button>'
+                         % (i, GR["colors"][i], E(plural(GR["keys"][i]))) for i, _ in GR["kinds"])
         legend += "".join('<span data-g="%d"><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
                           for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
+        if any(n.get("g") == -1 for n in GR["nodes"]):
+            legend += '<span data-g="-1"><i style="background:%s"></i>No group</span>' % GR["other"]
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action late'
                   '</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
-        switch = "".join('<option value="%s"%s>%s</option>' % (E(z), zone_attr(z, ZS), E(z)) for z in places) + '<option value="*">All</option>'
+        # one place at a time, the zones and the wikis under a heading each (#250)
+        zoned = [z for z in places if GR["pr"].get(z, "").startswith("Zones/")]
+        switch = "".join('<optgroup label="%s">%s</optgroup>' % (head, "".join(
+            '<option value="%s"%s>%s</option>' % (E(z), zone_attr(z, ZS), E(z)) for z in group))
+            for head, group in (("Zones", zoned), ("Wikis", [z for z in places if z not in zoned])) if group)
         # a select cannot draw an icon in its options, so the chosen place's icon sits over its left edge
         marks = "".join('<span class="gzi%s" data-z="%s" hidden>%s</span>' % (zone_class(z, ZS), E(z), zone_icon(ZS[z]["icon"]))
                         for z in places if ZS.get(z, {}).get("icon"))
         graph_card = card("graph", "Explore", "",
                           '<div class="gwrap"><canvas id="gcv" role="img" aria-label="Graph of the notes in a zone or wiki, and the links between them"></canvas>'
                           '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
-                          '<div class="gseg" role="group" aria-label="Notes shown"><button data-m="core">Projects and threads</button>'
-                          '<button data-m="all">Everything</button></div><button id="gpark" type="button"></button></div>'
+                          '<input type="search" class="gfind" id="gfind" placeholder="Find a note" aria-label="Find a note on the graph" autocomplete="off" spellcheck="false">'
+                          '<button id="gfmore" type="button" hidden></button><button id="gpark" type="button"></button></div>'
                           '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data),

@@ -718,11 +718,19 @@ WIKI_QUESTIONS = "questions"
 
 
 def wiki_questions(wiki: Path) -> List[Path]:
-    """The question files of one wiki, as a Needs you folder holds them."""
+    """The question files of one wiki, at any depth, found as meeting pages
+    are (discover()): every `.md` under `questions/`, whatever its name, so
+    a question moved into a subfolder or renamed is still read by the walls."""
     folder = wiki / WIKI_QUESTIONS
     if not folder.is_dir():
         return []
-    return sorted(f for f in folder.glob("*.md") if f.is_file() and not f.name.startswith((".", "_")))
+    return sorted(f for f in folder.rglob("*.md") if f.is_file())
+
+
+def meeting_noun(ws: Workspace, page: Path, kind: str = "meeting") -> str:
+    """How a finding names a file the walls read in the Meetings wiki: a
+    question for a question file (#224), `kind` for a meeting page."""
+    return "question" if page in ws.meeting_questions else kind
 
 
 # ---------------------------------------------------------------------------
@@ -2623,8 +2631,8 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
                 b = next(strip_tag(t) for t in as_list(ws.meetings[hits[0]].get("parties"))
                          if any(walled(ws.context, a, strip_tag(t)) for a in tags))
                 out.append(Finding(WARNING, "questions" if question else "meetings", rel(ws, page),
-                                   "cites %s, a meeting with %s, but is written for %s, across a wall"
-                                   % (hits[0].stem, b, ", ".join(sorted(tags))),
+                                   "cites %s, a %s with %s, but is written for %s, across a wall"
+                                   % (hits[0].stem, meeting_noun(ws, hits[0]), b, ", ".join(sorted(tags))),
                                    "A Meetings question cites a meeting across a wall" if question
                                    else "A page for one party cites a meeting across a wall"))
                 break
@@ -2670,10 +2678,13 @@ def check_people(ws: Workspace) -> List[Finding]:
         heard = meeting_wording(ws, body_of(text), common, page)
         if heard:
             more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
+            asked = heard[0] in ws.meeting_questions
             out.append(Finding(WARNING, "people", r,
-                               "repeats eight or more words from meeting %s%s; a person page is read on both sides of "
-                               "every wall, so it says who they are and nothing learned in a meeting" % (heard[0].stem, more),
-                               "The page for %s repeats what was said in a meeting" % name))
+                               "repeats eight or more words from %s %s%s; a person page is read on both sides of "
+                               "every wall, so it says who they are and nothing learned in a meeting"
+                               % (meeting_noun(ws, heard[0]), heard[0].stem, more),
+                               "The page for %s repeats a Meetings question" % name if asked
+                               else "The page for %s repeats what was said in a meeting" % name))
     return out
 
 
@@ -3459,26 +3470,30 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             mtags = [strip_tag(t) for t in as_list(mfm.get("parties"))]
             if not mtags or not mfm.get("zone"):
                 reported.add(page)
+                noun = meeting_noun(ws, page, "meeting page")
                 out.append(Finding(ERROR, "walls", r,
-                                   "uses %s, an unfinished meeting page (no zone or parties)" % page.stem,
-                                   "A note in %s uses an unfinished meeting page" % where))
+                                   "uses %s, an unfinished %s (no zone or parties)" % (page.stem, noun),
+                                   "A note in %s uses an unfinished %s" % (where, noun)))
                 continue
             if not tags:
                 out.append(Finding(ERROR, "walls", r,
-                                   "uses meeting %s, but the project has no party to check the walls against" % page.stem,
-                                   "A note in %s uses a meeting before the project has a party" % where))
+                                   "uses %s %s, but the project has no party to check the walls against"
+                                   % (meeting_noun(ws, page), page.stem),
+                                   "A note in %s uses a %s before the project has a party" % (where, meeting_noun(ws, page))))
                 continue
             hits = sorted((a, b) for a in tags for b in mtags if walled(ws.context, a, b))
             if hits:
                 a, b = hits[0]
                 reported |= {b, page}
                 out.append(Finding(ERROR, "walls", r,
-                                   "links %s, a meeting with %s; a wall stands between %s and %s" % (written, b, a, b),
-                                   "A note in %s uses a meeting with %s" % (where, party_name(ws, b))))
+                                   "links %s, a %s with %s; a wall stands between %s and %s"
+                                   % (written, meeting_noun(ws, page), b, a, b),
+                                   "A note in %s uses a %s with %s" % (where, meeting_noun(ws, page), party_name(ws, b))))
             elif mfm.get("zone") != zone:
                 out.append(Finding(WARNING, "walls", r,
-                                   "uses meeting %s from zone %s; cross-zone work happens only when asked" % (page.stem, mfm.get("zone")),
-                                   "A note in %s uses a meeting from the %s zone" % (where, mfm.get("zone"))))
+                                   "uses %s %s from zone %s; cross-zone work happens only when asked"
+                                   % (meeting_noun(ws, page), page.stem, mfm.get("zone")),
+                                   "A note in %s uses a %s from the %s zone" % (where, meeting_noun(ws, page), mfm.get("zone"))))
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
@@ -3556,16 +3571,18 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             continue
         mtags = [strip_tag(m) for m in as_list(ws.meetings[page].get("parties"))]
         a, b = sorted((a, m) for a in tags for m in mtags if walled(ws.context, a, m))[0]
+        noun = meeting_noun(ws, page)
         out.append(Finding(ERROR, "walls", r,
-                           "repeats wording from meeting %s, a meeting with %s; a wall stands between %s and %s"
-                           % (page.stem, b, a, b),
-                           "A note in %s quotes a meeting with %s" % (where, party_name(ws, b))))
+                           "repeats wording from %s %s, a %s with %s; a wall stands between %s and %s"
+                           % (noun, page.stem, noun, b, a, b),
+                           "A note in %s quotes a %s with %s" % (where, noun, party_name(ws, b))))
     for page in sorted(unfinished):
         if page in reported:
             continue
+        noun = meeting_noun(ws, page, "meeting page")
         out.append(Finding(ERROR, "walls", r,
-                           "repeats wording from %s, an unfinished meeting page (no zone or parties)" % page.stem,
-                           "A note in %s quotes an unfinished meeting page" % where))
+                           "repeats wording from %s, an unfinished %s (no zone or parties)" % (page.stem, noun),
+                           "A note in %s quotes an unfinished %s" % (where, noun)))
     for other in sorted(copied):
         sources = sorted(copied[other])
         a, b = sorted((a, t) for a in tags for t in index.tags[sources[0]] if walled(ws.context, a, t))[0]
@@ -3840,7 +3857,7 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     folders = meeting_sources(ws.root)
     asked = ws.root / "Wikis" / "Meetings" / WIKI_QUESTIONS
     for path, text in sorted(ws.git_view.items()):
-        question = path.parent == asked and not path.name.startswith((".", "_"))
+        question = asked in path.parents
         if (question or any(f in path.parents for f in folders)) and path.suffix.lower() == ".md":
             then = parse_frontmatter_text(text)
             if path not in ws.meetings:
@@ -4141,11 +4158,13 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
         heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond, path)
         if heard:
             more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
+            noun = meeting_noun(ws, heard[0])
             out.append(Finding(WARNING, "knowledge", rel(ws, path),
-                               "shares eight or more words in a row with meeting %s%s; wording in Knowledge is common to "
-                               "every side, so a conversation copied here crosses every wall. If the meeting quoted "
-                               "this published text, nothing needs changing" % (heard[0].stem, more),
-                               "A Knowledge page repeats a meeting"))
+                               "shares eight or more words in a row with %s %s%s; wording in Knowledge is common to "
+                               "every side, so a conversation copied here crosses every wall. If the %s quoted "
+                               "this published text, nothing needs changing" % (noun, heard[0].stem, more, noun),
+                               "A Knowledge page repeats a Meetings question" if noun == "question"
+                               else "A Knowledge page repeats a meeting"))
     return out
 
 

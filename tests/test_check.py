@@ -929,19 +929,32 @@ class TestWikiQuestions(CheckCase):
         write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n",
                                                                      pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - birch-lease]].\n")
-        self.assertFinds("walls", "error", "a wall stands between acme and birch",
-                         "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+        self.assertFinds("walls", "error", "links [[260312 - birch-lease]], a question with birch; a wall stands "
+                         "between acme and birch", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+
+    def test_a_question_in_a_subfolder_or_named_apart_is_read_too(self):
+        for name in ("answered/260312 - birch-lease.md", "_260312 - birch-lease.md"):
+            with self.subTest(name=name):
+                q = write(self.asked / name, wiki_question("zone: Work\nparties: [birch]\n",
+                                                          pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
+                link = Path(name).stem
+                write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[%s]].\n" % link)
+                self.assertFinds("walls", "error", "links [[%s]], a question with birch" % link,
+                                 "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+                q.unlink()
 
     def test_nor_an_unfinished_one(self):
         write(self.asked / "260312 - floor.md", wiki_question("parties: [acme]\n"))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - floor]].\n")
-        self.assertFinds("walls", "error", "unfinished")
+        hit = self.assertFinds("walls", "error", "uses 260312 - floor, an unfinished question (no zone or parties)")
+        self.assertEqual("A note in Acme Review's Pricing thread uses an unfinished question", hit[0].ear)
 
     def test_wording_from_a_question_across_a_wall_is_refused(self):
         quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
         write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n", body=quote + "."))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
-        self.assertFinds("walls", "error", "repeats wording from meeting 260312 - birch-lease")
+        hit = self.assertFinds("walls", "error", "repeats wording from question 260312 - birch-lease, a question with birch")
+        self.assertEqual("A note in Acme Review's Pricing thread quotes a question with Birch & Co", hit[0].ear)
 
     def test_a_question_on_the_near_side_never_vouches_for_wording(self):
         quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"

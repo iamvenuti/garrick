@@ -416,7 +416,7 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
             item.wall = "%s and %s" % (m.group(1), m.group(2))
         else:
             pair = re.search(r"names both (\S+) and (\S+),", item.message) or \
-                re.search(r"a meeting with (\S+), but is written for ([^,]+), across a wall", item.message)
+                re.search(r"a (?:meeting|question) with (\S+), but is written for ([^,]+), across a wall", item.message)
             zone = CROSS_ZONE_RE.search(item.message)
             if pair:
                 item.wall = "%s and %s" % pair.groups()

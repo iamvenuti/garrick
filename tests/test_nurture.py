@@ -164,6 +164,14 @@ class ClassificationTest(Base):
         self.assertEqual("attribution", item["kind"])
         self.assertEqual("Which zone does 261015 - floor belong to?", item["question"])
 
+    def test_a_meetings_question_citing_across_its_wall_is_a_wall(self):
+        write(self.wikis / "Meetings" / "questions" / "261015 - floor.md",
+              "---\ntype: question\nasked: 2026-10-15\nstatus: open\nzone: Work\nparties: [acme]\n"
+              "pages: [\"[[wiki/sources/260312-birch-kickoff]]\"]\n---\n\n**Acme: which volume floor holds?**\n")
+        _, out = self.run_tool("list")
+        item = self.by_path(out["items"], "questions/261015 - floor.md")[0]
+        self.assertEqual(("wall", "birch and acme"), (item["kind"], item["wall"]))
+
     def test_done_without_an_outcome_is_asked_not_fixed(self):
         text = thread_note("Acme Review", "Pricing", "acme", status="complete")
         write(self.pricing, text)

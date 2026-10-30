@@ -382,6 +382,16 @@ class TestResumeRowsAreNotARun(WallCase):
                           "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"},
                          {f.path for f in self.walls()})
 
+    def test_eight_words_running_on_below_a_cell_are_still_refused(self):
+        """A cell whose words go on to the next line, which Markdown draws as
+        more of the table, is read with that line: a quotation split there
+        is still found (found in review before 0.47.2)."""
+        cell = "the depot floor stays at twelve |\ncrates per verified pallet for every renewal"
+        self.both(acme=self.ACME[:2] + (cell,), birch=self.BIRCH[:2] + (cell,))
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         {f.path for f in self.walls()})
+
     def test_only_a_resume_here_table_is_a_break(self):
         """The same rows under any other heading, or below the rule that
         closes the block, still run from one into the next; a cell is read

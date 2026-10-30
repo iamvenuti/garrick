@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.47.2] - 2026-10-30
+
+A thread a session makes reaches the Threads card in seconds on a large workspace; the band stays drawn after a clear; fading leaves links in code blocks alone; and two walled thread notes no longer fail the wall check on their Resume here rows.
+
 ### Fixed
 
 - The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
@@ -1043,7 +1047,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.2...HEAD
+[0.47.2]: https://github.com/iamvenuti/garrick/compare/v0.47.1...v0.47.2
 [0.47.1]: https://github.com/iamvenuti/garrick/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/iamvenuti/garrick/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/iamvenuti/garrick/compare/v0.45.0...v0.46.0

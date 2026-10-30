@@ -66,7 +66,7 @@ Under **Codex** there is no list of tools to allow or deny, and the deny profile
 
 ### What it spends
 
-Every call adds one line to `~/Library/Logs/garrick-jobs/ledger.jsonl`, beside the jobs' logs: when, which job, assistant, tier, turns, cost, seconds, exit code, and any tool that was refused. The ledger keeps the last 60 days, more than any limit below or the status page needs. Before each call the ledger is read, and the call is refused, with exit 8 and no assistant started, when a limit is reached:
+Every call adds one line to `~/Library/Logs/garrick-jobs/ledger.jsonl`, beside the jobs' logs: when, which job, assistant, tier, turns, cost, seconds, exit code, and any tool that was refused. The ledger keeps the last 60 days, more than any limit below or the Garrick App needs. Before each call the ledger is read, and the call is refused, with exit 8 and no assistant started, when a limit is reached:
 
 | Variable | Default | Limit |
 |---|---|---|
@@ -132,7 +132,7 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 ### Being told
 
-`job.py` tells you when a job fails, when it works again, and when it has gone idle. It tells you on this Mac, as the status page's [Settings › Notifications](status-page.md#settings) says: *a scheduled job fails* switches *Job failed or recovered* on or off, and *Job idle* goes while any notice is on, outside quiet hours. The todo sweep's *Todo summary* follows *the morning Todo summary is ready*, the nightly nurture's line goes as *Todo summary* too, and *Todo refreshed* is never shown. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited for them.
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. It tells you on this Mac, as the Garrick App's [Settings › Notifications](status-page.md#settings) says: *a scheduled job fails* switches *Job failed or recovered* on or off, and *Job idle* goes while any notice is on, outside quiet hours. The todo sweep's *Todo summary* follows *the morning Todo summary is ready*, the nightly nurture's line goes as *Todo summary* too, and *Todo refreshed* is never shown. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited for them.
 
 To send a job's notices somewhere else, such as a chat app or a mail relay, set one of these in its plist. Each keeps working past those settings, for that job alone:
 
@@ -182,7 +182,7 @@ Every setting is an environment variable, set in the job's plist under `Environm
 
 `GARRICK_ENV_FILE` is for a setting you would rather not write into a plist, such as a sign-in token on a Mac nobody logs in to. Lines read as a shell reads them, `export` and quotes allowed. It is read before anything else, so it can hold any setting in the table, `GARRICK_JOBS_DIR` included; a value in the file wins over the plist's. The log names the settings it read, never their values, and warns when other users of the Mac can read the file: `chmod 600` it. On a Mac you sign in to, leave it out: Claude's own sign-in carries the claude.ai connectors, and a token does not.
 
-### What the status page reads
+### What the Garrick App reads
 
 Everything a job leaves is in the jobs folder, named after the job. `python3 System/jobs/job.py status` prints it all as JSON, or for the jobs you name.
 
@@ -206,7 +206,7 @@ Everything a job leaves is in the jobs folder, named after the job. `python3 Sys
 
 ## See them on one page
 
-The [status page](status-page.md) reads the heartbeats, the job logs and the ledger, and shows each job's last two weeks as a strip of days next to everything else in the workspace that needs you.
+The [Garrick App](status-page.md) reads the heartbeats, the job logs and the ledger, and shows each job's last two weeks as a strip of days next to everything else in the workspace that needs you.
 
 ## What you lose without it
 

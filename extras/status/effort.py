@@ -34,7 +34,16 @@ which also prices small background calls the transcript does not record.
 per thread to a ledger file, `effort.jsonl` beside the jobs ledger; run it
 nightly. The page reads that file and the transcripts and takes, for each day
 and thread, the larger of the two, so a day survives its transcripts being
-cleaned up and the page itself still stores nothing.
+cleaned up.
+
+**A transcript unchanged is not read again.** Given a file to keep its
+reading in (`ledger(kept=...)`; the status page keeps it beside itself, as
+status.effort.json), each transcript's size and modification time, and its
+subagents', are kept with what the ledger needs of the session: where it ran,
+the files it wrote and its figures by day. A later reading takes those
+figures again for a transcript whose size and times are the same, so a build
+with nothing changed reads no transcript in full (#260). A change to this
+file or to the machine's time zone starts the record afresh.
 
 Only names, dates, durations and figures leave this file: never a line of a
 transcript. Codex keeps its sessions elsewhere, in another format, and is not
@@ -45,11 +54,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -186,15 +197,66 @@ def _read(path: Path, s: dict, main: bool) -> bool:
 Roots = List[Tuple[Path, Tuple[str, ...]]]     # a folder, and where it sits in the workspace now
 
 
-def sessions(roots: Roots, since: Optional[dt.datetime] = None, folder: Optional[Path] = None) -> Iterable[dict]:
+def summary(s: dict) -> dict:
+    """What the ledger needs of one session, and all a later reading keeps of
+    it: where it ran, each file it wrote with how often, in the order first
+    written, and its figures by day. Never a line of the transcript."""
+    days: Dict[str, dict] = {}
+
+    def row(day: dt.date) -> dict:
+        return days.setdefault(day.isoformat(), dict({"seconds": 0.0, "cost": 0.0, "unpriced": 0, "session": 0},
+                                                     **{t: 0 for t in TOKENS}))
+    times = sorted(s["times"])
+    for a, b in zip(times, times[1:]):
+        gap = (b - a).total_seconds()
+        if 0 < gap <= IDLE:
+            row(b.date())["seconds"] += gap
+    for when, model, u in s["usage"]:
+        r = row(when.date())
+        c = usage_cost(model, u)
+        r["cost"] += c or 0.0
+        r["unpriced"] += c is None
+        for t, n in usage_tokens(u).items():
+            r[t] += n
+    for when in times[:1] + [w for w, _, _ in s["usage"]]:
+        row(when.date())["session"] = 1
+    writes: Dict[str, int] = {}
+    for w in s["writes"]:
+        writes[w] = writes.get(w, 0) + 1
+    return {"id": s["id"], "cwd": s["cwd"], "writes": [[w, n] for w, n in writes.items()], "days": days}
+
+
+def stamp(path: Path) -> Optional[list]:
+    """A transcript as it is on disk: its size and modification time, and
+    each of its subagents' by name. The same stamp, the same session."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    subs = []
+    for sub in sorted((path.parent / path.stem / "subagents").glob("*.jsonl")):
+        try:
+            ss = sub.stat()
+        except OSError:
+            continue
+        subs.append([sub.name, ss.st_size, ss.st_mtime_ns])
+    return [st.st_size, st.st_mtime_ns, subs]
+
+
+def sessions(roots: Roots, since: Optional[dt.datetime] = None, folder: Optional[Path] = None,
+             kept: Optional[Dict[str, list]] = None) -> Iterable[dict]:
     """Every interactive session that ran in one of `roots` or below,
-    touched since `since`."""
+    touched since `since`, as summary() gives it. `kept` maps a transcript's
+    path to [its stamp, its summary or None] as an earlier reading found
+    them: a transcript whose stamp is the same is not read again, and once
+    every session has been given, `kept` holds what this reading found, for
+    the transcripts it looked at and no others. The stamp is taken before
+    the read, so a transcript written meanwhile is read again next time."""
+    seen: Dict[str, list] = {}
     folder = folder or projects_dir()
-    if not folder.is_dir():
-        return
     prefixes = [encoded(r) for r, _ in roots]
     cutoff = since.timestamp() if since else 0
-    for d in sorted(folder.iterdir()):
+    for d in (sorted(folder.iterdir()) if folder.is_dir() else []):
         if not d.is_dir() or not any(d.name == p or d.name.startswith(p + "-") for p in prefixes):
             continue
         for path in sorted(d.glob("*.jsonl")):
@@ -203,9 +265,20 @@ def sessions(roots: Roots, since: Optional[dt.datetime] = None, folder: Optional
                     continue
             except OSError:
                 continue
-            s = read_session(path)
-            if s and s["cwd"]:
-                yield s
+            now = stamp(path) if kept is not None else None
+            was = (kept or {}).get(str(path))
+            if now is not None and isinstance(was, list) and len(was) == 2 and was[0] == now:
+                one = was[1]
+            else:
+                s = read_session(path)
+                one = summary(s) if s and s["cwd"] else None     # a headless run or no folder: kept as nothing
+            if now is not None:
+                seen[str(path)] = [now, one]
+            if one:
+                yield one
+    if kept is not None:
+        kept.clear()
+        kept.update(seen)
 
 
 # --------------------------------------------------------------------------- which thread
@@ -252,7 +325,7 @@ def attribute(s: dict, roots: Roots, single: Dict[Tuple[str, str], str]) -> Opti
     parts = inside(s["cwd"], roots)
     if parts is None:
         return None
-    writes = [w for w in (inside(x, roots) for x in s["writes"]) if w and len(w) >= 4 and w[0] == "Zones"]
+    writes = [w for w in (inside(x, roots) for x, n in s["writes"] for _ in range(n)) if w and len(w) >= 4 and w[0] == "Zones"]
     zone = project = thread = ""
     if len(parts) >= 3 and parts[0] == "Zones" and not parts[2].startswith((".", "_")):
         zone, project = parts[1], parts[2]
@@ -284,31 +357,19 @@ def most(items: list):
 # --------------------------------------------------------------------------- by day
 
 def tally(found: Iterable[dict], roots: Roots, single: Dict[Tuple[str, str], str]) -> Dict[tuple, dict]:
-    """(day, zone, project, thread) -> seconds, cost, tokens, sessions."""
+    """(day, zone, project, thread) -> seconds, cost, tokens, sessions, from
+    sessions as summary() gives them."""
     out: Dict[tuple, dict] = {}
-
-    def row(day: dt.date, key: tuple) -> dict:
-        return out.setdefault((day.isoformat(),) + key, dict({"seconds": 0, "cost": 0.0, "unpriced": 0, "sessions": []},
-                                                             **{t: 0 for t in TOKENS}))
     for s in found:
         key = attribute(s, roots, single)
         if key is None:
             continue
-        times = sorted(s["times"])
-        for a, b in zip(times, times[1:]):
-            gap = (b - a).total_seconds()
-            if 0 < gap <= IDLE:
-                row(b.date(), key)["seconds"] += gap
-        for when, model, u in s["usage"]:
-            r = row(when.date(), key)
-            c = usage_cost(model, u)
-            r["cost"] += c or 0.0
-            r["unpriced"] += c is None
-            for t, n in usage_tokens(u).items():
-                r[t] += n
-        for when in times[:1] + [w for w, _, _ in s["usage"]]:
-            r = row(when.date(), key)
-            if s["id"] not in r["sessions"]:
+        for day, fig in s["days"].items():
+            r = out.setdefault((day,) + key, dict({"seconds": 0, "cost": 0.0, "unpriced": 0, "sessions": []},
+                                                  **{t: 0 for t in TOKENS}))
+            for k in ("seconds", "cost", "unpriced") + TOKENS:
+                r[k] += fig.get(k) or 0
+            if fig.get("session") and s["id"] not in r["sessions"]:
                 r["sessions"].append(s["id"])
     for r in out.values():
         r["seconds"] = round(r["seconds"])
@@ -354,17 +415,64 @@ def single_threads(ws: Path) -> Dict[Tuple[str, str], str]:
     return out
 
 
+def reader() -> str:
+    """This reader and the time zone it puts days in: a reading kept by
+    another is not taken again, since its figures may not be what this one
+    would find."""
+    try:
+        me = Path(__file__).read_bytes()
+    except OSError:
+        me = b""
+    zone = "%s %s %s %s" % (time.tzname, time.timezone, time.altzone, os.environ.get("TZ", ""))
+    return hashlib.sha1(me + zone.encode("utf-8")).hexdigest()
+
+
+def read_kept(path: Path) -> Dict[str, list]:
+    """The transcripts an earlier reading kept in `path`, or {} where it kept
+    none, or another reader did, or the file does not read."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or data.get("reader") != reader() or not isinstance(data.get("transcripts"), dict):
+        return {}
+    return data["transcripts"]
+
+
+def write_kept(path: Path, transcripts: Dict[str, list]) -> None:
+    """Keep what this reading found, whole or not at all: a write that fails
+    leaves the next reading to read everything once."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".")
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"reader": reader(), "transcripts": transcripts}, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, str(path))
+    except (OSError, TypeError, ValueError):
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 def ledger(ws: Path, store: Optional[Path] = None, also: Iterable[Path] = (), days: Optional[int] = None,
            now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
-           moved: Optional[Dict[str, str]] = None) -> Dict[tuple, dict]:
+           moved: Optional[Dict[str, str]] = None, kept: Optional[Path] = None) -> Dict[tuple, dict]:
     """Every day and thread on record: the transcripts there are now, merged
     with the stored ledger. `also` names folders the workspace used to live in,
     read as if they were it; `moved` maps an old folder, absolute or relative
-    to the workspace, to where it is now, relative to the workspace."""
+    to the workspace, to where it is now, relative to the workspace. With
+    `kept`, a file this reading is kept in, a transcript unchanged since the
+    last reading kept there is not read again (#260)."""
     now = now or dt.datetime.now()
     roots = roots_for(ws, also, dict(kept_moves(ws), **(moved or {})))
     since = now - dt.timedelta(days=days) if days else None
-    fresh = tally(sessions(roots, since, folder), roots, single_threads(ws))
+    reads = read_kept(kept) if kept is not None else None
+    before = dict(reads) if reads is not None else None
+    fresh = tally(sessions(roots, since, folder, reads), roots, single_threads(ws))
+    if kept is not None and reads != before:
+        write_kept(kept, reads)
     return merged(fresh, read_store(store))
 
 

@@ -1609,7 +1609,9 @@ def resume_block(text: str) -> List[str]:
 
 # A Resume here block as the thread template leaves it: its date and table
 # cells still hold the template's <angle-bracket> prompts.
-RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(Live artifact|Rebuild with|Next action|Keep in mind|Waiting on|Deadline)\s*\|\s*<")
+# The labels of its table's rows, as the thread template ships them.
+RESUME_LABELS = ("Live artifact", "Rebuild with", "Next action", "Keep in mind", "Waiting on", "Deadline")
+RESUME_PROMPT_RE = re.compile(r"^\s*\|\s*(%s)\s*\|\s*<" % "|".join(re.escape(label) for label in RESUME_LABELS))
 RESUME_DATE_PROMPT = "**Where it stands, <"
 
 
@@ -2828,6 +2830,21 @@ def checkpoint_spans(text: str) -> List[Tuple[int, int]]:
     return spans
 
 
+# A row of the table in a Resume here block, by the label the thread template
+# gives it. The labels are the template's structure, as a heading is, and the
+# cells under them are often short and common ("Nothing to rebuild", a Next
+# action that opens with the owner's name), so a run that took in one row's
+# cell and the next row's label read two walled thread notes as quoting each
+# other on wording no shared file holds (#262). Each such row is a break: its
+# label is not read, and its cell is read with whatever follows it up to the
+# next row's label, so a run is still found inside one cell or running on below it. Only these exact labels, and only between a
+# `### Resume here` heading and the rule that closes its block: any other
+# table, or a row below the rule, runs into the next line as it stands.
+RESUME_ROW_RE = re.compile(r"(?m)^[ \t]*\|[ \t]*(?:%s)[ \t]*\|(?P<cell>[^\n]*)$"
+                           % "|".join(re.escape(label) for label in RESUME_LABELS))
+# The rule under a Resume here block's table, where the block ends (see resume_block).
+RESUME_RULE_RE = re.compile(r"(?m)^[ \t]*---[ \t]*$")
+
 WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
 
 
@@ -2861,10 +2878,11 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     here"), and the words either side of one were not written as one sentence.
     A published ledger's header row is a break in the same way (see
     LEDGER_HEADER_RE); what its rows hold is read like any other text. So is
-    a checkpoint block the tool wrote (see CHECKPOINT_WRITTEN_OPEN_RE): its
-    markers and the line under the opening one are never read, each of its
-    items is read without its kind and its id, and any other line in it is
-    read as it stands."""
+    each row of a Resume here table (see RESUME_ROW_RE), read as its cell
+    alone. So is a checkpoint block the tool wrote (see
+    CHECKPOINT_WRITTEN_OPEN_RE): its markers and the line under the opening
+    one are never read, each of its items is read without its kind and its
+    id, and any other line in it is read as it stands."""
     text = without_link_targets(text, shared)
     out: set = set()
     last = 0
@@ -2876,14 +2894,34 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     return out
 
 
-def _runs_between_breaks(text: str) -> set:
-    """The shingles of `text`, none crossing a heading or a ledger's header."""
+def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
+    """The shingles of `text`, none crossing a heading or a ledger's header,
+    nor, with `resume_rows`, a row of the table under a Resume here heading."""
     out: set = set()
     last = 0
+    under_resume = False
     for m in STRUCTURE_RE.finditer(text):
-        out.update(shingles(words(text[last:m.start()])))
+        out.update(_resume_runs(text[last:m.start()]) if under_resume else shingles(words(text[last:m.start()])))
         out.update(shingles(words(m.group(0))))
         last = m.end()
+        under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+    out.update(_resume_runs(text[last:]) if under_resume else shingles(words(text[last:])))
+    return out
+
+
+def _resume_runs(text: str) -> set:
+    """The shingles of what stands under a `### Resume here` heading, up to
+    the next break: no run crosses into a row of its table above the rule
+    that closes the block, and no label is read. A cell runs on into what
+    follows it, up to the next row's label, so a line that goes on below a
+    cell, or the text under the table, is read with the cell it continues."""
+    rule = RESUME_RULE_RE.search(text)
+    stop = rule.start() if rule else len(text)
+    out: set = set()
+    last = 0
+    for m in RESUME_ROW_RE.finditer(text, 0, stop):
+        out.update(shingles(words(text[last:m.start()])))
+        last = m.start("cell")
     out.update(shingles(words(text[last:])))
     return out
 
@@ -2900,10 +2938,10 @@ def _checkpoint_runs(block: str) -> set:
     out: set = set()
     last = 0
     for m in CHECKPOINT_ITEM_RE.finditer(text):
-        out.update(_runs_between_breaks(text[last:m.start()]))
+        out.update(_runs_between_breaks(text[last:m.start()], resume_rows=False))
         out.update(shingles(words(next(g for g in m.groups() if g is not None))))
         last = m.end()
-    out.update(_runs_between_breaks(text[last:]))
+    out.update(_runs_between_breaks(text[last:], resume_rows=False))
     return out
 
 

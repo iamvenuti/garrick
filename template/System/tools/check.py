@@ -2836,8 +2836,8 @@ def checkpoint_spans(text: str) -> List[Tuple[int, int]]:
 # action that opens with the owner's name), so a run that took in one row's
 # cell and the next row's label read two walled thread notes as quoting each
 # other on wording no shared file holds (#262). Each such row is a break: its
-# label is not read, and its cell is read on its own, all of it, so a run is
-# still found inside one cell. Only these exact labels, and only between a
+# label is not read, and its cell is read with whatever follows it up to the
+# next row's label, so a run is still found inside one cell or running on below it. Only these exact labels, and only between a
 # `### Resume here` heading and the rule that closes its block: any other
 # table, or a row below the rule, runs into the next line as it stands.
 RESUME_ROW_RE = re.compile(r"(?m)^[ \t]*\|[ \t]*(?:%s)[ \t]*\|(?P<cell>[^\n]*)$"
@@ -2911,16 +2911,17 @@ def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
 
 def _resume_runs(text: str) -> set:
     """The shingles of what stands under a `### Resume here` heading, up to
-    the next break: no run crosses a row of its table above the rule that
-    closes the block, and each row is read as its cell alone."""
+    the next break: no run crosses into a row of its table above the rule
+    that closes the block, and no label is read. A cell runs on into what
+    follows it, up to the next row's label, so a line that goes on below a
+    cell, or the text under the table, is read with the cell it continues."""
     rule = RESUME_RULE_RE.search(text)
     stop = rule.start() if rule else len(text)
     out: set = set()
     last = 0
     for m in RESUME_ROW_RE.finditer(text, 0, stop):
         out.update(shingles(words(text[last:m.start()])))
-        out.update(shingles(words(m.group("cell"))))
-        last = m.end()
+        last = m.start("cell")
     out.update(shingles(words(text[last:])))
     return out
 

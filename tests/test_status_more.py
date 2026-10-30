@@ -838,6 +838,79 @@ class TestSameFlags(StatusCase):
         self.assertEqual({"args": ["--no-graph", "--also", "/old"]}, json.loads(self.stored.read_text(encoding="utf-8")))
 
 
+class TestCheckReuse(StatusCase):
+    """#260: every build keeps the check's result beside the page, and a
+    build given --reuse-check, as scaffold.py's and correct.py's are, shows
+    it while it is younger than that instead of running the check again,
+    saying how old it is. A build without the flag always runs it. The check
+    here is the test's own: it counts its runs in a file."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = self.jobs / "runs"
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        found = {"errors": 0, "warnings": 1, "findings": [{"check": "threads", "severity": "warning", "path": "a.md", "message": "x"}]}
+        (tools / "check.py").write_text("import json\nopen(%r, 'a').write('ran\\n')\nprint(json.dumps(%r))\n"
+                                        % (str(self.runs), found), encoding="utf-8")
+        self.out = self.jobs / "status.html"
+        self.kept = self.jobs / "status.check.json"
+
+    def build(self, reuse=None, now=None):
+        return status.build(self.root, now=now or self.now, folder=self.jobs, page_at=self.out, reuse_check=reuse)
+
+    def ran(self):
+        return len(self.runs.read_text().splitlines()) if self.runs.exists() else 0
+
+    def test_a_young_result_is_shown_and_says_how_old_it_is(self):
+        first = self.build()
+        self.assertEqual(1, self.ran())
+        self.assertNotIn("As the check found it", first)
+        self.assertEqual(str(self.root), json.loads(self.kept.read_text(encoding="utf-8"))["workspace"])
+        page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
+        self.assertEqual(1, self.ran())                                # not run again
+        self.assertIn("As the check found it 4 min ago", page)
+        self.assertIn("a.md: x", page)                                 # the findings it kept
+
+    def test_an_old_or_missing_result_runs_the_check(self):
+        self.build()
+        self.build(reuse=600, now=self.now + dt.timedelta(minutes=11))
+        self.assertEqual(2, self.ran())
+        self.kept.unlink()
+        page = self.build(reuse=600)
+        self.assertEqual(3, self.ran())
+        self.assertNotIn("As the check found it", page)
+        self.kept.write_text("not json", encoding="utf-8")
+        self.build(reuse=600)
+        self.assertEqual(4, self.ran())
+
+    def test_a_build_by_hand_or_on_schedule_runs_it_however_young(self):
+        self.build()
+        self.build(now=self.now + dt.timedelta(minutes=1))
+        self.assertEqual(2, self.ran())
+        self.assertNotIn("As the check found it", self.build(now=self.now + dt.timedelta(minutes=2)))
+
+    def test_another_workspace_or_a_failed_check_is_never_shown(self):
+        self.build()
+        kept = json.loads(self.kept.read_text(encoding="utf-8"))
+        self.kept.write_text(json.dumps(dict(kept, workspace="/elsewhere")), encoding="utf-8")
+        self.build(reuse=600)
+        self.assertEqual(2, self.ran())
+        self.kept.unlink()
+        with mock.patch.object(status.subprocess, "run", side_effect=OSError("no python")):
+            self.assertIn("The check did not run", self.build())
+        self.assertFalse(self.kept.exists())                           # a failure is not kept
+
+    def test_the_flag_reaches_the_build_and_without_a_page_nothing_is_kept(self):
+        with mock.patch.object(status, "build", return_value="<html></html>") as b, \
+                mock.patch.object(status, "release_ask"), mock.patch.object(status, "obsidian_vaults", return_value=[]), \
+                mock.patch.object(status, "launchers_installed", return_value=()), contextlib.redirect_stdout(io.StringIO()):
+            status.main(["--workspace", str(self.root), "--out", str(self.out), "--same-flags", "--reuse-check", "600"])
+        self.assertEqual((600, self.out), (b.call_args.kwargs["reuse_check"], b.call_args.kwargs["page_at"]))
+        self.page()
+        self.assertFalse(self.kept.exists())
+
+
 class TestSharedLauncherSettings(StatusCase):
     def test_embedded_when_saved(self):
         self.assertNotIn('id="launch-settings"', self.page())

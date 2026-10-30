@@ -1975,18 +1975,29 @@ STATUS_BUILDER = ("System", "status", "status.py")
 # done: page_action.py, whose app rebuilds after every reply. The tool then
 # asks for no build of its own, so one request makes one page (#243).
 CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
+# Seconds: how old a check result a tool's rebuild may show, rather than run
+# the check again, which on a large workspace is half the build (#260). A
+# build by hand or on schedule always runs it.
+CHECK_REUSE = 600
 
 
 def status_command(root: PathLike, settle: Optional[float] = None) -> Optional[List[str]]:
     """The command that builds `root`'s status page, or None where the status
     extra is not installed. It builds with the flags the last build stored
-    (--same-flags), so the page keeps the app's or the plugin's flags (#246).
-    With `settle`, the build waits that many seconds and goes ahead only if
-    no later one was asked for: a burst makes one page."""
+    (--same-flags), so the page keeps the app's or the plugin's flags (#246),
+    and shows the check's last result while it is younger than CHECK_REUSE
+    (--reuse-check), where the builder knows the flag (#260). With `settle`,
+    the build waits that many seconds and goes ahead only if no later one was
+    asked for: a burst makes one page."""
     builder = Path(root).joinpath(*STATUS_BUILDER)
     if not builder.is_file():
         return None
+    try:
+        reuse = "--reuse-check" in builder.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        reuse = False
     return ([sys.executable or "python3", str(builder), "--workspace", str(root), "--same-flags"]
+            + (["--reuse-check", "%g" % CHECK_REUSE] if reuse else [])
             + (["--settle", "%g" % settle] if settle else []))
 
 

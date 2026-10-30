@@ -153,6 +153,32 @@ class TestGraph(StatusCase):
         a, b = self.node(data, "Market Sizing"), self.node(data, "Birch kick-off")
         self.assertIn([min(a, b), max(a, b)], data["edges"])
 
+    def test_a_link_by_its_ending_takes_the_shortest_path_and_the_first_walked(self):
+        """#260 looks endings up in an index; what a link resolves to stays as
+        it was: the shortest path that ends in it after a slash, the first
+        walked among paths as long, and else the shortest note of its name."""
+        work = self.root / "Zones" / "Work"
+        for place in (work / "Acme Review" / "Notes", work / "Birch Entry" / "Notes",
+                      work / "Birch Entry" / "Threads" / "Market Sizing" / "Notes", self.root / "Wikis" / "Knowledge" / "wiki"):
+            write(place / "Rates.md", "# Rates\n")
+        links = {"one": "Rates", "two": "Notes/Rates", "three": "Market Sizing/Notes/Rates", "four": "otes/Rates",
+                 "five": "Birch Entry/Notes/Rates"}
+        for name, target in links.items():
+            write(work / "Acme Review" / "Threads" / "Pricing" / ("Links %s.md" % name), "[[%s]]\n" % target)
+        data = graph_data(self.page())
+        at = {(n["z"], n["m"]): i for i, n in enumerate(data["nodes"])}
+        linked = {}
+        for a, b in data["edges"]:
+            for x, y in ((a, b), (b, a)):
+                linked.setdefault(x, set()).add(y)
+        hits = {name: {data["nodes"][j]["z"] + ":" + data["nodes"][j]["m"]
+                       for j in linked.get(at[("Work", "Acme Review/Threads/Pricing/Links %s" % name)], ())} for name in links}
+        self.assertEqual({"Knowledge:Rates"}, hits["one"])                                   # the shortest path of all
+        self.assertEqual({"Work:Acme Review/Notes/Rates"}, hits["two"])                      # as long as Birch's: walked first
+        self.assertEqual({"Work:Birch Entry/Threads/Market Sizing/Notes/Rates"}, hits["three"])
+        self.assertEqual({"Knowledge:Rates"}, hits["four"])                                  # not after a slash: by name
+        self.assertEqual({"Work:Birch Entry/Notes/Rates"}, hits["five"])
+
     @mock.patch.object(status, "desk_ready", return_value=False)      # the desk's keys depend on cmux; tested with a fake one in test_status_more
     def test_names_and_kinds_only(self, _desk):
         html = self.page()

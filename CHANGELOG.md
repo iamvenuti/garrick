@@ -6,6 +6,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
 - Two thread notes on either side of a wall no longer fail the wall check and the commit hook on their Resume here tables alone. A run of words crossed from one row into the next, label and all, so a *Rebuild with* cell reading "Nothing to rebuild" and a *Next action* cell opening with the same name read as a quotation of wording no shared file holds. Each row of a Resume here table is now a break, as a heading is, and is read as its cell alone. Only rows with the template's labels are breaks, and only above the rule that closes the block; eight words shared inside one cell, or in the prose around the table, are still refused. ([#262](https://github.com/iamvenuti/garrick/issues/262))
 
 ## [0.47.1] - 2026-10-30

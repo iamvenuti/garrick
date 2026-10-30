@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- Two thread notes on either side of a wall no longer fail the wall check and the commit hook on their Resume here tables alone. A run of words crossed from one row into the next, label and all, so a *Rebuild with* cell reading "Nothing to rebuild" and a *Next action* cell opening with the same name read as a quotation of wording no shared file holds. Each row of a Resume here table is now a break, as a heading is, and is read as its cell alone. Only rows with the template's labels are breaks, and only above the rule that closes the block; eight words shared inside one cell, or in the prose around the table, are still refused. ([#262](https://github.com/iamvenuti/garrick/issues/262))
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

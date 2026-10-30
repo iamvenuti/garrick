@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **The docs call the status page the Garrick App, and the architecture page has four layers.** [Architecture](docs/architecture.md) now follows the diagram: navigate and control with the Garrick App, where you work in the Claude or Codex desktop app or cmux, the record of Knowledge, Meetings and the threads, and underneath the model, the rules and the commit check. It says that the rules, the walls and the model act on the whole record. [Concepts](docs/concepts.md) defines the words a new user meets in the first week, among them piece of work, the simple home, Continue, Needs you, the Guide, Nurture and context debt. Across `docs/`, the status page is the Garrick App, the Mac app is the Mac app, and [the Garrick App's page](docs/extras/status-page.md) describes its Guide tab. Code names and paths stay as they are.
+
 ## [0.47.2] - 2026-10-30
 
 A thread a session makes reaches the Threads card in seconds on a large workspace; the band stays drawn after a clear; fading leaves links in code blocks alone; and two walled thread notes no longer fail the wall check on their Resume here rows.

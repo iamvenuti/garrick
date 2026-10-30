@@ -530,6 +530,91 @@ class TestFadedMeetings(GapCase):
             moved.rename(self.meetings / "wiki" / "sources" / moved.name)
 
 
+class TestMeetingsQuestions(QuoteCase):
+    """A Meetings question (#224) holds its parties against every commit, as a
+    meeting page does, and its wording is a conversation's material."""
+
+    def setUp(self):
+        super().setUp()
+        self.question = self.meetings / "questions" / "260314 - plan-check.md"
+        write(self.question, "---\ntype: question\nasked: 2026-03-14\nstatus: open\nzone: Work\nparties: [birch]\n"
+                             "origin: \"[[raw/260312-birch-kickoff]]\"\n---\n\n**Birch: does the plan still hold?**\n\n"
+                             + BRIEF + ".\n")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_link_to_a_walled_question_even_once_it_is_deleted(self):
+        real_repo(self.work)
+        real_repo(self.root / "Wikis")
+        note = self.acme / "Threads" / "Pricing" / "Notes.md"
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            commit_all(self.root / "Wikis", "start")
+            write(note, "See [[260314 - plan-check]].\n")
+            git(self.work, "add", "-A")
+            for deleted in (False, True):
+                if deleted:
+                    self.question.unlink()       # gone from disk, still in the Wikis history
+                found = check.run_checks(self.root, staged=self.work)
+                self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
+                                 [(f.severity, f.path) for f in found], deleted)
+                self.assertIn("a wall stands between acme and birch", found[0].message)
+                self.assertNoLeak(found, *BRIEF_WORDS)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_link_to_a_walled_question_in_a_subfolder(self):
+        moved = self.meetings / "questions" / "answered" / self.question.name
+        moved.parent.mkdir()
+        self.question.rename(moved)
+        real_repo(self.work)
+        real_repo(self.root / "Wikis")
+        note = self.acme / "Threads" / "Pricing" / "Notes.md"
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            commit_all(self.root / "Wikis", "start")
+            write(note, "See [[260314 - plan-check]].\n")
+            git(self.work, "add", "-A")
+            for deleted in (False, True):
+                if deleted:
+                    moved.unlink()               # gone from disk, still in the Wikis history
+                found = check.run_checks(self.root, staged=self.work)
+                self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
+                                 [(f.severity, f.path) for f in found], deleted)
+                self.assertIn("a question with birch", found[0].message)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_near_side_question_deleted_from_disk_still_never_vouches(self):
+        # Acme's own question holds the wording a Birch meeting holds; deleted
+        # from disk and read from git, it must still not clear the quotation.
+        self.question.unlink()
+        page = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        page.write_text(page.read_text().replace("Decisions.", BRIEF + "."))
+        near = self.meetings / "questions" / "260314 - near.md"
+        write(near, "---\ntype: question\nasked: 2026-03-14\nstatus: open\nzone: Work\nparties: [acme]\n---\n\n"
+                    "**Acme: does the plan still hold?**\n\n" + BRIEF + ".\n")
+        real_repo(self.work)
+        real_repo(self.root / "Wikis")
+        note = self.acme / "Threads" / "Pricing" / "Notes.md"
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            commit_all(self.root / "Wikis", "start")
+            near.unlink()
+            write(note, BRIEF + ".\n")
+            git(self.work, "add", "-A")
+            found = check.run_checks(self.root, staged=self.work)
+        self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
+                         [(f.severity, f.path) for f in found])
+        self.assertIn("repeats wording from meeting 260312-birch-kickoff, a meeting with birch", found[0].message)
+        self.assertNoLeak(found, *BRIEF_WORDS)
+
+    def test_a_knowledge_page_repeating_a_question_is_named(self):
+        write(self.knowledge / "wiki" / "concepts" / "plants.md", "# Plants\n\nReported: " + BRIEF + ".\n")
+        found = self.findings("knowledge", "warning")
+        self.assertEqual(["Wikis/Knowledge/wiki/concepts/plants.md"], [f.path for f in found])
+        self.assertIn("with question 260314 - plan-check; wording in Knowledge", found[0].message)
+        self.assertIn("If the question quoted", found[0].message)
+        self.assertEqual("A Knowledge page repeats a Meetings question", found[0].ear)
+
+
 class TestPersonPages(GapCase):
     """A person page says who someone is and which party: read on both sides of every wall."""
 

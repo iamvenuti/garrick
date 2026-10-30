@@ -13,6 +13,7 @@ Published material you study: reports, papers, articles, vendor documents. None 
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
+      questions/        one file per question only you can answer
       dormant/          pages faded out of working memory, and their raw files,
         wiki/ raw/        at the same paths below
       archive/          pages faded further, in no index; read only when asked
@@ -34,6 +35,10 @@ updated: YYYY-MM-DD
 ```
 
 A wiki that grew its own layout declares it in `schema.json` beside this file, and `intake.py`, the `knowledge` skill and `check.py` follow it: where originals go (`"raw": "raw/{kind}/{date} {publisher} - {title}.{ext}"`, with its `"kinds"`), the source page's `"type"` and required `"fields"`, and the index (`"list"` or `"tables"`) and log (`"line"` or `"section"`). Without it, the layout above applies.
+
+## A question
+
+When an ingest or a lint finds something only you can settle, such as two sources that disagree, it writes `questions/<YYMMDD> - <slug>.md` and adds no line to the page. It has the form of a Meetings question (see `../Meetings/AGENTS.md`), with `type: question`, `asked`, `status`, `origin` and `pages`, and no `zone` or `parties`, as no file here has.
 
 ## Rules
 

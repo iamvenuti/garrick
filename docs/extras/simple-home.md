@@ -105,7 +105,9 @@ The bold line is the question. The lines under it say why it matters. Each optio
 - **Not now** writes `status: later` and `later:` with tomorrow's date, and commits it. The question leaves the home, which counts it as *1 put off*, and comes back on that day.
 - **A question with no options** is answered in words, in Claude: its button is *Answer in Claude*, which is Continue.
 
-Technical warnings, updates and check findings never go here. They go to the dot by Settings. `check.py` warns about a question file the home would leave out: one with no `type: question`, a status other than `open`, `answered` or `later`, a `later` with no date, an answer with no `answer:`, or no bold line to ask.
+A question raised by the wikis, in `Wikis/Meetings/questions/` or `Wikis/Knowledge/questions/`, has the same form, and blocks no piece of work, so the home does not show it. See [wiki questions](../concepts.md#wiki-questions).
+
+Technical warnings, updates and check findings never go here. They go to the dot by Settings. `check.py` warns about a question file the home would leave out: one with no `type: question`, a status other than `open`, `answered` or `later`, a `later` with no date, an answer with no `answer:`, or no bold line to ask. It holds a wiki question to the same, and warns about a Meetings question with no zone or parties.
 
 ## The example
 

@@ -130,6 +130,10 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 `Wikis/Knowledge/`: published material you read, such as articles, reports and newsletters. Its pages carry no parties, because what they hold carries nobody's confidence, so it can be used in any project.
 
+### Wiki questions
+
+When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a [*Needs you*](extras/simple-home.md#needs-you) question, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
+
 ### `raw/`
 
 Each wiki keeps the record as it arrived in `raw/`, such as a transcript, a mail or a frozen copy of a page, and writes its pages in `wiki/`. Nothing in `raw/` is edited, and the check reports a raw record changed after it was filed. A page that fades takes its raw record with it, renamed and unchanged.

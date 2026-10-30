@@ -813,6 +813,19 @@ class TestSameFlags(StatusCase):
             self.assertIsNone(self.main("--same-flags", "--settle", "10")[1])     # a later request builds it
 
 
+    def test_the_evening_schedule_builds_with_the_stored_flags(self):
+        """The 23:30 build is nobody choosing flags: it draws with the stored
+        ones and stores none, so it cannot undo the app's (0.46.1)."""
+        with open(REPO / "extras" / "status" / "garrick.status.plist", "rb") as f:
+            args = plistlib.load(f)["ProgramArguments"]
+        build = args[args.index("--") + 1:]
+        self.assertTrue(build[1].endswith("/System/status/status.py"), build)
+        self.assertEqual(["--workspace", "/Users/<you>/Garrick", "--same-flags"], build[2:])
+        self.main("--no-graph", "--also", "/old")
+        self.main(*build[4:])                                      # what follows the workspace
+        self.assertEqual({"args": ["--no-graph", "--also", "/old"]}, json.loads(self.stored.read_text(encoding="utf-8")))
+
+
 class TestSharedLauncherSettings(StatusCase):
     def test_embedded_when_saved(self):
         self.assertNotIn('id="launch-settings"', self.page())

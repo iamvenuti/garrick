@@ -11,6 +11,8 @@
   Unload with `launchctl bootout gui/$(id -u)/garrick.status`.
   It needs System/jobs/ as well as System/status/: job.py gives the run a
   log, a heartbeat and a lock, and the page then shows its own job too.
+  It builds with the same-flags option, the flags the last build stored, so the
+  page keeps the ones Garrick.app or the Obsidian plugin gives it.
 -->
 <plist version="1.0">
 <dict>
@@ -28,6 +30,7 @@
     <string>/Users/&lt;you&gt;/Garrick/System/status/status.py</string>
     <string>--workspace</string>
     <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--same-flags</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

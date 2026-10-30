@@ -34,7 +34,9 @@ Never leave a third kind. A file no script can finish and the user cannot recogn
 
 ## Releasing
 
-With the notes for the new version written in `CHANGELOG.md` and the work on `main`, from a clone:
+With the notes for the new version written in `CHANGELOG.md` and the work on `main`, review what the release carries before you tag it: `git diff v<last>..main`, read for correctness and for any way past the wall check. A release adds code nobody has read as a whole, and 0.45.0 shipped a way past the wall check that a review of the next two releases found. A finding goes to an issue, or, when it is a way past the wall check, to a private advisory as `SECURITY.md` says, and is fixed before the tag.
+
+Then, from a clone:
 
 ```sh
 git tag -a v0.25.0 -m "Garrick 0.25.0"

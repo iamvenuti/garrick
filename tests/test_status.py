@@ -3037,5 +3037,51 @@ class TestContextDebt(StatusCase):
         with mock.patch.object(status, "nurture_lib", lambda ws: None):
             self.assertNotIn('id="debt"', self.page())
 
+
+class TestReviewContext(StatusCase):
+    """#258: Review context on the Checks card hands Nurture's guided review
+    to the assistant, and says from the review record's frontmatter alone when
+    the last review was done and whether one is unfinished."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        self.record = self.root / "System" / "nurture-review.md"
+
+    def block(self, html):
+        start = html.index('<div class="gacts review" id="review">')
+        return html[start:html.index("</div>", start)]
+
+    def checks(self, html):
+        start = html.index('id="checks"')
+        return html[start:html.index("</details>", start)]
+
+    def test_the_button_hands_over_the_request(self):
+        b = self.block(self.checks(self.page()))
+        self.assertIn('<button class="act" type="button" data-request="review the context with me" data-folder="%s"' % self.root, b)
+        self.assertIn(">Review context</button>", b)
+        self.assertIn("No review done yet.", b)                               # no record: nothing that looks measured
+        self.assertNotIn("unfinished", b)
+
+    def test_the_dates_and_the_unfinished_flag_come_from_the_record(self):
+        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
+                           "limit: 15 minutes\n---\n# Context review\n\n| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n"
+                           "| check:meetings:Wikis/Meetings/wiki/sources/260402-cedar-call.md | check.py | answered: Work, acme "
+                           "| the renewal floor is private | 2026-03-14 |\n")
+        html = self.page()
+        b = self.block(html)
+        self.assertIn("Last review Sat 07 Mar 2026 · one unfinished, started Sat 14 Mar 2026.", b)
+        for item in ("260402-cedar-call", "answered: Work", "renewal floor", "15 minutes"):    # nothing of its items
+            self.assertNotIn(item, html)
+        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n---\n")
+        b = self.block(self.page())
+        self.assertIn("Last review Sat 14 Mar 2026.", b)
+        self.assertNotIn("unfinished", b)
+
+    def test_left_out_without_nurture(self):
+        (self.root / "System" / "tools" / "nurture.py").unlink()
+        self.assertNotIn('id="review"', self.page())
+
 if __name__ == "__main__":
     unittest.main()

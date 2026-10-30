@@ -560,6 +560,7 @@ class WallRefusalTest(unittest.TestCase):
               SKILLS / "intake" / "SKILL.md",
               SKILLS / "intake" / "intake.py",
               SKILLS / "threads" / "SKILL.md",
+              SKILLS / "nurture" / "SKILL.md",
               REPO / "template" / "System" / "tools" / "operations.py",
               REPO / "examples" / "demo" / "video-script.md")
     # A sentence of the refusal's shape: it opens "A wall" and goes on to hold
@@ -638,7 +639,7 @@ class WallRefusalTest(unittest.TestCase):
 
     def test_every_route_that_can_hit_a_wall_says_the_same_sentence(self):
         """One sentence, wherever the wall is met: the rule, the brief, the filing, the
-        wrap, and the demo that shows a wall holding."""
+        wrap, Nurture's review, and the demo that shows a wall holding."""
         for path in self.ROUTES:
             self.assertIn(self.SENTENCE, self.said_in(path), str(path.relative_to(REPO)))
         self.assertIn(self.SENTENCE, self.wall_refusal_constant())

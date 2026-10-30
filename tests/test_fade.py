@@ -202,6 +202,46 @@ class RespellTest(unittest.TestCase):
                                       "Wikis/Meetings/archive/raw/260401-review.txt", "Wikis/Meetings/x.md"))
 
 
+class CodeTest(unittest.TestCase):
+    """A link in a code block, fenced or inline, is text: an instructions
+    file's example of the frontmatter, say. Fading neither rewrites it nor
+    counts it as use (#256)."""
+
+    OLD = "Wikis/Meetings/wiki/sources/260401-review.md"
+    NEW = "Wikis/Meetings/dormant/wiki/sources/260401-review.md"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        write(root / self.OLD, "# Review\n")
+        self.links = fade.Links(root)
+
+    def test_a_fenced_block_is_neither_read_nor_rewritten(self):
+        text = ("Before [[260401-review]].\n\n```yaml\nrelated:\n  - \"[[wiki/sources/260401-review]]\"\n```\n\n"
+                "~~~~\n[[260401-review]]\n~~~\nstill inside, the fence is four long\n~~~~\n\n"
+                "````md\n```\n[[260401-review]]\n````\n\nAfter [[wiki/sources/260401-review]].\n")
+        self.assertEqual([(0, "260401-review"), (18, "wiki/sources/260401-review")], list(fade.links_in(text)))
+        out = fade.relink(text, {self.OLD: self.NEW}, self.links, "Wikis/Meetings/wiki/x.md")
+        self.assertEqual(text.replace("Before [[260401-review]]",
+                                      "Before [[dormant/wiki/sources/260401-review|260401-review]]")
+                             .replace("After [[wiki/", "After [[dormant/wiki/"), out)
+
+    def test_a_fence_never_closed_runs_to_the_end(self):
+        text = "```\n[[260401-review]]\n"
+        self.assertEqual([], list(fade.links_in(text)))
+        self.assertEqual(text, fade.relink(text, {self.OLD: self.NEW}, self.links, "Wikis/Meetings/wiki/x.md"))
+
+    def test_inline_code_is_neither_read_nor_rewritten(self):
+        text = "Write `[[wiki/sources/260401-review]]`, as in [[260401-review]] or `obsidian://open?file=260401-review`."
+        self.assertEqual([(0, "260401-review")], list(fade.links_in(text)))
+        self.assertEqual(text.replace("in [[260401-review]]", "in [[dormant/wiki/sources/260401-review|260401-review]]"),
+                         fade.relink(text, {self.OLD: self.NEW}, self.links, "Wikis/Meetings/wiki/x.md"))
+        row = "| `[[260401-review]]` | [[260401-review]] |"
+        self.assertEqual("| `[[260401-review]]` | [[dormant/wiki/sources/260401-review\\|260401-review]] |",
+                         fade.relink(row, {self.OLD: self.NEW}, self.links, "Wikis/Meetings/wiki/x.md"))
+
+
 class Base(unittest.TestCase):
     """A workspace with real repositories in Zones/Work and Wikis/, and
     meetings of every age: one pinned by a live thread and an open action,
@@ -440,6 +480,23 @@ class ApplyTest(Base):
                       "[[dormant/wiki/sources/260401-acme-review#Decisions|its decisions]].", later)
         self.assertEqual("", git(self.work, "status", "--porcelain") + git(self.wikis, "status", "--porcelain"))
 
+
+    def test_an_example_in_a_code_block_survives_the_fade_byte_for_byte(self):
+        agents = self.meetings / "AGENTS.local.md"
+        example = ("# Meetings: this workspace's own\n\nA page's frontmatter, as in `[[260401-acme-review]]`:\n\n"
+                   "```yaml\nrelated:\n  - \"[[wiki/sources/260401-acme-review]]\"\n```\n")
+        write(agents, example)
+        later = self.page("wiki/sources/270501-acme-later.md")
+        block = "\n~~~\n[[260401-acme-review]]\n~~~\n"
+        later.write_text(self.text(later) + block)
+        self.commit_all()
+        self.propose()
+        self.apply()
+        self.assertTrue(self.page("dormant/wiki/sources/260401-acme-review.md").is_file())
+        self.assertEqual(example.encode("utf-8"), agents.read_bytes())
+        self.assertIn("After [[dormant/wiki/sources/260401-acme-review|260401-acme-review]]", self.text(later))
+        self.assertTrue(self.text(later).endswith(block))
+
     def test_the_lists_follow(self):
         self.propose()
         self.apply()
@@ -567,6 +624,20 @@ class WakeTest(Base):
         self.assertEqual(["working"], [m["to"] for m in moves])
         self.assertIn("linked again from the working page Wikis/Meetings/wiki/sources/270520-acme-next.md",
                       moves[0]["why"])
+
+
+    def test_a_link_in_a_code_block_neither_holds_a_page_nor_wakes_it(self):
+        pricing = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        before = self.text(pricing)
+        pricing.write_text(before + "\n```\n[[260401-acme-review]]\n```\n\nNot `[[260401-acme-review]]` either.\n")
+        git(self.work, "commit", "-qam", "an example")
+        self.assertIn("Wikis/Meetings/wiki/sources/260401-acme-review.md", [m["page"] for m in self.propose()["moves"]])
+        self.apply()
+        self.assertEqual([], self.propose(today=TODAY + datetime.timedelta(days=1))["moves"])
+        self.assertIn("```\n[[260401-acme-review]]\n```", self.text(pricing))
+        pricing.write_text(self.text(pricing) + "\nBack to [[260401-acme-review]].\n")       # a link, not an example
+        git(self.work, "commit", "-qam", "linked again")
+        self.assertEqual(["working"], [m["to"] for m in self.propose(today=TODAY + datetime.timedelta(days=2))["moves"]])
 
     def test_a_superseded_page_never_wakes(self):
         self.faded()

@@ -590,6 +590,16 @@ class TestReloadAndSettle(StatusCase):
         self.assertFalse(out.exists())
 
 
+    def test_a_workspace_deleted_during_the_wait_is_not_made_again(self):
+        """A settled build outliving the workspace, as one a test's tool
+        started can, writes nothing and makes no folder of it again."""
+        gone = lambda marker, seconds: (shutil.rmtree(self.root), True)[1]
+        with mock.patch.object(status, "settle", side_effect=gone), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(1, status.main(["--workspace", str(self.root), "--settle", "10", "--same-flags"]))
+        self.assertFalse(self.root.exists())
+        self.assertIn("no longer a workspace", err.getvalue())
+
+
 class TestBuildsAtOnce(StatusCase):
     """Builds overlap in ordinary use: the app after a button, a hook, a job,
     a build by hand (#214). Each runs here as its own process, with a home

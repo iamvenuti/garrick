@@ -7982,6 +7982,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                   "is never committed.", file=sys.stderr)
     if args.settle and args.settle > 0 and not settle(out.with_name(out.name + ".settle"), args.settle):
         return 0                              # a later request builds it
+    if not (ws / "System").is_dir():          # deleted during the wait: build nothing, and make no folder again
+        print("status: %s is no longer a workspace; nothing built." % ws, file=sys.stderr)
+        return 1
     if args.same_flags:                       # read after the wait, so a build made meanwhile counts
         try:
             kept = ap.parse_args(stored_words(flags_file(out)))

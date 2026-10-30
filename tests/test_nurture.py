@@ -172,6 +172,23 @@ class ClassificationTest(Base):
         item = self.by_path(out["items"], "questions/261015 - floor.md")[0]
         self.assertEqual(("wall", "birch and acme"), (item["kind"], item["wall"]))
 
+    def test_each_finding_has_a_key_of_its_own_that_holds_across_runs(self):
+        # One page, one check, two findings: no zone, and both sides of a wall.
+        page = self.wikis / "Meetings" / "wiki" / "sources" / "260322-joint-call.md"
+        write(page, meeting_page(None, "[acme, birch]", "Joint call"))
+        _, out = self.run_tool("list")
+        found = [i for i in self.by_path(out["items"], "260322-joint-call.md") if i["check"] == "meetings"]
+        self.assertEqual({"attribution", "wall"}, {i["kind"] for i in found}, found)
+        keys = [i["key"] for i in found]
+        self.assertEqual(2, len(set(keys)), found)
+        for key in keys:
+            self.assertRegex(key, r"^[0-9a-f]{%d}$" % nurture.KEY_LENGTH)
+            self.assertNotIn("joint", key)
+        every = [i["key"] for i in out["items"]]
+        self.assertEqual(len(every), len(set(every)), out["items"])
+        _, again = self.run_tool("list")
+        self.assertEqual(sorted(every), sorted(i["key"] for i in again["items"]))
+
     def test_done_without_an_outcome_is_asked_not_fixed(self):
         text = thread_note("Acme Review", "Pricing", "acme", status="complete")
         write(self.pricing, text)

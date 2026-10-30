@@ -2744,9 +2744,17 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     for i, wiki, typed in typed_at:
         if found[wiki][typed] >= KIND_FROM_PAGES:
             nodes[i]["k"] = keys.index(typed)
+    # A link that is not a whole path resolves to the shortest path that ends
+    # in it after a slash, and else to the shortest note of its name; among
+    # paths as long, the first walked. Each note goes in once under every such
+    # ending, so a link is a lookup, not a pass over every note (#260).
     by_base: Dict[str, Path] = {}
+    by_tail: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
+        parts = rel[p].split("/")
+        for i in range(1, len(parts)):
+            by_tail.setdefault("/".join(parts[i:]), p)
     edges = set()
     for _, _, path in notes:
         try:
@@ -2759,8 +2767,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             target = target[:-3] if target.endswith(".md") else target
             hit = by_rel.get(target)
             if hit is None:
-                ends = [p for p, r in rel.items() if r.endswith("/" + target)]
-                hit = min(ends, key=lambda q: len(rel[q])) if ends else by_base.get(target.split("/")[-1].lower())
+                hit = by_tail.get(target)
+            if hit is None:
+                hit = by_base.get(target.split("/")[-1].lower())
             if hit is not None and hit != path:
                 a, b = index[path], index[hit]
                 edges.add((min(a, b), max(a, b)))

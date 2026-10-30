@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A thread a session makes reaches the Threads card sooner on a large workspace** ([#260](https://github.com/iamvenuti/garrick/issues/260)). A build of the status page took 26 to 36 seconds on a workspace of about 1,700 notes and 1,300 transcripts, most of it in three places, so the thread `scaffold.py thread` made took about forty seconds to show. A rebuild that `scaffold.py` or `correct.py` asks for now shows the check's last result while it is younger than ten minutes (`--reuse-check`, kept in `System/generated/status.check.json`), and the Checks card says how old it is; a build by hand or on schedule still runs the check. The effort ledger reads again only the transcripts whose size or modification time changed, keeping what it read in `System/generated/status.effort.json`; `effort.jsonl` keeps its format. And Explore resolves a link by its ending from an index built once, instead of a pass over every note for each link, with the same shortest-path-first result.
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **A guided context review.** "Review the context with me", or "review the latest audit with me", has the `nurture` skill work through what the checks left in a short session: it gathers the check, the wiki lint, the shared-file comparison and any audit report the workspace keeps, checks each finding again, and asks walls and failed sources first, then one batch of mechanical fixes, then one decision at a time, up to a limit you choose, fifteen minutes or ten questions by default. `System/nurture-review.md` keeps the answers and the deferrals, so the next review goes on where this one stopped. The Garrick App's Checks card has *Review context*, which hands the request to your assistant, beside the day of the last review and whether one is unfinished, read from that file's frontmatter alone. ([#258](https://github.com/iamvenuti/garrick/issues/258))
+
 ### Changed
 
 - **The docs call the status page the Garrick App, and the architecture page has four layers.** [Architecture](docs/architecture.md) now follows the diagram: navigate and control with the Garrick App, where you work in the Claude or Codex desktop app or cmux, the record of Knowledge, Meetings and the threads, and underneath the model, the rules and the commit check. It says that the rules, the walls and the model act on the whole record. [Concepts](docs/concepts.md) defines the words a new user meets in the first week, among them piece of work, the simple home, Continue, Needs you, the Guide, Nurture and context debt. Across `docs/`, the status page is the Garrick App, the Mac app is the Mac app, and [the Garrick App's page](docs/extras/status-page.md) describes its Guide tab. Code names and paths stay as they are.

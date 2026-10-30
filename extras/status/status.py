@@ -1123,6 +1123,35 @@ def debt_points(n):
     return int(n) if float(n).is_integer() else round(n, 2)
 
 
+# Review context (#258), under the debt: the button that hands Nurture's
+# guided review to the assistant, and from the review record's frontmatter
+# alone the day the last review was done and whether one is unfinished.
+# Nothing of its items is read: they are the user's decisions, across zones.
+REVIEW_RECORD = ("System", "nurture-review.md")
+REVIEW_REQUEST = "review the context with me"
+
+
+def review_block(ws: Path) -> str:
+    """The Review context line for the Checks card; "" in a workspace with
+    no nurture.py, since the review is Nurture's."""
+    if not ws.joinpath("System", "tools", "nurture.py").is_file():
+        return ""
+    record = ws.joinpath(*REVIEW_RECORD)
+    fm = frontmatter(record, ws) if record.is_file() else {}
+
+    def day(key):
+        try:
+            return dt.date.fromisoformat(str(fm.get(key) or "").strip()[:10])
+        except ValueError:
+            return None
+    done, started = day("last_completed"), day("started")
+    said = ["Last review %s" % done.strftime("%a %d %b %Y") if done else "No review done yet"]
+    if str(fm.get("status") or "").strip().lower() == "open":
+        said.append("one unfinished" + (", started %s" % started.strftime("%a %d %b %Y") if started else ""))
+    return ('<div class="gacts review" id="review">%s<span class="hint">%s</span></div>'
+            % (request_button("Review context", REVIEW_REQUEST, ws), E(" · ".join(said) + ".")))
+
+
 DEBT_CSS = r"""
 /* Context debt, on the Checks card: the figure, a line over thirty days against the threshold, dashed, and the scopes carrying most */
 .debt{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line)}.dhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
@@ -1132,6 +1161,7 @@ DEBT_CSS = r"""
 .dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
+.review{align-items:center;margin:0 0 12px}
 """
 
 
@@ -7705,7 +7735,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if C and C.get("kept"):                    # a tool's rebuild showed the last result rather than run the check (#260)
         body = ('<p class="hint ckept">As the check found it %s; a build by hand or on schedule runs it again.</p>'
                 % E(age(dt.datetime.fromtimestamp(C["at"]), now))) + body
-    checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + body)
+    checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + review_block(ws) + body)
 
     # ---- open actions and inboxes
     tb = ""

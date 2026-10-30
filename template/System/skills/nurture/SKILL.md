@@ -417,7 +417,7 @@ name.
   not change, and never pushes.
 - **It keeps no score.** It counts findings by kind, and weighs none.
 - **A review is not a job.** It runs only when the user asks, and nothing of
-  it runs overnight. A report it reads is a lead, never leave to edit.
+  it runs overnight. A report it reads is a lead, never permission to edit.
 - **It never fades a page on its own**, and never without a written
   proposal the user could read. It never deletes a page, never edits a raw
   record, and never moves a page anywhere but its own wiki's `dormant/` or

@@ -389,11 +389,13 @@ class TestVaultGraph(StatusCase):
         self.assertEqual(0, by["Acme Review"]["g"])
         self.assertEqual(0, by["Notes"]["g"])
         self.assertEqual(1, by["Market Sizing"]["g"])
-        self.assertEqual(-1, by["Pricing"]["g"])                                # no group takes it: grey
+        self.assertEqual(-1, by["Pricing"]["g"])                                # no group takes it: grey, when they are used
         self.assertNotIn("g", by["Acme kick-off"])                             # a wiki with no vault of its own keeps the kinds
-        self.assertIn("n.g===-1?G.other", status.GRAPH_JS)
+        self.assertIn("vc&&n.g===-1?G.other", status.GRAPH_JS)
         html = self.page()
-        self.assertIn('<span data-g="-1"><i style="background:%s"></i>No group</span>' % status.OTHER, html)   # grey keyed (#250)
+        self.assertNotIn("No group", html)                                     # grey says it (#253)
+        self.assertIn('<div class="legend gkey" hidden><b>Colours from Obsidian</b><span data-g="0" hidden><i style="background:#ff0000">'
+                      '</i>Project, Notes</span><span data-g="1" hidden>', html)    # a line of its own, shown with the setting
         self.assertIn("></i>Projects</button>", html)                          # and each kind still a toggle
 
     def test_the_legend_names_each_group_as_a_person_would(self):
@@ -1912,6 +1914,217 @@ class TestTheLegendFiltersAndTheBoxFinds(StatusCase):
     def test_a_linked_note_not_drawn_brings_its_kind(self):
         self.assertIn("if(!ks[m.k]){ks[m.k]=1;keep()}", status.GRAPH_JS)
         self.assertIn("if(m.z!==zsel){if(!cardZone(m.z))held=true;show(m.z)}", status.GRAPH_JS)
+
+
+# GRAPH_JS drawn on a canvas that records its names: a card of a given size,
+# a place and the kinds a window stored. The graph settles and fits as it
+# would on screen, and the last frame says each name drawn, where, in which
+# font and how wide; and, for each step, what the legend and a node's colour
+# look like after the switch in Settings › Explore is flipped.
+CANVAS_HARNESS = r"""
+const vm = require("vm");
+const [js, data, saved, W, H, legend, steps] = JSON.parse(process.argv[1]);
+const any = new Proxy(function () {}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "length" ? 0 : any,
+                                        apply: () => any, construct: () => any });
+const store = Object.assign({}, saved || {});
+let names = [], fills = [];
+const g = { font: "", measureText: (t) => ({ width: t.length * (/12px/.test(g.font) ? 7 : 6) }),
+            fillText: (t, x, y) => names.push([t, x, y, g.font, g.measureText(t).width]),
+            clearRect: () => { names = []; fills = []; }, fill: () => fills.push(g.fillStyle) };
+["setTransform", "beginPath", "moveTo", "lineTo", "stroke", "arc", "strokeText"].forEach((k) => { g[k] = () => {}; });
+const rect = () => ({ left: 0, top: 0, width: W, height: H });
+const wrap = { getBoundingClientRect: rect, querySelector: () => null };
+const cv = { getContext: () => g, parentNode: wrap, getBoundingClientRect: rect, addEventListener: () => {}, dataset: {},
+             classList: { add: () => {}, remove: () => {}, toggle: () => {} }, setPointerCapture: () => {} };
+const sel = { value: "", onchange: null, options: [], selectedIndex: 0, className: "",
+              parentNode: { querySelectorAll: () => [], classList: { toggle: () => {} } } };
+const chip = (c) => Object.assign(c, { hidden: !!c.hidden, attrs: {}, cls: {}, dataset: c.dataset || {},
+  setAttribute(k, v) { this.attrs[k] = String(v); }, classList: { toggle: (k, on) => { c.cls[k] = !!on; } } });
+const kinds = (legend.kinds || []).map(([k, said]) => chip({ dataset: { k: String(k) }, textContent: said }));
+const keys = (legend.groups || []).map(([g, said]) => chip({ dataset: { g: String(g) }, textContent: said, hidden: true }));
+const gkey = legend.groups ? { hidden: true } : null;
+const ob = legend.switch ? { checked: false, on: null, addEventListener: (t, fn) => { ob.on = fn; } } : null;
+const byId = { "graph-data": { textContent: data }, gcv: cv, gpop: { hidden: true, innerHTML: "", addEventListener: () => {} },
+               "graph-obsidian": ob };
+let queue = [];
+const ctx = { JSON, String, Array, Object, Math, Date, performance: { now: () => 0 },
+              localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+              document: new Proxy({}, { get: (t, k) => k === "getElementById" ? (id) => id in byId ? byId[id] : any
+                                                       : k === "querySelectorAll" ? (s) => s === ".glegend [data-k]" ? kinds : s === ".gkey [data-g]" ? keys : []
+                                                       : k === "querySelector" ? (s) => s === ".gzsel" ? sel : s === ".gkey" ? gkey : any : any }),
+              Panel: any, requestAnimationFrame: (fn) => queue.push(fn), setTimeout: () => 0, addEventListener: () => {},
+              matchMedia: () => ({ matches: true }), ResizeObserver: any, MutationObserver: any,
+              IntersectionObserver: function (cb) { this.observe = () => cb([{ isIntersecting: true }]); },
+              getComputedStyle: () => ({ getPropertyValue: () => "#000" }), location: any, navigator: any, devicePixelRatio: 1 };
+ctx.window = ctx;
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+let t = 0;
+const settle = () => { for (let i = 0; i < 4000 && queue.length; i++) { const q = queue; queue = []; q.forEach((fn) => fn(t += 16)); } };
+const nodes = JSON.parse(data).nodes, G = ctx.window.GarrickGraph;
+const look = () => { const drawn = nodes.filter((n) => G.focus(n.u)); G.focus(null); settle();
+  return { names, fills: drawn.map((n, i) => [n.N || n.n, fills[i]]),
+           kinds: kinds.filter((c) => !c.hidden).map((c) => [c.textContent, !!c.cls.nog]),
+           key: gkey && !gkey.hidden ? keys.filter((c) => !c.hidden).map((c) => c.textContent) : null,
+           checked: ob ? ob.checked : null, stored: store["garrick-graph-obsidian"] || null }; };
+settle();
+const out = [look()];
+for (const [op, arg] of steps || []) {
+  if (op === "switch") { ob.checked = arg; ob.on(); }
+  else if (op === "pick") { sel.value = arg; sel.onchange(); }
+  out.push(look());
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def overlaps(names):
+    """The pairs of drawn names whose boxes cover each other, the box as names() measures it."""
+    boxes = [(t, x, y, x + w, y + (14 if f.startswith("600") else 13)) for t, x, y, f, w in names]
+    return [(a[0], b[0]) for i, a in enumerate(boxes) for b in boxes[i + 1:]
+            if a[1] < b[3] and b[1] < a[3] and a[2] < b[4] and b[2] < a[4]]
+
+
+def run_canvas(html, saved=None, size=(900, 520), steps=(), switch=False):
+    data = graph_data_text(html)
+    legend = {"kinds": [[int(k), said] for k, said in re.findall(r'data-k="(\d+)" aria-pressed="true"><i[^>]*></i>([^<]+)</button>', html)]}
+    if 'class="legend gkey"' in html:
+        legend["groups"] = [[int(g), said] for g, said in re.findall(r'<span data-g="(-?\d+)" hidden><i[^>]*></i>([^<]+)</span>', html)]
+    legend["switch"] = switch
+    done = subprocess.run(["node", "-e", CANVAS_HARNESS, json.dumps([status.GRAPH_JS, data, saved or {}, size[0], size[1], legend,
+                                                                    [list(s) for s in steps]])],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def graph_data_text(html):
+    return re.search(r'<script type="application/json" id="graph-data">(.*?)</script>', html, re.S).group(1)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestEveryKindDrawnIsNamed(StatusCase):
+    """#252: a kind turned on in the legend is named at any zoom, after projects and hubs, the most linked first."""
+
+    def setUp(self):
+        super().setUp()
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        self.entities = ["Entity %02d" % i for i in range(40)]
+        for i, name in enumerate(self.entities):
+            links = " ".join("[[e%02d]]" % j for j in range(i + 1, min(40, i + 1 + (6 if i < 5 else 1))))
+            write(m / "entities" / ("e%02d.md" % i), "---\ntitle: %s\ntype: entity\n---\n\n%s\n" % (name, links))
+        for i, name in enumerate(("Ada Moss", "Bo Lind", "Cy Hart")):
+            write(m / "people" / ("p%d.md" % i), "---\ntitle: %s\ntype: person\n---\n\nKnows [[e%02d]] and [[e%02d]].\n" % (name, i, i + 10))
+
+    def test_a_kind_turned_on_is_named_without_zooming_in(self):
+        out = run_canvas(self.page(), {"garrick-graph-place": "Meetings", "garrick-graph-kinds-Meetings": '["entity"]'})[0]
+        said = [n[0] for n in out["names"]]
+        self.assertGreater(len(set(said) & set(self.entities)), 10, said)     # where there is room, at the scale that fits them all
+        self.assertEqual([], overlaps(out["names"]))
+
+    def test_hubs_first_then_the_most_linked(self):
+        html = self.page()
+        out = run_canvas(html, {"garrick-graph-place": "Meetings", "garrick-graph-kinds-Meetings": '["person","entity"]'},
+                         size=(640, 360))[0]
+        said = [n[0] for n in reversed(out["names"])]                          # drawn least wanted first
+        people = [n for n in said if n not in self.entities]
+        self.assertTrue({"Ada Moss", "Bo Lind", "Cy Hart"} <= set(people), said)  # people keep their priority
+        self.assertEqual(people, said[:len(people)])
+        ents = [n for n in said if n in self.entities]
+        self.assertTrue(ents, said)                                              # entities fill the room left
+        data = graph_data(html)
+        on = {i for i, n in enumerate(data["nodes"]) if n["z"] == "Meetings" and n["n"] in self.entities + people}
+        deg = {}
+        for a, b in data["edges"]:
+            if a in on and b in on:
+                for i in (a, b):
+                    deg[data["nodes"][i]["n"]] = deg.get(data["nodes"][i]["n"], 0) + 1
+        self.assertEqual("Entity 04", max(self.entities, key=lambda n: (deg.get(n, 0), -self.entities.index(n))))
+        self.assertEqual(sorted(ents, key=lambda n: (-deg.get(n, 0), self.entities.index(n))), ents)   # the most linked placed first
+        self.assertEqual([], overlaps(out["names"]))
+
+    def test_a_note_in_a_project_is_named_and_its_card_keeps_what_it_resumes(self):
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Call notes.md", "# Call notes\n")
+        html = self.page(launchers=("finder", "claude"))
+        self.assertEqual("Pricing", next(n for n in graph_data(html)["nodes"] if n["n"] == "Call notes")["lw"])
+        out = run_canvas(html, {"garrick-graph-place": "Work", "garrick-graph-kinds-Work": '["project","thread","note"]'})[0]
+        self.assertIn("Call notes", [n[0] for n in out["names"]])
+        self.assertTrue(all(isinstance(n[1], (int, float)) and isinstance(n[4], (int, float)) for n in out["names"]), out["names"])
+        self.assertNotIn("n.lw||(n.lw={})", status.GRAPH_JS)                   # a name's widths kept apart from it (tw)
+        self.assertIn("lw=n.tw||(n.tw={})", status.GRAPH_JS)
+
+    def test_names_stay_cheap_on_a_crowded_graph(self):
+        # Measured in Node on 2,000 notes drawn: 6.6 ms a frame trying every name, 2.3 ms trying BIG of the rest.
+        self.assertNotIn("scale>1.4", status.GRAPH_JS)
+        self.assertIn("||e[0]===4&&++tried>BIG){n.lp=-1;return}", status.GRAPH_JS)     # a note off the card is not counted
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestObsidianColoursAreASetting(StatusCase):
+    """#253: every place is coloured by its kinds; a vault's colour groups only with Settings › Explore's switch on."""
+
+    def setUp(self):
+        super().setUp()
+        TestVaultGraph.obsidian(self, self.root / "Zones" / "Work", groups=[("[type:project]", 0xFF0000), ("path:Birch Entry", 0x00FF00)])
+        self.html = self.page()
+        self.data = graph_data(self.html)
+
+    def colours(self, out, by):
+        return {name: colour for name, colour in out["fills"] if name in by}
+
+    def test_off_a_zone_in_a_vault_takes_its_kinds_colours(self):
+        out = run_canvas(self.html, {"garrick-graph-place": "Work"}, switch=True)[0]
+        kind = {n["n"]: self.data["colors"][n["k"]] for n in self.data["nodes"] if n["z"] == "Work"}
+        self.assertTrue(out["fills"])
+        self.assertEqual({n: kind[n] for n, _ in out["fills"]}, dict(out["fills"]))
+        self.assertTrue(out["kinds"])
+        self.assertFalse(any(nog for _, nog in out["kinds"]))                  # each kind's dot in its colour
+        self.assertIsNone(out["key"])                                          # no key under the legend
+        self.assertFalse(out["checked"])
+        legend = self.html[self.html.index('class="legend glegend"'):self.html.index('id="gsum"')]
+        self.assertNotIn("No group", legend)
+        first = legend[:legend.index("</div>")]
+        self.assertNotIn("data-g", first)                                      # one row: kinds, then the two states
+        self.assertLess(first.index("</button>"), first.index("Next action late"))
+        self.assertLess(first.index("Next action late"), first.index("Parked"))
+
+    def test_on_the_vaults_colours_and_their_key_on_a_line_of_its_own(self):
+        by = {n["n"]: n for n in self.data["nodes"] if n["z"] == "Work"}
+        for steps, saved in (((("switch", True),), {}), ((), {"garrick-graph-obsidian": "1"})):
+            out = run_canvas(self.html, dict(saved, **{"garrick-graph-place": "Work"}), steps=steps, switch=True)[-1]
+            fills = dict(out["fills"])
+            for name, colour in fills.items():
+                g = by[name]["g"]
+                self.assertEqual(self.data["groups"][g][0] if g >= 0 else status.OTHER, colour, name)
+            self.assertEqual("#ff0000", fills["Acme Review"])
+            self.assertEqual("#00ff00", fills["Market Sizing"])
+            self.assertEqual(status.OTHER, fills["Pricing"])
+            self.assertTrue(out["kinds"] and all(nog for _, nog in out["kinds"]))   # the kinds stay, with a plain dot
+            self.assertEqual(["Project", "Birch Entry"], out["key"])            # keyed apart, no No group
+            self.assertTrue(out["checked"])
+            self.assertEqual("1", out["stored"])
+        off = run_canvas(self.html, {"garrick-graph-place": "Work", "garrick-graph-obsidian": "1"}, steps=(("switch", False),), switch=True)
+        self.assertIsNone(off[1]["key"])
+        self.assertEqual("0", off[1]["stored"])
+        self.assertNotEqual(dict(off[0]["fills"])["Pricing"], dict(off[1]["fills"])["Pricing"])
+
+    def test_a_wiki_looks_the_same_either_way(self):
+        TestVaultGraph.obsidian(self, self.root, groups=[("[type:meeting]", 0x123456)])
+        html = self.page()
+        out = run_canvas(html, {"garrick-graph-place": "Meetings"}, steps=(("switch", True),), switch=True)
+        self.assertEqual(out[0]["fills"], out[1]["fills"])
+        self.assertTrue(out[0]["fills"])
+        self.assertEqual(out[0]["kinds"], out[1]["kinds"])
+        self.assertFalse(any(nog for _, nog in out[1]["kinds"]))
+        self.assertIsNone(out[1]["key"])
+
+    def test_the_switch_sits_in_settings_explore_off_by_default(self):
+        explore = self.html[self.html.index('id="follow-settings"'):]
+        explore = explore[:explore.index("</section>")]
+        self.assertIn('<input type="checkbox" id="graph-obsidian"> <span>Use Obsidian&#39;s graph colours<small>', explore)
+        self.assertLess(explore.index("graph-follow"), explore.index("graph-obsidian"))
+        self.assertNotIn("graph-obsidian", self.page(show_graph=False))
+        self.assertIn("var vc=st.get('garrick-graph-obsidian')==='1';", status.GRAPH_JS)
 
 
 # FOLLOW_JS against a page status.py wrote, with the zones' boxes made up

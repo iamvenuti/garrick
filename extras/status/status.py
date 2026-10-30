@@ -2553,12 +2553,14 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     its folder, and a project with no live thread left, with everything in it,
     are marked `s` and drawn only when the page is asked to show them.
 
-    A place inside an Obsidian vault with colour groups of its own
-    (.obsidian/graph.json) is coloured by them, `g` naming the group, and a
-    note no group takes is grey; the vault's ignore filters (.obsidian/app.json)
-    leave notes out, as Obsidian's graph does. Elsewhere each kind keeps its
-    colour. Every note in a project carries the folder an app opens it in
-    (`f`), its thread's or else its project's, where an app can open one. A
+    Every note is coloured by its kind. In a zone inside an Obsidian vault
+    with colour groups of its own (.obsidian/graph.json), `g` names the group
+    that takes the note, -1 for none, and the page colours it so, grey for
+    none, only while Settings › Explore uses Obsidian's colours (#253). The
+    vault's ignore filters (.obsidian/app.json) leave notes out either way, as
+    Obsidian's graph does. Every note in a project carries the folder an app
+    opens it in (`f`), its thread's or else its project's, where an app can
+    open one. A
     thread whose own next action is late, named by zone,
     project and thread in `urgent`, is marked `lt` and draws the one ring the
     graph has: age alone never marks a note. Every note carries its path from
@@ -2638,7 +2640,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         if kind == "project" and project_said:
             say = project        # "open Acme Review": the threads skill resolves a project name too
         # Short keys keep the page small. The layout adds x, y, vx, vy, ax, ay, r,
-        # i, adj, deg, lp and lw to each node in the browser, so none of those is used here.
+        # i, adj, deg, lp and tw to each node in the browser, so none of those is used here.
+        # tw holds a name's widths; it was lw, which a note in a project carries for what an app
+        # resumes, so such a note was never named once zoomed in (#252).
         index[path] = len(nodes)
         title = as_text(fm.get("title")).strip() or path.stem
         hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
@@ -3630,15 +3634,24 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
 
 def follow_settings() -> str:
     """Settings › Explore: whether the graph follows the zone you are reading
-    on the Threads card (#142, FOLLOW_JS). On until switched off, and kept in
-    this window, as the graph's other choices are; only on a page with the graph."""
-    return ('<section class="setsec" id="follow-settings">%s%s<div class="launcher-row"><label class="launcher-choice">'
-            '<input type="checkbox" id="graph-follow" checked> <span>Follow the zone in view<small>Explore shows the zone you are '
-            'reading on the Threads card</small></span></label></div></section>'
-            % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading."), help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
+    on the Threads card (#142, FOLLOW_JS), on until switched off; and whether a
+    zone inside an Obsidian vault takes the colours of the vault's own graph
+    groups (#253, GRAPH_JS), off until switched on, every place otherwise
+    coloured by its kinds. Both kept in this window, as the graph's other
+    choices are, so neither is known when the page is built; only on a page
+    with the graph."""
+    row = '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="%s"%s> <span>%s<small>%s</small></span></label></div>'
+    return ('<section class="setsec" id="follow-settings">%s%s%s%s</section>'
+            % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading, and whose colours it uses."),
+               help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
                'switches to it once it has filled the window for a moment. With the zones side by side, point at a column or open a '
                'project or thread in it. The switch is for this page only: the zone you pick in Explore&#39;s drop-down still leads '
-               'the card and is what the page opens on. Picking All or a wiki pauses it until the page reloads. Kept in this window.')))
+               'the card and is what the page opens on. Picking a wiki pauses it until the page reloads. Explore colours each kind '
+               'of note its own way; with Obsidian&#39;s graph colours on, a zone inside an Obsidian vault with colour groups takes '
+               'the vault&#39;s colours instead, keyed under the legend. A wiki keeps its kinds either way. Kept in this window.'),
+               row % ("graph-follow", " checked", "Follow the zone in view", "Explore shows the zone you are reading on the Threads card"),
+               row % ("graph-obsidian", "", "Use Obsidian&#39;s graph colours",
+                      "A zone in an Obsidian vault takes the colours of its graph&#39;s groups")))
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
@@ -5791,6 +5804,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
 .glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}.glegend>button.nog>i{background:var(--muted)!important}
 .glegend>button[aria-pressed="false"]>i{background:none!important;border:1.5px solid var(--muted)}
+.gkey{margin-top:6px}.gkey>b{font-weight:600}
 .live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
@@ -7011,6 +7025,8 @@ if(s)try{JSON.parse(s).forEach(function(x){var i=G.keys.indexOf(x);if(i>=0)o[i]=
 var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub;for(k in pick)return pick;for(k in model)return model;return all}
 function keep(){st.set('garrick-graph-kinds-'+zsel,JSON.stringify(Object.keys(ks).map(function(k){return G.keys[k]})))}
 var ks=kindsFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1',q='',mt={},hits=[],hi=-1,more={};
+/* a vault's colour groups colour its notes only when Settings › Explore says so; else every place takes its kinds' (#253) */
+var vc=st.get('garrick-graph-obsidian')==='1';
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -7051,10 +7067,11 @@ function visible(n){return!!ks[n.k]&&(parked||!n.s)&&n.z===zsel}
    lines are the notes' own links (#250) */
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(V.every(function(n){return n.c})?G.edges.concat(G.ce||[]):G.edges).filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
-/* the legend offers every kind the place has, pressed when shown, and keys the colour groups drawn */
-var have={},dg={},grp=false;N.forEach(function(n){if(n.z===zsel&&(parked||!n.s)){have[n.k]=1;if(n.g!=null)grp=true}});V.forEach(function(n){if(n.g!=null)dg[n.g]=1});
+/* the legend offers every kind the place has, pressed when shown; with a vault's colours on, each kind's dot is plain
+   and the groups drawn are keyed on a line of their own, which filters nothing (#253) */
+var have={},dg={},grp=false;N.forEach(function(n){if(n.z===zsel&&(parked||!n.s)){have[n.k]=1;if(vc&&n.g!=null)grp=true}});if(vc)V.forEach(function(n){if(n.g>=0)dg[n.g]=1});
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false');s.classList.toggle('nog',grp)});
-document.querySelectorAll('.glegend [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g]});
+var gk=document.querySelector('.gkey'),ka=false;document.querySelectorAll('.gkey [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g];ka=ka||!s.hidden});if(gk)gk.hidden=!ka;
 var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
 var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+' notes, '+E.length+' links · names only';seek()}
 /* Every note pushes every other away, which costs the square of the notes a
@@ -7101,8 +7118,9 @@ x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
 if(now){scale=k;px=x;py=y;return false}var going=Math.abs(k-scale)>scale*.001||Math.abs(x-px)>.2||Math.abs(y-py)>.2;
 scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08;return going}
 function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
-/* a note in a vault with colour groups of its own takes its group's colour, or grey; elsewhere its kind's */
-function fill(n){return n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:n.g===-1?G.other:G.colors[n.k]||C['--muted']}
+/* a note takes its kind's colour; with Obsidian's colours on (#253), a note in a vault with colour groups of its own
+   takes its group's, or grey */
+function fill(n){return vc&&n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:vc&&n.g===-1?G.other:G.colors[n.k]||C['--muted']}
 /* a ring for a thread whose own next action is late (lt), never for age alone */
 function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
@@ -7121,20 +7139,26 @@ names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=f&&!near[n.i]||
 ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,l.x,l.y);ctx.fillStyle=l.big?C['--ink']:C['--ink2'];ctx.fillText(n.n,l.x,l.y)});
 ctx.globalAlpha=1}
 /* Which names to draw, and where. They are placed most wanted first: the note
-   in focus, its linked notes, projects, threads, then the rest once zoomed in.
+   in focus, its linked notes, projects, hubs, then every other note drawn, the
+   most linked first, at any zoom: a kind is drawn because it was asked for (#252).
    A name whose box would cover one already placed tries above its note, then
    beside it, and is left out when none of those is free, unless it is the
    note in focus or a project, which are always named. A name keeps the side it
    had while that stays free, so names do not hop as the graph moves. The
-   list comes back least wanted first, so the most wanted is drawn on top. */
+   list comes back least wanted first, so the most wanted is drawn on top.
+   Of the notes that are neither in focus, linked, found, projects nor hubs,
+   at most BIG on the card are tried a frame, the most linked first: measured
+   with 2,000 notes drawn, a frame took 6.6 ms trying them all and 2.3 ms so,
+   and with 650 it was 2.2 ms and 1.6 ms. Zooming in leaves the rest off the
+   card, which frees the count for those still on it (#252). */
 var FONT='system-ui,-apple-system,sans-serif';
 function names(P,f,near,zs){var want=[],out=[],cells={},M=q?mt:null,few=M&&hits.length<=20;
-V.forEach(function(n){var w=n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1;if(w<0)n.lp=-1;else want.push([w,n])});
+V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:4,n])});
 want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
 function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
 function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}
-want.forEach(function(e){var n=e[1],p=P[n.i],big=n.h||n===f;if(p[0]<-200||p[0]>W+200||p[1]<-40||p[1]>H+40){n.lp=-1;return}
-var font=(big?'600 12px ':'11px ')+FONT,lw=n.lw||(n.lw={});if(lw[font]==null){ctx.font=font;lw[font]=ctx.measureText(n.n).width}
+var tried=0;want.forEach(function(e){var n=e[1],p=P[n.i],big=n.h||n===f;if(p[0]<-200||p[0]>W+200||p[1]<-40||p[1]>H+40||e[0]===4&&++tried>BIG){n.lp=-1;return}
+var font=(big?'600 12px ':'11px ')+FONT,lw=n.tw||(n.tw={});if(lw[font]==null){ctx.font=font;lw[font]=ctx.measureText(n.n).width}
 var w=lw[font],h=big?14:13,r=n.r*zs+(ring(n)?6:3),at=[[p[0]-w/2,p[1]+r+1],[p[0]-w/2,p[1]-r-1-h],[p[0]+r+4,p[1]-h/2],[p[0]-r-4-w,p[1]-h/2]],
 tries=n.lp>=0?[n.lp,0,1,2,3]:[0,1,2,3],pad=n.lp>=0?-1:1,got=-1,box=null;
 for(var i=0;i<tries.length&&got<0;i++){var x=Math.max(2,Math.min(W-w-2,at[tries[i]][0])),y=at[tries[i]][1],b=[x-2-pad,y-pad,x+w+2+pad,y+h+pad];
@@ -7214,6 +7238,8 @@ if(fq){fq.value='';fq.addEventListener('input',function(){var v=fold(fq.value.tr
 fq.addEventListener('keydown',function(e){if(e.isComposing)return;if(e.key==='Enter'){e.preventDefault();if(hits.length){hi=(hi+1)%hits.length;select(hits[hi],true)}}
 else if(e.key==='Escape'&&(fq.value||q)){e.preventDefault();e.stopPropagation();fq.value='';q='';hi=-1;seek()}})}
 if(fm)fm.onclick=function(){Object.keys(more).forEach(function(k){ks[k]=1});keep();redo()};
+/* Settings › Explore's Use Obsidian's graph colours (#253): kept in this window, and redrawn at once */
+var ob=document.getElementById('graph-obsidian');if(ob){ob.checked=vc;ob.addEventListener('change',function(){vc=ob.checked;st.set('garrick-graph-obsidian',vc?'1':'0');rebuild();if(sel)select(sel);wake()})}
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};
@@ -7708,15 +7734,16 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        # each kind a toggle that shows or hides it, and a vault's colour groups a key beside them (#250)
+        # each kind a toggle that shows or hides it (#250), then the two states. A vault's colour groups are keyed on a
+        # line of their own, shown only while Settings › Explore uses Obsidian's colours; grey needs no key (#253)
         legend = "".join('<button type="button" data-k="%d" aria-pressed="true"><i style="background:%s"></i>%s</button>'
                          % (i, GR["colors"][i], E(plural(GR["keys"][i]))) for i, _ in GR["kinds"])
-        legend += "".join('<span data-g="%d"><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
-                          for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
-        if any(n.get("g") == -1 for n in GR["nodes"]):
-            legend += '<span data-g="-1"><i style="background:%s"></i>No group</span>' % GR["other"]
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action late'
                   '</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
+        key = "".join('<span data-g="%d" hidden><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
+                      for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
+        if key:
+            legend += '<div class="legend gkey" hidden><b>Colours from Obsidian</b>%s</div>' % key
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis

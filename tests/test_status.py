@@ -308,8 +308,9 @@ class TestGraph(StatusCase):
 
     def test_names_do_not_cover_each_other(self):
         js = status.GRAPH_JS
-        # Placed in order: the note in focus, its links, projects, threads, the rest.
-        self.assertIn("var w=n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1", js)   # a match found as its links are (#250)
+        # Placed in order: the note in focus, its links, projects, hubs, then every other note drawn, at any zoom (#252).
+        self.assertIn("want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:4,n])", js)   # a match found as its links are (#250)
+        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # the most linked first
         self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
         self.assertIn("if(got<0&&(n===f||n.h||few&&M[n.i])){got=0", js)   # the focus, projects and a few matches are never left out
         self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top

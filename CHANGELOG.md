@@ -7,6 +7,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 ### Fixed
 
 - The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
+- **Fading leaves a link in a code block as it was written.** `fade.py apply` pointed every link to a page that faded at its new place, inside fenced code blocks and inline code too, so a wiki's `AGENTS.local.md` that showed the frontmatter with a real page as its example came back teaching `[[dormant/wiki/...]]`. The same example also counted as use, so it could hold a page in working memory or wake it. A link inside a ``` or ~~~ fence, or inside inline code, is now text: fading neither rewrites it nor counts it, as the wall check already strips inline code before it reads links. ([#256](https://github.com/iamvenuti/garrick/issues/256))
 
 ## [0.47.1] - 2026-10-30
 

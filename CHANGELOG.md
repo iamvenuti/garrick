@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **A guided context review.** "Review the context with me", or "review the latest audit with me", has the `nurture` skill work through what the checks left in a short session: it gathers the check, the wiki lint, the shared-file comparison and any audit report the workspace keeps, checks each finding again, and asks walls and failed sources first, then one batch of mechanical fixes, then one decision at a time, up to a limit you choose, fifteen minutes or ten questions by default. `System/nurture-review.md` keeps the answers and the deferrals, so the next review goes on where this one stopped. The status page's Checks card has *Review context*, which hands the request to your assistant, beside the day of the last review and whether one is unfinished, read from that file's frontmatter alone. ([#258](https://github.com/iamvenuti/garrick/issues/258))
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

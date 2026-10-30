@@ -286,6 +286,27 @@ With the [scheduled jobs](extras/scheduled-jobs.md#nurturing-the-context-each-ni
 
 Each finding a run leaves weighs by its kind, and the sum is the workspace's *context debt*: a wall 10, an attribution question or a correction 5, a judgment finding or a mechanical fix not yet made 1, and a copy behind the share nothing. A mechanical finding stops counting once it is fixed. The weights were set from Nurture's runs on a working workspace, and `nurture-weights` and `nurture-threshold` in the [check settings](#check-settings) change them. Each day's record, `System/generated/nurture/<YYYY-MM-DD>.json`, keeps the debt by kind and by scope, a zone, a wiki or System, so its trend can be read back without running anything: the [status page](extras/status-page.md) shows it on its Checks card, with its last 30 days and the scopes carrying most. A run of the whole workspace measures it; a scoped run, "nurture Work", replaces only its own scope's part of what stood before. When the debt is over the threshold, 40 unless you set another, or has kept rising for a week, the nightly job's morning digest adds one line, such as `Context debt 42, up from 18 last week, mostly attribution in the Meetings wiki. Say "nurture the meetings".` A wall is in the digest whatever the total.
 
+### Reviewing the context
+
+Say "review the context with me" for a short session through what the checks left for you, or "review the latest audit with me" to start from a report your workspace keeps about itself, where `System/rules.local.md` or an `AGENTS.local.md` says it is. A weekly review is one use of it; nothing schedules it, and it needs no job.
+
+The assistant gathers what the check, the wiki lint and the shared-file comparison find now, and reads the audit report if there is one, saying its date and where it came from. It checks each finding again before it proposes anything, makes one item of the same problem found twice, and keeps apart what is current, what only an older report says, and which sources did not run. Then it asks you for a limit, fifteen minutes or ten questions unless you choose another, and goes in this order: walls and anything that failed to run, then one batch of mechanical fixes on one yes, then attribution and judgment one decision at a time, each with its evidence, a proposed answer and the files it would change. Say "skip" or "later", and why. Every change goes through Nurture's own steps: an audit report alone never allows an edit, a raw record is never edited, nothing crosses a wall, and a difference from a shared file is never written over. At the end it checks again and says what was fixed, answered and deferred, and what is left. A lower count of warnings does not prove the content is right, and the review never says it does.
+
+The record of decisions is `System/nurture-review.md`, committed in the workspace root's repository. It keeps what was answered and what was deferred, so the next review goes on where this one stopped and never asks a settled question again. It holds decisions, never quoted material. Its frontmatter says when the last review was done and whether one is unfinished, and the [status page](extras/status-page.md) reads only that:
+
+```markdown
+---
+type: nurture-review
+status: open                 # done once every item has a decision
+started: 2026-03-14
+last_completed: 2026-03-07
+limit: 15 minutes
+---
+| Id | Source | Decision | Reason | Date |
+|---|---|---|---|---|
+| check:links:Zones/Work/Acme Review/Threads/Pricing/Notes.md | check.py | deferred to 2026-03-21 | another session is changing it | 2026-03-14 |
+```
+
 ## Fading
 
 Both wikis only grow, and every question starts by reading their index. So old pages fade out of working memory, by age, kind and use, and stay where a search can still find them. Nothing is deleted.

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- The wall check skipped any line shaped like a checkpoint's own lines, wherever it stood, and read nothing in an item's id, whatever it held; it now skips only the lines `scaffold.py checkpoint` writes, exactly as it writes them, inside a checkpoint, and reads everything else as wording. ([#225](https://github.com/iamvenuti/garrick/issues/225))
+
 ## [0.47.0] - 2026-10-30
 
 Explore groups the zones and the wikis, filters by kind from its legend, draws a wiki's own page types as kinds, and finds a note by name.

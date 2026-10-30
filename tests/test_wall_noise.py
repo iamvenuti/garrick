@@ -22,6 +22,8 @@ from fixtures import HAVE_GIT, TOOLS, git, meeting_page, write
 from test_walls_deterministic import ENV, REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
+from garrick_lib import (CHECKPOINT_KINDS, CHECKPOINT_ONE, CHECKPOINT_SAID,  # noqa: E402
+                         checkpoint_item_line, render_checkpoint)
 
 
 class TestZoneArchive(WallCase):
@@ -389,7 +391,10 @@ class TestCheckpointIsNotWording(WallCase):
         self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", [{"kind": "incomplete", "text": "half done"}])
         self.assertEqual(before, check.runs(self.note(self.acme).read_text(encoding="utf-8")))
         item = "the rebate column for the northern accounts is still half filled"
-        self.assertEqual(check.runs(item), check.runs("- **Incomplete** %s <!-- i -->\n" % item))
+        block = ("<!-- garrick-checkpoint at=2026-03-14T14:32:10+01:00 base=- key=0123456789ab -->\n"
+                 "- **Incomplete** %s <!-- i -->\n<!-- /garrick-checkpoint -->\n" % item)
+        self.assertEqual(check.runs(item), check.runs(block))
+        self.assertNotEqual(check.runs(item), check.runs("- **Incomplete** %s <!-- i -->\n" % item))
 
     def test_eight_words_quoted_from_a_walled_meeting_in_an_item_are_refused(self):
         write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
@@ -405,6 +410,69 @@ class TestCheckpointIsNotWording(WallCase):
         self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
                           "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"},
                          {f.path for f in self.walls()})
+
+    # Lines shaped like what the tool writes, carrying words of their own. Each
+    # was read as nothing before 0.46.1, wherever it stood (#225).
+    SHAPED = (
+        "<!-- garrick-checkpoint --> %s <!-- -->" % SECRET,
+        "<!-- garrick-checkpoint %s -->" % SECRET,
+        "<!-- /garrick-checkpoint %s -->" % SECRET,
+        "<!-- garrick-checkpoint at=2026-03-14T14:32:10+01:00 base=- key=0123456789ab note=%s -->"
+        % SECRET.replace(" ", "-"),
+        "**Unconfirmed, %s.** %s" % (SECRET, CHECKPOINT_SAID),
+        "- **Decided** the tier stays <!-- %s -->" % SECRET.replace(" ", "-"),
+    )
+
+    def quoted_from_a_walled_meeting(self):
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
+              meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", SECRET + "."))
+
+    def test_a_line_shaped_like_the_tools_is_read_outside_a_checkpoint(self):
+        self.quoted_from_a_walled_meeting()
+        notes = self.acme / "Threads" / "Pricing" / "Notes.md"
+        for line in self.SHAPED:
+            with self.subTest(line=line):
+                write(notes, "Left as it was:\n\n%s\n" % line)
+                self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Notes.md"}, {f.path for f in self.walls()})
+
+    def test_a_line_shaped_like_the_tools_is_read_inside_a_checkpoint(self):
+        self.quoted_from_a_walled_meeting()
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        note = self.note(self.acme)
+        written = note.read_text(encoding="utf-8")
+        said = next(l for l in written.splitlines() if l.startswith("**Unconfirmed, "))
+        for line in self.SHAPED:
+            for where in ("above the closing marker", "in place of the line under the opening one"):
+                with self.subTest(line=line, where=where):
+                    if where.startswith("above"):
+                        text = written.replace("<!-- /garrick-checkpoint -->", line + "\n<!-- /garrick-checkpoint -->")
+                    else:
+                        text = written.replace(said, line)
+                    write(note, text)
+                    self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md"}, {f.path for f in self.walls()})
+        write(note, written)
+        self.assertEqual([], self.walls())
+
+    def test_every_block_the_tool_can_write_is_skipped_as_written(self):
+        said = "the %s item says what the northern rebate column still lacks today"
+        items = [{"kind": kind, "text": said % kind,
+                  "line": checkpoint_item_line(kind, said % kind, stem if kind in CHECKPOINT_ONE else stem + "12")}
+                 for kind, _, stem in CHECKPOINT_KINDS]
+        mine = set().union(*(check.runs(item["text"]) for item in items))
+        self.assertTrue(all(check.runs(item["text"]) for item in items))    # every item has runs to find
+        for at in ("2026-03-14T14:32:10+01:00", "2026-12-01T00:00:00", "2026-07-09T09:05:00-05:00",
+                   "2026-05-31T23:59:59+05:30:15"):
+            for base in (None, "0123456789ab"):
+                with self.subTest(at=at, base=base):
+                    body, _ = render_checkpoint(at, base, items)
+                    self.assertEqual([(0, len(body))], check.checkpoint_spans(body))
+                    self.assertEqual(mine, check.runs("# Notes\n\n%s\n" % body) - check.runs("# Notes\n"))
+
+    def test_a_checkpoint_without_its_closing_marker_is_read_whole(self):
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        text = self.note(self.acme).read_text(encoding="utf-8")
+        open_only = text.replace("<!-- /garrick-checkpoint -->", "")
+        self.assertLess(check.runs(text), check.runs(open_only))
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_committing_both_checkpoints_passes_the_hook(self):

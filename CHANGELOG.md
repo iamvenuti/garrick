@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

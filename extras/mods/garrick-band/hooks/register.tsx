@@ -269,8 +269,28 @@ async function measure($: any) {
 
 async function refresh($: any) {
   const found = await findNote($).catch(() => null)
+  last = found
   await update($, note, () => found)
   await measure($)
+}
+
+// The note the band last found, kept by the module. A /clear starts a new
+// conversation with no session.start, and its atoms start empty, so `note`
+// reads null until that conversation's first turn.complete; meanwhile the band
+// draws from this, with no figure, since `used` starts empty too. Undefined
+// until a search has run in this module, which then searches once; a folder
+// with no note above it keeps null and never searches again, so a render
+// costs no file read.
+let last: Note | null | undefined = undefined
+let finding: Promise<Note | null> | null = null
+
+async function noteOf($: any): Promise<Note | null> {
+  const n = await read($, note)
+  if (n !== null) return n
+  if (last !== undefined) return last
+  finding ??= findNote($).catch(() => null).then(found => (last ??= found))
+
+  return finding
 }
 
 // --- Clickable paths -------------------------------------------------------
@@ -446,7 +466,7 @@ let timer: { cancel: () => void } | null = null
 let held: { pick: WaitPick; root: string }[] = []     // ticks waiting for the turn to end
 
 async function nextUp($: any): Promise<WaitPick[]> {
-  const n = await read($, note)
+  const n = await noteOf($)
   if (n === null) return []
   const argv = nextUpArgv(n)
   if (!(await $.fs.exists(argv[1]!))) return []
@@ -520,7 +540,7 @@ export function waitOrder(l: Launchers): string[] {
 // on that can open it here.
 async function waitOpen($: any): Promise<string> {
   const pick = shownPick(await read($, wait))
-  const n = await read($, note)
+  const n = await noteOf($)
   if (pick === null || n === null || pick.note === null) return 'Nothing is on offer to open.'
   const root = rootOf(n)
   const abs = `${root}/${pick.note}`
@@ -572,7 +592,7 @@ async function tick($: any, pick: WaitPick, root: string): Promise<string> {
 async function waitTick($: any): Promise<string> {
   const w = await read($, wait)
   const pick = shownPick(w)
-  const n = await read($, note)
+  const n = await noteOf($)
   if (pick === null || n === null) return 'Nothing is on offer to tick.'
   if (!pick.tick) return 'Only a Todo line can be ticked.'
   const root = rootOf(n)
@@ -622,7 +642,7 @@ export const register: Register = on => {
       timer?.cancel()
       timer = null
       await update($, wait, () => null).catch(() => undefined)
-      const n = await read($, note)
+      const n = await noteOf($)
       const previewed = n !== null && (await waitPreview($, rootOf(n)))
       const text = previewed ? ((await $.fs.read(`${rootOf(n)}/System/garrick-settings.json`).catch(() => null)) as string | null) : null
       const chosen = waitSettings(text)
@@ -666,7 +686,8 @@ export const register: Register = on => {
   // A /clear, typed or from the band, ends the conversation and goes on in a
   // new one with no session.start; so does a resume. The new conversation has
   // no figure until its first reply, so the band shows none rather than the
-  // old one's, which may be red and tell the person to clear again.
+  // old one's, which may be red and tell the person to clear again. Its atoms
+  // start empty, `note` too, so the band draws from noteOf()'s fallback.
   on('session.end', async ($, e, next) => {
     await update($, used, () => null).catch(() => undefined)
 
@@ -692,7 +713,7 @@ export const register: Register = on => {
     await update($, isHidden, () => false)
     const shown = 'Garrick band shown. If it is folded under [+], ctrl+x ctrl+a opens it.'
     if (arg === '' || arg === 'show') return { text: shown }
-    const current = await read($, note)
+    const current = await noteOf($)
     if (['next', 'open', 'tick', 'later'].includes(arg)) {
       if (current === null || !(await waitPreview($, rootOf(current)))) return { text: waitOff }
       if (arg === 'next') return { text: await waitNext($) }
@@ -728,7 +749,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const current = await read($, note)
+    const current = await noteOf($)
     if (e.props.hasSurvey || current === null || (await read($, isHidden))) return next(e)
 
     const percent = await read($, used)
@@ -795,7 +816,7 @@ export const register: Register = on => {
   // the pane offers Obsidian and Finder as the band does.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Markdown } = $.ui.resolve(e)
-    const current = await read($, note)
+    const current = await noteOf($)
     if (!resumable(current)) return <Text dimColor>No Resume here block found.</Text>
     const byTarget = (target: string) => {
       if (index === null) return null

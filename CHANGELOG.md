@@ -4,6 +4,11 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every note Explore draws is named, at any zoom** ([#252](https://github.com/iamvenuti/garrick/issues/252)). Since 0.47.0 a kind is shown because you turned it on in the legend, but only projects and hubs were named at normal zoom, so *Entities* or *Domains* turned on in Meetings had no labels until you zoomed in past 1.4×. Names now go to the note in focus, its links and the search matches, projects, hubs, then every other note drawn, the most linked first, and the overlap check still leaves out a name with no room. On a crowded graph at most 400 of those last notes on the card are tried a frame, so drawing stays quick. A note in a project whose card can open in an app was never named, even zoomed in: the graph kept a name's measured width under the key that already held what the app resumes there, and the width came out as no number. The width now has a key of its own.
+- **Explore colours every place by Garrick's kinds, and a vault's colour groups are a setting** ([#253](https://github.com/iamvenuti/garrick/issues/253)). A zone inside an Obsidian vault with colour groups of its own took the vault's colours, and since 0.47.0 its legend listed the kinds as grey toggles beside the groups as keys and *No group*, so the same notes were named twice and the filters looked like keys. Every place is now coloured by its kinds, as a wiki is, and the legend is one row of coloured kind toggles, then *Next action late* and *Parked*. *Use Obsidian's graph colours* in Settings › Explore, off by default and kept in the window, brings back the vault's colours: the kinds stay toggles with a plain dot, the groups drawn are keyed on a line of their own headed *Colours from Obsidian*, and *No group* is gone, since grey says it. The vault's ignore filters apply either way, and a wiki looks the same either way.
+
 ## [0.47.0] - 2026-10-30
 
 Explore groups the zones and the wikis, filters by kind from its legend, draws a wiki's own page types as kinds, and finds a note by name.

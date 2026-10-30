@@ -60,7 +60,9 @@ from garrick_lib import (  # noqa: E402
     nested_repo,
     CHECKPOINT_DAYS,
     CHECKPOINT_HEADING,
+    CHECKPOINT_KINDS,
     CHECKPOINT_LABELS,
+    CHECKPOINT_ONE,
     CHECKPOINT_SAID,
     CHECKPOINT_UNCONFIRMED,
     CONTEXT_TABLES,
@@ -2776,23 +2778,56 @@ HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
 # this exact header is a break: the header of any other table is not.
 LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*\|[ \t]*destination[ \t]*\|"
                               r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
-# What `scaffold.py checkpoint` writes around a person's items: the block's two
-# markers, and the line under the opening one, which carries the generated time
-# and CHECKPOINT_SAID. No shared file holds that sentence, so two checkpoints in
-# walled projects read as quoting each other on it alone (#225). Each is a break
-# that is not read at all, as the item's id and kind are: an item is read on its
-# own, as the words after its kind and before its id.
-CHECKPOINT_WRITTEN_RE = re.compile(
-    r"(?m)^[ \t]*<!--[ \t]*/?garrick-checkpoint\b[^\n]*-->[ \t]*$"
-    r"|^[ \t]*%s[^*\n]*\.\*\*[ \t]+%s[ \t]*$" % (re.escape(CHECKPOINT_UNCONFIRMED), re.escape(CHECKPOINT_SAID)))
+# Where no run of words crosses: a Markdown heading, or a ledger's header row.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
+
+# What `scaffold.py checkpoint` writes around a person's items, exactly as
+# render_checkpoint() writes it: the opening marker, with its stamp, base and
+# key, the line under it, which carries the generated time and CHECKPOINT_SAID,
+# and the closing marker. No shared file holds that sentence, so two
+# checkpoints in walled projects read as quoting each other on it alone (#225).
+# These lines are not read at all, and an item is read as its own words, after
+# its kind and before its id. Only the exact shapes the tool writes, none with
+# room for a word of anyone's, and only inside a block that opens with the one
+# marker and closes with the other: a line shaped like them anywhere else, or
+# with anything more in it, is wording like any other.
+CHECKPOINT_STAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}(?::\d{2})?)?"
+CHECKPOINT_WRITTEN_OPEN_RE = re.compile(
+    r"(?m)^<!-- garrick-checkpoint at=%s base=(?:[0-9a-f]{12}|-) key=[0-9a-f]{12} -->[ \t]*$" % CHECKPOINT_STAMP)
+CHECKPOINT_WRITTEN_CLOSE_RE = re.compile(r"(?m)^<!-- /garrick-checkpoint -->[ \t]*$")
+# The months as said_time() says them, so this line can never disagree with it.
+_SAID_MONTHS = "|".join(said_time("2026-%02d-01T00:00:00" % month).split()[3] for month in range(1, 13))
+CHECKPOINT_WRITTEN_SAID_RE = re.compile(
+    r"^%s\d{2}:\d{2} on \d{1,2} (?:%s) \d{4}\.\*\* %s[ \t]*$"
+    % (re.escape(CHECKPOINT_UNCONFIRMED), _SAID_MONTHS, re.escape(CHECKPOINT_SAID)))
+# An item, with the id checkpoint_id() gives its kind: the stem alone for the
+# kinds a block holds one of, the stem and a number for the rest.
 CHECKPOINT_ITEM_RE = re.compile(
-    r"(?m)^[ \t]*- \*\*(?:%s)\*\*(?P<item>[^\n]*?)<!--[ \t]*[A-Za-z][A-Za-z0-9-]*[ \t]*-->[ \t]*$"
-    % "|".join(re.escape(label) for label in CHECKPOINT_LABELS.values()))
-# Where no run of words crosses: a Markdown heading, a ledger's header row, or
-# what a checkpoint writes; of the last, only an item's own words are read.
-STRUCTURE_RE = re.compile(r"(?mi)%s|%s|(?P<written>%s)|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:],
-                                                            CHECKPOINT_WRITTEN_RE.pattern[4:],
-                                                            CHECKPOINT_ITEM_RE.pattern[4:]))
+    r"(?m)^- (?:%s)[ \t]*$" % "|".join(
+        r"\*\*%s\*\*(?P<item_%s>[^\n]*?)<!-- %s -->" % (re.escape(label), kind,
+                                                       re.escape(stem) if kind in CHECKPOINT_ONE
+                                                       else re.escape(stem) + r"[1-9][0-9]*")
+        for kind, label, stem in CHECKPOINT_KINDS))
+
+
+def checkpoint_spans(text: str) -> List[Tuple[int, int]]:
+    """Where each checkpoint block written by the tool sits in `text`: from
+    the first byte of its opening marker to the byte after its closing one.
+    An opening marker with no closing one after it, or another opening marker
+    before it, is no block."""
+    spans: List[Tuple[int, int]] = []
+    for head in CHECKPOINT_WRITTEN_OPEN_RE.finditer(text):
+        if spans and head.start() < spans[-1][1]:
+            continue
+        close = CHECKPOINT_WRITTEN_CLOSE_RE.search(text, head.end())
+        if close is None:
+            break
+        if CHECKPOINT_WRITTEN_OPEN_RE.search(text, head.end(), close.start()):
+            continue                  # the next opening marker is the block's, if any
+        spans.append((head.start(), close.end()))
+    return spans
+
+
 WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
 
 
@@ -2826,19 +2861,49 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     here"), and the words either side of one were not written as one sentence.
     A published ledger's header row is a break in the same way (see
     LEDGER_HEADER_RE); what its rows hold is read like any other text. So is
-    what a checkpoint's tool writes (see CHECKPOINT_WRITTEN_RE), which is
-    never read, and each of its items, read without its kind and its id."""
+    a checkpoint block the tool wrote (see CHECKPOINT_WRITTEN_OPEN_RE): its
+    markers and the line under the opening one are never read, each of its
+    items is read without its kind and its id, and any other line in it is
+    read as it stands."""
     text = without_link_targets(text, shared)
+    out: set = set()
+    last = 0
+    for start, end in checkpoint_spans(text):
+        out.update(_runs_between_breaks(text[last:start]))
+        out.update(_checkpoint_runs(text[start:end]))
+        last = end
+    out.update(_runs_between_breaks(text[last:]))
+    return out
+
+
+def _runs_between_breaks(text: str) -> set:
+    """The shingles of `text`, none crossing a heading or a ledger's header."""
     out: set = set()
     last = 0
     for m in STRUCTURE_RE.finditer(text):
         out.update(shingles(words(text[last:m.start()])))
-        if m.group("item") is not None:
-            out.update(shingles(words(m.group("item"))))
-        elif m.group("written") is None:
-            out.update(shingles(words(m.group(0))))
+        out.update(shingles(words(m.group(0))))
         last = m.end()
     out.update(shingles(words(text[last:])))
+    return out
+
+
+def _checkpoint_runs(block: str) -> set:
+    """The shingles of one checkpoint block, from its opening marker to its
+    closing one. The two markers and the line straight under the opening one
+    are not read; an item is read as its own words; anything else is read."""
+    lines = block.split("\n")
+    body = lines[1:-1]
+    if body and CHECKPOINT_WRITTEN_SAID_RE.match(body[0]):
+        body = body[1:]
+    text = "\n".join(body)
+    out: set = set()
+    last = 0
+    for m in CHECKPOINT_ITEM_RE.finditer(text):
+        out.update(_runs_between_breaks(text[last:m.start()]))
+        out.update(shingles(words(next(g for g in m.groups() if g is not None))))
+        last = m.end()
+    out.update(_runs_between_breaks(text[last:]))
     return out
 
 

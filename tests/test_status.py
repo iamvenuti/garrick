@@ -2331,6 +2331,25 @@ class TestChangedFiles(StatusCase):
         self.assertIn("Work<small>could not be read</small>", block)
         self.assertNotIn("all committed", block)
 
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_reading_a_repository_never_writes_its_index(self):
+        """git status refreshes a stale index and writes it under index.lock,
+        and a commit a session starts in that moment fails on the lock. The
+        page only reads, so it never takes the lock (0.46.1)."""
+        from fixtures import commit_all, git_init
+        work = self.root / "Zones" / "Work"
+        git_init(work)
+        commit_all(work)
+        hub = work / "Acme Review" / "Acme Review.md"
+        later = hub.stat().st_mtime + 120
+        os.utime(hub, (later, later))                    # the same bytes, a new time: the index is stale
+        index = work / ".git" / "index"
+        before = index.read_bytes()
+        R = {r["name"]: r for r in status.repos(self.root)}
+        self.assertEqual(0, R["Work"]["dirty"])
+        self.assertEqual(before, index.read_bytes())
+        self.assertFalse((work / ".git" / "index.lock").exists())
+
     def test_one_file_is_singular_and_a_clean_repository_says_so(self):
         self.assertEqual("1 changed file", status.say_files(1))
         self.assertEqual("12 changed files", status.say_files(12))

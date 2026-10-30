@@ -592,6 +592,16 @@ class TestReloadAndSettle(StatusCase):
         self.assertFalse(out.exists())
 
 
+    def test_a_workspace_deleted_during_the_wait_is_not_made_again(self):
+        """A settled build outliving the workspace, as one a test's tool
+        started can, writes nothing and makes no folder of it again."""
+        gone = lambda marker, seconds: (shutil.rmtree(self.root), True)[1]
+        with mock.patch.object(status, "settle", side_effect=gone), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(1, status.main(["--workspace", str(self.root), "--settle", "10", "--same-flags"]))
+        self.assertFalse(self.root.exists())
+        self.assertIn("no longer a workspace", err.getvalue())
+
+
 class TestBuildsAtOnce(StatusCase):
     """Builds overlap in ordinary use: the app after a button, a hook, a job,
     a build by hand (#214). Each runs here as its own process, with a home
@@ -813,6 +823,19 @@ class TestSameFlags(StatusCase):
         self.assertEqual(("--no-cmux",), kw["flags"])
         with mock.patch.object(status, "settle", return_value=False):
             self.assertIsNone(self.main("--same-flags", "--settle", "10")[1])     # a later request builds it
+
+
+    def test_the_evening_schedule_builds_with_the_stored_flags(self):
+        """The 23:30 build is nobody choosing flags: it draws with the stored
+        ones and stores none, so it cannot undo the app's (0.46.1)."""
+        with open(REPO / "extras" / "status" / "garrick.status.plist", "rb") as f:
+            args = plistlib.load(f)["ProgramArguments"]
+        build = args[args.index("--") + 1:]
+        self.assertTrue(build[1].endswith("/System/status/status.py"), build)
+        self.assertEqual(["--workspace", "/Users/<you>/Garrick", "--same-flags"], build[2:])
+        self.main("--no-graph", "--also", "/old")
+        self.main(*build[4:])                                      # what follows the workspace
+        self.assertEqual({"args": ["--no-graph", "--also", "/old"]}, json.loads(self.stored.read_text(encoding="utf-8")))
 
 
 class TestSharedLauncherSettings(StatusCase):

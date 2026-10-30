@@ -84,7 +84,7 @@ What a catch-up raises first, says in a line, and leaves out, in plain words: "a
 
 ### What's next
 
-"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the top of the interruption stack, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs.
+"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the top of the interruption stack, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
 ## Parties and walls
 
@@ -278,7 +278,7 @@ The skill that comes with the cmux extra: one cmux tab per thread, opened, wrapp
 
 ### The Garrick band
 
-A Claude Code mod, optional: the current thread and the first paragraph of its Resume here block above the prompt, buttons that ask for *Resume* or *Wrap*, and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
+A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and the buttons *Wrap*, *Clear* and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
 
 ## Updates
 

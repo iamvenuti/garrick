@@ -10,7 +10,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `template/System/rules.md` | How an assistant behaves in an installed workspace. Garrick's only copy; a workspace's own rules go in `System/rules.local.md`, which the installer starts from `template/System/rules.local.md` and never lists or updates |
 | `template/System/context.md` | Who the user is and who they deal with. Filled in at install |
 | `template/System/templates/` | The zone, project and thread templates. The installer makes one copy of `zone/` per zone the user names; `System/tools/scaffold.py` fills all three later |
-| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `correct.py`, which stops a wrong value everywhere it was written; `example.py`, which puts the worked example away and brings it back; the two tools that reach the network, `release.py`, only when asked or switched on, and `notifications.py`, every notice Garrick sends, to Telegram only when that channel is switched on; `discover.py`, which proposes the pieces of work in a folder the user keeps, from names and dates alone, and `extract.py`, which takes the text out of their Office files; neither writes in that folder |
+| `template/System/tools/` | `scaffold.py`, `check.py` and the library they share, `garrick_lib.py`; `correct.py`, which stops a wrong value everywhere it was written; `example.py`, which puts the worked example away and brings it back; `release.py`, the one tool that reaches the network, only when asked or switched on; `notifications.py`, every notice Garrick sends, to this Mac; `discover.py`, which proposes the pieces of work in a folder the user keeps, from names and dates alone, and `extract.py`, which takes the text out of their Office files; neither writes in that folder |
 | `template/System/skills/` | Skills, one folder each. The installer links them for every assistant |
 | `template/Wikis/` | The two memories: `Meetings/` and `Knowledge/` |
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
@@ -34,7 +34,9 @@ Never leave a third kind. A file no script can finish and the user cannot recogn
 
 ## Releasing
 
-With the notes for the new version written in `CHANGELOG.md` and the work on `main`, from a clone:
+With the notes for the new version written in `CHANGELOG.md` and the work on `main`, review what the release carries before you tag it: `git diff v<last>..main`, read for correctness and for any way past the wall check. A release adds code nobody has read as a whole, and 0.45.0 shipped a way past the wall check that a review of the next two releases found. A finding goes to an issue, or, when it is a way past the wall check, to a private advisory as `SECURITY.md` says, and is fixed before the tag.
+
+Then, from a clone:
 
 ```sh
 git tag -a v0.25.0 -m "Garrick 0.25.0"

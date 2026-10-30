@@ -414,7 +414,9 @@ def stamp(day, hhmm):
 
 
 def run(args, cwd, when=None, what="a command"):
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    # GARRICK_CALLER_BUILDS_PAGE: scaffold.py would start a page build after each
+    # change, which outlives this script and writes into the workspace it built (#243).
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GARRICK_CALLER_BUILDS_PAGE="1")
     if when:
         env.update(GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
     r = subprocess.run([str(a) for a in args], cwd=str(cwd), env=env, capture_output=True, text=True)

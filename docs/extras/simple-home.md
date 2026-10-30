@@ -16,7 +16,7 @@ A row is read from what Garrick keeps already. The next action and who it waits 
 
 Unlike the full page, the simple home shows some of a note's words: its *Where it stands* line, *Next action* and *Waiting on*, its newest dated entry and its opening sentence. A piece of work means nothing without them. The page itself still lives in `System/generated/`, never committed and left out of the wall check, as the full page always has.
 
-At the top right sit a dot, *More* and the cog for Settings. The dot is green when nothing on the Status tab needs attention, and says how many things do when something does: a failed job, a check finding, an update. Clicking it opens the Status tab. *More* opens the Overview, with the Todo, Status and Guide tabs beside it and *Home* first among them. The graph, the diagnostics, the ways to open a thread and every setting are where they always were.
+At the top right sit a dot, *More* and the cog for Settings. The dot is green and says *All clear* when nothing on the Status tab needs attention, and says how many things need attention when something does, in the Status tab's own words: a failed job, a check finding, an update. Clicking it opens the Status tab. *More* opens the Overview, with the Todo, Status and Guide tabs beside it and *Home* first among them. The graph, the diagnostics, the ways to open a thread and every setting are where they always were.
 
 ## A piece of work's page
 

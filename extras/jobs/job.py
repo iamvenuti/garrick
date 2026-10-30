@@ -882,7 +882,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   % ("\n  EVENT is one of: %s" % ", ".join(lib.EVENT_NAMES) if lib is not None else ""), file=sys.stderr)
             return agent.EXIT_USAGE
         if not notify("message", rest[0], rest[1], event=event):
-            print("job.py: no notifier is set for this notice (a channel on in Settings › Notifications, or "
+            print("job.py: no notifier is set for this notice (its event on in Settings › Notifications, or "
                   "GARRICK_NOTIFY_CMD, or GARRICK_NOTIFY=1 on a Mac); nothing sent", file=sys.stderr)
         return 0
     if "--" not in argv:

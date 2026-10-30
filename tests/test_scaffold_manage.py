@@ -7,11 +7,14 @@ made, each of them also run the way the status page runs it.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import io
 import json
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -905,6 +908,121 @@ class TestParkBothWays(ManageCase):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod
+
+
+class TestThePageIsAskedFor(ManageCase):
+    """#243: a verb that changes what the status page shows starts a build of
+    it in the background, settled, so a run of commands makes one page; a
+    refusal, a verb that only reads, a request from the page and a workspace
+    without the status extra start nothing. The spawn is mocked: no build runs."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("GARRICK_CALLER_BUILDS_PAGE", None)       # as a session runs it, not as the page does
+        self.builder = self.root / "System" / "status" / "status.py"
+        self.assertTrue(self.builder.is_file(), "the installer puts the status page in place")
+        spec = importlib.util.spec_from_file_location("garrick_scaffold_page", str(self.root / "System" / "tools" / "scaffold.py"))
+        self.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.tool)
+        self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags", "--settle", "10"]
+
+    def run_it(self, *args, stdin=""):
+        """scaffold.py's exit code, its stderr, and every command it started."""
+        err = io.StringIO()
+        with mock.patch.object(self.tool, "detach", return_value=True) as spawn, \
+                mock.patch.object(sys, "stdin", io.StringIO(stdin)), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = self.tool.main(["--root", str(self.root), *args])
+        return code, err.getvalue(), [c.args[0] for c in spawn.call_args_list]
+
+    def asks_once(self, *args):
+        code, err, spawned = self.run_it(*args)
+        self.assertEqual(0, code, err)
+        self.assertEqual([self.build], spawned, args)
+
+    def asks_nothing(self, *args, code=0, stdin=""):
+        got, err, spawned = self.run_it(*args, stdin=stdin)
+        self.assertEqual(code, got, err)
+        self.assertEqual([], spawned, args)
+
+    def test_each_verb_that_changes_the_page_asks_for_one_settled_build(self):
+        self.asks_once("thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal")
+        self.commit("Renewal")
+        self.asks_once("park", "--zone", "Work", "--project", "Acme", "--thread", "Renewal")
+        self.commit("Renewal parked")
+        self.asks_once("wake", "--zone", "Work", "--project", "Acme", "--thread", "Renewal")
+        self.commit("Renewal woken")
+        self.asks_once("rename", "--zone", "Work", "--project", "Acme", "--thread", "Renewal", "--to", "Renewals")
+        self.asks_once("delete", "--zone", "Work", "--project", "Acme", "--thread", "Renewals", "--confirm", "Renewals")
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        self.asks_once("undo", "--zone", "Work", "--commit", commit)
+        self.asks_once("project", "--zone", "Work", "--name", "Birch", "--party", "birch", "--thread", "Launch Plan")
+        self.asks_once("zone", "Garden", "--holds", "The house and the garden")
+
+    def test_a_refusal_asks_for_nothing(self):
+        self.asks_nothing("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing", code=1)
+        self.asks_nothing("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "freight",
+                          code=1)
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        self.asks_nothing("undo", "--zone", "Work", "--commit", commit, code=1)          # not a rename or a deletion
+        self.asks_nothing("wake", "--zone", "Work", "--project", "Acme", "--thread", "Freight", code=1)  # not parked
+
+    def test_what_only_reads_asks_for_nothing(self):
+        self.asks_nothing("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight")
+        self.assertTrue(self.freight.is_file())
+        self.asks_nothing("thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal", "--check")
+        self.asks_nothing("project", "--zone", "Work", "--name", "Birch", "--party", "birch", "--thread", "Plan", "--check")
+        self.asks_nothing("rename", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--to", "Lanes", "--check")
+        read = json.dumps({"verb": "checkpoint", "zone": "Work", "project": "Acme", "thread": "Pricing", "read": True})
+        self.asks_nothing("checkpoint", stdin=read)
+
+    def test_a_request_from_the_page_asks_for_nothing_since_the_app_builds_after_it(self):
+        os.environ["GARRICK_CALLER_BUILDS_PAGE"] = "1"
+        self.asks_nothing("thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal")
+        self.assertTrue((self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").is_file())
+
+    def test_page_action_tells_scaffold_the_app_builds_the_page(self):
+        self.assertEqual(self.tool.CALLER_BUILDS_PAGE, pa.CALLER_BUILDS_PAGE)
+        done = subprocess.CompletedProcess([], 0, stdout="Created thread Renewal.\n", stderr="")
+        with mock.patch.object(pa.subprocess, "run", return_value=done) as ran:
+            pa.scaffold(self.root, "thread", "--zone", "Work", "--project", "Acme", "--name", "Renewal")
+        self.assertEqual("1", ran.call_args.kwargs["env"]["GARRICK_CALLER_BUILDS_PAGE"])
+        self.assertEqual(os.environ["HOME"], ran.call_args.kwargs["env"]["HOME"])      # the rest of the environment kept
+
+    def test_correct_builds_the_page_with_the_flags_the_last_build_stored(self):
+        """#246: the page a tool rebuilds keeps the flags the app or the plugin built it with."""
+        self.freight.write_text(self.freight.read_text(encoding="utf-8") + "\nLantern Ltd ships it.\n", encoding="utf-8")
+        import correct                       # the repository's own; fixtures puts the tools folder on sys.path
+        hits = correct.find_hits(self.root, "Lantern Ltd", "Lantern Group")
+        ran = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(correct.subprocess, "run", return_value=ran) as run:
+            done = correct.apply(self.root, "Lantern Ltd", "Lantern Group", hits=hits, commit=False)
+        self.assertEqual(["System/generated/status.html"], done.rebuilt)
+        self.assertEqual([self.build[:-2]], [c.args[0] for c in run.call_args_list])
+
+    def test_without_the_status_extra_nothing_happens_and_nothing_is_said(self):
+        self.builder.unlink()
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.tool, "detach") as spawn, contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            code = self.tool.main(["--root", str(self.root), "thread", "--zone", "Work", "--project", "Acme",
+                                   "--name", "Renewal"])
+        self.assertEqual(0, code, err.getvalue())
+        self.assertEqual([], spawn.call_args_list)
+        self.assertEqual("", err.getvalue())
+        self.assertNotIn("status", out.getvalue().lower())
+
+    def test_the_build_is_started_apart_and_not_waited_on(self):
+        with mock.patch("subprocess.Popen") as popen:
+            self.assertTrue(self.tool.detach(self.build))
+        popen.assert_called_once()
+        self.assertEqual(self.build, popen.call_args.args[0])
+        kw = popen.call_args.kwargs
+        self.assertTrue(kw["start_new_session"])
+        self.assertEqual((subprocess.DEVNULL,) * 3, (kw["stdin"], kw["stdout"], kw["stderr"]))
+        popen.return_value.wait.assert_not_called()
+        with mock.patch("subprocess.Popen", side_effect=OSError("no python")):
+            self.assertFalse(self.tool.detach(self.build))
 
 
 if __name__ == "__main__":

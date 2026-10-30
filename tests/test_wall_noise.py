@@ -1,9 +1,9 @@
 """False alarms the wall check no longer raises: a zone's archive read as a
 project, the code of HTML pages read as wording, a list of links to Knowledge
 pages read as one run of words, files git ignores read as the project's own,
-the published ledger's shipped header read as a quotation, and a party who is
-a person caught through her party's tag. Each test pairs the case that must
-pass with one that must still be found.
+the published ledger's shipped header read as a quotation, alone or running
+into the first row, the line a checkpoint's tool writes read as wording, and a
+party who is a person caught through her party's tag. Each test pairs the case that must pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
 from each other, as in fixtures.py, with Rowan Keeler, Zeta Rossi and Keeler
@@ -12,14 +12,18 @@ added where a party is a person.
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import sys
 import unittest
 
-from fixtures import HAVE_GIT, git, meeting_page, write
-from test_walls_deterministic import REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
+from fixtures import HAVE_GIT, TOOLS, git, meeting_page, write
+from test_walls_deterministic import ENV, REPO, SECRET, WallCase, _copy_tools, _real_repo, _run
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
+from garrick_lib import (CHECKPOINT_KINDS, CHECKPOINT_ONE, CHECKPOINT_SAID,  # noqa: E402
+                         checkpoint_item_line, render_checkpoint)
 
 
 class TestZoneArchive(WallCase):
@@ -257,6 +261,234 @@ class TestPublishedLedger(WallCase):
                          [(r["date"], r["file"], r["authoritative"]) for r in rows])
         self.assertEqual([], bad)
         self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "deliverables"])
+
+
+class TestLedgerHeaderIsNotARun(WallCase):
+    """#221: the separator row under a ledger's header holds no words, so a
+    run of words used to cross from the shipped header into the first row's
+    date cell, and two walled ledgers whose first rows were both `sent` in
+    the same month read as quoting each other. The header is a break now, as
+    a heading is; what the rows hold is still read."""
+
+    def setUp(self):
+        super().setUp()
+        self.shipped = self.root / "System" / "templates" / "published.md"
+        write(self.shipped, TestPublishedLedger.TEMPLATE.read_text(encoding="utf-8"))
+        self.ledgers = {}
+        for project, row in ((self.acme, "| sent 2026-10-03 | `261003 - Pricing memo.md` | `Pricing memo.md` | Dana | here |\n"),
+                             (self.birch, "| sent 2026-10-14 | `261014 - Sizing.md` | `Sizing.md` | Theo | here |\n")):
+            self.ledgers[project] = write(project / "Deliverables" / "published.md",
+                                          self.shipped.read_text(encoding="utf-8") + row)
+
+    def add_row(self, project, row):
+        ledger = self.ledgers[project]
+        ledger.write_text(ledger.read_text(encoding="utf-8") + row, encoding="utf-8")
+
+    def test_first_rows_dated_alike_are_not_a_quotation(self):
+        self.assertEqual([], self.walls())
+
+    def test_so_is_a_thread_first_ledger(self):
+        ledger = self.ledgers.pop(self.birch)
+        moved = self.birch / "Threads" / "Market Sizing" / "Deliverables" / "published.md"
+        write(moved, ledger.read_text(encoding="utf-8"))
+        ledger.unlink()
+        self.assertEqual([], self.walls())
+
+    def test_eight_words_shared_inside_the_rows_are_still_refused(self):
+        """Real wording in a ledger's own cells is still a quotation, however
+        the rows are dated."""
+        cell = "Nordic depot volumes split before the regional board handover"
+        self.add_row(self.acme, "| sent 2026-10-05 | `261005 - Depots.md` | `Depots.md` | %s | here |\n" % cell)
+        self.add_row(self.birch, "| sent 2026-10-16 | `261016 - Regions.md` | `Regions.md` | %s | here |\n" % cell)
+        self.assertEqual({"Zones/Work/Acme Review/Deliverables/published.md",
+                          "Zones/Work/Birch Entry/Deliverables/published.md"},
+                         {f.path for f in self.walls()})
+
+    def test_only_the_ledger_header_is_a_break(self):
+        """Any other table's header still runs into its first row: a table
+        lifted whole from a walled page is caught across that line."""
+        header = "| Item | Region | Volume |\n|---|---|---|\n"
+        row = "| Nordic depot | north | eleven thousand pallets |\n"
+        self.assertTrue(check.runs(header + row) - check.runs(header) - check.runs(row))
+        ledger = "| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+        dated = "| sent 2026-10-03 | `a.md` | `b.md` | Dana | here |\n"
+        self.assertEqual(check.runs(ledger) | check.runs(dated), check.runs(ledger + dated))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_both_ledgers_passes_the_hook(self):
+        texts = {ledger: ledger.read_text(encoding="utf-8") for ledger in self.ledgers.values()}
+        for ledger in texts:
+            ledger.unlink()
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        for ledger, text in texts.items():  # staged, not part of the first commit
+            write(ledger, text)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+
+class TestCheckpointIsNotWording(WallCase):
+    """#225: every checkpoint opens with the line its tool writes, the time it
+    was written and a fixed sentence that no shared file holds, so two
+    checkpoints in walled projects read as quoting each other on that line
+    alone. What the tool writes is not read now, nor are an item's kind and
+    id; the words of each item still are."""
+
+    ACME = [{"kind": "considering", "text": "dropping tier three for the smaller accounts"},
+            {"kind": "incomplete", "text": "the rebate column is half filled"}]
+    BIRCH = [{"kind": "next", "text": "rerun the survey weighting for the coastal towns", "by": "user"},
+             {"kind": "action", "text": "ask Theo for the census extract"}]
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "System" / "templates").mkdir(parents=True, exist_ok=True)  # what the tool takes for installed
+
+    def note(self, project):
+        thread = "Pricing" if project == self.acme else "Market Sizing"
+        return project / "Threads" / thread / (thread + ".md")
+
+    def tool(self, project, now, **fields):
+        """`scaffold.py checkpoint`, run as a session runs it."""
+        req = {"verb": "checkpoint", "zone": "Work", "project": project.name, "thread": self.note(project).parent.name}
+        req.update(fields)
+        done = subprocess.run([sys.executable, str(TOOLS / "scaffold.py"), "--root", str(self.root), "checkpoint",
+                               "--now", now], input=json.dumps(req), capture_output=True, text=True, env=ENV)
+        self.assertEqual("", done.stderr)
+        return json.loads(done.stdout)
+
+    def checkpoint(self, project, now, items):
+        read = self.tool(project, now, read=True)
+        reply = self.tool(project, now, base=read["base"], prev=read["key"], items=items)
+        self.assertTrue(reply["wrote"], reply)
+
+    def both(self, acme_at, birch_at, acme=ACME, birch=BIRCH):
+        self.checkpoint(self.acme, acme_at, acme)
+        self.checkpoint(self.birch, birch_at, birch)
+
+    def test_two_checkpoints_are_not_a_quotation(self):
+        for acme_at, birch_at in (("2026-03-14T14:32:10+01:00", "2026-03-14T14:32:10+01:00"),
+                                  ("2026-03-14T14:32:10+01:00", "2026-03-20T09:05:00+01:00"),
+                                  ("2026-03-14T14:32:10+01:00", "2026-05-02T17:40:00+02:00")):
+            with self.subTest(acme=acme_at, birch=birch_at):
+                for project in (self.acme, self.birch):
+                    text = self.note(project).read_text(encoding="utf-8")
+                    self.note(project).write_text(text.split("\n### Checkpoint\n")[0], encoding="utf-8")
+                self.both(acme_at, birch_at)
+                self.assertIn("Recorded since the resume point above", self.note(self.birch).read_text(encoding="utf-8"))
+                self.assertEqual([], self.walls())
+
+    def test_a_note_that_quotes_the_line_is_not_a_quotation_either(self):
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        line = next(l for l in self.note(self.acme).read_text(encoding="utf-8").splitlines()
+                    if l.startswith("**Unconfirmed, "))
+        write(self.birch / "Threads" / "Market Sizing" / "Notes.md", "Left as it was:\n\n%s\n" % line)
+        self.assertEqual([], self.walls())
+
+    def test_what_the_tool_writes_is_no_run_of_words(self):
+        before = check.runs(self.note(self.acme).read_text(encoding="utf-8"))
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", [{"kind": "incomplete", "text": "half done"}])
+        self.assertEqual(before, check.runs(self.note(self.acme).read_text(encoding="utf-8")))
+        item = "the rebate column for the northern accounts is still half filled"
+        block = ("<!-- garrick-checkpoint at=2026-03-14T14:32:10+01:00 base=- key=0123456789ab -->\n"
+                 "- **Incomplete** %s <!-- i -->\n<!-- /garrick-checkpoint -->\n" % item)
+        self.assertEqual(check.runs(item), check.runs(block))
+        self.assertNotEqual(check.runs(item), check.runs("- **Incomplete** %s <!-- i -->\n" % item))
+
+    def test_eight_words_quoted_from_a_walled_meeting_in_an_item_are_refused(self):
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
+              meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", SECRET + "."))
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-14T14:32:10+01:00",
+                  acme=[{"kind": "considering", "text": SECRET.lower()}])
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md"}, {f.path for f in self.walls()})
+
+    def test_eight_words_quoted_from_a_walled_project_file_in_an_item_are_refused(self):
+        write(self.birch / "Threads" / "Market Sizing" / "Notes.md", SECRET + "\n")
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-20T09:05:00+01:00",
+                  acme=[{"kind": "incomplete", "text": "the clause that says " + SECRET.lower()}])
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"},
+                         {f.path for f in self.walls()})
+
+    # Lines shaped like what the tool writes, carrying words of their own. Each
+    # was read as nothing before 0.46.1, wherever it stood (#225).
+    SHAPED = (
+        "<!-- garrick-checkpoint --> %s <!-- -->" % SECRET,
+        "<!-- garrick-checkpoint %s -->" % SECRET,
+        "<!-- /garrick-checkpoint %s -->" % SECRET,
+        "<!-- garrick-checkpoint at=2026-03-14T14:32:10+01:00 base=- key=0123456789ab note=%s -->"
+        % SECRET.replace(" ", "-"),
+        "**Unconfirmed, %s.** %s" % (SECRET, CHECKPOINT_SAID),
+        "- **Decided** the tier stays <!-- %s -->" % SECRET.replace(" ", "-"),
+    )
+
+    def quoted_from_a_walled_meeting(self):
+        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
+              meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", SECRET + "."))
+
+    def test_a_line_shaped_like_the_tools_is_read_outside_a_checkpoint(self):
+        self.quoted_from_a_walled_meeting()
+        notes = self.acme / "Threads" / "Pricing" / "Notes.md"
+        for line in self.SHAPED:
+            with self.subTest(line=line):
+                write(notes, "Left as it was:\n\n%s\n" % line)
+                self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Notes.md"}, {f.path for f in self.walls()})
+
+    def test_a_line_shaped_like_the_tools_is_read_inside_a_checkpoint(self):
+        self.quoted_from_a_walled_meeting()
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        note = self.note(self.acme)
+        written = note.read_text(encoding="utf-8")
+        said = next(l for l in written.splitlines() if l.startswith("**Unconfirmed, "))
+        for line in self.SHAPED:
+            for where in ("above the closing marker", "in place of the line under the opening one"):
+                with self.subTest(line=line, where=where):
+                    if where.startswith("above"):
+                        text = written.replace("<!-- /garrick-checkpoint -->", line + "\n<!-- /garrick-checkpoint -->")
+                    else:
+                        text = written.replace(said, line)
+                    write(note, text)
+                    self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md"}, {f.path for f in self.walls()})
+        write(note, written)
+        self.assertEqual([], self.walls())
+
+    def test_every_block_the_tool_can_write_is_skipped_as_written(self):
+        said = "the %s item says what the northern rebate column still lacks today"
+        items = [{"kind": kind, "text": said % kind,
+                  "line": checkpoint_item_line(kind, said % kind, stem if kind in CHECKPOINT_ONE else stem + "12")}
+                 for kind, _, stem in CHECKPOINT_KINDS]
+        mine = set().union(*(check.runs(item["text"]) for item in items))
+        self.assertTrue(all(check.runs(item["text"]) for item in items))    # every item has runs to find
+        for at in ("2026-03-14T14:32:10+01:00", "2026-12-01T00:00:00", "2026-07-09T09:05:00-05:00",
+                   "2026-05-31T23:59:59+05:30:15"):
+            for base in (None, "0123456789ab"):
+                with self.subTest(at=at, base=base):
+                    body, _ = render_checkpoint(at, base, items)
+                    self.assertEqual([(0, len(body))], check.checkpoint_spans(body))
+                    self.assertEqual(mine, check.runs("# Notes\n\n%s\n" % body) - check.runs("# Notes\n"))
+
+    def test_a_checkpoint_without_its_closing_marker_is_read_whole(self):
+        self.checkpoint(self.acme, "2026-03-14T14:32:10+01:00", self.ACME)
+        text = self.note(self.acme).read_text(encoding="utf-8")
+        open_only = text.replace("<!-- /garrick-checkpoint -->", "")
+        self.assertLess(check.runs(text), check.runs(open_only))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_both_checkpoints_passes_the_hook(self):
+        before = {self.note(p): self.note(p).read_text(encoding="utf-8") for p in (self.acme, self.birch)}
+        self.both("2026-03-14T14:32:10+01:00", "2026-03-14T16:05:00+01:00")
+        after = {note: note.read_text(encoding="utf-8") for note in before}
+        for note, text in before.items():
+            write(note, text)
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        for note, text in after.items():  # staged, not part of the first commit
+            write(note, text)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
 
 
 class TestChangelogIsCommon(WallCase):

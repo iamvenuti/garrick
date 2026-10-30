@@ -14,6 +14,8 @@ The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recen
 
 Behind the home, Garrick holds three things in one place: what you're working on, in your files; what was said, in a record of your meetings; and what you read, in a library of what you've studied. It files what comes in, such as mail, transcripts and documents, into the right one, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
 
+![Context is all you need. Articles and reports are ingested into Knowledge, a graph of what you read, linked by topic. Recordings and mail are ingested into Meetings, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Your assistant draws on all three and starts already set up. Two graphs and a tree, so you never set up the same context twice.](docs/assets/two-graphs-and-a-tree.png)
+
 When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and a check runs before every commit.
 
 Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
@@ -85,9 +87,9 @@ A **zone** is a side of your life, such as Work or Personal, with its own folder
 <details>
 <summary>See the workspace diagram and optional tools</summary>
 
-![Garrick as a shell around Claude Code or Codex, in four layers. On top, the Garrick App navigates your zones, projects and threads, and opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. You work on the record: Knowledge, Meetings and the work threads, each with its resume point, and mail, files and recordings are filed into it for you. Underneath, Claude or Codex is the model doing the work across the whole record. It reads the rules first, and the rules, the walls and a check on every commit apply to all of it.](docs/architecture/overview.png)
+![Garrick as a shell around Claude Code or Codex, in four layers, coloured by who owns each box: Garrick, third-party tools, your content, or what comes in. On top, the Garrick App navigates your zones, projects and pieces of work, and opens a piece of work where you work: the Claude or Codex desktop app, or cmux with a terminal tab per piece of work. You work on the record, plain files you own: your pieces of work, each with its resume point, Meetings and Knowledge. Three sources feed it: what you're working on goes into your pieces of work, what was said into Meetings, and what you read into Knowledge, with documents, mail, transcripts and articles filed there for you. Underneath, Claude or Codex is the model doing the work across the whole record, and it reads the rules first. The rules and the walls apply to all of the record, and the commit check runs on every zone's commits.](docs/architecture/overview.png)
 
-Download the [diagram page](docs/architecture/overview.html) and open it in a browser for the same drawing, in dark mode too, with a note on each layer. cmux is optional, and so are the ways in.
+Download the [diagram page](docs/architecture/overview.html) and open it in a browser for the same drawing, in dark mode too, with a note on each layer. cmux is optional. Meetings and Knowledge start empty, so you can bring only your files and add the other two later.
 
 </details>
 

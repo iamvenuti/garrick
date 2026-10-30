@@ -132,16 +132,16 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 ### Being told
 
-`job.py` tells you when a job fails, when it works again, and when it has gone idle. Where it tells you is the Garrick App's [Settings › Notifications](status-page.md#settings), the one place every notice Garrick sends is set: this Mac, cmux, Telegram or a command of your own, per event, per zone and outside quiet hours. A job's notices are two of its events, *Job failed or recovered* and *Job idle*; the todo sweep's are *Todo refreshed* and *Todo summary*, and the nightly nurture's line goes as *Todo summary* too. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited to change where its notices go.
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. It tells you on this Mac, as the Garrick App's [Settings › Notifications](status-page.md#settings) says: *a scheduled job fails* switches *Job failed or recovered* on or off, and *Job idle* goes while any notice is on, outside quiet hours. The todo sweep's *Todo summary* follows *the morning Todo summary is ready*, the nightly nurture's line goes as *Todo summary* too, and *Todo refreshed* is never shown. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited for them.
 
-A plist that already sets either of the old variables keeps them working, past those settings, for that job alone, and Settings counts those jobs, naming each one and its variable when you point at the line:
+To send a job's notices somewhere else, such as a chat app or a mail relay, set one of these in its plist. Each keeps working past those settings, for that job alone:
 
 - `GARRICK_NOTIFY=1` raises a macOS notification.
 - `GARRICK_NOTIFY_CMD` runs a command of yours with two more arguments, the title and the message.
 
-The command, whether set here or in Settings, gets `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle`, `message`, `refreshed`, or `digest` for the todo sweep's morning summary), `GARRICK_NOTIFY_EVENT` (the event, such as `job-failed`), `GARRICK_JOB` and `GARRICK_EXIT` in its environment. A notice about one zone, such as a digest, runs it in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so it can send each zone somewhere of its own. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
+The command gets `GARRICK_NOTIFY_KIND` (`failed`, `recovered`, `idle`, `message`, `refreshed`, or `digest` for the todo sweep's morning summary), `GARRICK_NOTIFY_EVENT` (the event, such as `job-failed`), `GARRICK_JOB` and `GARRICK_EXIT` in its environment. A notice about one zone, such as a digest, runs it in that zone's folder with `GARRICK_ZONE` and `GARRICK_ZONE_DIR` set, so it can send each zone somewhere of its own. It has a minute to finish. If it fails, a line in the job's log says so, and the run's exit code stays the job's own.
 
-A notifier for a chat app or a mail relay is a few lines, though Telegram needs none: Settings has it. This one appends to a file instead, which is enough to see the shape:
+A notifier for a chat app or a mail relay is a few lines. This one appends to a file instead, which is enough to see the shape:
 
 ```sh
 #!/bin/sh
@@ -150,7 +150,7 @@ printf '%s  %s: %s (%s, exit %s)\n' "$(date '+%F %T')" "$1" "$2" "$GARRICK_JOB" 
   >> "$HOME/Library/Logs/garrick-jobs/notices.txt"
 ```
 
-In Settings › Notifications, under *More options*, switch on *A command of your own* and give it `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh`. Nothing leaves the machine unless your command, or the Telegram channel, sends it.
+Set `GARRICK_NOTIFY_CMD` to `/bin/sh /Users/<you>/Garrick/System/jobs/notify.sh` in the job's plist. Nothing leaves the machine unless your command sends it.
 
 When a notice goes:
 

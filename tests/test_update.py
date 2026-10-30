@@ -47,8 +47,11 @@ class Case(unittest.TestCase):
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
                              "[commit]\n\tgpgsign = false\n")
         # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
+        # GARRICK_CALLER_BUILDS_PAGE: scaffold.py starts no build of it in the
+        # background, which would outlive the test and write into its folder (#243).
         self.env = dict(os.environ, HOME=str(base / "home"), GIT_CONFIG_GLOBAL=str(gitconfig),
-                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1", GARRICK_INSTALL_NO_PAGE="1")
+                        GIT_CONFIG_NOSYSTEM="1", PYTHONDONTWRITEBYTECODE="1", GARRICK_INSTALL_NO_PAGE="1",
+                        GARRICK_CALLER_BUILDS_PAGE="1")
         self.patch = mock.patch.dict(os.environ, self.env)
         self.patch.start()
         self.base = base
@@ -1104,8 +1107,8 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         page = self.stale_page()
         self.as_if_older("System/status/status.py", "# an older status page\n")
         p = self.plan()
-        self.assertIn("Rebuild the status page, System/generated/status.html, with no flags, as no Garrick.app is built "
-                      "for this workspace.", self.report_of(p))
+        self.assertIn("Rebuild the status page, System/generated/status.html, with the flags its last build used, as no "
+                      "Garrick.app is built for this workspace.", self.report_of(p))
         self.assertEqual("<p>drawn by the older status.py</p>\n", page.read_text())     # the report changes nothing
         result = update.apply(self.root, p)                 # nothing mocked: the workspace's own status.py builds it
         html = page.read_text(encoding="utf-8")
@@ -1113,6 +1116,17 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertIn('data-built="', html)
         self.assertIn("Rebuilt the status page: %s." % page, result["then"])
         self.assertEqual([], [p.name for p in page.parent.iterdir() if p.name.startswith("status.html.")])
+
+    def test_without_an_app_the_page_is_rebuilt_with_the_flags_stored_and_stores_none(self):
+        """An update chooses no flags, so it must not overwrite the ones the
+        Obsidian plugin stored with an empty list (#246)."""
+        self.install_extra("status")
+        self.stale_page()
+        self.as_if_older("System/status/status.py", "# an older status page\n")
+        with mock.patch.object(update, "build_page", return_value=(0, str(self.root / update.PAGE))) as build:
+            update.apply(self.root, self.plan())
+        build.assert_called_once_with([sys.executable, str(self.root / "System/status/status.py"), "--workspace",
+                                       str(self.root), "--same-flags"])
 
     def test_the_page_is_rebuilt_after_the_app_with_the_apps_flags(self):
         self.older_app()

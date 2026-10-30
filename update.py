@@ -952,17 +952,19 @@ def next_steps(root, p, done=None):
     # The page a build left is the replaced code's, and the app shows it as
     # current until it is old enough to rebuild, so it is built again here,
     # once every file is in place, with the flags the app builds it with.
+    # Without an app it builds with the flags the last build stored, which may
+    # be the Obsidian plugin's: nobody chose flags here, so it stores none (#246).
     if any(path.startswith(STATUS_FOLDER) for path in written) and (root / STATUS_PY).is_file() \
             and (apps or (root / PAGE).is_file()):
         if any(path.startswith(STATUS_FOLDER) for path in merged):
             steps.append(("The status page: merge the .new files under System/status first, then rebuild it "
                           "with python3 %s" % STATUS_PY, None))
         else:
-            args = apps[0][1] if apps else []
+            args = apps[0][1] if apps else ["--same-flags"]
             cmd = [sys.executable or "python3", str(root / STATUS_PY), "--workspace", str(root)] + args
             steps.append(("Rebuild the status page, %s, %s" % (
                 PAGE, "with the flags Garrick.app was built with" + (": " + " ".join(args) if args else " (none)")
-                if apps else "with no flags, as no Garrick.app is built for this workspace"),
+                if apps else "with the flags its last build used, as no Garrick.app is built for this workspace"),
                 lambda cmd=cmd: say_page(cmd)))
 
     sources = sorted(path for path in p["files"] if path.startswith(PLUGIN_SOURCE))

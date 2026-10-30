@@ -7,40 +7,34 @@
 <style>
   :root {
     --bg: #f8fafc; --panel: #ffffff; --ink: #0f172a; --muted: #475569; --line: #e2e8f0;
-    --group: #fffbeb; --group-line: #d97706; --group-ink: #b45309;
-    --guard: #fff1f2; --guard-line: #e11d48; --guard-ink: #be123c;
-    --nav: #ecfeff; --nav-line: #0891b2;
-    --thread: #ecfdf5; --thread-line: #059669;
-    --memory: #f5f3ff; --memory-line: #7c3aed;
-    --model: #fef3c7; --model-line: #d97706;
+    --frame: #fafafa; --frame-line: #94a3b8; --frame-ink: #475569;
+    --own: #eef3fd; --own-line: #3d73e0;
+    --tool: #f7f0e4; --tool-line: #a8834e;
+    --content: #ecfdf5; --content-line: #059669;
     --way: #f1f5f9; --way-line: #64748b;
-    --go: #059669; --in: #64748b; --work: #b45309; --rule: #e11d48;
+    --link: #1e293b; --in: #64748b;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0b1120; --panel: #111827; --ink: #e5e7eb; --muted: #94a3b8; --line: #1f2937;
-      --group: #1c1917; --group-line: #f59e0b; --group-ink: #fbbf24;
-      --guard: #1f1014; --guard-line: #fb7185; --guard-ink: #fda4af;
-      --nav: #082f35; --nav-line: #22d3ee;
-      --thread: #052e22; --thread-line: #34d399;
-      --memory: #1e1537; --memory-line: #a78bfa;
-      --model: #2a1d06; --model-line: #fbbf24;
-      --way: #1e293b; --way-line: #94a3b8;
-      --go: #34d399; --in: #94a3b8; --work: #fbbf24; --rule: #fb7185;
+      --frame: #151d2c; --frame-line: #64748b; --frame-ink: #a3b0c2;
+      --own: #132447; --own-line: #6b9bf2;
+      --tool: #2b2318; --tool-line: #d4b483;
+      --content: #052e22; --content-line: #34d399;
+      --way: #1e293b; --way-line: #7d8ba1;
+      --link: #e2e8f0; --in: #8796ab;
     }
   }
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #0b1120; --panel: #111827; --ink: #e5e7eb; --muted: #94a3b8; --line: #1f2937;
-    --group: #1c1917; --group-line: #f59e0b; --group-ink: #fbbf24;
-    --guard: #1f1014; --guard-line: #fb7185; --guard-ink: #fda4af;
-    --nav: #082f35; --nav-line: #22d3ee;
-    --thread: #052e22; --thread-line: #34d399;
-    --memory: #1e1537; --memory-line: #a78bfa;
-    --model: #2a1d06; --model-line: #fbbf24;
-    --way: #1e293b; --way-line: #94a3b8;
-    --go: #34d399; --in: #94a3b8; --work: #fbbf24; --rule: #fb7185;
+    --frame: #151d2c; --frame-line: #64748b; --frame-ink: #a3b0c2;
+    --own: #132447; --own-line: #6b9bf2;
+    --tool: #2b2318; --tool-line: #d4b483;
+    --content: #052e22; --content-line: #34d399;
+    --way: #1e293b; --way-line: #7d8ba1;
+    --link: #e2e8f0; --in: #8796ab;
   }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
   main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 40px; }
@@ -55,26 +49,23 @@
   body.embed h1, body.embed .cards { display: none; }
   body.embed .stage { border: 0; border-radius: 0; padding: 0; }
 
-  .grp { fill: var(--group); stroke: var(--group-line); stroke-width: 1.5; stroke-dasharray: 7 5; }
-  .grp-guard { fill: var(--guard); stroke: var(--guard-line); stroke-width: 1.5; stroke-dasharray: 7 5; }
-  .glabel { fill: var(--group-ink); font-size: 13px; font-weight: 600; }
-  .glabel-guard { fill: var(--guard-ink); font-size: 13px; font-weight: 600; }
+  /* Colour means one thing: who owns the box. The frames carry none. */
+  .grp { fill: var(--frame); stroke: var(--frame-line); stroke-width: 1.5; stroke-dasharray: 7 5; }
+  .glabel { fill: var(--frame-ink); font-size: 13px; font-weight: 600; }
   .box { stroke-width: 2; }
-  .nav { fill: var(--nav); stroke: var(--nav-line); }
-  .thread { fill: var(--thread); stroke: var(--thread-line); }
-  .memory { fill: var(--memory); stroke: var(--memory-line); }
-  .model { fill: var(--model); stroke: var(--model-line); }
-  .rule { fill: var(--guard); stroke: var(--guard-line); }
+  .own { fill: var(--own); stroke: var(--own-line); }
+  .tool { fill: var(--tool); stroke: var(--tool-line); }
+  .content { fill: var(--content); stroke: var(--content-line); }
   .way { fill: var(--way); stroke: var(--way-line); }
+  .key { stroke-width: 1.5; }
+  .ktext { fill: var(--muted); font-size: 12.5px; font-weight: 500; }
   .t { fill: var(--ink); font-size: 15px; font-weight: 600; text-anchor: middle; }
   .s { fill: var(--muted); font-size: 12px; text-anchor: middle; }
   .edge { fill: none; stroke-width: 2.5; }
   .elabel { font-size: 12.5px; font-weight: 500; }
-  .go { stroke: var(--go); } .go-t { fill: var(--go); }
+  .link { stroke: var(--link); } .link-t { fill: var(--link); }
   .in { stroke: var(--in); } .in-t { fill: var(--in); }
-  .work { stroke: var(--work); } .work-t { fill: var(--work); }
-  .rl { stroke: var(--rule); } .rl-t { fill: var(--rule); }
-  .ah-go { fill: var(--go); } .ah-in { fill: var(--in); } .ah-work { fill: var(--work); } .ah-rl { fill: var(--rule); }
+  .ah-link { fill: var(--link); } .ah-in { fill: var(--in); }
 </style>
 </head>
 <body>
@@ -83,97 +74,118 @@
 <div class="stage">
 <svg viewBox="0 0 1200 640" role="img" aria-labelledby="dtitle ddesc" xmlns="http://www.w3.org/2000/svg">
   <title id="dtitle">Garrick at a glance</title>
-  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and threads and opens a thread where you work: the Claude or Codex desktop app, or cmux. You work on the record: Knowledge, Meetings and the threads, into which mail, files and recordings are filed. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first, and the rules, the walls and a check on every commit apply to the whole record.</desc>
+  <desc id="ddesc">Four layers. The Garrick App navigates zones, projects and pieces of work and opens a piece of work where you work: the Claude or Codex desktop app, or cmux. You work on the record: your pieces of work, Meetings and Knowledge. Three sources feed it, each its own part: what you're working on, your files, feeds the pieces of work; what was said, your meetings, feeds Meetings; what you read feeds Knowledge. Documents, mail, transcripts and articles arrive and are filed there. Underneath, Claude or Codex is the model doing the work across the whole record; it reads the rules first. The rules and the walls apply to the whole record, and the commit check runs on every zone's commits. Colour shows who owns each box: Garrick, third-party tools, your content, or what comes in.</desc>
   <defs>
-    <marker id="m-go" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-go" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="m-link" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-link" d="M0,0 L10,5 L0,10 z"/></marker>
     <marker id="m-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-in" d="M0,0 L10,5 L0,10 z"/></marker>
-    <marker id="m-work" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-work" d="M0,0 L10,5 L0,10 z"/></marker>
-    <marker id="m-rl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-rl" d="M0,0 L10,5 L0,10 z"/></marker>
   </defs>
 
+  <!-- Legend: colour shows who owns a box -->
+  <rect class="key own" x="40" y="22" width="22" height="14" rx="4"/>
+  <text class="ktext" x="72" y="33">Garrick</text>
+  <rect class="key tool" x="40" y="46" width="22" height="14" rx="4"/>
+  <text class="ktext" x="72" y="57">Third-party tools</text>
+  <rect class="key content" x="40" y="70" width="22" height="14" rx="4"/>
+  <text class="ktext" x="72" y="81">Your content</text>
+  <rect class="key way" x="40" y="94" width="22" height="14" rx="4"/>
+  <text class="ktext" x="72" y="105">What comes in</text>
+
   <!-- Layer 1: navigate and control -->
-  <rect class="grp" x="470" y="16" width="260" height="104" rx="12"/>
-  <text class="glabel" x="484" y="36">Navigate and control</text>
-  <rect class="box nav" x="500" y="48" width="200" height="60" rx="8"/>
-  <text class="t" x="600" y="74">Garrick App</text>
-  <text class="s" x="600" y="94">zones, projects, threads</text>
+  <rect class="grp" x="362" y="16" width="260" height="104" rx="12"/>
+  <text class="glabel" x="376" y="36">Navigate and control</text>
+  <rect class="box own" x="377" y="48" width="230" height="60" rx="8"/>
+  <text class="t" x="492" y="74">Garrick App</text>
+  <text class="s" x="492" y="94">zones, projects, pieces of work</text>
 
   <!-- Layer 2: where you work -->
-  <rect class="grp" x="330" y="176" width="540" height="104" rx="12"/>
-  <text class="glabel" x="344" y="196">Where you work: one or the other</text>
-  <rect class="box nav" x="360" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="470" y="234">Claude or Codex app</text>
-  <text class="s" x="470" y="254">the desktop app</text>
-  <rect class="box nav" x="620" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="730" y="234">cmux</text>
-  <text class="s" x="730" y="254">a terminal tab per thread</text>
+  <rect class="grp" x="280" y="176" width="432" height="104" rx="12"/>
+  <text class="glabel" x="294" y="196">Where you work: one or the other</text>
+  <rect class="box tool" x="294" y="208" width="180" height="60" rx="8"/>
+  <text class="t" x="384" y="234">Claude or Codex app</text>
+  <text class="s" x="384" y="254">the desktop app</text>
+  <rect class="box tool" x="488" y="208" width="212" height="60" rx="8"/>
+  <text class="t" x="594" y="234">cmux</text>
+  <text class="s" x="594" y="254">a terminal tab per piece of work</text>
 
-  <!-- Way in -->
-  <rect class="box way" x="40" y="208" width="220" height="60" rx="8"/>
-  <text class="t" x="150" y="234">Mail, files, recordings</text>
-  <text class="s" x="150" y="254">filed for you</text>
+  <!-- The three sources, beside the layers: each feeds its own part of the record -->
+  <rect class="box way" x="50" y="208" width="210" height="60" rx="8"/>
+  <text class="t" x="155" y="234">What you’re working on</text>
+  <text class="s" x="155" y="254">your files</text>
+  <rect class="box way" x="725" y="208" width="170" height="60" rx="8"/>
+  <text class="t" x="810" y="234">What was said</text>
+  <text class="s" x="810" y="254">your meetings</text>
+  <rect class="box way" x="960" y="208" width="170" height="60" rx="8"/>
+  <text class="t" x="1045" y="234">What you read</text>
+  <text class="s" x="1045" y="254">your reading</text>
 
   <!-- Layer 3: the record -->
-  <rect class="grp" x="40" y="336" width="1120" height="110" rx="12"/>
-  <text class="glabel" x="54" y="356">The record: plain files you own</text>
-  <rect class="box memory" x="70" y="370" width="230" height="60" rx="8"/>
-  <text class="t" x="185" y="396">Knowledge</text>
-  <text class="s" x="185" y="416">what you read</text>
-  <rect class="box memory" x="340" y="370" width="230" height="60" rx="8"/>
-  <text class="t" x="455" y="396">Meetings</text>
-  <text class="s" x="455" y="416">every conversation</text>
-  <rect class="box thread" x="610" y="370" width="240" height="60" rx="8"/>
-  <text class="t" x="730" y="396">Thread</text>
-  <text class="s" x="730" y="416">resume point, next action</text>
-  <rect class="box thread" x="890" y="370" width="240" height="60" rx="8"/>
-  <text class="t" x="1010" y="396">Another thread</text>
-  <text class="s" x="1010" y="416">resume point, next action</text>
+  <rect class="grp" x="30" y="336" width="1140" height="110" rx="12"/>
+  <text class="glabel" x="44" y="356">The record: plain files you own</text>
+  <rect class="box content" x="50" y="370" width="210" height="60" rx="8"/>
+  <text class="t" x="155" y="396">Piece of work</text>
+  <text class="s" x="155" y="416">resume point, next action</text>
+  <rect class="box content" x="300" y="370" width="220" height="60" rx="8"/>
+  <text class="t" x="410" y="396">Another piece of work</text>
+  <text class="s" x="410" y="416">resume point, next action</text>
+  <rect class="box content" x="710" y="370" width="200" height="60" rx="8"/>
+  <text class="t" x="810" y="396">Meetings</text>
+  <text class="s" x="810" y="416">every conversation</text>
+  <rect class="box content" x="945" y="370" width="200" height="60" rx="8"/>
+  <text class="t" x="1045" y="396">Knowledge</text>
+  <text class="s" x="1045" y="416">published material</text>
 
   <!-- Layer 4: underneath, and the guard -->
   <rect class="grp" x="100" y="506" width="300" height="104" rx="12"/>
   <text class="glabel" x="114" y="526">Underneath</text>
-  <rect class="box model" x="120" y="538" width="260" height="60" rx="8"/>
+  <rect class="box tool" x="120" y="538" width="260" height="60" rx="8"/>
   <text class="t" x="250" y="564">Claude or Codex</text>
   <text class="s" x="250" y="584">the model doing the work</text>
-  <rect class="grp-guard" x="580" y="506" width="580" height="104" rx="12"/>
-  <text class="glabel-guard" x="594" y="526">The guard</text>
-  <rect class="box rule" x="600" y="538" width="250" height="60" rx="8"/>
-  <text class="t" x="725" y="564">Rules and walls</text>
-  <text class="s" x="725" y="584">what goes where, who never mixes</text>
-  <rect class="box rule" x="890" y="538" width="250" height="60" rx="8"/>
-  <text class="t" x="1015" y="564">Commit check</text>
-  <text class="s" x="1015" y="584">catches a crossing</text>
+  <rect class="grp" x="580" y="506" width="590" height="104" rx="12"/>
+  <text class="glabel" x="594" y="526">The guard</text>
+  <rect class="box own" x="600" y="538" width="260" height="60" rx="8"/>
+  <text class="t" x="730" y="564">Rules and walls</text>
+  <text class="s" x="730" y="584">what goes where, who never mixes</text>
+  <rect class="box own" x="890" y="538" width="260" height="60" rx="8"/>
+  <text class="t" x="1020" y="564">Commit check</text>
+  <text class="s" x="1020" y="584">catches a crossing</text>
 
-  <!-- Edges: every one ends on a group's border -->
-  <path class="edge go" d="M600,120 L600,174" marker-end="url(#m-go)"/>
-  <text class="elabel go-t" x="612" y="152">opens a thread in</text>
+  <!-- Edges: every one between layers ends on a group's border -->
+  <path class="edge link" d="M492,120 L492,174" marker-end="url(#m-link)"/>
+  <text class="elabel link-t" x="504" y="152">opens a piece of work in</text>
 
-  <path class="edge go" d="M600,280 L600,334" marker-end="url(#m-go)"/>
-  <text class="elabel go-t" x="612" y="312">work on it, at its next action</text>
+  <path class="edge link" d="M492,280 L492,334" marker-end="url(#m-link)"/>
+  <text class="elabel link-t" x="504" y="312">work on it, at its next action</text>
 
-  <path class="edge in" d="M150,268 L150,334" marker-end="url(#m-in)"/>
-  <text class="elabel in-t" x="162" y="306">filed where it belongs</text>
+  <path class="edge in" d="M155,268 L155,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="167" y="306">documents, filed</text>
 
-  <path class="edge work" d="M250,506 L250,448" marker-end="url(#m-work)"/>
-  <text class="elabel work-t" x="262" y="482">does the work, across all of it</text>
+  <path class="edge in" d="M810,268 L810,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="822" y="306">mail and transcripts, filed</text>
 
-  <path class="edge rl" d="M870,506 L870,448" marker-end="url(#m-rl)"/>
-  <text class="elabel rl-t" x="882" y="482">apply to all of it, on every commit</text>
+  <path class="edge in" d="M1045,268 L1045,334" marker-end="url(#m-in)"/>
+  <text class="elabel in-t" x="1057" y="306">articles, filed</text>
 
-  <path class="edge work" d="M400,568 L578,568" marker-end="url(#m-work)"/>
-  <text class="elabel work-t" x="489" y="558" text-anchor="middle">reads the rules first</text>
+  <path class="edge link" d="M250,506 L250,448" marker-end="url(#m-link)"/>
+  <text class="elabel link-t" x="262" y="482">does the work, across all of it</text>
+
+  <path class="edge link" d="M870,506 L870,448" marker-end="url(#m-link)"/>
+  <text class="elabel link-t" x="882" y="473">rules on all of it;</text>
+  <text class="elabel link-t" x="882" y="490">the check on every zone’s commits</text>
+
+  <path class="edge link" d="M400,568 L578,568" marker-end="url(#m-link)"/>
+  <text class="elabel link-t" x="489" y="558" text-anchor="middle">reads the rules first</text>
 </svg>
 </div>
 <div class="cards">
   <section class="card"><h2>Navigate, then work</h2>
-    <p>The Garrick App is the control panel over your zones, projects and threads: where each stands, what is due, park or wake a thread, tick an action.</p>
-    <p>It opens a thread where you work: the Claude or Codex desktop app, or cmux with a terminal tab per thread. Say “hold this” when interrupted and “back” when you return.</p></section>
+    <p>The Garrick App is the control panel over your zones, projects and pieces of work: where each stands, what is due, park or wake one, tick an action.</p>
+    <p>It opens a piece of work where you work: the Claude or Codex desktop app, or cmux with a terminal tab per piece of work. Say “hold this” when interrupted and “back” when you return.</p></section>
   <section class="card"><h2>The record</h2>
-    <p>Each thread has one resume point: what is done, the next action, and what was only in your head.</p>
-    <p>Meetings keeps every conversation, Knowledge what you read. All of it is plain Markdown in git, on your Mac. Mail, files and recordings are filed into it for you.</p></section>
+    <p>It holds what you’re working on, what was said and what you read: your pieces of work, Meetings and Knowledge. Documents, mail and transcripts are filed into the part they belong to for you.</p>
+    <p>Each piece of work has one resume point: what is done, the next action, and what was only in your head. All of it is plain Markdown in git, on your Mac.</p></section>
   <section class="card"><h2>Underneath, and the guard</h2>
     <p>Claude or Codex is the model doing the work across the whole record, whichever app you use it in, and it reads the rules first.</p>
-    <p>The rules and the walls you declare apply to everything in the record. A check before every commit catches links, names and copied wording across a wall, within limits: see <a href="../principles.md#what-the-check-covers">Principles and limits</a>.</p></section>
+    <p>The rules and the walls you declare apply to everything in the record. A check before every commit in each zone catches links, names and copied wording across a wall, within limits: see <a href="../principles.md#what-the-check-covers">Principles and limits</a>.</p></section>
 </div>
 </main>
 <script>

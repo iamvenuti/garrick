@@ -19,7 +19,7 @@ The Garrick App's home lists your work, most recent first, each with its next ac
 
 *More*, or *Settings › Home*, opens **the full page**, in four tabs:
 
-- **Overview**: every live thread, one column per zone, each with at most two chips, *todo* for its open actions and *check* for an error the page can explain and fix; open actions and the inboxes beside them; and the graph of every note behind *Explore*.
+- **Overview**: every live thread, one column per zone, each with at most two chips, *todo* for its open actions and *check* for an error the page can explain and fix; open actions and the inboxes beside them; and *Explore*, the graph of the notes in one zone or one wiki at a time.
 - **Todo**: each zone's `Todo.md`, to tick, date and add to. A workspace with no `Todo.md` has no Todo tab.
 - **Status**: the machinery: what needs attention, the check, the scheduled jobs and the assistant's calls, and the state of each repository.
 - **Guide**: these pages, as the release the workspace runs shipped them, in `System/garrick-docs/`.
@@ -41,7 +41,7 @@ The work happens in your assistant's own app, on the same files whichever you ch
 - **The Claude or Codex desktop app.** Claude's desktop app, in its Code tab, is where the Garrick App's *Continue* and *Ask something* open, through the Claude Code command-line tool. Codex works in its own desktop app, without the home's Continue: the full page's *Open in Codex* opens the folder there and puts "open Pricing" on the clipboard. See [Desktop first steps](first-steps.md).
 - **cmux**, a Mac terminal with one tab per thread. Its extra adds the `desk` skill: "open X" opens or brings forward that thread's tab, "close X" wraps it and closes the tab, and "start the day" brings the tabs back. The Garrick App's *Open in cmux* goes through the same desk. See [cmux](extras/cmux.md).
 
-A terminal on its own works too, with Claude Code or Codex CLI: see [Terminal setup](terminal-setup.md). Wherever you work, you name a thread and the assistant reads its resume point, as [A working day](#a-working-day) follows below. Two extras sit here: **the Garrick band**, a Claude Code mod that shows the current thread and its resume point above the prompt ([the Garrick band](../extras/mods/README.md)), and **phone access**, through the assistants' own remote features ([Phone access](extras/phone-access.md)).
+A terminal on its own works too, with Claude Code or Codex CLI: see [Terminal setup](terminal-setup.md). Wherever you work, you name a thread and the assistant reads its resume point, as [A working day](#a-working-day) follows below. Two extras sit here: **the Garrick band**, a Claude Code mod that shows the current thread, its status and how full the context is above the prompt, with buttons to wrap and clear ([the Garrick band](../extras/mods/README.md)), and **phone access**, through the assistants' own remote features ([Phone access](extras/phone-access.md)).
 
 ## The record
 
@@ -106,9 +106,9 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 - `operations.py` declares every action the Garrick App can ask for, in one table, `DECLARED`, and keeps a durable record of six of them.
 - `install.py`, in the repository and not in the workspace, makes a workspace. `install.py --update` runs `update.py` beside it, which brings a workspace up to that Garrick.
 - `release.py` asks GitHub whether a newer Garrick is out and runs the update from it, only when asked or switched on.
-- `notifications.py` is the one way Garrick tells you something: every notice goes through it, to this Mac, cmux, Telegram or a command of your own, as the Garrick App's Settings › Notifications says. It installs the hooks that let a Claude Code or Codex session say it needs you or has finished. With `release.py`, it is one of the two tools that reach the network, and only to the Telegram chat you switch on.
+- `notifications.py` is the one way Garrick tells you something: every notice goes through it, to this Mac, or to a session's own tab in cmux, as the Garrick App's Settings › Notifications says. It installs the hooks that let a Claude Code or Codex session say it needs you or has finished. It never reaches the network.
 - `correct.py` stops a wrong value everywhere: it lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on a yes fixes them all, one commit per repository, marking a page whose raw record holds the old value as superseded. See [Correcting a value](commands.md#correcting-a-value).
-- `briefing.py` gathers what changed in a zone's threads over a period, for "catch me up", and decides nothing; `next_up.py` ranks one thing worth doing while a long turn runs, for "what's next" and the band.
+- `briefing.py` gathers what changed in a zone's threads over a period, for "catch me up", and decides nothing; `next_up.py` ranks one thing worth doing while a long turn runs, for "what's next" and for the band's *While you wait*, a preview feature that is off unless you switch it on.
 - `discover.py` proposes the pieces of work in a folder you keep, from names and dates alone, and `extract.py` takes the text out of their Word, PowerPoint and Excel files; neither writes in that folder. `example.py` puts the worked example away and brings it back.
 - `probe.py` lists what the Mac has, for the setup skill; `drift.py` compares a published deliverable with its shared copy; `wiki_lint.py` finds orphan pages and broken links in a wiki; `nurture.py` sorts what those find by what a fix needs, and applies the mechanical ones on a yes; `fade.py` proposes which wiki pages leave working memory, by age, kind and use, and moves them, links and all, on a yes. See [Fading](commands.md#fading).
 

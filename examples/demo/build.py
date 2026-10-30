@@ -311,6 +311,9 @@ def git_env(when):
         "GIT_COMMITTER_NAME": OWNER, "GIT_COMMITTER_EMAIL": EMAIL,
         "GIT_AUTHOR_DATE": stamp(when), "GIT_COMMITTER_DATE": stamp(when),
         "PYTHONDONTWRITEBYTECODE": "1",
+        # scaffold.py would start a page build after each project and thread,
+        # which outlives this script and writes into the workspace it built (#243).
+        "GARRICK_CALLER_BUILDS_PAGE": "1",
     })
     return env
 

@@ -203,11 +203,8 @@ DECLARED: Dict[str, Op] = {
     "stack": _op((), (), "none", retry="safe"),
     "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
     # The settings file is in the workspace's own repository, committed with it.
-    # "test" names one channel to send a test on, once the rest is saved;
-    # "token" and "find-chat" are Telegram's Set up…. Settings keeps no
-    # record (RECORDED), so the token is never written to the journal.
-    "settings": _op(("launchers", "default", "zones", "notifications", "test", "token", "find-chat",
-                         "while-you-wait", "home", "memory", "catch-up"), (), "workspace"),
+    "settings": _op(("launchers", "default", "zones", "notifications", "while-you-wait", "home", "memory"),
+                    (), "workspace"),
     # Settings › Memory's unsaved values, counted by fade.py (#108): it only reads.
     "memory-preview": _op(("memory",), (), "none", retry="safe"),
     # A note from Explore's card (#206): read for its Preview, which only

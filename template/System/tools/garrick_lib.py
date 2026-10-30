@@ -47,6 +47,8 @@ functions below keep their signatures:
     stamp_parties(data, tags) -> bytes; stamped_parties(data) -> [tag]
     parties_for_domain(context, domain) -> [tag]
     is_webmail(domain) -> bool
+    status_command(root, settle=None) -> [str] or None
+    detach(cmd) -> bool
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import unicodedata
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
@@ -1964,6 +1967,40 @@ def simple_home(root: PathLike) -> bool:
     return read_settings(root).get("home") == "simple"
 
 
+# The status page's builder, where the installer or the status extra put it.
+# A tool that changes what the page shows builds it, or asks for a build, so
+# the page does not wait for the app, the menu or the evening's schedule.
+STATUS_BUILDER = ("System", "status", "status.py")
+# Set for a tool by a caller that builds the page itself once the tool is
+# done: page_action.py, whose app rebuilds after every reply. The tool then
+# asks for no build of its own, so one request makes one page (#243).
+CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
+
+
+def status_command(root: PathLike, settle: Optional[float] = None) -> Optional[List[str]]:
+    """The command that builds `root`'s status page, or None where the status
+    extra is not installed. It builds with the flags the last build stored
+    (--same-flags), so the page keeps the app's or the plugin's flags (#246).
+    With `settle`, the build waits that many seconds and goes ahead only if
+    no later one was asked for: a burst makes one page."""
+    builder = Path(root).joinpath(*STATUS_BUILDER)
+    if not builder.is_file():
+        return None
+    return ([sys.executable or "python3", str(builder), "--workspace", str(root), "--same-flags"]
+            + (["--settle", "%g" % settle] if settle else []))
+
+
+def detach(cmd: List[str]) -> bool:
+    """Start `cmd` in a session of its own, reading and writing nothing, and
+    return at once, without waiting on it: whether it started."""
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, close_fds=True)
+    except OSError:
+        return False
+    return True
+
+
 def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
 
@@ -2016,8 +2053,9 @@ def release_repository(root: PathLike) -> str:
 # status page opens on: the installer writes "simple" for a new workspace,
 # and a workspace without it keeps the page it had; "memory" is Settings ›
 # Memory, how pages fade out of the wikis, which System/tools/fade.py reads;
-# "catch-up" is Settings › Catch up, the period "catch me up" covers by
-# default, which System/tools/briefing.py reads and checks.
+# "catch-up" is the period "catch me up" covers when none is said, which
+# System/tools/briefing.py reads and checks; Settings no longer offers it
+# (#226), so it is set by hand, and a workspace that set it keeps it.
 PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")

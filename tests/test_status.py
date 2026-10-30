@@ -178,7 +178,7 @@ class TestGraph(StatusCase):
         rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
         self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
         self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
-        self.assertIn('<i style="background:%s"></i>Mail</span>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
+        self.assertIn('<i style="background:%s"></i>Mail</button>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
 
     def test_inboxes_raw_and_catalogues_stay_out(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Note.md", "# A dropped note\n")
@@ -217,14 +217,25 @@ class TestGraph(StatusCase):
         self.assertFalse({"Todo", "AGENTS"} & names)
         self.assertNotIn("open actions", [label for _, label in data["kinds"]])
 
-    def test_legend_lists_only_drawn_kinds(self):
+    def test_the_legend_is_the_filter(self):
         html = self.page()
         data = graph_data(html)
         self.assertEqual(sorted({n["k"] for n in data["nodes"]}), [i for i, _ in data["kinds"]])
         legend = html[html.index('class="legend glegend"'):]
         legend = legend[:legend.index("</div>")]
-        self.assertEqual([str(i) for i, _ in data["kinds"]], re.findall(r'data-k="(\d+)"', legend))
-        self.assertIn("drawn[s.dataset.k]", status.GRAPH_JS)    # and in the browser, only what the view draws
+        # every kind a toggle, named as a filter reads (#250)
+        self.assertEqual([str(i) for i, _ in data["kinds"]], re.findall(r'<button type="button" data-k="(\d+)" aria-pressed="true">', legend))
+        self.assertIn("></i>Threads</button>", legend)
+        self.assertIn("></i>Other notes</button>", legend)
+        self.assertIn("Next action late</span>", legend)                   # states, not kinds: no toggle
+        self.assertIn("Parked</span>", legend)
+        self.assertNotIn("data-m=", html)                                   # the two view buttons are gone
+        self.assertNotIn("gseg", html)
+        js = status.GRAPH_JS
+        self.assertIn("s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false')", js)   # every kind the place has
+        self.assertIn("if(ks[k])delete ks[k];else ks[k]=1;keep();redo()", js)
+        self.assertIn("st.set('garrick-graph-kinds-'+zsel,", js)            # kept for each place
+        self.assertNotIn("mode='all'", js)
 
     def test_parked_threads_and_their_notes_are_marked(self):
         sizing = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing"
@@ -266,17 +277,23 @@ class TestGraph(StatusCase):
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
 
     def test_a_place_at_a_time_work_first(self):
+        write(self.root / "Zones" / "Personal" / "House" / "House.md", project_hub("Personal", "House", ""))
         html = self.page()
         bar = html[html.index('<select class="gzsel" aria-label="Place">'):html.index("</select>")]
         places = re.findall(r'<option value="([^"]*)"', bar)                      # a drop-down, not a row of buttons
         self.assertEqual("Work", places[0])
-        self.assertEqual("*", places[-1])                                         # and All, last
+        self.assertNotIn("*", places)                                             # no All (#250)
         self.assertIn("Meetings", places)                                         # a wiki is a place too
-        self.assertIn("(zsel==='*'||n.z===zsel)", status.GRAPH_JS)
+        groups = re.findall(r'<optgroup label="([^"]+)">(.*?)</optgroup>', bar)
+        self.assertEqual(["Zones", "Wikis"], [g for g, _ in groups])             # zones, then wikis, each under its heading
+        self.assertEqual(["Work", "Personal"], re.findall(r'value="([^"]*)"', groups[0][1]))
+        self.assertEqual({"Meetings", "Knowledge"}, set(re.findall(r'value="([^"]*)"', groups[1][1])))
+        self.assertIn("n.z===zsel}", status.GRAPH_JS)
+        self.assertNotIn("'*'", status.GRAPH_JS)
         graph = html[html.index('id="graph"'):html.index("</details>", html.index('id="graph"'))]
         self.assertLess(graph.index("glegend"), graph.index('id="gsum"'))          # the summary sits under the legend
         self.assertIn("<h2>Explore</h2>", graph)                                   # the graph sits behind Explore
-        self.assertIn('<span class="meta">the graph of every note, and the links between them</span>', graph)
+        self.assertIn('<h2>Explore</h2><span class="meta"></span>', graph)            # folded, it has nothing to report
 
     def test_the_graph_fills_its_card(self):
         js = status.GRAPH_JS
@@ -291,10 +308,11 @@ class TestGraph(StatusCase):
 
     def test_names_do_not_cover_each_other(self):
         js = status.GRAPH_JS
-        # Placed in order: the note in focus, its links, projects, threads, the rest.
-        self.assertIn("var w=n===f?0:f&&near[n.i]?1:n.h?2:n.c?3:scale>1.4?4:-1", js)
+        # Placed in order: the note in focus, its links, projects, hubs, then every other note drawn, at any zoom (#252).
+        self.assertIn("want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:4,n])", js)   # a match found as its links are (#250)
+        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # the most linked first
         self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
-        self.assertIn("if(got<0&&(n===f||n.h)){got=0", js)            # the focus and projects are never left out
+        self.assertIn("if(got<0&&(n===f||n.h||few&&M[n.i])){got=0", js)   # the focus, projects and a few matches are never left out
         self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top
 
     def test_large_workspaces_stay_quick(self):
@@ -474,6 +492,18 @@ class TestTabs(StatusCase):
             self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
         self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
 
+    def test_each_tile_is_named_as_the_card_it_opens(self):
+        # #233: Waiting to be filed, Check and Open actions named other things than the cards they open.
+        html = self.page()
+        tiles = dict(re.findall(r'<a class="tile go" href="#([a-z]+)"><div class="lbl">([^<]*)</div>', html))
+        self.assertEqual({"inboxes": "Inboxes", "checks": "Checks", "todolist": "Todo"},
+                         {k: v for k, v in tiles.items() if k != "threads"})
+        for title in ("Inboxes", "Checks", "Todo"):
+            self.assertIn("<h2>%s</h2>" % title, html)                     # the Todo card on the Overview, as the tab and the file
+        self.assertIn('data-tab="todo">Todo<', html)
+        for gone in ("Waiting to be filed", "Open actions", '<div class="lbl">Check</div>'):
+            self.assertNotIn(gone, html)
+
     def test_one_pinned_row_and_no_sidebar(self):
         html = self.page()
         self.assertNotIn("<aside", html)                                      # the tabs move, the cards are in view
@@ -485,6 +515,9 @@ class TestTabs(StatusCase):
         self.assertIn("header.bar{position:sticky;top:0", status.BAR_CSS)
         for t in ("auto", "light", "dark"):                                  # icons, each named
             self.assertRegex(bar, r'<button type="button" data-t="%s" title="[^"]+" aria-label="Theme: [^"]+"><svg' % t)
+        self.assertIn('id="open-settings" aria-label="Settings" title="Settings">', bar)   # a name, not a description (#236)
+        self.assertRegex(bar, r'<p title="Built \w{3} \d{2} \w{3}, \d{2}:\d{2}">Built <span id="age">just now</span></p>')
+        self.assertEqual(["Built "], re.findall(r">(Built[^<]*)<", bar))            # one timestamp shown, the date and time on hover
         dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
         self.assertIn('<div class="hiddencards" id="hidden-cards" hidden></div>', dialog)   # hidden cards are listed in Settings
         self.assertIn("'<p class=\"hint\">Hidden cards</p>", status.LAYOUT_JS)
@@ -715,7 +748,7 @@ class TestOpensOnTheWork(StatusCase):
         self.assertNotIn('class="fresh warning', threads)           # no amber, no red for age
         self.assertNotIn('class="fresh critical', threads)
         self.assertIn('class="fresh age mu"', threads)              # a plain bar, and the figure beside it
-        self.assertRegex(threads, r'class="num muted mu" style="text-align:right">\d+d<')
+        self.assertRegex(threads, r'class="num muted mu" style="text-align:right" title="[^"]*">\d+d<')
         self.assertNotIn("aging", threads)
         self.assertNotIn("stale", threads)
         self.assertNotIn("Over 45 days", html)
@@ -752,16 +785,22 @@ class TestOpensOnTheWork(StatusCase):
             self.assertNotIn("no next action", row)
         self.assertNotIn("tnext", status.CSS + status.HOME_CSS + status.TVIEW_CSS)
 
-    def test_the_legend_reads_as_a_line_of_text_beside_its_swatch(self):
-        # From 0.36.0 (#179): every text node and <code> of an entry was a flex item of its own, so the
-        # sentence wrapped into narrow columns. An entry is its swatch and one run of text.
-        legend = re.search(r'<div class="legend mu">(.*?)</div>', self.page(), re.S).group(1)
-        entries = re.findall(r'<span><i[^>]*></i>(<span class="lt">.*?</span>)</span>', legend)
-        self.assertEqual(2, len(entries), legend)
-        self.assertIn("A red <code>todo</code>: an open action is overdue", entries[0])
-        self.assertEqual("", re.sub(r'<span><i[^>]*></i><span class="lt">.*?</span></span>', "", legend))   # nothing loose
-        self.assertIn(".legend>span{display:inline-flex", status.CSS)
-        self.assertNotIn(".legend span{display:inline-flex", status.CSS)                 # not the text's own span
+    def test_no_legend_under_the_list_each_chip_and_figure_says_what_it_means(self):
+        # #228: the legend under the list is gone; a chip or a figure it explained says so when pointed at.
+        self.actions("[[Pricing]]: send the renewal floor to Dana 📅 2026-03-18",
+                     "[[Market Sizing]]: chase the survey #waiting ⏳ 2026-03-19")
+        html = self.page()
+        threads = self.rows(html, "threads")
+        self.assertNotIn('class="legend', threads)
+        self.assertNotIn("A red <code>todo</code>", threads)
+        self.assertNotIn(".legend .lt", status.CSS)
+        row = self.row(html, "Pricing")
+        todo = re.search(r'<button type="button" class="chip tchip todo late"[^>]*title="([^"]+)"', row).group(1)
+        self.assertIn("late: send the renewal floor", htmllib.unescape(todo))
+        figure = re.search(r'<span class="num muted mu" style="text-align:right" title="([^"]+)">\d+d<', row).group(1)
+        self.assertRegex(figure, r"^\d+ days? since its note moved: a figure, not a fault$")
+        self.assertRegex(threads, r'<div class="thread proj".*?<span class="num muted mu" style="text-align:right" '
+                                  r'title="\d+ days? since its newest thread moved: a figure, not a fault">')
 
     def test_the_chip_sits_on_the_names_line_not_under_it(self):
         # #186: at the name's right, so a row with open actions takes one line; text under a name keeps its own.
@@ -805,8 +844,9 @@ class TestOpensOnTheWork(StatusCase):
         self.assertLess(listed.index("send the floor"), listed.index("book the call"))       # the late one first
         self.assertIn('<span class="lateby">was due Sun 1 Mar</span>', listed)                 # said in words, not by colour alone
         self.assertIn('data-ok="0"', threads)
-        self.assertIn("1 needing a chase", threads)                          # the project's row, and its zone's meta
-        for gone in (">overdue</span>", ">chase due</span>"):
+        self.assertRegex(threads, r'<span class="muted subn">\d+ threads? · 1 late')   # the project's row (#233)
+        self.assertRegex(threads, r'<span class="meta mu">\d+ live · 1 late')          # and its zone's meta
+        for gone in (">overdue</span>", ">chase due</span>", "needing a chase"):
             self.assertNotIn(gone, threads)
 
     def test_the_row_carries_its_urgency_so_a_park_recounts_in_the_same_words(self):
@@ -815,8 +855,10 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         self.assertEqual(1, cards(html)[("Acme Review", "Pricing")]["lt"])          # the card says it, not its age
         self.assertNotIn("lt", cards(html)[("Birch Entry", "Market Sizing")])
-        self.assertIn("' · '+a+' needing a chase'", status.PARK_JS)                 # and PARK_JS recounts in those words
-        self.assertIn("' · '+urg+' needing a chase'", status.PARK_JS)
+        self.assertIn("' · '+a+' late'", status.PARK_JS)                 # and PARK_JS recounts in those words
+        self.assertIn("' · '+urg+' late'", status.PARK_JS)
+        self.assertIn("'.thread:not(.proj) .tchip.todo.late'", status.PARK_JS)    # a red todo, as the build counts
+        self.assertNotIn("needing a chase", status.PARK_JS)
         for word in ("aging", "stale", ".fresh.warning", ".fresh.critical"):
             self.assertNotIn(word, status.PARK_JS, word)
 
@@ -865,10 +907,13 @@ class TestOpensOnTheWork(StatusCase):
     def test_an_error_finding_shows_check_with_what_is_wrong_and_what_fixes_it(self):
         self.fake_check({"check": "threads", "severity": "error",
                          "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "message": "no `### Resume here` block"})
-        pricing = self.row(self.page(), "Pricing")
+        html = self.page()
+        pricing = self.row(html, "Pricing")
         self.assertEqual(["check"], self.chips(pricing))
         self.assertIn('class="chip tchip check late"', pricing)
         self.assertIn('data-ok="0"', pricing[:60])
+        self.assertNotRegex(self.rows(html, "threads"), r" · \d+ late")      # its chip says it; nothing is late (#233)
+        self.assertNotIn("lt", cards(html)[("Acme Review", "Pricing")])
         found = self.pop(pricing, "cp")
         self.assertIn("<b>Pricing.md</b> It has no Resume here block, so nobody can pick it up cold.", found)
         self.assertIn("Wrap it: a wrap writes the block.", found)
@@ -1103,11 +1148,12 @@ class TestSelfContained(StatusCase):
                 os.environ["GARRICK_JOBS_DIR"] = old
         return err.getvalue()
 
-    def test_writes_nothing_but_itself(self):
+    def test_writes_nothing_but_itself_and_its_flags(self):
         before = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
         self.run_main()
         after = set(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
-        self.assertEqual({"System/generated", "System/generated/status.html"}, after - before)
+        self.assertEqual({"System/generated", "System/generated/status.html", "System/generated/status.flags.json"},
+                         after - before)
         self.assertEqual(set(), before - after)
         self.assertEqual([], list(self.jobs.iterdir()))
 
@@ -1180,7 +1226,7 @@ class TestThreadCards(StatusCase):
     def test_rows_carry_a_card_not_buttons(self):
         html = self.page()
         start = html.index('<div class="zones">')
-        block = html[start:html.index('<div class="legend', start)]
+        block = html[start:html.index('<p class="hint gsum', start)]
         self.assertEqual(set(re.findall(r'<button type="button" class="(\w+)"', block)), {"pchev"})   # only the folds of a project's threads
         self.assertEqual(block.count("<button"), block.count('class="pchev"'))
         self.assertNotIn("data-tip", block)
@@ -1285,10 +1331,17 @@ class TestSettings(StatusCase):
         self.assertIn("id: garrick\n", form)                  # the field the link fills must still exist
         self.assertTrue(query["garrick"][0].startswith("Garrick abc1234 of 4 October 2026"))
 
+    def test_the_release_number_when_the_changelog_says_it(self):
+        self.stamp()
+        write(self.root / "System" / "garrick-changelog.md", "# Changelog\n\n## [Unreleased]\n\n## [0.29.0] - 2026-10-15\n")
+        dialog = self.dialog()
+        self.assertIn('<p class="setver" id="garrick-version">Garrick 0.29.0</p>', dialog)
+        self.assertNotIn("abc1234", dialog)                                           # a release number, never a commit
+
     def test_links_go_only_to_garrick_and_open_outside(self):
         dialog = self.dialog()
         links = self.hrefs(dialog)
-        self.assertEqual(8, len(links))
+        self.assertEqual(3, len(links))
         for h in links:
             self.assertTrue(h.startswith(status.PROJECT + "/"), h)
         for tag in re.findall(r'<a [^>]*href="https://[^>]*>', dialog):
@@ -1298,13 +1351,15 @@ class TestSettings(StatusCase):
         self.assertIn(status.PROJECT + "/discussions/categories/ideas", chooser)   # the same category the chooser names
         self.assertIn(status.PROJECT + "/discussions/new?category=ideas", links)
         self.assertIn(status.PROJECT + "/releases", links)
-        self.assertIn(status.PROJECT + "/discussions/categories/announcements", links)
 
-    def test_a_report_to_copy_carries_the_version_and_the_warning(self):
+    def test_about_is_a_version_and_three_links(self):
         self.stamp()
-        report = htmllib.unescape(re.search(r'data-copy="([^"]*)"[^>]*>Copy a report<', self.dialog()).group(1))
-        self.assertIn("Which Garrick: Garrick abc1234", report)
-        self.assertIn("invented names", report)
+        dialog = self.dialog()
+        about = dialog[dialog.index('id="about-settings"'):dialog.index("</section>", dialog.index('id="about-settings"'))]
+        self.assertEqual(["Report a bug", "Suggest a change", "Release notes"], re.findall(r'class="setlink"[^>]*><b>([^<]+)</b>', about))
+        for gone in ("Copy version", "Copy a report", "What&#x27;s new", "Report a wrong refusal", "Report a bypass", "Announcements",
+                     "Ask a question", "data-copy", "<small>"):
+            self.assertNotIn(gone, about)
 
     def test_each_explanation_is_behind_a_question_mark(self):
         dialog = self.dialog()
@@ -1317,34 +1372,30 @@ class TestSettings(StatusCase):
         self.assertNotIn('<p class="hint">', dialog)                                  # no explanation left showing
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
-        for key, lede in (("launchers", "Which apps a project or thread can open in"), ("about", "Which Garrick this is"),
-                          ("preview", "Features that are built but not released yet")):
+        for key, lede in (("launchers", "Which apps a project or thread can open in"),
+                          ("preview", "Built but not released yet, and switched on in a file.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
         dialog = htmllib.unescape(self.dialog())
-        for words in ("Tick what project and thread cards offer; the dot marks what clicking a thread's name does.",
+        for words in ("Tick what project and thread cards offer; Default is what clicking a thread's name does.",
                       "A colour and an icon for each zone, shown wherever the page names it.",
                       "A menu of the live projects of the zone the graph shows, with their threads, kept at hand outside this window.",
-                      "These open GitHub in your browser. The page sends nothing: a report goes only when you submit it there.",
+                      "These open GitHub in your browser. Nothing is sent until you submit it there.",
                       "In Garrick's source but not yet released, so they may still change.",
                       "Cards dragged or hidden, folds, the graph's view and the open tab are remembered in this window only."):
             self.assertIn(words, dialog)
 
-    def test_a_bypass_has_a_row_of_its_own(self):
-        dialog = self.dialog()
-        row = re.search(r'<a class="setlink" href="([^"]*)"[^>]*><b>Report a bypass privately</b>', dialog)
-        self.assertIsNotNone(row)
-        self.assertEqual(status.PROJECT + "/security/advisories/new", htmllib.unescape(row.group(1)))
-        para = dialog[dialog.index('id="help-about"'):]
-        self.assertIn('<a href="%s" target="_blank" rel="noopener">report it privately</a>' % row.group(1), para)   # the same address
-        labels = re.findall(r'class="setlink"[^>]*><b>([^<]+)</b>', dialog)
-        self.assertEqual(["Report a bug", "Report a wrong refusal", "Report a bypass privately"], labels[:3])
+    def test_a_bypass_is_reported_privately_and_the_bug_form_says_where(self):
+        bug = (REPO / ".github" / "ISSUE_TEMPLATE" / "bug.yml").read_text(encoding="utf-8")
+        self.assertIn("way past the wall check", bug)
+        self.assertIn("SECURITY.md", bug)
+        self.assertIn(status.PROJECT + "/security/advisories/new", (REPO / "SECURITY.md").read_text(encoding="utf-8"))
 
     def test_the_forms_that_publish_warn_in_their_tooltip(self):
         dialog = self.dialog()
         warn = htmllib.escape("Use invented names (Acme, Birch), never a real client's.")
-        for label in ("Report a bug", "Report a wrong refusal"):
+        for label in ("Report a bug", "Suggest a change"):
             self.assertRegex(dialog, r'<a class="setlink" [^>]*title="%s"><b>%s</b>' % (re.escape(warn), label))
         self.assertEqual(2, dialog.count('title="%s"' % warn))
 
@@ -1371,7 +1422,7 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "menu-settings", "wait-settings",
-             "notify-settings", "catch-settings", "memory-settings", "about-settings", "preview-settings"]
+             "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -1397,7 +1448,10 @@ class TestSettingsLayout(StatusCase):
         self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
         self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
         self.assertNotIn("setcols", dialog)
-        self.assertEqual(len(built), dialog.count('<p class="setlede">'))           # each opens with what it is for
+        self.assertEqual(len(built) - 1, dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
+        self.assertNotIn('id="catch-settings"', dialog)                            # Catch up lives in the window (#226)
+        for lede in re.findall(r'<p class="setlede">(.*?)</p>', dialog):
+            self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 0, lede)   # one sentence at most
 
     def test_a_section_left_out_is_not_listed(self):
         dialog = self.dialog()                                                      # no fade.py here
@@ -1430,7 +1484,12 @@ class TestSettingsLayout(StatusCase):
 
 
 class TestWaitSettings(StatusCase):
-    """Settings › While you wait (#111): next_up.py's keys, drawn and read back."""
+    """Settings › While you wait (#111): next_up.py's keys, drawn and read back,
+    while its preview flag is on (#247)."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
 
     def section(self):
         html = self.page()
@@ -1475,6 +1534,17 @@ class TestWaitSettings(StatusCase):
         self.assertIn("window.GarrickWait=", page)
         self.assertEqual(1, page.count('id="wait-settings"'))
 
+    def test_left_out_while_the_preview_is_off(self):
+        for flags in ({}, {"while-you-wait": False}, {"while-you-wait": "yes"}):
+            write(self.root / "System" / "garrick-flags.json", json.dumps(flags))
+            page = self.page()
+            self.assertNotIn('id="wait-settings"', page)
+            self.assertRegex(page, r'While you wait</b><span class="chip">off</span>')
+        (self.root / "System" / "garrick-flags.json").unlink()
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {"on": False, "threshold": 120}}))
+        self.assertNotIn('id="wait-settings"', self.page())                # what was saved is kept, not shown
+        self.assertEqual(120, self.lib().settings(self.root)["threshold"])
+
     def test_left_out_without_next_up(self):
         with mock.patch.object(status, "wait_lib", lambda ws: None):
             self.assertNotIn('id="wait-settings"', self.page())
@@ -1489,8 +1559,9 @@ class TestWaitSettings(StatusCase):
 class TestCatchUp(StatusCase):
     """Catch up (#27): beside Settings, a dialog that picks the period and,
     if wanted, the projects and threads of one zone, and hands "catch me up
-    ..." to the default assistant; Settings › Catch up keeps the default
-    period, briefing.py's; the menu bar's menu and the panel get the periods."""
+    ..." to the default assistant. The default period is briefing.py's, or
+    the settings file's "catch-up"; Settings, the menu bar's menu and the
+    panel offer no Catch up of their own (#226)."""
 
     def dialog(self, html=None):
         html = html or self.page()
@@ -1503,7 +1574,7 @@ class TestCatchUp(StatusCase):
     def test_a_button_beside_settings_opens_it(self):
         html = self.page()
         bar = html[html.index('<div class="bacts">'):html.index('id="open-settings"')]
-        self.assertIn('id="open-catchup" aria-label="Catch up"', bar)
+        self.assertIn('id="open-catchup" aria-label="Catch up" title="Catch up">', bar)
         self.assertIn("window.GarrickCatchUp={open:open,phrase:phrase}", status.CATCH_JS)
         self.assertIn("var b=document.getElementById('open-catchup');if(b)b.onclick=open;", status.CATCH_JS)
 
@@ -1524,26 +1595,32 @@ class TestCatchUp(StatusCase):
         self.assertIn('data-cu="Acme Review, Pricing" data-cup="Acme Review"> Pricing', sec)   # "Project, Thread"
         self.assertIn('<ul class="cuz" data-zone="Work">', sec)
 
+    def test_only_choices_and_the_request(self):
+        sec = self.dialog()                                                   # no sentence but the request it sends (#236)
+        self.assertEqual(["Asks: "], re.findall(r'<p[^>]*>([^<]*)', sec))
+        for gone in ("cuwhat", "cuhint", "while you were away", "none ticked"):
+            self.assertNotIn(gone, sec)
+            self.assertNotIn(gone, status.CATCH_CSS)
+
     def test_the_request_goes_to_the_default_assistant_or_is_copied(self):
         js = status.CATCH_JS
         self.assertIn("return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}", js)
         self.assertIn("var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m)", js)
         self.assertIn("GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})", js)
-        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                          # as the app's assistant()
+        self.assertIn("a=host&&window.GarrickAssistant&&GarrickAssistant();", js)         # the one rule, in JS
+        self.assertNotIn("function assistant(", js)
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", status.JS)                 # as the app's assistant()
 
-    def test_settings_keeps_the_default_period(self):
+    def test_settings_has_no_catch_up(self):
         html = self.page()
-        start = html.index('<section class="setsec apponly" id="catch-settings">')
-        sec = html[start:html.index("</section>", start)]
-        self.assertIn('<input type="radio" name="cu-default" value="day" checked> <span>The last day</span>', sec)
-        self.assertIn("q['catch-up']=C.request();C.saved()", status.JS)                   # sent with the rest when Settings closes
-        self.assertIn("System/briefing.local.md", sec)
+        self.assertNotIn('id="catch-settings"', html)
+        self.assertNotIn("cu-default", html)
+        self.assertNotIn("catch-up", status.JS)                                          # nothing to send when Settings closes
+        self.assertNotIn("GarrickCatch=", status.CATCH_JS)
 
-    def test_the_menu_gets_the_periods(self):
-        catch = self.menu(self.page(launchers=("claude",)))["catchup"]
-        self.assertEqual({"n": "Catch Up", "f": str(self.root), "d": "day",
-                          "p": [list(p) for p in status.catch_lib(self.root).PERIODS]}, catch)
-        self.assertNotIn("catchup", self.menu(self.page()))                               # nothing installed to open it in
+    def test_the_menu_has_no_catch_up(self):
+        self.assertNotIn("catchup", self.menu(self.page(launchers=("claude",))))
+        self.assertIn("intake", self.menu(self.page(launchers=("claude",))))               # Process the Inbox stays
 
     def test_left_out_without_briefing(self):
         with mock.patch.object(status, "catch_lib", lambda ws: None):
@@ -1556,9 +1633,8 @@ class TestCatchUp(StatusCase):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn('web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()")', swift)
         self.assertIn('item("Catch Up…", #selector(openCatchUp(_:)), "")', swift)            # File › Catch Up…
-        self.assertIn("if text.isEmpty, let catchUp = catchItem() { menu.addItem(catchUp) }", swift)
-        self.assertIn('return "catch me up" + (zones.isEmpty ? "" : " on " + zones.joined(separator: " and ")) + " " + words', swift)
-        self.assertIn("self.launch(c.app, c.folder, phrase: self.catchPhrase(def[2]))", swift)   # the panel's row
+        for gone in ("catchItem", "catchPhrase", "PanelCatch", "model.catchUp", "catchUpRow", "Choose Projects or Threads"):
+            self.assertNotIn(gone, swift)                                                 # not in the menu or the panel (#226)
         main = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('this.addCommand({ id: "catch-up", name: "Catch up", callback: () => this.catchUp() });', main)
         self.assertIn('window.GarrickCatchUp&&window.GarrickCatchUp.open()', main)
@@ -1613,12 +1689,24 @@ class TestLaunchers(StatusCase):
         # The reason sits on the row, before any click rather than after it.
         dialog = status.launcher_choices(("finder", "claude"), why={"codex": status.NO_CODEX_CLI,
                                                                    "cmux": status.NOT_INSTALLED})
-        self.assertIn('<input type="checkbox" data-launcher="codex" disabled> <span>Open in Codex<small>%s</small>'
-                      % htmllib.escape(status.NO_CODEX_CLI, quote=False), dialog)
-        self.assertIn('<input type="checkbox" data-launcher="cmux" disabled> <span>Open in cmux<small>%s</small>'
-                      % status.NOT_INSTALLED, dialog)
-        self.assertIn('data-launcher="claude"> <span>Open in Claude<small>Installed</small>', dialog)
-        self.assertIn('data-launcher="finder"> <span>Reveal in Finder<small>Installed</small>', dialog)
+        icon = lambda k: '<i class="lico" aria-hidden="true" style="--ic:var(--icon-%s)"></i>' % k
+        self.assertIn('<input type="checkbox" data-launcher="codex" disabled> %s<span>Open in Codex<small>%s</small>'
+                      % (icon("codex"), htmllib.escape(status.NO_CODEX_CLI, quote=False)), dialog)
+        self.assertIn('<input type="checkbox" data-launcher="cmux" disabled> %s<span>Open in cmux<small>%s</small>'
+                      % (icon("cmux"), status.NOT_INSTALLED), dialog)
+        self.assertIn('data-launcher="claude"> %s<span>Open in Claude</span>' % icon("claude"), dialog)   # no line saying it is there
+        self.assertIn('data-launcher="finder"> %s<span>Reveal in Finder</span>' % icon("finder"), dialog)
+
+    def test_each_row_carries_its_card_icon(self):
+        dialog = status.launcher_choices(("finder",), obsidian=True, why={})
+        self.assertIn('data-launcher="note"> <i class="lico" aria-hidden="true" style="--ic:var(--icon-obsidian,var(--icon-note))"></i>'
+                      '<span>Open in Obsidian</span>', dialog)
+        self.assertIn('data-launcher="preview"> <svg class="lico lglass"', dialog)        # Preview's magnifier, as on the card
+        glass = re.search(r"var GLASS='(.*?)'\s*\+'(.*?)';", status.NOTE_JS, re.S)
+        self.assertIn(glass.group(2), status.GLASS)
+        self.assertIn(".lico{display:none}", status.SETTINGS_CSS)                        # a browser, whose cards show words, shows none
+        self.assertIn(".appicons .lico{display:inline-block", status.SETTINGS_CSS)
+        self.assertNotIn("is now on the clipboard", htmllib.unescape(dialog))            # how each app takes the phrase is in the docs
 
     def test_the_page_names_what_is_installed(self):
         html = self.page(launchers=("claude", "cmux"))
@@ -1642,7 +1730,7 @@ class TestLaunchers(StatusCase):
         # Explore's Preview (#219) is a box beside them, on by default, and never what a click does
         self.assertEqual(["note", "finder", "cmux", "codex", "claude"], re.findall(r'name="garrick-default" value="([a-z]+)"', dialog))
         self.assertIn('<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
-                      '<span>Preview<small>', dialog)                                # a browser, which never offers it, leaves it out
+                      '<svg class="lico lglass"', dialog)                            # a browser, which never offers it, leaves it out
         self.assertIn("KEYS=['note','preview','finder','cmux','codex','claude']", status.PANEL_JS)
         self.assertEqual(("note", "preview", "finder", "cmux", "codex", "claude"), status.LAUNCH_KEYS)
         self.assertIn('value="cmux" disabled', dialog)                            # not installed: no default either
@@ -1658,39 +1746,18 @@ class TestLaunchers(StatusCase):
 
 
 class TestReleaseNotes(StatusCase):
-    CHANGES = ("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Something on main, with `code`.\n\n"
-               "## [0.4.0] - 2026-10-05\n\nA summary line.\n\n### Added\n\n- **Settings** with a cog\n"
-               "  that wraps onto a second line.\n- A [link](https://example.com) and <script>x</script>.\n\n"
-               "## [0.3.1] - 2026-10-04\n\n- Older.\n\n[0.4.0]: https://github.com/iamvenuti/garrick/compare/v0.3.1...v0.4.0\n")
-
-    def test_the_newest_release_only_for_a_download(self):
-        notes = status.release_notes(self.CHANGES)
-        self.assertIn("What&#x27;s new in 0.4.0, 2026-10-05", notes)
-        self.assertNotIn("Older", notes)
-        self.assertNotIn("Something on main", notes)
-        self.assertIn("<b>Settings</b> with a cog that wraps onto a second line.", notes)
-
-    def test_main_shows_what_is_coming(self):
-        notes = status.release_notes(self.CHANGES, edge=True)
-        self.assertLess(notes.index("Coming next, on main"), notes.index("What&#x27;s new in 0.4.0"))
-        self.assertIn("<code>code</code>", notes)
-
-    def test_nothing_from_the_changelog_runs_or_links_out(self):
-        notes = status.release_notes(self.CHANGES)
-        self.assertNotIn("<script>", notes)
-        self.assertNotIn("example.com", notes)
-        self.assertNotIn("compare/", notes)                              # link references stay out
-        self.assertIn("A link and &lt;script&gt;", notes)
-
-    def test_the_page_reads_the_installed_changelog(self):
-        write(self.root / "System" / "garrick-changelog.md", self.CHANGES)
-        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "download"}))
+    def test_settings_names_the_release_and_shows_no_notes(self):
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", self.root / "System" / "tools")
+        write(self.root / "System" / "garrick-changelog.md", "# Changelog\n\n## [Unreleased]\n\n- Something on main.\n\n"
+              "## [0.4.0] - 2026-10-05\n\n- **Settings** with a cog.\n")
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "clone"}))
         status._LIBS.clear()
         html = self.page()
-        self.assertIn("What&#x27;s new in 0.4.0", html)
-        self.assertNotIn("Coming next", html)
-        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "abc1234", "from": "clone"}))
-        self.assertIn("Coming next, on main", self.page())
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
+        self.assertIn(">Garrick 0.4.0<", dialog)
+        for gone in ("What&#x27;s new", "Coming next", "Something on main", 'class="notes"'):
+            self.assertNotIn(gone, dialog)
 
 
 class TestPreviewFeatures(StatusCase):
@@ -1706,7 +1773,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask"], re.findall(r'<div class="flagrow"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
@@ -1734,7 +1801,7 @@ class TestPreviewFeatures(StatusCase):
         self.assertNotIn("Old one", card)                                         # ticked
         order = [card.index(t) for t in ("Book the room", "Send the revised terms", "Numbers from Birch", "Check the clause")]
         self.assertEqual(sorted(order), order)                                    # by section, then A-Z by thread
-        self.assertIn('<button class="tdate overdue" type="button" title="Set the date">Due Mon 3 Jan</button>', card)
+        self.assertIn('<button class="tdate late" type="button" title="Set the date">Due Mon 3 Jan</button>', card)
         self.assertIn("Chase", card)
         for group in ("Inbox", "Waiting on", "In thread notes"):
             self.assertIn('<span class="tname">%s</span>' % group, card)
@@ -1893,6 +1960,26 @@ class TestPanels(StatusCase):
         self.assertIn("1 waiting", html)
         self.assertIn("1 item waiting in the inboxes", html)
 
+    def inboxes(self, html):
+        start = html.index('id="inboxes"')
+        return html[start:html.index("</details>", start)]
+
+    def test_process_the_inbox_is_a_button_while_anything_waits(self):
+        self.assertNotIn("data-request", self.inboxes(self.page()))                 # every inbox empty: no button
+        write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
+        card = self.inboxes(self.page())
+        self.assertIn('<h2>Inboxes</h2><span class="meta"></span>', card)          # no "say …" in the caption (#234)
+        self.assertIn('<div class="gacts"><button class="act" type="button" data-request="process the inbox" data-folder="%s"' % self.root, card)
+        self.assertIn(">Process the Inbox</button>", card)
+        self.assertNotIn('say "process the inbox"', self.page())
+
+    def test_a_request_button_opens_the_menus_assistant_or_copies(self):
+        js = status.JS
+        self.assertIn("var q=t.closest('button[data-request]')", js)
+        self.assertIn("host.postMessage({launch:a,folder:q.dataset.folder,phrase:p})", js)   # the launch the menu's row makes
+        self.assertIn("put(p).then(", js)                                                    # a browser, or no assistant: copied
+        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", js)                             # the default, else the first switched on
+
     def test_open_actions_skip_the_placeholder_and_done(self):
         write(self.root / "Zones" / "Work" / "Todo.md",
               "# Work\n\n## Inbox\n\n- [ ] <action> · <project or person> · <date>\n- [ ] Send the memo · Acme · 3 March\n\n## Done\n\n- [ ] stray\n")
@@ -1946,6 +2033,14 @@ class TestJobs(StatusCase):
         self.assertIn('id="jobs"', html)
         self.assertIn('class="critical" tabindex="0"', html)
 
+    def test_the_strip_has_no_legend(self):
+        self.heartbeat(0)
+        html = self.page()
+        card = html[html.index('id="jobs"'):html.index("</details>", html.index('id="jobs"'))]
+        self.assertNotIn('class="legend"', card)                         # each cell's tooltip says its day (#232)
+        self.assertNotIn("One cell per day", card)
+        self.assertIn("· no run", card)
+
     def test_day_that_recovered_is_amber(self):
         self.heartbeat(0)
         t = (self.now - dt.timedelta(days=2)).replace(hour=12, minute=0, second=0).timestamp()   # one day, whatever the hour
@@ -1960,6 +2055,13 @@ class TestJobs(StatusCase):
         self.heartbeat(8)
         html = self.page()
         self.assertIn("brief: exit 8: spending cap", html)
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta">1 failed</span>', html)    # a folded card still says it (#231)
+
+    def test_the_caption_is_empty_when_every_job_is_fine(self):
+        self.heartbeat(0)
+        html = self.page()
+        self.assertIn('<h2>Scheduled jobs</h2><span class="meta"></span>', html)
+        self.assertNotIn("heartbeats and logs in", html)
 
     def plists(self, **jobs):
         """A LaunchAgents folder holding one plist per job, each as given."""
@@ -2038,7 +2140,8 @@ class TestJobs(StatusCase):
         self.assertIn(">1 / 10<", html)
         self.assertIn(">1 / 12<", html)                      # a cap the plist leaves out is agent.py's default
         self.assertIn(">$0.50, no cap<", html)               # 0 removes a cap
-        self.assertIn("Caps from the launchd plist of brief.", html)
+        self.assertIn('<div class="m" data-tip="Caps from the launchd plist of brief.">', html)   # in the meters' tooltip (#232)
+        self.assertNotIn('<p class="hint">Caps from', html)
 
     def test_without_a_plist_the_caps_say_where_they_come_from(self):
         self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
@@ -2046,7 +2149,7 @@ class TestJobs(StatusCase):
             html = self.page()
         self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
-        self.assertIn("Caps from the GARRICK_CAP_* settings the page was built with", html)
+        self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
 
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"
@@ -2142,6 +2245,32 @@ class TestWikisAndRepos(StatusCase):
         self.assertIn('<div class="name">Wikis<small>', html[start:html.index("</details>", start)])
 
 
+class TestCaptions(StatusCase):
+    """A card's caption says a state worth acting on, or nothing (#231): never
+    the file, flag or colour behind the card."""
+
+    def metas(self, html):
+        return dict(re.findall(r'<h2>([^<]*)</h2><span class="meta">([^<]*)</span>', html))
+
+    def test_a_healthy_page_has_empty_captions(self):
+        metas = self.metas(self.page())
+        for title in ("Todo", "Checks", "Repositories", "Wikis"):
+            self.assertEqual("", metas.get(title, ""), title)
+        page = self.page()
+        for said in ("unticked items", "check.py --quick", "a ring means", "newest entry in each log",
+                     "in the zone and meeting inboxes", "run just now"):
+            self.assertNotIn(said, page)
+
+    def test_the_checks_caption_counts_the_findings(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        findings = [{"check": "threads", "severity": "error", "path": "a.md", "message": "x"},
+                    {"check": "threads", "severity": "warning", "path": "b.md", "message": "y"},
+                    {"check": "threads", "severity": "warning", "path": "c.md", "message": "z"}]
+        (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": 1, "warnings": 2, "findings": findings})
+        self.assertEqual("1 error · 2 warnings", self.metas(self.page())["Checks"])
+
+
 class TestChangedFiles(StatusCase):
     """The Repositories card counts changed files and says what they are. It
     never calls them commits, and it offers no way to commit them."""
@@ -2176,7 +2305,8 @@ class TestChangedFiles(StatusCase):
         self.assertIn("Work: 4 changed files", block)
         self.assertIn("<code>Acme Review/Sources/a.csv</code>", block)
         self.assertIn("<code>Acme Review/Threads/Pricing/Pricing notes.md</code>", block)
-        self.assertIn("In Zones/Work.", block)
+        self.assertNotIn("In Zones/Work.", block)
+        self.assertIn('<h2>Repositories</h2><span class="meta">1 with changes</span>', html)
         self.assertNotIn("data-act", block)                                   # nothing here commits
         self.assertNotRegex(block.lower(), r">\s*commit")
 
@@ -2201,6 +2331,25 @@ class TestChangedFiles(StatusCase):
         self.assertIn("Work<small>could not be read</small>", block)
         self.assertNotIn("all committed", block)
 
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_reading_a_repository_never_writes_its_index(self):
+        """git status refreshes a stale index and writes it under index.lock,
+        and a commit a session starts in that moment fails on the lock. The
+        page only reads, so it never takes the lock (0.46.1)."""
+        from fixtures import commit_all, git_init
+        work = self.root / "Zones" / "Work"
+        git_init(work)
+        commit_all(work)
+        hub = work / "Acme Review" / "Acme Review.md"
+        later = hub.stat().st_mtime + 120
+        os.utime(hub, (later, later))                    # the same bytes, a new time: the index is stale
+        index = work / ".git" / "index"
+        before = index.read_bytes()
+        R = {r["name"]: r for r in status.repos(self.root)}
+        self.assertEqual(0, R["Work"]["dirty"])
+        self.assertEqual(before, index.read_bytes())
+        self.assertFalse((work / ".git" / "index.lock").exists())
+
     def test_one_file_is_singular_and_a_clean_repository_says_so(self):
         self.assertEqual("1 changed file", status.say_files(1))
         self.assertEqual("12 changed files", status.say_files(12))
@@ -2209,8 +2358,10 @@ class TestChangedFiles(StatusCase):
     def test_the_root_repository_is_the_workspace_folder(self):
         out = status.repo_changes(self.root, {"name": "Workspace", "folder": self.root, "dirty": 1,
                                               "changes": [("AGENTS.md", ("unstaged",))]})
-        self.assertIn("In the workspace folder. 1 not staged.", out)
+        self.assertIn("<code>AGENTS.md</code>", out)
         self.assertIn('data-copy="%s"' % self.root, out)
+        self.assertNotIn("In the workspace folder", out)                 # the summary above already counts them (#232)
+        self.assertNotIn("Nothing here commits", out)                    # the docs say it once
 
     def test_a_long_list_is_cut_but_the_count_is_not(self):
         changes = [("f%02d.md" % i, ("untracked",)) for i in range(status.REPO_LIST_CAP + 5)]
@@ -2285,7 +2436,10 @@ class TestOpenActions(StatusCase):
         html = self.page()
         start = html.index('id="todo"')
         block = html[start:html.index("</details>", start)]
-        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open the list</a>', block)
+        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open</a>', block)
+        for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
+            self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
+            self.assertNotIn("changed ", zone)
         url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
         self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
         vault = self.page(vault="My Work")
@@ -2297,7 +2451,8 @@ class TestOpenActions(StatusCase):
             todo.unlink()
         html = self.page()
         self.assertNotIn('id="todo"', html)
-        self.assertNotIn("Open actions", html)                    # no card, no tile, no sidebar line
+        self.assertNotIn("<h2>Todo</h2>", html)                    # no card, no tile, no sidebar line
+        self.assertNotIn('<div class="lbl">Todo</div>', html)
         self.assertIn('class="top" style="--tiles:3"', html)     # the tiles still fill their row
 
 
@@ -2657,8 +2812,9 @@ class TestCheckChipFix(StatusCase):
 
 
 class TestMemorySettings(StatusCase):
-    """Settings › Memory (#108): fade.py's settings drawn as they are, kinds
-    and all, with what they would do now beside them. A stand-in fade.py,
+    """Settings › Manage older material (#108, #227): fade.py's settings drawn
+    as they are, kinds and all: per wiki its switch, its kinds' months and one
+    line of counts; the rest under one closed Advanced. A stand-in fade.py,
     since the real one is graded oblivion's and has its own tests."""
 
     def setUp(self):
@@ -2679,26 +2835,23 @@ class TestMemorySettings(StatusCase):
         self.assertIn('data-mwiki="Meetings"', meetings)
         self.assertIn('data-mk="dormant" min="1" max="240" value="6"', meetings)
         self.assertIn('data-mk="archived" min="1" max="240" value="18"', meetings)
-        self.assertIn('data-mk="types" value="meeting, email"', meetings)
         self.assertIn('<input type="checkbox" data-mk="never" aria-label', meetings)
         reference = sec[sec.index('data-mkind="reference"'):]
         self.assertIn('<input type="checkbox" data-mk="never" checked', reference)          # archived: never
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
-        self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', sec)))
+        advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
+        self.assertIn('<div class="mlists" data-mkl="meetings"><b>Meetings</b>', advanced)
+        self.assertIn('data-mk="types" value="meeting, email"', advanced)                  # each kind's lists, under Advanced
+        self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
         self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
-                      'work links again">', sec)
-        self.assertIn('<option value="dormant" selected>working and dormant pages</option>', sec)
-        self.assertIn('<input type="checkbox" id="m-night" checked', sec)
-        self.assertIn('id="m-min" min="1" max="1000" value="10"', sec)
-        self.assertIn("dormant ones in its <code>dormant/</code> folder, archived ones in its <code>archive/</code> folder", sec)
-        self.assertIn('<div class="mwiki" data-mw="Meetings"><p class="mcount"><b>Meetings</b> <span data-mc="grades">40 working · '
-                      '12 dormant · 5 archived</span><span class="mnext" data-mc="next">Next pass: 4 to dormant, 2 to the archive, '
-                      '1 woken</span></p>', sec)
-        self.assertIn("Next pass: 9 to dormant, 4 to the archive, 1 woken", sec)              # Knowledge's two kinds
-        # a fade.py older than preview() and its sentences: the counts alone, and no rule worded here in its place
-        self.assertNotIn('data-mc="moving"', sec)
-        self.assertNotIn('class="hint msaid"', sec)
-        self.assertIn("The full list, every page with why: <code>System/generated/fade/Meetings.md</code>", sec)
+                      'work links again">', advanced)
+        self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
+        self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
+        self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
+        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · next pass moves 7'
+                      '</span></p>', sec)                                                    # no list written yet: no link
+        self.assertIn("Knowledge: ", sec)
+        self.assertNotIn('class="hint msaid"', sec)            # a fade.py older than its sentences: no rule worded here in its place
 
     def test_what_was_saved_is_shown(self):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {
@@ -2712,8 +2865,8 @@ class TestMemorySettings(StatusCase):
         self.assertIn('<option value="working" selected>', sec)
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
-        self.assertIn("Next pass: 2 to dormant</span>", sec)                                 # 24 // 12, never archived, no waking
-        self.assertIn('<span class="mnext" data-mc="next">Off: nothing fades</span>', sec)
+        self.assertIn("next pass moves 2</span>", sec)                                      # 24 // 12, never archived, no waking
+        self.assertRegex(sec, r'data-mc="line">Knowledge: [^<]* · off</span>')
 
     def test_left_out_without_fade_and_said_when_it_fails(self):
         os.remove(str(self.root / "System" / "tools" / "fade.py"))
@@ -2737,6 +2890,7 @@ class TestMemorySettings(StatusCase):
         self.assertIn("window.GarrickMemory=", status.MEMORY_JS)
         self.assertIn("host.postMessage({act:{verb:'memory-preview',memory:request()}})", status.MEMORY_JS)
         self.assertIn("window.GarrickReadsMemory", status.MEMORY_JS)          # only where the host answers it
+        self.assertIn("sec.querySelector('[data-mkl=\"'+f.dataset.mkind+'\"]')", status.MEMORY_JS)   # the lists, from Advanced
         self.assertIn("if(m){q.memory=M.request();M.saved()}", status.JS)     # sent with the rest when Settings closes
         page = self.page()
         self.assertIn(status.MEMORY_CSS.strip()[:60], page)
@@ -2745,67 +2899,44 @@ class TestMemorySettings(StatusCase):
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
-        self.assertEqual(("3 working · 2 dormant · 1 archived", "Next pass: 4 to the archive"), status.memory_said(c))
-        self.assertEqual("Next pass: nothing moves", status.memory_said(dict(c, to_archive=0))[1])
-        self.assertEqual("Off: nothing fades", status.memory_said(dict(c, on=False))[1])
-        for words in ("' working · '", "' dormant · '", "' archived'", "'Off: nothing fades'", "'to dormant'",
-                      "'to the archive'", "'woken'", "'Next pass: '", "'nothing moves'"):
+        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · next pass moves 4", status.memory_said("Meetings", c))
+        self.assertEqual("Meetings: 3 working · 2 dormant · nothing to move",
+                         status.memory_said("Meetings", dict(c, to_archive=0, archived=0)))
+        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · off", status.memory_said("Meetings", dict(c, on=False)))
+        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' · next pass moves '", "' · nothing to move'"):
             self.assertIn(words, status.MEMORY_JS)
+        self.assertIn("textContent", status.MEMORY_JS)
+        self.assertNotIn("innerHTML", status.MEMORY_JS)
 
-    def test_it_reads_as_three_grades_and_three_steps_before_any_rule(self):
+    def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        for words in ("Older meetings and reading move out of the way, so today's work is quicker to find. Nothing is ever "
-                      "deleted, and nothing moves until you say yes.",
-                      "Put aside: out of the index, but still found when a search reaches back for it",
-                      "Kept out of the way: found only when you ask to search the archive.",
-                      "Closing Settings saves the rules below. Saving moves nothing.",
-                      "Ask “what would fade”: it writes the list of what the next pass would move, and why.",
-                      "Pages move only when you say yes to that list",
-                      "Active work is never put aside"):
-            self.assertIn(words, sec)                                               # on screen, not behind the "?"
-        order = [sec.index(x) for x in ('class="mgradesay"', 'class="msteps"', 'id="m-prev"', 'data-mwikion=',
-                                        'data-mkind=', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
-        self.assertEqual(sorted(order), order)                                      # what would happen, then the rules
-        self.assertEqual(3, sec.count('class="madv"'))                              # each kind's lists, under Advanced
-        self.assertRegex(sec, r'<details class="madv"><summary>Advanced: which pages this kind takes</summary>'
-                              r'<label class="mlist">Types <input type="text" data-mk="types"')
-        for gone in ("Use wakes a dormant page", "Opened, quoted or linked again"):
-            self.assertNotIn(gone, sec)
+        self.assertIn('<p class="setlede">Old meetings and reading leave the index after the months set here; nothing is deleted, '
+                      'and nothing moves until you say “fade the meetings” or “fade the library”.</p>', sec)
+        shown = sec[:sec.index('<details class="madv">')]
+        for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
+                     "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
+                     'data-mk="types"', "The full list, every page with why"):
+            self.assertNotIn(gone, shown)                                       # in the docs, or under Advanced
+        self.assertEqual(1, sec.count('<details class="madv">'))                # one Advanced, closed
+        self.assertNotIn('<details class="madv" open', sec)
+        order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', 'Meetings: ', 'data-mwikion="Knowledge"',
+                                        '<details class="madv">', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
+        self.assertEqual(sorted(order), order)
 
-    def test_with_the_real_fade_it_names_the_pages_and_says_its_own_rules(self):
+    def test_with_the_real_fade_it_says_its_own_rules_and_links_the_full_list(self):
         fixtures.write_fade(self.root)
         status._FADE.pop(self.root, None)
         fade = status.fade_lib(self.root)
-        self.assertTrue(callable(fade.preview))
         sec = self.section()
-        for name in ("AGE_SAID", "WAKE_SAID"):
-            self.assertIn('<p class="hint msaid">%s</p>' % status.said_html(getattr(fade, name)), sec)   # fade.py's words, as they are
+        self.assertIn(status.said_html(fade.AGE_SAID), sec[sec.index('id="help-memory"'):])     # fade.py's words, behind the "?"
+        advanced = sec[sec.index('<details class="madv">'):]
+        self.assertIn('<p class="hint msaid">%s</p>' % status.said_html(fade.WAKE_SAID), advanced)
         self.assertIn("<code>pinned: true</code>", status.said_html(fade.WAKE_SAID))
-        meetings = sec[sec.index('data-mw="Meetings"'):sec.index('data-mw="Knowledge"')]
-        moving = re.search(r'<ul class="mrows" data-mc="moving">(.*?)</ul>', meetings).group(1)
-        self.assertEqual(fade.PREVIEW_LIMIT, moving.count("<li>"))                  # a short list
-        self.assertIn('<li><b>Old call 1</b> <span class="mdate">2020-01-01</span> <span class="mto">to the archive</span>'
-                      '<small>', moving)
-        self.assertIn("months old; meetings are archived at 18</small>", moving)    # and why
-        self.assertRegex(meetings, r'<p class="mmore" data-mc="moves">and \d+ more</p>')
-        keeping = re.search(r'<ul class="mrows" data-mc="keeping">(.*?)</ul>', meetings).group(1)
-        self.assertIn('<li><b>Kept call</b> <span class="mdate">2020-01-08</span><small>Kept by a live thread, '
-                      'Zones/Work/Acme Review/Threads/Pricing/Pricing.md</small></li>', keeping)
-        self.assertIn('<p class="mkeptlab" data-mc="keptlab">Old enough to go, but kept for active work</p>', meetings)
-        self.assertIn("<code>System/generated/fade/Meetings.md</code>, written when you ask", htmllib.unescape(meetings))
+        self.assertNotIn("Full list", sec)
         self.assertFalse((self.root / "System" / "generated").exists())             # building the page writes nothing
         fade.propose(self.root, "Meetings")
-        meetings = self.section().split('data-mw="Meetings"', 1)[1]
-        self.assertRegex(meetings, r'<a href="[^"]+">System/generated/fade/Meetings\.md</a>, as last written')
-
-    def test_the_script_draws_the_pages_as_the_page_does(self):
-        js = status.MEMORY_JS
-        self.assertIn("paint(out.counts,out.preview)", js)
-        for words in ("'to dormant'", "'to the archive'", "'back to working'", "'Kept by '", "'undated'", "'and '", "' more'"):
-            self.assertIn(words, js)
-        self.assertEqual({"dormant": "to dormant", "archived": "to the archive", "working": "back to working"}, status.MEMORY_TO)
-        self.assertIn("textContent", js)
-        self.assertNotIn("innerHTML", js)                                           # a title is the user's text, never markup
+        meetings = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
+        self.assertRegex(meetings, r'<a class="mfull" href="[^"]+Meetings\.md[^"]*">Full list</a>')
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_script_parses(self):
@@ -2858,7 +2989,9 @@ class TestContextDebt(StatusCase):
         self.assertIn('class="dt"', b)                                     # the threshold, dashed
         self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
         self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
-        self.assertIn("Say &#8220;nurture the meetings&#8221;.", b)
+        self.assertIn('data-request="nurture the meetings" data-folder="%s"' % self.root, b)      # a button, not "Say …" (#234)
+        self.assertIn('>Nurture the meetings</button>', b)
+        self.assertNotIn("Say &#8220;", b)
         for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
             self.fail("a fixed colour in the chart: %s" % colour)
         self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
@@ -2869,7 +3002,8 @@ class TestContextDebt(StatusCase):
         self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
         self.assertIn('<span class="chip"', b)
         self.assertIn(">under 40</span>", b)
-        self.assertIn("Say &#8220;nurture Work&#8221;.", b)
+        self.assertIn('<button class="act dask" type="button" data-request="nurture Work"', b)
+        self.assertIn(">Nurture Work</button>", b)
         self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
 
     def test_left_out_without_a_nurture_that_keeps_it(self):

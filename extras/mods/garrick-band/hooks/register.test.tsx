@@ -236,6 +236,77 @@ describe('context used', () => {
     expect((await shown($))?.text).toBe('3%')
   })
 
+  // The session's named values, held by the test so that a clear can empty
+  // them as a real one does: the new conversation's atoms start fresh, and no
+  // session.start follows.
+  function freshState(on: any) {
+    const values = new Map<string, { value: unknown; version: number }>()
+    const name = (e: any) => `${e.plugin}/${e.key}/${e.id ?? ''}`
+    on('state.get', async (_$: any, e: any) => ({ value: values.get(name(e)) ?? { value: undefined, version: 0 } }))
+    on('state.set', async (_$: any, e: any) => {
+      const now = values.get(name(e))?.version ?? 0
+      if (e.ifVersion !== undefined && e.ifVersion !== now) return { value: { isSet: false, version: now } }
+      values.set(name(e), { value: e.value, version: now + 1 })
+      return { value: { isSet: true, version: now + 1 } }
+    })
+    return () => values.clear()
+  }
+
+  for (const how of ['typed', 'from the band'] as const) {
+    test(`after a clear ${how}, the band is drawn at once, with its place and buttons and no figure`, async ($, on) => {
+      mock.clock(on)
+      on('ui.render', ENGINE)
+      const at: { percent?: number } = { percent: 78 }
+      usage(on, at)
+      const wipe = freshState(on)
+      on('session.end', async (_$: any, e: any) => ({ sessionId: e.sessionId }))
+      on('command.run', async (_$: any, e: any) => {
+        if (e.command === 'clear') {
+          delete at.percent
+          wipe()
+        }
+        return {}
+      })
+      await inThread($, on, NOTE)
+      expect((await shown($))?.text).toBe('78%')
+
+      if (how === 'typed') {
+        delete at.percent
+        await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as any)
+        wipe()
+      } else {
+        await (await $.ui.mount({ ...BAND, surface: 'terminal' })).press({ key: 'clear' })
+      }
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
+      expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear'])
+      expect(await band.find({ text: /%/ })).toBeUndefined()
+      expect((await $.command.run({ command: 'garrick', args: 'wrap' } as any)).text).toBe('Wrapping Acme.')
+
+      at.percent = 4
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+      expect((await shown($))?.text).toBe('4%')
+    })
+  }
+
+  test('after a clear outside any workspace, a render searches for nothing', async ($, on) => {
+    on('ui.render', ENGINE)
+    const wipe = freshState(on)
+    let asked = 0
+    on('session.root', async () => {
+      asked++
+      return { value: '/elsewhere/project' }
+    })
+    on('session.cwd', async () => ({ value: '/elsewhere/project' }))
+    on('fs.exists', async () => ({ value: false }))
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    const before = asked
+    wipe()
+    for (let i = 0; i < 3; i++) expect(await (await $.ui.mount({ ...BAND, surface: 'terminal' })).find({ key: 'clear' })).toBeUndefined()
+    expect(asked).toBe(before)
+  })
+
   test("the band's Clear empties the figure", async ($, on) => {
     usage(on, { percent: 78 })
     on('command.run', async () => ({}))

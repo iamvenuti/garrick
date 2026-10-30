@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **A guided context review.** "Review the context with me", or "review the latest audit with me", has the `nurture` skill work through what the checks left in a short session: it gathers the check, the wiki lint, the shared-file comparison and any audit report the workspace keeps, checks each finding again, and asks walls and failed sources first, then one batch of mechanical fixes, then one decision at a time, up to a limit you choose, fifteen minutes or ten questions by default. `System/nurture-review.md` keeps the answers and the deferrals, so the next review goes on where this one stopped. The status page's Checks card has *Review context*, which hands the request to your assistant, beside the day of the last review and whether one is unfinished, read from that file's frontmatter alone. ([#258](https://github.com/iamvenuti/garrick/issues/258))
 
+### Fixed
+
+- The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.

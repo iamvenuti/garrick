@@ -190,6 +190,87 @@ class TestHistory(EffortCase):
         self.assertEqual(self.ledger()[("Work", "Cedar Notes", "Cedar Notes")]["cost"], 999.0)
 
 
+class TestUnchangedNotReadAgain(EffortCase):
+    """#260: given a file to keep its reading in, the ledger reads again only
+    the transcripts whose size or modification time, or a subagent's, moved
+    since; the figures are the same either way."""
+
+    def setUp(self):
+        super().setUp()
+        self.kept = self.store.parent / "status.effort.json"
+
+    def reads(self, **kw):
+        """The ledger, and the transcripts it opened, main ones and subagents'."""
+        with mock.patch.object(effort, "_read", wraps=effort._read) as read:
+            rows = effort.ledger(self.root, self.store, kept=self.kept, **kw)
+        return rows, sorted(Path(c.args[0]).name for c in read.call_args_list)
+
+    def test_nothing_changed_reads_nothing(self):
+        cedar = self.root / "Zones" / "Work" / "Cedar Notes"
+        acme = self.root / "Zones" / "Work" / "Acme Review"
+        self.session(cedar, minutes=(0, 1), sub=1)
+        self.session(acme, writes=[acme / "Threads" / "Pricing" / "Pricing.md", acme / "Acme Review.md",
+                                   acme / "Threads" / "Pricing" / "Pricing.md"])
+        self.session(cedar, entry="sdk-cli")                                 # headless: kept as nothing, not read again
+        first, opened = self.reads()
+        self.assertEqual(["agent-1.jsonl", "s1.jsonl", "s2.jsonl", "s3.jsonl"], opened)
+        again, opened = self.reads()
+        self.assertEqual([], opened)
+        self.assertEqual(first, again)
+        self.assertEqual(effort.ledger(self.root, self.store), again)        # as a reading that keeps nothing finds
+        self.assertNotIn(SECRET.split()[1], self.kept.read_text(encoding="utf-8"))
+
+    def test_a_changed_size_time_or_subagent_is_read_again(self):
+        one = self.session(self.root / "Zones" / "Work" / "Cedar Notes", minutes=(0, 1), sub=1)
+        two = self.session(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing")
+        self.reads()
+        with one.open("a", encoding="utf-8") as f:                           # a session that went on
+            f.write(json.dumps({"type": "assistant", "timestamp": self.at(3),
+                                "message": {"id": "s1-m9", "model": "claude-opus-5-5", "usage": USAGE, "content": []}}) + "\n")
+        rows, opened = self.reads()
+        self.assertEqual(["agent-1.jsonl", "s1.jsonl"], opened)
+        self.assertEqual(effort.ledger(self.root, self.store), rows)
+        st = two.stat()
+        os.utime(str(two), ns=(st.st_atime_ns, st.st_mtime_ns + 10 ** 9))     # touched, the same size
+        self.assertEqual(["s2.jsonl"], self.reads()[1])
+        sub = one.parent / one.stem / "subagents" / "agent-1.jsonl"
+        sub.write_text(sub.read_text(encoding="utf-8") * 2, encoding="utf-8")
+        self.assertEqual(["agent-1.jsonl", "s1.jsonl"], self.reads()[1])
+
+    def test_no_reading_kept_or_one_kept_by_another_reader_reads_everything_once(self):
+        self.session(self.root / "Zones" / "Work" / "Cedar Notes")
+        self.session(self.root / "Zones" / "Work" / "Acme Review")
+        effort.record(self.root, self.store)                                 # the ledger itself keeps its format
+        self.assertEqual(["s1.jsonl", "s2.jsonl"], self.reads()[1])          # nothing kept yet
+        kept = json.loads(self.kept.read_text(encoding="utf-8"))
+        self.kept.write_text(json.dumps({"transcripts": kept["transcripts"]}), encoding="utf-8")   # no reader named
+        self.assertEqual(["s1.jsonl", "s2.jsonl"], self.reads()[1])
+        self.assertEqual([], self.reads()[1])
+        with mock.patch.object(effort, "reader", return_value="another"):    # this file changed, or the time zone
+            self.assertEqual(["s1.jsonl", "s2.jsonl"], self.reads()[1])
+        self.kept.write_text("not json", encoding="utf-8")
+        self.assertEqual(["s1.jsonl", "s2.jsonl"], self.reads()[1])
+
+    def test_a_transcript_gone_leaves_the_reading(self):
+        gone = self.session(self.root / "Zones" / "Work" / "Cedar Notes")
+        stays = self.session(self.root / "Zones" / "Work" / "Acme Review")
+        self.reads()
+        gone.unlink()
+        self.reads()
+        self.assertEqual([str(stays)], list(json.loads(self.kept.read_text(encoding="utf-8"))["transcripts"]))
+
+    def test_the_page_keeps_its_reading_beside_itself(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"effort": True}))
+        self.session(self.root / "Zones" / "Work" / "Cedar Notes")
+        page = self.store.parent / "status.html"
+        reader = status.effort()                                             # the page's own copy of effort.py
+        with mock.patch.object(reader, "_read", wraps=reader._read) as read:
+            status.build(self.root, folder=self.store.parent, page_at=page)
+            status.build(self.root, folder=self.store.parent, page_at=page)
+        self.assertEqual(1, read.call_count)
+        self.assertTrue((self.store.parent / "status.effort.json").is_file())
+
+
 class TestThreadsView(EffortCase):
     """Time and Cost on the Threads card: the last 30 days over the same rows."""
 

@@ -14,10 +14,11 @@ thread in the list for the same actions. Every card can be dragged elsewhere
 or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
-already keep, and writes nothing but itself, the flags it was built with and
-the check's last result. It runs no server, loads nothing from the network
-and carries no third-party script. Delete it and nothing is lost: every fact on it lives in a file you
-own. Each panel says where its numbers come from and how old they are. The
+already keep, and writes nothing but itself, the flags it was built with, the
+check's last result and what effort.py last read of each transcript. It runs
+no server, loads nothing from the network and carries no third-party script.
+Delete it and nothing is lost: every fact on it lives in a file you own. Each
+panel says where its numbers come from and how old they are. The
 one call out is the release notice, off until System/garrick-settings.json
 switches it on: then a build starts System/tools/release.py, at most once a
 day and without waiting for it, and Needs attention names a newer Garrick
@@ -78,7 +79,9 @@ Each build keeps the check's result beside the page too, in
 status.check.json, and `--reuse-check SECONDS`, which those tools also
 pass, shows that result while it is younger than that instead of running
 the check again, saying how old it is (#260). A build by hand or on
-schedule runs the check.
+schedule runs the check. With Effort switched on, status.effort.json beside
+the page holds what effort.py read of each transcript, so a build reads only
+the transcripts that changed since.
 A build whose status.py is replaced while it runs, as an update replaces it
 during a `--settle` wait, writes nothing and builds again from the new file,
 so the page is always drawn by the status.py on disk.
@@ -2205,6 +2208,12 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
 def check_file(out: Path) -> Path:
     """Where the check's last result for the page at `out` is kept: beside it, never committed."""
     return out.with_name(out.stem + ".check.json")
+
+
+def effort_file(out: Path) -> Path:
+    """Where the effort ledger keeps what it read of each transcript, for the
+    page at `out`: beside it, never committed."""
+    return out.with_name(out.stem + ".effort.json")
 
 
 def kept_check(store: Path, ws: Path, now: dt.datetime, reuse: float) -> Optional[dict]:
@@ -7361,8 +7370,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     without it, or unsaid, through the deep link. `page_at` is where the page
     goes (main() passes it): beside it the build keeps the check's result,
     which a build given `reuse_check` seconds shows while it is younger than
-    that, instead of running the check again (#260). Without it nothing is
-    kept and the check always runs."""
+    that, instead of running the check again, and what the effort ledger read
+    of each transcript, so one unchanged is not read again (#260). Without it
+    nothing is kept, the check always runs and every transcript is read."""
     now = now or dt.datetime.now()
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
@@ -7512,7 +7522,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     store = folder / effort().STORE
     if flags_on["effort"]:
         try:
-            EV = Effort(effort().ledger(ws, store, also=[Path(a).expanduser() for a in also], now=now, moved=moved or None), now.date())
+            EV = Effort(effort().ledger(ws, store, also=[Path(a).expanduser() for a in also], now=now, moved=moved or None,
+                                        kept=effort_file(page_at) if page_at else None), now.date())
         except Exception:                     # a transcript format this reader does not know: no Time and Cost
             EV = None
     said = {t.casefold() for t in (r["thread"] for z in T.values() for r in z["rows"] + z["parked"])}

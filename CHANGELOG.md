@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-30
+
+Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.
+
 ### Fixed
 
 - The wall check skipped any line shaped like a checkpoint's own lines, wherever it stood, and read nothing in an item's id, whatever it held; it now skips only the lines `scaffold.py checkpoint` writes, exactly as it writes them, inside a checkpoint, and reads everything else as wording. ([#225](https://github.com/iamvenuti/garrick/issues/225))
@@ -1032,7 +1036,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/iamvenuti/garrick/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/iamvenuti/garrick/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/iamvenuti/garrick/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/iamvenuti/garrick/compare/v0.44.0...v0.45.0

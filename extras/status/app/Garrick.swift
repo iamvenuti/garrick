@@ -1217,13 +1217,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		menu.items.forEach { $0.view?.needsDisplay = true }
 	}
 
-	// The zone the graph shows: All shows every zone; a wiki, or a zone gone
-	// since, falls back to Work, as the graph does, or to every zone.
+	// The zone the graph shows. A wiki, a zone gone since, or the All a page
+	// before #250 stored (*), falls back to Work, as the graph does, or to
+	// every zone.
 	func shownZones() -> [[String: Any]] {
 		let zones = (menuState?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
 		let place = menuState?["place"] as? String ?? ""
-		if place != "*", let z = zones.first(where: { $0["z"] as? String == place }) { return [z] }
-		if place != "*", let z = zones.first(where: { $0["z"] as? String == "Work" }) { return [z] }
+		if let z = zones.first(where: { $0["z"] as? String == place }) { return [z] }
+		if let z = zones.first(where: { $0["z"] as? String == "Work" }) { return [z] }
 		return zones
 	}
 

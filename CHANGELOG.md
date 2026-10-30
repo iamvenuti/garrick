@@ -8,6 +8,17 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The docs call the status page the Garrick App, and the architecture page has four layers.** [Architecture](docs/architecture.md) now follows the diagram: navigate and control with the Garrick App, where you work in the Claude or Codex desktop app or cmux, the record of Knowledge, Meetings and the threads, and underneath the model, the rules and the commit check. It says that the rules, the walls and the model act on the whole record. [Concepts](docs/concepts.md) defines the words a new user meets in the first week, among them piece of work, the simple home, Continue, Needs you, the Guide, Nurture and context debt. Across `docs/`, the status page is the Garrick App, the Mac app is the Mac app, and [the Garrick App's page](docs/extras/status-page.md) describes its Guide tab. Code names and paths stay as they are.
 
+## [0.47.2] - 2026-10-30
+
+A thread a session makes reaches the Threads card in seconds on a large workspace; the band stays drawn after a clear; fading leaves links in code blocks alone; and two walled thread notes no longer fail the wall check on their Resume here rows.
+
+### Fixed
+
+- The band no longer disappears after *Clear* or `/clear` until the next reply. A clear starts a new conversation with no session start, and its named values start empty, the band's note among them, so the band drew nothing, mark, place line and buttons, until the new conversation's first reply found the note again. The band now keeps the note it last found and draws from it until then, with no context figure, as before the first reply of any conversation; it reads no file to do so, and a folder with no note above it is never searched again. ([#259](https://github.com/iamvenuti/garrick/issues/259))
+- **Fading leaves a link in a code block as it was written.** `fade.py apply` pointed every link to a page that faded at its new place, inside fenced code blocks and inline code too, so a wiki's `AGENTS.local.md` that showed the frontmatter with a real page as its example came back teaching `[[dormant/wiki/...]]`. The same example also counted as use, so it could hold a page in working memory or wake it. A link inside a ``` or ~~~ fence, or inside inline code, is now text: fading neither rewrites it nor counts it. ([#256](https://github.com/iamvenuti/garrick/issues/256))
+- Two thread notes on either side of a wall no longer fail the wall check and the commit hook on their Resume here tables alone. A run of words crossed from one row into the next, label and all, so a *Rebuild with* cell reading "Nothing to rebuild" and a *Next action* cell opening with the same name read as a quotation of wording no shared file holds. Each row of a Resume here table is now a break, as a heading is, and is read as its cell alone. Only rows with the template's labels are breaks, and only above the rule that closes the block; eight words shared inside one cell, in a cell and the line that goes on below it, or in the prose around the table, are still refused. ([#262](https://github.com/iamvenuti/garrick/issues/262))
+- **A thread a session makes reaches the Threads card sooner on a large workspace** ([#260](https://github.com/iamvenuti/garrick/issues/260)). A build of the status page took 26 to 36 seconds on a workspace of about 1,700 notes and 1,300 transcripts, most of it in three places, so the thread `scaffold.py thread` made took about forty seconds to show. A rebuild that `scaffold.py` or `correct.py` asks for now shows the check's last result while it is younger than ten minutes (`--reuse-check`, kept in `System/generated/status.check.json`), and the Checks card says how old it is; a build by hand or on schedule still runs the check. The effort ledger reads again only the transcripts whose size or modification time changed, keeping what it read in `System/generated/status.effort.json`; `effort.jsonl` keeps its format. And Explore resolves a link by its ending from an index built once, instead of a pass over every note for each link, with the same shortest-path-first result.
+
 ## [0.47.1] - 2026-10-30
 
 Explore names every note it draws and colours by Garrick's kinds unless asked for Obsidian's colours; the wall check reads every line except the ones the checkpoint tool writes inside a checkpoint, scheduled builds keep the app's page flags, and four smaller fixes.
@@ -1040,7 +1051,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.2...HEAD
+[0.47.2]: https://github.com/iamvenuti/garrick/compare/v0.47.1...v0.47.2
 [0.47.1]: https://github.com/iamvenuti/garrick/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/iamvenuti/garrick/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/iamvenuti/garrick/compare/v0.45.0...v0.46.0

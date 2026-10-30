@@ -2,7 +2,7 @@
 """The status page for a Garrick workspace. An optional extra.
 
     python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
-                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags]
+                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags] [--reuse-check SECONDS]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
@@ -14,10 +14,11 @@ thread in the list for the same actions. Every card can be dragged elsewhere
 or hidden, and Reset view puts the page back.
 
 **Show, don't store.** The page reads files the workspace and the jobs extra
-already keep, and writes nothing but itself and the flags it was built with.
-It runs no server, loads nothing from the network and carries no third-party
-script. Delete it and nothing is lost: every fact on it lives in a file you
-own. Each panel says where its numbers come from and how old they are. The
+already keep, and writes nothing but itself, the flags it was built with, the
+check's last result and what effort.py last read of each transcript. It runs
+no server, loads nothing from the network and carries no third-party script.
+Delete it and nothing is lost: every fact on it lives in a file you own. Each
+panel says where its numbers come from and how old they are. The
 one call out is the release notice, off until System/garrick-settings.json
 switches it on: then a build starts System/tools/release.py, at most once a
 day and without waiting for it, and Needs attention names a newer Garrick
@@ -74,6 +75,13 @@ Each build stores the flags that shape the page beside it, in
 status.flags.json, and `--same-flags` builds with those, so a page that
 scaffold.py or correct.py rebuilds looks as the app or the plugin last drew
 it (#246). It cannot be given with those flags; the last build to store wins.
+Each build keeps the check's result beside the page too, in
+status.check.json, and `--reuse-check SECONDS`, which those tools also
+pass, shows that result while it is younger than that instead of running
+the check again, saying how old it is (#260). A build by hand or on
+schedule runs the check. With Effort switched on, status.effort.json beside
+the page holds what effort.py read of each transcript, so a build reads only
+the transcripts that changed since.
 A build whose status.py is replaced while it runs, as an update replaces it
 during a `--settle` wait, writes nothing and builds again from the new file,
 so the page is always drawn by the status.py on disk.
@@ -2197,14 +2205,53 @@ def inboxes(ws: Path) -> List[Tuple[str, Path, int]]:
     return out
 
 
-def check(ws: Path) -> Optional[dict]:
+def check_file(out: Path) -> Path:
+    """Where the check's last result for the page at `out` is kept: beside it, never committed."""
+    return out.with_name(out.stem + ".check.json")
+
+
+def effort_file(out: Path) -> Path:
+    """Where the effort ledger keeps what it read of each transcript, for the
+    page at `out`: beside it, never committed."""
+    return out.with_name(out.stem + ".effort.json")
+
+
+def kept_check(store: Path, ws: Path, now: dt.datetime, reuse: float) -> Optional[dict]:
+    """The result a build kept in `store` for this workspace, when it is
+    younger than `reuse` seconds, marked `kept` and carrying `at`, when the
+    check ran; else None."""
+    try:
+        data = json.loads(store.read_text(encoding="utf-8"))
+        at, result = float(data["at"]), data["result"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if data.get("workspace") != str(ws) or not isinstance(result, dict) or result.get("failed"):
+        return None
+    if not 0 <= now.timestamp() - at < reuse:
+        return None
+    return dict(result, at=at, kept=True)
+
+
+def check(ws: Path, store: Optional[Path] = None, reuse: Optional[float] = None,
+          now: Optional[dt.datetime] = None) -> Optional[dict]:
     """check.py's findings, run as the page is built. With `--quick`, where the
     workspace's check.py has it: every check but the comparison of wording
     with the meetings, which on a large workspace is most of a full run's
-    time, and which the commit hook and a scheduled full check still make."""
+    time, and which the commit hook and a scheduled full check still make.
+
+    With `store`, a result is kept there for the next build, and with `reuse`
+    as well, one kept there less than `reuse` seconds ago is shown instead of
+    running the check again: what scaffold.py's and correct.py's rebuilds ask
+    for (#260), so a thread a session made reaches the page in seconds. A
+    check that did not run is never kept."""
     tool = ws / "System" / "tools" / "check.py"
     if not tool.is_file():
         return None
+    now = now or dt.datetime.now()
+    if store is not None and reuse:
+        kept = kept_check(store, ws, now, reuse)
+        if kept is not None:
+            return kept
     try:
         quick = ["--quick"] if "--quick" in tool.read_text(encoding="utf-8") else []
     except OSError:
@@ -2222,6 +2269,11 @@ def check(ws: Path) -> Optional[dict]:
     except OSError:
         pass
     data["titles"] = titles
+    if store is not None:
+        try:
+            write_page(store, json.dumps({"workspace": str(ws), "at": now.timestamp(), "result": data}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass                              # the next build runs the check again
     return data
 
 
@@ -2692,9 +2744,17 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     for i, wiki, typed in typed_at:
         if found[wiki][typed] >= KIND_FROM_PAGES:
             nodes[i]["k"] = keys.index(typed)
+    # A link that is not a whole path resolves to the shortest path that ends
+    # in it after a slash, and else to the shortest note of its name; among
+    # paths as long, the first walked. Each note goes in once under every such
+    # ending, so a link is a lookup, not a pass over every note (#260).
     by_base: Dict[str, Path] = {}
+    by_tail: Dict[str, Path] = {}
     for p in sorted(rel, key=lambda q: len(rel[q])):
         by_base.setdefault(p.stem.lower(), p)
+        parts = rel[p].split("/")
+        for i in range(1, len(parts)):
+            by_tail.setdefault("/".join(parts[i:]), p)
     edges = set()
     for _, _, path in notes:
         try:
@@ -2707,8 +2767,9 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             target = target[:-3] if target.endswith(".md") else target
             hit = by_rel.get(target)
             if hit is None:
-                ends = [p for p, r in rel.items() if r.endswith("/" + target)]
-                hit = min(ends, key=lambda q: len(rel[q])) if ends else by_base.get(target.split("/")[-1].lower())
+                hit = by_tail.get(target)
+            if hit is None:
+                hit = by_base.get(target.split("/")[-1].lower())
             if hit is not None and hit != path:
                 a, b = index[path], index[hit]
                 edges.add((min(a, b), max(a, b)))
@@ -7303,7 +7364,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
           show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
-          managed: Optional[List[Path]] = None, cli: Optional[bool] = None) -> str:
+          managed: Optional[List[Path]] = None, cli: Optional[bool] = None, page_at: Optional[Path] = None,
+          reuse_check: Optional[float] = None) -> str:
     """The page. `vaults` and `launchers` say what this machine has (main()
     asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
@@ -7314,14 +7376,20 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     Continue keeps is read, as a test needs. `cli` says whether Claude Code's
     command-line tool is here (main() asks handoff.py's find_claude()): with
     it, Open in Claude on a thread goes through Continue's request (#180);
-    without it, or unsaid, through the deep link."""
+    without it, or unsaid, through the deep link. `page_at` is where the page
+    goes (main() passes it): beside it the build keeps the check's result,
+    which a build given `reuse_check` seconds shows while it is younger than
+    that, instead of running the check again, and what the effort ledger read
+    of each transcript, so one unchanged is not read again (#260). Without it
+    nothing is kept, the check always runs and every transcript is read."""
     now = now or dt.datetime.now()
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws, vault, vaults)
-    T, TD, IB, C, R, W = threads(ws), todo(ws), inboxes(ws), check(ws), repos(ws), wikis(ws)
+    T, TD, IB, C, R, W = (threads(ws), todo(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
+                           repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
@@ -7463,7 +7531,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     store = folder / effort().STORE
     if flags_on["effort"]:
         try:
-            EV = Effort(effort().ledger(ws, store, also=[Path(a).expanduser() for a in also], now=now, moved=moved or None), now.date())
+            EV = Effort(effort().ledger(ws, store, also=[Path(a).expanduser() for a in also], now=now, moved=moved or None,
+                                        kept=effort_file(page_at) if page_at else None), now.date())
         except Exception:                     # a transcript format this reader does not know: no Time and Cost
             EV = None
     said = {t.casefold() for t in (r["thread"] for z in T.values() for r in z["rows"] + z["parked"])}
@@ -7633,6 +7702,9 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
+    if C and C.get("kept"):                    # a tool's rebuild showed the last result rather than run the check (#260)
+        body = ('<p class="hint ckept">As the check found it %s; a build by hand or on schedule runs it again.</p>'
+                % E(age(dt.datetime.fromtimestamp(C["at"]), now))) + body
     checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + body)
 
     # ---- open actions and inboxes
@@ -7989,6 +8061,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="for effort: a folder the workspace used to live in, read as the workspace (repeatable)")
     ap.add_argument("--moved", action="append", default=[], metavar="OLD=NEW",
                     help="for effort: a folder renamed or moved, its old path and its path in the workspace now (repeatable)")
+    ap.add_argument("--reuse-check", type=float, metavar="SECONDS", help="show the check's last result, kept beside the "
+                    "page, while it is younger than this, instead of running the check again: a tool's rebuild")
     ap.add_argument("--same-flags", action="store_true", help="build with the page flags the last build stored, as a tool's "
                     "rebuild does; not with --obsidian, --no-obsidian, --no-cmux, --no-graph, --also or --moved")
     args = ap.parse_args(argv)
@@ -8040,7 +8114,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     page = build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
                  vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
-                 launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")))
+                 launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")),
+                 page_at=out, reuse_check=args.reuse_check)
     if STARTED is not None and own_stamp() != STARTED:
         return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
     write_page(out, page)

@@ -2,8 +2,8 @@
 project, the code of HTML pages read as wording, a list of links to Knowledge
 pages read as one run of words, files git ignores read as the project's own,
 the published ledger's shipped header read as a quotation, alone or running
-into the first row, the line a checkpoint's tool writes read as wording, and a
-party who is a person caught through her party's tag. Each test pairs the case that must pass with one that must still be found.
+into the first row, a Resume here table's rows read as one run of words, the
+line a checkpoint's tool writes read as wording, and a party who is a person caught through her party's tag. Each test pairs the case that must pass with one that must still be found.
 
 Invented parties only: Acme Corp (`acme`) and Birch & Co (`birch`), walled
 from each other, as in fixtures.py, with Rowan Keeler, Zeta Rossi and Keeler
@@ -324,6 +324,98 @@ class TestLedgerHeaderIsNotARun(WallCase):
         _real_repo(zone)
         for ledger, text in texts.items():  # staged, not part of the first commit
             write(ledger, text)
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+
+class TestResumeRowsAreNotARun(WallCase):
+    """#262: a run of words used to cross from one row of a Resume here table
+    into the next, label and all, so two walled thread notes whose *Rebuild
+    with* cells both read "Nothing to rebuild" and whose *Next action* cells
+    opened with the same name read as quoting each other on the template's
+    labels and two common cells. Each row is a break now, read as its cell
+    alone; what a cell holds, and what stands around the table, is still read."""
+
+    TABLE = ("| | |\n|---|---|\n"
+             "| Live artifact | %s |\n"
+             "| Rebuild with | Nothing to rebuild |\n"
+             "| Next action | %s |\n"
+             "| Keep in mind | %s |\n"
+             "| Waiting on | Nobody |\n"
+             "| Deadline | Not given |\n")
+    ACME = ("`Deliverables/260301 - Pricing memo.md`", "Rowan to send the pricing memo to Dana",
+            "tier three may go for the smaller accounts")
+    BIRCH = ("`Deliverables/260302 - Sizing.md`", "Rowan to rerun the survey weighting",
+             "the coastal towns are under-sampled")
+
+    def note(self, project):
+        thread = "Pricing" if project == self.acme else "Market Sizing"
+        return project / "Threads" / thread / (thread + ".md")
+
+    def resume(self, project, cells, after=""):
+        """The project's thread note, its Resume here block written as the
+        template lays it out, with `cells` in the table and `after` under it."""
+        head, _, _ = self.note(project).read_text(encoding="utf-8").partition("### Resume here\n")
+        write(self.note(project), head + "### Resume here\n\n**Where it stands, 30 October 2026.** "
+              "The %s draft is out.\n\n" % project.name + self.TABLE % cells + after
+              + "\n---\n\n**30 October 2026.** Wrapped.\n")
+
+    def both(self, acme=ACME, birch=BIRCH, after=""):
+        self.resume(self.acme, acme, after)
+        self.resume(self.birch, birch, after)
+
+    def test_common_cells_under_the_template_labels_are_not_a_quotation(self):
+        self.both()
+        self.assertEqual([], self.walls())
+
+    def test_eight_words_shared_inside_one_cell_are_still_refused(self):
+        cell = "Nordic depot volumes split before the regional board handover"
+        self.both(acme=self.ACME[:2] + (cell,), birch=self.BIRCH[:2] + (cell,))
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         {f.path for f in self.walls()})
+
+    def test_eight_words_shared_in_prose_just_after_the_table_are_still_refused(self):
+        self.both(after=HANDOVER)
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         {f.path for f in self.walls()})
+
+    def test_eight_words_running_on_below_a_cell_are_still_refused(self):
+        """A cell whose words go on to the next line, which Markdown draws as
+        more of the table, is read with that line: a quotation split there
+        is still found (found in review before 0.47.2)."""
+        cell = "the depot floor stays at twelve |\ncrates per verified pallet for every renewal"
+        self.both(acme=self.ACME[:2] + (cell,), birch=self.BIRCH[:2] + (cell,))
+        self.assertEqual({"Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         {f.path for f in self.walls()})
+
+    def test_only_a_resume_here_table_is_a_break(self):
+        """The same rows under any other heading, or below the rule that
+        closes the block, still run from one into the next; a cell is read
+        whole, without its label."""
+        rows = self.TABLE % self.ACME
+        joined = check.runs("## Notes\n\n" + rows)
+        self.assertTrue(joined - check.runs("### Resume here\n\n" + rows))
+        self.assertEqual(joined, check.runs("### Resume here\n\n---\n\n" + rows))
+        cell = "the Nordic depot volumes must be split before the regional board handover"
+        self.assertTrue(check.runs(cell))
+        self.assertEqual(check.runs(cell),
+                         check.runs("### Resume here\n\n| | |\n|---|---|\n| Keep in mind | %s |\n" % cell))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_committing_both_thread_notes_passes_the_hook(self):
+        self.both()
+        after = {self.note(p): self.note(p).read_text(encoding="utf-8") for p in (self.acme, self.birch)}
+        for note in after:
+            note.unlink()
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        for note, text in after.items():  # staged, not part of the first commit
+            write(note, text)
         git(zone, "add", "-A")
         res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
         self.assertEqual((0, ""), (res.returncode, res.stderr))

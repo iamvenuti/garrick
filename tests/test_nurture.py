@@ -28,7 +28,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import GIT_ENV, HAVE_GIT, build_workspace, git, meeting_page, thread_note, write  # noqa: E402
+from fixtures import GIT_ENV, HAVE_GIT, build_workspace, git, meeting_page, project_hub, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "template" / "System" / "tools"
@@ -429,6 +429,58 @@ class LinkRulesTest(Base):
         self.assertEqual(0, code, out)
         self.assertEqual({"codelink", "parent"}, {i["fix"]["op"] for i in out["fixed"]} & {"codelink", "parent"})
         self.assertIn("parent link", out["digest"])
+
+
+class WalledLinkTest(Base):
+    """No fix writes a link into a project walled from the note it is in. A
+    path written as code into Birch Entry, from a note of Acme Review, stays
+    for a person; one into Lantern, for a party no wall keeps from Acme, is
+    made a link as before. A parent link whose note was renamed into Birch
+    Entry is not pointed after it."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"parent-links": ["Work"], "note-links": ["Work"]}))
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace(
+            "mail.birchco.example |\n",
+            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | cobalt.example |\n", 1))
+        lantern = self.work / "Lantern"
+        write(lantern / "Lantern.md", project_hub("Work", "Lantern", "cobalt", ["Survey"]))
+        write(lantern / "Threads" / "Survey" / "Survey.md", thread_note("Lantern", "Survey", "cobalt"))
+        write(lantern / "Threads" / "Survey" / "Survey plan.md", '---\nparent: "[[Survey]]"\n---\n# Survey plan\n')
+        write(self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Sizing model.md",
+              '---\nparent: "[[Market Sizing]]"\n---\n# Sizing model\n')
+        freight = self.acme / "Threads" / "Freight"
+        self.routes = write(freight / "Routes.md", '---\nparent: "[[Freight]]"\n---\n# Routes\n\n'
+                                                   "Model in `Birch Entry/Threads/Market Sizing/Sizing model.md`.\n")
+        self.lanes = write(freight / "Lanes.md", '---\nparent: "[[Freight]]"\n---\n# Lanes\n\n'
+                                                 "Plan in `Lantern/Threads/Survey/Survey plan.md`.\n")
+        self.draft = write(freight / "Handover.md", '---\nparent: "[[Freight]]"\n---\n# Handover\n')
+        self.sub = write(freight / "Sub.md", '---\nparent: "[[Handover]]"\n---\n# Sub\n')
+        git(self.work, "add", "-A", "--", ".", ":!Scratch.md", ":!Birch Entry/Birch Entry.md")
+        git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "notes")
+        git(self.work, "mv", "Acme Review/Threads/Freight/Handover.md", "Birch Entry/Threads/Market Sizing/Handover v2.md")
+        git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "moved by hand")
+
+    def test_a_link_across_the_wall_is_never_a_mechanical_fix(self):
+        _, out = self.run_tool("list")
+        fixes = {(i["path"].rsplit("/", 1)[-1], i["fix"]["op"]) for i in out["items"] if i["kind"] == "mechanical"}
+        self.assertIn(("Lanes.md", "codelink"), fixes)
+        self.assertNotIn(("Routes.md", "codelink"), fixes)
+        self.assertNotIn(("Sub.md", "relink"), fixes)
+        judged = {i["path"].rsplit("/", 1)[-1] for i in out["items"] if i["kind"] == "judgment" and i["check"] == "links"}
+        self.assertTrue({"Routes.md", "Sub.md"} <= judged, judged)
+
+    def test_one_yes_links_the_open_path_and_leaves_the_walled_one(self):
+        routes, sub = self.routes.read_text(), self.sub.read_text()
+        code, out = self.run_tool("fix", "--yes")
+        self.assertEqual(0, code, out)
+        self.assertIn("Plan in [[Lantern/Threads/Survey/Survey plan.md]].", self.lanes.read_text())
+        self.assertEqual((routes, sub), (self.routes.read_text(), self.sub.read_text()))
+        code, out = self.run_tool("nightly")
+        self.assertEqual(0, code, out)
+        self.assertEqual((routes, sub), (self.routes.read_text(), self.sub.read_text()))
 
 
 class CorrectionTest(Base):

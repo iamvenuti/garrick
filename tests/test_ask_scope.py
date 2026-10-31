@@ -365,9 +365,9 @@ class TestAnswers(AnswerCase):
                                                       round(ledger[0]["cost_usd"], 4)))
         a.ask("open Pricing")
         self.assertEqual(2, len((self.jobs / "ledger.jsonl").read_text().splitlines()))
-        os.environ["GARRICK_CAP_CALLS_HOUR"] = "2"
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "2"
         started = len(self.procs())
-        with self.assertRaisesRegex(ask.Bad, "not asked"):
+        with self.assertRaisesRegex(ask.Capped, "Ask has reached its limit"):
             a.ask("What did Dana say about the pallet quote?")
         self.assertEqual(started, len(self.procs()))
         self.assertEqual(3, len(self.msgs()))                                  # nothing sent past the cap

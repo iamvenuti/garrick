@@ -282,23 +282,48 @@ def stop_group(proc: subprocess.Popen, grace: float) -> None:
         except subprocess.TimeoutExpired:
             continue
     record = agent.groups_file(proc.pid) if hasattr(agent, "groups_file") else None
-    try:
-        groups = [int(w) for w in record.read_text(encoding="utf-8").split() if w.isdigit()] if record else []
-    except OSError:
-        groups = []
-    for group in groups:
-        try:
-            os.killpg(group, signal.SIGKILL)
-        except OSError:
-            pass                                    # gone already
+    for group, started in recorded_groups(record):
+        if same_process(group, started) is True:   # still the step recorded: never a number reused since
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except OSError:
+                pass                                # gone already
     if record is not None:
         record.unlink(missing_ok=True)
+
+
+def recorded_groups(record: Optional[Path]) -> List[Tuple[int, float]]:
+    """The groups a command recorded (agent.groups_file()), each line
+    `<group> <started>`: a group number above 1 that is not this process's
+    own group, with the time its first process started. A line that is not
+    that is passed over, so nothing is killed on its word."""
+    try:
+        text = record.read_text(encoding="utf-8") if record else ""
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        words = line.split()
+        try:
+            group, started = int(words[0]), float(words[1])
+        except (IndexError, ValueError):
+            continue
+        if group > 1 and group != os.getpgrp() and started == started and started > 0:
+            out.append((group, started))
+    return out
 
 
 def stop_orphan(group: int) -> None:
     """The same for a group this process did not start, left by a run whose
     job.py was killed: it is nobody's child here, so it is watched, not
-    waited on."""
+    waited on. A record of groups that command left (agent.groups_file()) is
+    taken away unread: whatever its numbers name now is not known to be the
+    run's, so nothing is killed on its word."""
+    if hasattr(agent, "groups_file"):
+        try:
+            agent.groups_file(group).unlink(missing_ok=True)
+        except OSError:
+            pass
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
         try:
             os.killpg(group, sig)
@@ -518,6 +543,11 @@ def watchdog(cmd: List[str], timeout: float, cwd: Path, env: dict, log,
         log.write("job: could not start %s: %s\n" % (cmd[0], exc))
         catch_signals()
         return EXIT_START, "start"
+    if hasattr(agent, "groups_file"):              # a record left by an earlier process of this number is not this run's
+        try:
+            agent.groups_file(proc.pid).unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
         began = time.time()
         for lock in locks:

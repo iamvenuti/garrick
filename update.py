@@ -831,6 +831,7 @@ JOBS_SOURCE = REPO / "extras" / "jobs"
 OLD_SCRIPTS = {"backup": "backup.py", "nurture": "nurture_sweep.py", "reading-sweep": "reading_sweep.py",
                "todo-sweep": "todo_sweep.py", "whats-open": "whats_open.py", "status": "status.py"}
 NEW_SCRIPTS = {"gr-nightly": "nightly.py"}      # the job whose script changed with its name
+NEW_FROM = {"nurture"}                           # its old name: its old script in a gr- plist shows the rename
 
 
 def launch_agents():
@@ -893,10 +894,37 @@ def old_jobs(root):
         scripts = {OLD_SCRIPTS[old], NEW_SCRIPTS.get(new, OLD_SCRIPTS[old])} if old in renamed else {OLD_SCRIPTS[old]}
         if not any(Path(a).name in scripts for a in cmd):
             continue
+        if name == new and not came_from(plist, data, cmd, old):
+            continue                               # a gr- plist with no old name behind it: as shipped, nothing to do
         block = rename_commands(plist, data, args, at, old, new, old in retired)
         if block["commands"] or block["state"] == "manual":
             found.append(block)
     return found
+
+
+def jobs_folder():
+    """The scheduled jobs' folder, as agent.py finds it."""
+    set_to = os.environ.get("GARRICK_JOBS_DIR")
+    if set_to:
+        return Path(set_to).expanduser()
+    return Path.home() / "Library" / "Logs" / "garrick-jobs"
+
+
+def came_from(plist, data, cmd, old):
+    """Whether a plist that already runs a job under its gr- name was once
+    the job under its old name, part way through its rename: an old label or
+    marker in it, the old script or the old log in it, the old plist set
+    aside as .retired beside it, or the old name's heartbeat in the jobs
+    folder. A gr- plist copied as shipped has none of these, and is left
+    alone. An old plist still beside it is not counted: its own block, set
+    aside as a duplicate, marks this one."""
+    env = data.get("EnvironmentVariables") if isinstance(data.get("EnvironmentVariables"), dict) else {}
+    logs = [data.get(k) for k in ("StandardOutPath", "StandardErrorPath")]
+    return (str(data.get("Label")) == "garrick." + old or env.get("GARRICK_RENAMED_FROM") == old
+            or any(Path(a).name == OLD_SCRIPTS[old] for a in cmd) and old in NEW_FROM
+            or any(isinstance(v, str) and v.endswith("/%s.launchd.log" % old) for v in logs)
+            or plist.with_name("garrick.%s.plist.retired" % old).exists()
+            or (jobs_folder() / ("%s.heartbeat.json" % old)).is_file())
 
 
 def rename_commands(plist, data, args, at, old, new, retired):

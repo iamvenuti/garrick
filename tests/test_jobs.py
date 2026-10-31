@@ -1435,7 +1435,8 @@ class NightlyTest(FakeAssistants):
             time.sleep(0.1)
         step = int(pidfile.read_text())
         self.addCleanup(self.kill_quietly, step)
-        self.assertEqual("%d\n" % step, agent.groups_file(proc.pid).read_text())   # on record for job.py
+        group, started = agent.groups_file(proc.pid).read_text().split()             # on record for job.py,
+        self.assertEqual((step, True), (int(group), abs(float(started) - time.time()) < 30))   # with when it started
         return proc, step
 
     @staticmethod
@@ -1473,6 +1474,84 @@ class NightlyTest(FakeAssistants):
         job.stop_group(proc, job.STOP_GRACE)                                    # the recorded group goes too
         self.assertTrue(self.gone(step))
         self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def sleeper(self):
+        """A process in a group of its own, as a step is, that lives a minute."""
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc
+
+    def stop_with_record(self, line):
+        """job.py's stop_group() on a short command whose record says `line`;
+        run in a session of its own, so a kill of its own group ends only it.
+        Its last line is "alive" when it lived through the stop."""
+        script = ("import os, subprocess, sys, time\nsys.path.insert(0, %r)\nimport agent, job\n"
+                  "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+                  "line = %r.replace('OWN', str(os.getpgrp()))\n"
+                  "agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)\n"
+                  "agent.groups_file(proc.pid).write_text(line + '\\n')\n"
+                  "job.stop_group(proc, 1)\nprint('alive' if not agent.groups_file(proc.pid).exists() else 'kept')\n"
+                  % (str(JOBS), line))
+        return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, start_new_session=True,
+                              timeout=60)
+
+    def test_a_record_of_group_0_1_or_job_pys_own_is_never_killed(self):
+        now = time.time()
+        for line in ("0 %f" % now, "1 %f" % now, "OWN %f" % now, "0", "-5 %f" % now, "abc 1"):
+            with self.subTest(line):
+                done = self.stop_with_record(line)
+                self.assertEqual((0, "alive"), (done.returncode, done.stdout.strip()), done.stderr)
+        record = self.tmp / "record"
+        record.write_text("0 %f\n1 %f\n%d %f\n" % (now, now, os.getpgrp(), now))
+        self.assertEqual([], job.recorded_groups(record))
+
+    def test_a_record_whose_number_now_names_another_process_is_not_killed(self):
+        """A stale record, its number since given to another process: that
+        process started after the record's time, so it is left alone."""
+        other = self.sleeper()
+        time.sleep(0.3)
+        proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)
+        agent.groups_file(proc.pid).write_text("%d %f\n" % (other.pid, time.time() - 3 * 86400))
+        job.stop_group(proc, 1)
+        self.assertIsNone(other.poll())                                          # still running
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def test_a_valid_record_still_stops_its_group(self):
+        step = self.sleeper()
+        proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)
+        agent.groups_file(proc.pid).write_text("%d %f\n" % (step.pid, time.time()))
+        job.stop_group(proc, 1)
+        self.assertIsNotNone(step.wait(timeout=10))
+
+    def test_an_orphans_record_is_taken_away_unread(self):
+        step = self.sleeper()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        gone.wait()
+        record = agent.groups_file(gone.pid)
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("%d %f\n" % (step.pid, time.time()))
+        job.stop_orphan(gone.pid)
+        self.assertFalse(record.exists())
+        self.assertIsNone(step.poll())                                           # nothing killed on its word
+
+    def test_job_py_clears_a_record_its_command_did_not_write(self):
+        record = self.tmp / "stale.groups"
+        record.write_text("4242 1.0\n")
+        log = io.StringIO()
+        with mock.patch.object(job.agent, "groups_file", lambda pid: record), \
+                mock.patch.object(job, "catch_signals", lambda: None), mock.patch.object(job, "hold_signals", lambda: None):
+            with (self.tmp / "w.log").open("w") as out:
+                code, _ = job.watchdog([sys.executable, "-c", "import time; time.sleep(0.5)"], 30, self.tmp, dict(os.environ), out)
+        self.assertEqual(0, code)
+        self.assertFalse(record.exists())
+
+    def test_a_popen_that_fails_oddly_holds_no_stop_for_good(self):
+        with mock.patch.object(nightly.subprocess, "Popen", side_effect=ValueError("odd")), \
+                self.assertRaises(ValueError):
+            self.run_nightly()
+        self.assertFalse(nightly._starting)
 
     def test_a_stop_while_a_step_starts_waits_for_it(self):
         """A SIGTERM between Popen and the step's record is held until the

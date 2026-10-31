@@ -135,20 +135,20 @@ def run_step(cmd: List[str], cwd: Path, limit: float) -> Tuple[int, List[str], f
 
     global _starting
     _starting = True                            # a stop now waits until the step is in _running and on record
+    proc = None
     try:
         proc = subprocess.Popen(cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
+        _running.append(proc)
+        record_group(proc.pid, time.time())
     except OSError as exc:
-        _starting = False
         said("could not start: %s" % exc)
-        if _deferred:
-            stopped(_deferred[0], None)
-        return 127, list(tail), time.time() - start
-    _running.append(proc)
-    record_group(proc.pid)
-    _starting = False
+    finally:
+        _starting = False                       # whatever Popen raised: a stop is never held for good
     if _deferred:
         stopped(_deferred[0], None)
+    if proc is None:
+        return 127, list(tail), time.time() - start
     pump = threading.Thread(target=lambda: [said(line) for line in proc.stdout], daemon=True)
     pump.start()
     try:
@@ -170,18 +170,19 @@ def run_step(cmd: List[str], cwd: Path, limit: float) -> Tuple[int, List[str], f
     return code, list(tail), time.time() - start
 
 
-def record_group(group: Optional[int]) -> None:
+def record_group(group: Optional[int], started: float = 0.0) -> None:
     """Keep the running step's process group where job.py's stop_group()
-    finds it (agent.groups_file(), named after this process), so that a
-    SIGKILL to this script, which it cannot catch, still leaves no step
-    behind. None takes the record away."""
+    finds it (agent.groups_file(), named after this process), with when the
+    step started, so that job.py kills the group only while its first process
+    is still that step: a SIGKILL to this script, which it cannot catch,
+    still leaves no step behind. None takes the record away."""
     path = agent.groups_file(os.getpid())
     try:
         if group is None:
             path.unlink(missing_ok=True)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("%d\n" % group, encoding="utf-8")
+            path.write_text("%d %.3f\n" % (group, started), encoding="utf-8")
     except OSError:
         pass                                    # no record: this script's own stop still stops the step
 

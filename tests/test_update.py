@@ -1380,6 +1380,23 @@ class TestJobsRenamed(ExtrasCase):
             self.assertEqual(shipped["ProgramArguments"], there["ProgramArguments"])
             self.assertFalse([r for r in self.plan()["renames"] if r["job"] == "backup"])     # nothing left for it
 
+    def test_fresh_shipped_plists_need_nothing(self):
+        """A Mac that never ran the old names, with only the shipped gr-
+        plists copied in: nothing to report, and no old name stamped on them."""
+        import plistlib
+        for path in list(self.agents.iterdir()):
+            path.unlink()
+        for path in sorted((REPO / "extras/jobs/launchd").glob("*.plist")):
+            (self.agents / path.name).write_bytes(plistlib.dumps(self.filled(plistlib.loads(path.read_bytes()))))
+        p = self.plan()
+        self.assertEqual([], p["renames"])
+        self.assertNotIn("scheduled jobs have new names", update.report(p))
+        # The old name's heartbeat in the jobs folder is evidence of a rename part way through.
+        self.logs.mkdir(parents=True)
+        (self.logs / "backup.heartbeat.json").write_text(json.dumps({"job": "backup", "exit": 0}))
+        got = [(Path(r["plist"]).name, r["state"]) for r in self.plan()["renames"]]
+        self.assertEqual([("garrick.gr-backup.plist", "part")], got)
+
     def test_a_plist_with_a_date_is_left_for_you_and_the_rest_go_on(self):
         import datetime as dt
         import plistlib

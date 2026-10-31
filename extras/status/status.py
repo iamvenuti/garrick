@@ -2602,6 +2602,20 @@ KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", 
 WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
 
 
+# The longest name a kind found from pages takes: page_action.py's GRAPH_FOUND
+# holds a kind Settings › Graph colours saves to the same shape (#291).
+FOUND_KIND_MAX = 60
+
+
+def found_kind(typed: str) -> str:
+    """A page's `type:`, lower case, as the kind it would found (#250): its
+    letters, digits, spaces, hyphens and underscores, with no space, hyphen or
+    underscore at either end, cut to FOUND_KIND_MAX. Every name this gives is
+    one Settings › Graph colours can save (#291). "" for none."""
+    word = re.sub(r"[^\w -]+", "", typed).strip(" _-")
+    return word[:FOUND_KIND_MAX].rstrip(" _-")
+
+
 def wiki_kind(wiki: str, kind: str, parts: tuple, source_type: str = "source") -> str:
     if wiki == "Meetings":
         return kind if kind in WIKI_KINDS else "note"
@@ -2646,105 +2660,19 @@ def short_label(title: str, limit: int = WIKI_LABEL) -> str:
     return (cut or title[:limit]) + "…"
 
 
-OTHER = next(c for k, _, c in KINDS if k == "note")    # a note no colour group of its vault takes: "other notes"
-
-
 def vault_of(ws: Path, folder: Path) -> Optional[Path]:
     """The Obsidian vault a folder's notes belong to: the nearest folder at or
     above it, up to the workspace root, that holds a .obsidian folder."""
     return todo_lines().vault_of(ws, folder)
 
 
-def obsidian_graph(vault: Optional[Path]) -> Tuple[List[Tuple[List[str], str, str]], List[object]]:
-    """A vault's own graph settings: the colour groups of .obsidian/graph.json
-    as (terms, colour, label), each an OR of terms, and the ignore filters of
-    .obsidian/app.json (userIgnoreFilters), a path prefix or a /regex/ each.
-    Whatever is missing or does not read is empty."""
-    groups: List[Tuple[List[str], str, str]] = []
-    ignore: List[object] = []
-    if vault is None:
-        return groups, ignore
-    try:
-        data = json.loads((vault / ".obsidian" / "graph.json").read_text(encoding="utf-8"))
-        for cg in data.get("colorGroups") or []:
-            terms = [t.strip() for t in re.split(r"\s+OR\s+", str(cg.get("query") or "")) if t.strip()]
-            rgb = (cg.get("color") or {}).get("rgb")
-            if terms and isinstance(rgb, int):
-                groups.append((terms, "#%06x" % (rgb & 0xFFFFFF), group_label(terms, len(groups) + 1)))
-    except (OSError, ValueError, AttributeError, TypeError):
-        groups = []
-    ignore = todo_lines().ignore_filters(vault)      # read as the Todo card reads them
-    return groups, ignore
-
-
-# A property term: [key], [key:value], with either side quoted, and the
-# ["key","value"] form some vaults hold.
-PROPERTY_TERM = re.compile(r"""\[\s*["']?([\w-]+)["']?\s*(?:[:,]\s*(.+?))?\s*\]""")
-
-
-def group_word(term: str) -> str:
-    """One term of a colour group as a person would say it: a folder's last
-    name, a file's name, a property's value (or its key), a tag. Empty for a
-    term Garrick does not read."""
-    m = PROPERTY_TERM.fullmatch(term.strip())
-    if m:
-        word = (m.group(2) or m.group(1)).strip().strip("\"'")
-    else:
-        m = re.fullmatch(r"(file|path|tag):(.+)", term.strip())
-        if not m:
-            return ""
-        kind, value = m.group(1), m.group(2).strip().strip("\"'")
-        if kind == "path":
-            value = [part for part in value.split("/") if part.strip()][-1:] or [""]
-            value = value[0]
-        elif kind == "file":
-            value = value.rsplit("/", 1)[-1]
-            value = value[:-3] if value.lower().endswith(".md") else value
-        else:
-            value = value.lstrip("#")
-        word = value
-    word = re.sub(r"[-_]+", " ", word).strip()
-    return word[:1].upper() + word[1:]
-
-
-def group_label(terms: List[str], n: int = 0) -> str:
-    """A colour group as the legend says it: `[type:project] OR file:Brief`
-    reads "Project, Brief", `path:"Notes/wiki/concepts/"` reads "Concepts".
-    A word said twice, or as singular and plural, is said once; a group with
-    no word Garrick reads is "Group n"."""
-    said, seen = [], set()
-    for t in terms:
-        word = group_word(t)
-        key = word.lower()
-        key = key[:-1] if key.endswith("s") and len(key) > 3 else key
-        if word and key not in seen:
-            seen.add(key)
-            said.append(word)
-    return ", ".join(said) or "Group %d" % n
-
-
-def group_match(term: str, fm: dict, rel: str) -> bool:
-    """Whether a note answers one term of a colour group's query, in the forms
-    Garrick reads: [key], [key:value], file:, path: and tag:. Any other term
-    never matches: the page reads no note's text to test it."""
-    m = PROPERTY_TERM.fullmatch(term.strip())
-    if m:
-        key, want = m.group(1), m.group(2)
-        if key not in fm:
-            return False
-        have = fm[key] if isinstance(fm[key], list) else [fm[key]]
-        return want is None or any(as_text(v).strip("\"' ").lower() == want.strip().strip("\"'").lower() for v in have)
-    m = re.fullmatch(r"(file|path|tag):(.+)", term)
-    if not m:
-        return False
-    kind, want = m.group(1), m.group(2).strip().strip("\"'").lower()
-    if kind == "file":
-        base = rel.rsplit("/", 1)[-1].lower()
-        return want in (base, base[:-3] if base.endswith(".md") else base)
-    if kind == "path":
-        return want in rel.lower()
-    want = want.lstrip("#")
-    return any(t.lower() == want or t.lower().startswith(want + "/") for t in tags(fm.get("tags")))
+def vault_filters(vault: Optional[Path]) -> List[object]:
+    """A vault's ignore filters (.obsidian/app.json, userIgnoreFilters), a path
+    prefix or a /regex/ each, read as the Todo card reads them: what Obsidian
+    leaves off its graph, Explore leaves off too. Nothing else of the vault's
+    is read, so the graph looks the same with Obsidian or without it (#292).
+    Empty outside a vault, or when the file is missing or does not read."""
+    return todo_lines().ignore_filters(vault) if vault is not None else []
 
 
 def ignored(rel: str, filters: List[object]) -> bool:
@@ -2761,15 +2689,12 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     its folder, and a project with no live thread left, with everything in it,
     are marked `s` and drawn only when the page is asked to show them.
 
-    Every note is coloured by its kind. In a zone inside an Obsidian vault
-    with colour groups of its own (.obsidian/graph.json), `g` names the group
-    that takes the note, -1 for none, and the page colours it so, grey for
-    none, only while Settings › Explore uses Obsidian's colours (#253). The
-    vault's ignore filters (.obsidian/app.json) leave notes out either way, as
-    Obsidian's graph does. Every note in a project carries the folder an app
-    opens it in (`f`), its thread's or else its project's, where an app can
-    open one. A
-    thread whose own next action is late, named by zone,
+    Every note is coloured by its kind, in every place, whether or not it
+    sits inside an Obsidian vault (#292). A vault's ignore filters
+    (.obsidian/app.json) leave notes out, as Obsidian's graph does: a filter
+    for what to draw, not a colour. Every note in a project carries the
+    folder an app opens it in (`f`), its thread's or else its project's,
+    where an app can open one. A thread whose own next action is late, named by zone,
     project and thread in `urgent`, is marked `lt` and draws the one ring the
     graph has: age alone never marks a note. Every note carries its path from
     its place's folder, without `.md` (`m`), and `pr` maps each place to that
@@ -2781,18 +2706,14 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     hubs_parked = {zone: set(data.get("held", ())) for zone, data in T.items()}
     awake = {(r["zone"], r["project"]) for z in T.values() for r in z["rows"]}
     asleep = {(zone, project) for zone, project, _ in held} - awake
-    groups: List[list] = []                           # [colour, label], every vault's in turn
-    vaults: Dict[Path, Tuple[int, list, list]] = {}   # vault -> (its first group's index, groups, filters)
-    vault_at: Dict[Path, Optional[Path]] = {}         # place's root -> its vault
+    vaults: Dict[Path, List[object]] = {}             # vault -> its ignore filters
     notes = []
     for place, root in places:
         in_zone = root.parent.name == "Zones"
-        vault = vault_at[root] = vault_of(ws, root)
+        vault = vault_of(ws, root)
         if vault is not None and vault not in vaults:
-            gs, filters = obsidian_graph(vault)
-            vaults[vault] = (len(groups), gs, filters)
-            groups += [[colour, label] for _, colour, label in gs]
-        filters = vaults[vault][2] if vault is not None else []
+            vaults[vault] = vault_filters(vault)
+        filters = vaults[vault] if vault is not None else []
         for folder, dirs, files in os.walk(root):
             dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone))
             for f in sorted(files):
@@ -2854,7 +2775,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         index[path] = len(nodes)
         title = as_text(fm.get("title")).strip() or path.stem
         hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
-        typed = re.sub(r"[^\w -]+", "", typed).strip() if wiki and kind == "note" else ""
+        typed = found_kind(typed) if wiki and kind == "note" else ""
         if typed and typed not in kinds:
             seen = found.setdefault(wiki, {})
             seen[typed] = seen.get(typed, 0) + 1
@@ -2867,11 +2788,6 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             nodes[-1]["lt"] = 1                  # its next action is late
         if wiki and nodes[-1]["n"] != title:
             nodes[-1]["N"] = title                   # the whole title, for the card and the tooltip
-        vault = vault_at[root]
-        if vault is not None and vaults[vault][1] and not wiki:     # a wiki is drawn by its kinds, whatever its vault says
-            first, gs, _ = vaults[vault]
-            rel_v = path.relative_to(vault).as_posix()
-            nodes[-1]["g"] = next((first + i for i, (terms, _, _) in enumerate(gs) if any(group_match(t, fm, rel_v) for t in terms)), -1)
         if in_zone and project:
             home = root / project / "Threads" / folder_thread if folder_thread else root / project
             if cmux:
@@ -2929,7 +2845,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             if hit is not None and hit != path:
                 a, b = index[path], index[hit]
                 edges.add((min(a, b), max(a, b)))
-    used = sorted({n["k"] for n in nodes})        # a kind is a filter even where a vault's groups colour it (#250)
+    used = sorted({n["k"] for n in nodes})        # each kind the legend offers as a filter (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
     # people in the same meeting, two concepts cited by the same source. The
     # third number is how many pages do.
@@ -2949,8 +2865,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
     counts: Dict[str, int] = {}
     for n in nodes:
         counts[n["z"]] = counts.get(n["z"], 0) + 1
-    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in every], "other": OTHER,
-            "kinds": [[i, every[i][1]] for i in used], "keys": keys, "known": len(KINDS), "groups": groups,
+    return {"nodes": nodes, "edges": sorted(edges), "colors": [c for _, _, c in every],
+            "kinds": [[i, every[i][1]] for i in used], "keys": keys, "known": len(KINDS),
             "mode": "all" if len(nodes) <= 150 else "core",
             "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
             "pr": {place: root.relative_to(ws).as_posix() for place, root in places},
@@ -4141,24 +4057,18 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
 
 def follow_settings() -> str:
     """Settings › Explore: whether the graph follows the zone you are reading
-    on the Threads card (#142, FOLLOW_JS), on until switched off; and whether a
-    zone inside an Obsidian vault takes the colours of the vault's own graph
-    groups (#253, GRAPH_JS), off until switched on, every place otherwise
-    coloured by its kinds. Both kept in this window, as the graph's other
-    choices are, so neither is known when the page is built; only on a page
-    with the graph."""
+    on the Threads card (#142, FOLLOW_JS), on until switched off. Kept in this
+    window, as the graph's other choices are, so it is not known when the page
+    is built; only on a page with the graph. Explore's colours are no switch
+    here: every place takes its kinds' colours (#292)."""
     row = '<div class="launcher-row"><label class="launcher-choice"><input type="checkbox" id="%s"%s> <span>%s<small>%s</small></span></label></div>'
-    return ('<section class="setsec" id="follow-settings">%s%s%s%s</section>'
-            % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading, and whose colours it uses."),
+    return ('<section class="setsec" id="follow-settings">%s%s%s</section>'
+            % (set_head("Explore", "explore", "Whether the graph follows the zone you are reading."),
                help_text("explore", 'Scroll the Threads card from one zone into the next and Explore '
                'switches to it once it has filled the window for a moment. With the zones side by side, point at a column or open a '
                'project or thread in it. The switch is for this page only: the zone you pick in Explore&#39;s drop-down still leads '
-               'the card and is what the page opens on. Picking a wiki pauses it until the page reloads. Explore colours each kind '
-               'of note its own way; with Obsidian&#39;s graph colours on, a zone inside an Obsidian vault with colour groups takes '
-               'the vault&#39;s colours instead, keyed under the legend. A wiki keeps its kinds either way. Kept in this window.'),
-               row % ("graph-follow", " checked", "Follow the zone in view", "Explore shows the zone you are reading on the Threads card"),
-               row % ("graph-obsidian", "", "Use Obsidian&#39;s graph colours",
-                      "A zone in an Obsidian vault takes the colours of its graph&#39;s groups")))
+               'the card and is what the page opens on. Picking a wiki pauses it until the page reloads. Kept in this window.'),
+               row % ("graph-follow", " checked", "Follow the zone in view", "Explore shows the zone you are reading on the Threads card")))
 
 
 def preview_section(flags: Dict[str, bool]) -> str:
@@ -4210,10 +4120,12 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
-             layout: str = "full", link: Optional["Links"] = None) -> str:
+             layout: str = "full", link: Optional["Links"] = None,
+             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
     """The Settings dialog: what Garrick opens on, which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
-    each zone's colour and icon, the menu bar, While you wait; which notices
+    each zone's colour and icon, the colour of each kind of note Explore
+    draws (`kinds`, with the graph), the menu bar, While you wait; which notices
     this Mac shows; how older material fades (`link` opens the full list);
     About Garrick, and the preview features with which are switched on;
     Reset view at the foot. Each section shows its choices and one line at
@@ -4221,7 +4133,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     and in docs/extras/status-page.md (#227)."""
     agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
     filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
-                      follow_settings() if graph else "", zone_settings(list(zones), styles or {}), menu_settings(),
+                      follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
+                      graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings(),
                       wait_settings(ws)],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
@@ -4359,8 +4272,8 @@ def zone_css() -> str:
             '.zi{width:1.15em;height:1.15em;flex:none;vertical-align:-.2em;margin-right:.4em}.seg button .zi{margin-right:0}\n'
             '.gzw{position:relative;display:inline-flex;align-items:center}.gzw .gzi{position:absolute;left:9px;display:flex;pointer-events:none}\n'
             '.gzw .gzi .zi{margin:0}.gzw.hasi .gzsel{padding-left:27px}\n'
-            '.zrow{display:flex;align-items:center;gap:8px;padding:3px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n'
+            '.zrow,.gkrow{display:flex;align-items:center;gap:8px;padding:3px 0}.zrow .zprev,.gkrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gkrow .zprev .zsw{display:inline-block;vertical-align:-.15em;margin-right:.5em}\n'
             '.zpick{position:relative}.zbtn{display:inline-flex;align-items:center;gap:6px;min-width:112px;font:inherit;font-size:12px;'
             'color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 9px;cursor:pointer}'
             '.zbtn .zi{margin:0}.zbtn:focus-visible,.zcell:focus-visible{outline:2px solid var(--accent,#2D6CDF);outline-offset:1px}\n'
@@ -4381,34 +4294,34 @@ def zone_swatch(colour: Optional[str]) -> str:
     return '<i class="zsw" style="background:var(--zc-%s)"></i>' % colour.lower()
 
 
+def swatch_pick(kind: str, label: str, owner: str, chosen: Optional[str], names, none_label: str, none_face: str, draw) -> str:
+    """A button that shows the choice, over a palette that shows every one:
+    a select's list cannot draw a colour or an icon. The select stays,
+    hidden, as what the row reads and saves. `draw` draws one of `names`;
+    the first cell, drawn as `none_face` and said as `none_label`, takes the
+    choice away. Settings › Zones and Settings › Graph colours share it."""
+    said = lambda n: n[:1].upper() + n[1:]
+    options = '<option value="">%s</option>' % E(none_label) + "".join(
+        '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(said(n))) for n in names)
+    face = (draw(chosen) if chosen else none_face) + '<span>%s</span>' % E(said(chosen) if chosen else none_label)
+    cells = '<button type="button" class="zcell" data-v="" title="%s">%s</button>' % (E(none_label), none_face) + "".join(
+        '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(said(n)), draw(n)) for n in names)
+    return ('<span class="zpick"><select class="z%s" hidden aria-hidden="true" tabindex="-1">%s</select>'
+            '<button type="button" class="zbtn" aria-haspopup="true" aria-expanded="false" aria-label="%s for %s">%s</button>'
+            '<span class="zpop zp-%s" hidden role="group" aria-label="%s for %s">%s</span></span>'
+            % (kind, options, label, E(owner), face, kind, label, E(owner), cells))
+
+
 def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
     """Settings › Zones: a row per zone, its name drawn as chosen, a colour
     and an icon. In the app only: what is chosen is saved for every viewer,
     and for the cmux desk, through page_action.py when Settings closes."""
     if not zones:
         return ""
-    def options(none, names, chosen):
-        return '<option value="">%s</option>' % none + "".join(
-            '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(n[:1].upper() + n[1:]))
-            for n in names)
     def pick(kind, zone, chosen):
-        # A button that shows the choice, over a palette that shows every one:
-        # a select's list cannot draw a colour or an icon. The select stays,
-        # hidden, as what the row reads and saves.
         if kind == "col":
-            names, label = ZONE_COLOURS, "Colour"
-            face = zone_swatch(chosen) + '<span>%s</span>' % (E(chosen) if chosen else "No colour")
-            cells = '<button type="button" class="zcell" data-v="" title="No colour">%s</button>' % zone_swatch("") + "".join(
-                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n), zone_swatch(n)) for n in names)
-        else:
-            names, label = ZONE_ICONS, "Icon"
-            face = (zone_icon(chosen) or '<i class="znone"></i>') + '<span>%s</span>' % (E(chosen[:1].upper() + chosen[1:]) if chosen else "No icon")
-            cells = '<button type="button" class="zcell" data-v="" title="No icon"><i class="znone"></i></button>' + "".join(
-                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n[:1].upper() + n[1:]), zone_icon(n)) for n in names)
-        return ('<span class="zpick"><select class="z%s" hidden aria-hidden="true" tabindex="-1">%s</select>'
-                '<button type="button" class="zbtn" aria-haspopup="true" aria-expanded="false" aria-label="%s for %s">%s</button>'
-                '<span class="zpop zp-%s" hidden role="group" aria-label="%s for %s">%s</span></span>'
-                % (kind, options("No " + label.lower(), names, chosen), label, E(zone), face, kind, label, E(zone), cells))
+            return swatch_pick("col", "Colour", zone, chosen, ZONE_COLOURS, "No colour", zone_swatch(""), zone_swatch)
+        return swatch_pick("ico", "Icon", zone, chosen, ZONE_ICONS, "No icon", '<i class="znone"></i>', zone_icon)
     rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>%s%s</div>'
                    % (E(z), zone_class(z, styles), zone_name(z, styles),
                       pick("col", z, styles.get(z, {}).get("color")), pick("ico", z, styles.get(z, {}).get("icon")))
@@ -4419,6 +4332,60 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
                'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
                'Saved for every viewer when you close Settings, in <code>%s</code>, which is committed with your '
                'workspace.' % E(prefs().FILE)), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+
+
+# Settings › Graph colours (#291): a colour for each kind of note Explore
+# draws, from the zones' sixteen less the three that read as the graph's ring
+# for a late next action (--critical) and the page's warnings, so no kind
+# looks like one; KINDS keeps clear of them for the same reason. Saved beside the zones, in the workspace's own
+# settings file: {"graph": {"project": "Teal", "thread": "Indigo"}}. A kind
+# left out keeps its shipped colour (KINDS, PAGE_COLOURS); a chosen one is
+# drawn in its light ink in the light theme and its dark ink in the dark.
+GRAPH_OFF = ("Red", "Crimson", "Amber")
+GRAPH_COLOURS = tuple(k for k in ZONE_COLOURS if k not in GRAPH_OFF)
+
+
+def graph_styles(ws: Path) -> Dict[str, str]:
+    """Settings › Graph colours as saved: {kind: one of GRAPH_COLOURS}. A
+    colour is matched whatever its case; one the graph does not offer, or a
+    value that is not a name, is dropped, and its kind keeps its default."""
+    given = prefs().read(ws).get("graph")
+    if not isinstance(given, dict):
+        return {}
+    named = {k.lower(): k for k in GRAPH_COLOURS}
+    return {k: named[c.lower()] for k, c in given.items()
+            if isinstance(k, str) and isinstance(c, str) and c.lower() in named}
+
+
+def graph_colours(keys: List[str], shipped: List[str], chosen: Dict[str, str]) -> List[str]:
+    """Each kind's colour as the page draws it: a chosen colour as the page's
+    variable for it (zone_css()), which holds a shade for each theme, else
+    the kind's shipped colour. The canvas reads the variable (GRAPH_JS)."""
+    return ["var(--zc-%s)" % chosen[k].lower() if k in chosen else c for k, c in zip(keys, shipped)]
+
+
+def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, str]) -> str:
+    """Settings › Graph colours (#291): a row for each kind the legend can
+    show, (key, as the legend says it, shipped colour), its dot drawn as
+    chosen, and the palette Settings › Zones uses, Default first; Reset
+    colours puts every kind back. In the app only: what is chosen is saved
+    for every viewer, through page_action.py, when Settings closes. Only on
+    a page with the graph."""
+    if not kinds:
+        return ""
+    dot = lambda colour: '<i class="zsw" style="background:%s"></i>' % E(colour)
+    rows = "".join('<div class="gkrow" data-kind="%s" data-def="%s"><span class="zprev">%s%s</span>%s</div>'
+                   % (E(k), E(c), dot(graph_colours([k], [c], chosen)[0]), E(said),
+                      swatch_pick("col", "Colour", said, chosen.get(k), GRAPH_COLOURS, "Default", dot(c), zone_swatch))
+                   for k, said, c in kinds)
+    return ('<section class="setsec apponly" id="graph-colour-settings">%s%s%s<div class="gacts">'
+            '<button class="act" type="button" id="graph-reset">Reset colours</button></div></section>'
+            % (set_head("Graph colours", "graphcol", "A colour for each kind of note in Explore."),
+               help_text("graphcol", 'Each kind of note in Explore&#39;s legend takes the colour chosen here, in its legend dot '
+               'and on the graph, with a shade for the light theme and one for the dark. <em>Default</em> keeps the colour Garrick '
+               'ships. Red, Crimson and Amber are not offered, since the rings for a late next action use them. Saved for every '
+               'viewer when you close Settings, in <code>%s</code>, which is committed with your workspace.' % E(prefs().FILE)),
+               rows))
 
 
 _NL: Dict[Path, object] = {}
@@ -6318,9 +6285,8 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
 .glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
-.glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}.glegend>button.nog>i{background:var(--muted)!important}
+.glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}
 .glegend>button[aria-pressed="false"]>i{background:none!important;border:1.5px solid var(--muted)}
-.gkey{margin-top:6px}.gkey>b{font-weight:600}
 .live{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none;margin:0 2px 1px 6px;vertical-align:middle;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
 .live.working{background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent);animation:livepulse 1.4s ease-in-out infinite}
 @keyframes livepulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 8%,transparent)}}
@@ -6644,14 +6610,14 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed.
-   null when there is nothing. */
+/* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications, While you wait,
+   Memory, each only when it changed. null when there is nothing. */
 function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
-if(!(lpChanged||zChanged||daChanged||n||w||m))return null;
-var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
+if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m))return null;
+var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
-lpChanged=zChanged=false;if(n)N.saved();return q}
+lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 /* Settings' list of sections (#205): a link brings its section to the top of the column and gives it the focus,
@@ -6694,20 +6660,26 @@ sd.querySelectorAll('.zrow').forEach(function(r){r.querySelectorAll('select').fo
 var c=zpick(r,'.zcol'),p=r.querySelector('.zprev');p.className='zprev'+(c?' zc zc-'+c.toLowerCase():'');p.innerHTML=zIcons[zpick(r,'.zico')]||'';
 p.appendChild(document.createTextNode(r.dataset.zone))}})});
 /* Each choice is a button over a palette: the palette sets the hidden select and runs its onchange */
-function zface(b,s){var v=s.value,o=s.options[s.selectedIndex],ico=s.classList.contains('zico');
-b.innerHTML=(ico?(zIcons[v]||'<i class="znone"></i>'):(v?'<i class="zsw" style="background:var(--zc-'+v.toLowerCase()+')"></i>':'<i class="zsw znone"></i>'))+'<span></span>';
-b.lastChild.textContent=o?o.textContent:''}
+function zface(b,s){var o=s.options[s.selectedIndex],c=[].filter.call(b.nextSibling.querySelectorAll('.zcell'),function(x){return x.dataset.v===s.value})[0];
+b.innerHTML=(c?c.innerHTML:'')+'<span></span>';b.lastChild.textContent=o?o.textContent:''}
 function zshut(except){sd.querySelectorAll('.zpop').forEach(function(p){if(p!==except&&!p.hidden){p.hidden=true;p.previousSibling.setAttribute('aria-expanded','false')}})}
 sd.querySelectorAll('.zpick').forEach(function(k){var s=k.querySelector('select'),b=k.querySelector('.zbtn'),p=k.querySelector('.zpop');
 function mark(){p.querySelectorAll('.zcell').forEach(function(c){c.classList.toggle('on',c.dataset.v===s.value)})}mark();
 b.onclick=function(e){e.stopPropagation();zshut(p);p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden){mark();var on=p.querySelector('.zcell.on')||p.querySelector('.zcell');on.focus()}};
-p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
+p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();if(s.value!==c.dataset.v){s.value=c.dataset.v;s.onchange();sdChanged=true}zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
 p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()}}});
 sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
 /* each "?" shows or hides its section's explanation where it stands */
 sd.addEventListener('click',function(e){var q=e.target.closest('.qhelp'),p=q&&document.getElementById(q.getAttribute('aria-controls'));if(!p)return;
 p.hidden=!p.hidden;q.setAttribute('aria-expanded',String(!p.hidden))});
 function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
+/* Settings › Graph colours (#291): each kind's dot drawn as chosen, Default its shipped colour; Reset colours puts every
+   kind back. The whole section goes with the request when Settings closes, a kind on Default left out. */
+var gChanged=false;function gdot(r){r.querySelector('.zprev .zsw').style.background=zpick(r,'.zcol')?'var(--zc-'+zpick(r,'.zcol').toLowerCase()+')':r.dataset.def}
+sd.querySelectorAll('.gkrow').forEach(function(r){r.querySelector('.zcol').onchange=function(){gChanged=true;gdot(r)}});
+var gReset=document.getElementById('graph-reset');if(gReset)gReset.onclick=function(){sd.querySelectorAll('.gkrow').forEach(function(r){var s=r.querySelector('.zcol');s.value='';gdot(r);zface(r.querySelector('.zbtn'),s)});
+gChanged=sdChanged=true;say('Every kind of note back to its default colour.')};
+function greq(){var o={};sd.querySelectorAll('.gkrow').forEach(function(r){var c=zpick(r,'.zcol');if(c)o[r.dataset.kind]=c});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -7545,8 +7517,8 @@ if(s)try{JSON.parse(s).forEach(function(x){var i=G.keys.indexOf(x);if(i>=0)o[i]=
 var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub;for(k in pick)return pick;for(k in model)return model;return all}
 function keep(){st.set('garrick-graph-kinds-'+zsel,JSON.stringify(Object.keys(ks).map(function(k){return G.keys[k]})))}
 var ks=kindsFor(zsel),spin=!reduce&&st.get('garrick-graph-spin')!=='0',parked=st.get('garrick-graph-parked')==='1',q='',mt={},hits=[],hi=-1,more={};
-/* a vault's colour groups colour its notes only when Settings › Explore says so; else every place takes its kinds' (#253) */
-var vc=st.get('garrick-graph-obsidian')==='1';
+/* Settings › Explore no longer offers Obsidian's graph colours (#292): what a window saved for it is dropped, unread */
+try{localStorage.removeItem('garrick-graph-obsidian')}catch(e){}
 var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/2147483647}
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
@@ -7587,11 +7559,9 @@ function visible(n){return!!ks[n.k]&&(parked||!n.s)&&n.z===zsel}
    lines are the notes' own links (#250) */
 function rebuild(){V=N.filter(visible);var on={};V.forEach(function(n){on[n.i]=1});E=(V.every(function(n){return n.c})?G.edges.concat(G.ce||[]):G.edges).filter(function(e){return on[e[0]]&&on[e[1]]});
 N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg++});anchors();
-/* the legend offers every kind the place has, pressed when shown; with a vault's colours on, each kind's dot is plain
-   and the groups drawn are keyed on a line of their own, which filters nothing (#253) */
-var have={},dg={},grp=false;N.forEach(function(n){if(n.z===zsel&&(parked||!n.s)){have[n.k]=1;if(vc&&n.g!=null)grp=true}});if(vc)V.forEach(function(n){if(n.g>=0)dg[n.g]=1});
-document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false');s.classList.toggle('nog',grp)});
-var gk=document.querySelector('.gkey'),ka=false;document.querySelectorAll('.gkey [data-g]').forEach(function(s){s.hidden=!dg[s.dataset.g];ka=ka||!s.hidden});if(gk)gk.hidden=!ka;
+/* the legend offers every kind the place has, pressed when shown */
+var have={};N.forEach(function(n){if(n.z===zsel&&(parked||!n.s))have[n.k]=1});
+document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false')});
 var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
 var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+' notes, '+E.length+' links · names only';seek()}
 /* Every note pushes every other away, which costs the square of the notes a
@@ -7637,10 +7607,11 @@ k=Math.min((W-l-r)/Math.max(1,b[1]-b[0]),(H-t-u)/Math.max(1,b[3]-b[2]),2.2),
 x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
 if(now){scale=k;px=x;py=y;return false}var going=Math.abs(k-scale)>scale*.001||Math.abs(x-px)>.2||Math.abs(y-py)>.2;
 scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08;return going}
-function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
-/* a note takes its kind's colour; with Obsidian's colours on (#253), a note in a vault with colour groups of its own
-   takes its group's, or grey */
-function fill(n){return vc&&n.g>=0&&G.groups[n.g]?G.groups[n.g][0]:vc&&n.g===-1?G.other:G.colors[n.k]||C['--muted']}
+/* the theme's colours, and each kind's chosen in Settings › Graph colours (#291), a variable with a shade for each theme */
+function cvar(c){var m=/^var\((--[\w-]+)\)$/.exec(c||'');return m&&m[1]}
+function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].concat(G.colors.map(cvar).filter(Boolean)).forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
+/* a note takes its kind's colour, in every place (#292): the one chosen for the theme in use, or the one shipped (#291) */
+function fill(n){var c=G.colors[n.k],v=cvar(c);return(v?C[v]:c)||C['--muted']}
 /* a ring for a thread whose own next action is late (lt), never for age alone */
 function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
@@ -7727,7 +7698,8 @@ function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];ret
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;
 var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
-var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
+/* each linked note's dot in its kind's colour as the page holds it, so a chosen colour follows the theme (#291) */
+var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+esc(G.colors[m.k]||'var(--muted)')+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
@@ -7758,8 +7730,6 @@ if(fq){fq.value='';fq.addEventListener('input',function(){var v=fold(fq.value.tr
 fq.addEventListener('keydown',function(e){if(e.isComposing)return;if(e.key==='Enter'){e.preventDefault();if(hits.length){hi=(hi+1)%hits.length;select(hits[hi],true)}}
 else if(e.key==='Escape'&&(fq.value||q)){e.preventDefault();e.stopPropagation();fq.value='';q='';hi=-1;seek()}})}
 if(fm)fm.onclick=function(){Object.keys(more).forEach(function(k){ks[k]=1});keep();redo()};
-/* Settings › Explore's Use Obsidian's graph colours (#253): kept in this window, and redrawn at once */
-var ob=document.getElementById('graph-obsidian');if(ob){ob.checked=vc;ob.addEventListener('change',function(){vc=ob.checked;st.set('garrick-graph-obsidian',vc?'1':'0');rebuild();if(sel)select(sel);wake()})}
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
 document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};
@@ -7911,6 +7881,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
     lists = todo_list(ws, link, now.date())
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
+    GS = graph_styles(ws)       # each kind's colour, from Settings › Graph colours (#291)
+    GK: List[Tuple[str, str, str]] = []
     # What each thread owes, on its own row: its next action, and whether that
     # action makes it urgent. Every card that says a thread is in trouble
     # reads this, and none of them reads its age.
@@ -8272,17 +8244,14 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     graph_card = ""
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
+        GK = [(k, plural(k), c) for k, c in zip(GR["keys"], GR["colors"])]    # each kind as shipped, for Settings (#291)
+        GR["colors"] = graph_colours(GR["keys"], GR["colors"], GS)
         core = sum(1 for n in GR["nodes"] if n["c"])
-        # each kind a toggle that shows or hides it (#250), then the two states. A vault's colour groups are keyed on a
-        # line of their own, shown only while Settings › Explore uses Obsidian's colours; grey needs no key (#253)
+        # each kind a toggle that shows or hides it (#250), then the two states
         legend = "".join('<button type="button" data-k="%d" aria-pressed="true"><i style="background:%s"></i>%s</button>'
                          % (i, GR["colors"][i], E(plural(GR["keys"][i]))) for i, _ in GR["kinds"])
         legend = ('<div class="legend glegend">%s<span><i class="ring" style="border-color:var(--critical)"></i>Next action late'
                   '</span><span><i style="opacity:.3;background:var(--muted)"></i>Parked</span></div>' % legend)
-        key = "".join('<span data-g="%d" hidden><i style="background:%s"></i>%s</span>' % (i, E(colour), E(label))
-                      for i, (colour, label) in enumerate(GR["groups"]) if any(n.get("g") == i for n in GR["nodes"]))
-        if key:
-            legend += '<div class="legend gkey" hidden><b>Colours from Obsidian</b>%s</div>' % key
         data = script_json(GR)
         places = list(dict.fromkeys(n["z"] for n in GR["nodes"]))
         places = sorted(places, key=lambda z: (z != "Work", z not in T, places.index(z)))      # Work, the other zones, then the wikis
@@ -8391,7 +8360,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                 E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link),
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

@@ -17,6 +17,8 @@
                                    before-quitting commands, quit cmux
     desk start                     launch or restore cmux, resume any tab it brought back
                                    at a bare shell prompt, then list the tabs
+    desk agent [claude|codex]      which assistant a new tab starts; with a name, sets it
+                                   in System/desk.json, as the status page's Settings does
 
 Without --yes, close, end and shutdown change nothing and say what they would
 do. Quitting keeps every tab in cmux's restore set; closing a tab takes it out.
@@ -29,8 +31,9 @@ settings are in System/desk.json (desk.example.json, beside this file, shows
 every one), or the file GARRICK_DESK_CONFIG names. A zone's colour comes from
 the status page's Settings › Zones, kept in System/garrick-settings.json:
 a tab opened in a project or thread colours its zone's workspace with it. A
-tab at the workspace root, in a wiki or in System/ takes none. Standard
-library only.
+tab at the workspace root, in a wiki or in System/ takes none. A new tab
+starts the assistant `agent` names only when its command is found here;
+otherwise desk says so and opens nothing. Standard library only.
 """
 
 from __future__ import annotations
@@ -42,8 +45,11 @@ import json
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +70,13 @@ SETTINGS = ("workspaces", "skip", "aliases", "agent", "before_quit", "socket_pas
 FILLER = {"the", "thread", "project", "tab"}
 MATCH_MIN = 4                                     # letters before part of a tab's name may stand for it
 CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex"}
+# Where the two assistants' installers put their command, looked in when the
+# PATH desk was started with lacks it: the status app and launchd start it
+# with a bare one. The user's own shell is asked last (agent_found()).
+SHELL_WAIT_S = 10                                  # for the user's shell to say where a command is
+AGENT_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin",
+              "~/.npm-global/bin", "~/.bun/bin", "~/.volta/bin", "~/.cargo/bin")
 
 
 class DeskError(Exception):
@@ -91,12 +104,17 @@ def find_workspace(given: Optional[str] = None) -> Path:
     raise DeskError("no workspace here; pass --workspace or set GARRICK_WORKSPACE")
 
 
+def config_path(ws: Path) -> Path:
+    """System/desk.json, or the file GARRICK_DESK_CONFIG names."""
+    return Path(os.environ.get("GARRICK_DESK_CONFIG") or ws / "System" / "desk.json").expanduser()
+
+
 def load_config(ws: Path, path: Optional[Path] = None) -> dict:
     """System/desk.json, merged over the defaults. Every key is optional; an
     unknown one is refused, so a misspelt setting is not silently ignored."""
     cfg = {"workspaces": {"neutral": "System"}, "skip": list(SKIP), "aliases": {}, "agent": "claude",
            "before_quit": [], "socket_password_file": None}
-    path = path or Path(os.environ.get("GARRICK_DESK_CONFIG") or ws / "System" / "desk.json").expanduser()
+    path = path or config_path(ws)
     if path.is_file():
         try:
             given = json.loads(path.read_text(encoding="utf-8"))
@@ -414,6 +432,49 @@ def plain(text: str) -> str:
     return CONTROL.sub(" ", text)
 
 
+def agent_found(agent: str) -> bool:
+    """Whether the assistant's command is installed: on this PATH, in one of
+    AGENT_DIRS, or found by the user's own shell, which a tab starts in. A
+    shell that cannot be asked, or does not answer in time, is taken to have
+    it, so a tab is never refused on a guess. The shell's answer goes to a
+    file, not a pipe: a job its startup files leave running in the
+    background would hold a pipe open, and the check would wait it out."""
+    if shutil.which(agent):
+        return True
+    for folder in AGENT_DIRS:
+        p = Path(folder).expanduser() / agent
+        if p.is_file() and os.access(str(p), os.X_OK):
+            return True
+    with tempfile.TemporaryFile() as out:
+        try:
+            proc = subprocess.Popen([os.environ.get("SHELL") or "/bin/zsh", "-ilc", "command -v %s" % shlex.quote(agent)],
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+        except OSError:
+            return True
+        try:
+            code = proc.wait(timeout=SHELL_WAIT_S)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)       # the shell and whatever it started
+            except OSError:
+                pass
+            proc.wait()
+            return True
+        out.seek(0)
+        return code == 0 and bool(out.read().strip())
+
+
+def require_agent(agent: str, named: bool = False) -> None:
+    """Refuse, in words, a tab whose assistant would fail to start. `named`:
+    the assistant was given with --agent, not taken from the setting."""
+    if not agent_found(agent):
+        other = next(k for k in cx.AGENTS if k != agent)
+        raise DeskError("%s is not installed here, so the tab would not start. Install it, or %s"
+                        % (agent, "start it with --agent %s" % other if named else
+                           "choose %s for cmux tabs in Settings › Opening a thread" % AGENT_NAMES[other]))
+
+
 def start_command(agent: str, name: str, prompt: Optional[str]) -> str:
     """Claude Code is named after the thread; both take a first prompt as an argument."""
     args = ["claude", "-n", plain(name)] if agent == "claude" else [agent]
@@ -650,6 +711,7 @@ def cmd_open(desk: Desk, a) -> None:
                        else folder.name or "Workspace")
     command = start_command(agent, name, a.prompt)
     target = a.target or desk.workspace_for(place["zone"] if not at_root else "root")
+    require_agent(agent, named=bool(a.agent))
     if a.dry_run:
         print("would open %s in %s, running: %s" % (r or "the workspace root", target, command))
         return
@@ -759,10 +821,35 @@ def cmd_workspace(desk: Desk, a) -> None:
     args = ["new-workspace", "--name", name, "--focus", "true"]
     if a.folder:
         place = desk.resolve(a.folder)
-        args += ["--cwd", str(place["path"]), "--command",
-                 start_command(a.agent or desk.cfg["agent"], desk.say_place(place), None)]
+        agent = a.agent or desk.cfg["agent"]
+        require_agent(agent, named=bool(a.agent))
+        args += ["--cwd", str(place["path"]), "--command", start_command(agent, desk.say_place(place), None)]
     cmux(*args)
     print("made the workspace %s" % name)
+
+
+def cmd_agent(desk: Desk, a) -> None:
+    """Which assistant a new tab starts. Named, it is written to the settings
+    file, every other setting kept; the status page's Settings and the setup
+    skill set it this way."""
+    if not a.agent:
+        print(desk.cfg["agent"])
+        return
+    path = config_path(desk.ws)
+    data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    data["agent"] = a.agent
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".desk-", suffix=".json", dir=str(path.parent))
+    try:                                  # whole or not at all: the desk refuses a half-written file
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, str(path))
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    desk.cfg["agent"] = a.agent
+    print("a new cmux tab starts %s%s" % (AGENT_NAMES[a.agent], "" if agent_found(a.agent)
+                                         else "; %s is not installed here yet" % a.agent))
 
 
 def cmd_colour(desk: Desk, a) -> None:
@@ -1093,6 +1180,10 @@ def parser() -> argparse.ArgumentParser:
     w.add_argument("--folder", help="start an assistant tab in this thread's or project's folder")
     w.add_argument("--agent", choices=cx.AGENTS)
     w.set_defaults(fn=cmd_workspace)
+
+    ag = sub.add_parser("agent", help="which assistant a new tab starts, or set it")
+    ag.add_argument("agent", nargs="?", choices=cx.AGENTS)
+    ag.set_defaults(fn=cmd_agent)
 
     co = sub.add_parser("colour", help="each zone's workspace in its colour from Settings › Zones")
     co.add_argument("zones", nargs="*", metavar="ZONE", help="only these; one with no colour is cleared")

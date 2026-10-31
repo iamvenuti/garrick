@@ -1764,6 +1764,25 @@ class TestLaunchers(StatusCase):
         self.assertNotIn(">Done<", dialog)
         self.assertIn("e.target.closest('.thread .t>a,.sres .t>a')", status.PANEL_JS)   # a click on a thread, or a match for one, follows the default
 
+    def test_which_assistant_a_cmux_tab_starts(self):
+        # #279: under Open in cmux, read from and saved to the desk's own setting, only where cmux can open
+        def dialog(**kw):
+            html = self.page(**kw)
+            return html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GARRICK_DESK_CONFIG", None)
+            self.assertNotIn('id="desk-agent"', dialog(launchers=("finder", "claude")))     # no cmux, no choice
+            shown = dialog(launchers=("cmux",))
+            self.assertIn('<option value="claude" selected>Claude Code</option><option value="codex">Codex</option>', shown)
+            self.assertLess(shown.index('data-launcher="cmux"'), shown.index('id="desk-agent-row"'))
+            self.assertLess(shown.index('id="desk-agent-row"'), shown.index('data-launcher="codex"'))
+            write(self.root / "System" / "desk.json", json.dumps({"agent": "codex", "skip": ["archive"]}))
+            self.assertIn('<option value="codex" selected>Codex</option>', dialog(launchers=("cmux",)))
+            write(self.root / "System" / "desk.json", "{")
+            self.assertEqual("claude", status.desk_agent(self.root))                      # as the desk reads a default
+        self.assertIn("q['desk-agent']=document.getElementById('desk-agent').value", status.JS)   # saved when Settings closes
+        self.assertIn("r.style.display=!c||c.disabled||!c.checked?'none':''", status.JS)    # shown while Open in cmux is on
+
     def test_settings_open_from_the_cog(self):
         html = self.page()
         brand = html[html.index('<header class="bar">'):html.index("</header>")]

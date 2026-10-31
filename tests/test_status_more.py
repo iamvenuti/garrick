@@ -933,8 +933,13 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        self.assertIn("if(!(lpChanged||zChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
-                      "if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();", status.JS)
+        # A change to the launchers, the zones, the notifications, While you wait, Memory or which assistant a
+        # cmux tab starts (#279) makes a request; none makes none. The launchers lead it, the zones and the
+        # notifications ride on it, and the desk's choice goes as desk-agent, read from its select.
+        self.assertIn("if(!(lpChanged||zChanged||daChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+                      "if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();\n"
+                      "if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}", status.JS)
+        self.assertIn("daSel.onchange=function(){daChanged=true;", status.JS)            # set by the select alone
 
 
 class TestZoneOrder(StatusCase):

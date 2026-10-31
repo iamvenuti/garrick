@@ -81,6 +81,14 @@ mode* in the `threads` skill describes.
      this Mac, or to a session's own tab in cmux; which ones, and quiet
      hours, are the status page's Settings › Notifications: say so, and
      change nothing there.
+   - Only if the cmux extra is here (`System/cmux/desk.py`) and
+     `System/desk.json` does not already set `agent`: which assistant a cmux
+     tab starts. The probe found the `codex` command and
+     not `claude`: run `python3 System/cmux/desk.py agent codex`, and say
+     so. `claude` and not `codex`: `python3 System/cmux/desk.py agent claude`.
+     Both: "Should a cmux tab start Claude Code or Codex?", then run it with
+     the answer. Neither: leave it. It writes `agent` in `System/desk.json`,
+     the same choice as Settings › Opening a thread in the Garrick App.
    - Unless `System/garrick-settings.json` already says: "Tell me when a new
      Garrick is out? It asks GitHub once a day and sends nothing about your
      workspace." Ask it once. A yes or a no is written as the `update`

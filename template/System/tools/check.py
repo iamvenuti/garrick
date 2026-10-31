@@ -4450,17 +4450,26 @@ REVIEW_DECISION_RE = re.compile(r"^(?:fixed [0-9a-f]{7,40}|answered|deferred to 
 REVIEW_REASONS = ("another session holds the file", "waiting on someone", "needs the user's own records",
                   "source did not run", "not now")
 REVIEW_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+REVIEW_COUNTS = ("fixed", "answered", "deferred")       # the frontmatter's counts, which the status page shows
 
 
 def check_review(ws: Workspace) -> List[Finding]:
     """Each row of the review record's table is an Id that is a key from
     `nurture.py --json`, or the tool's name for a source that did not run; a
     Source of tool names; a Decision and a Reason from the fixed sets; and a
-    date. A finding names the row and the column, never what the cell says."""
+    date; and in the frontmatter, `fixed`, `answered` and `deferred`, where
+    given, are whole numbers. A finding names the row and the column, or the
+    key, never what the cell says."""
     out = []
     text = read_text(ws.root / REVIEW_RECORD)
     if text is None:
         return out
+    fm = parse_frontmatter_text(text)
+    for key in REVIEW_COUNTS:
+        if key in fm and fm[key] not in (None, "") and not str(fm[key]).strip().isdigit():
+            out.append(Finding(WARNING, "review", REVIEW_RECORD,
+                               "`%s` in the frontmatter is not a whole number; it counts decisions and holds "
+                               "nothing else" % key, "A count in the review record is not a number"))
     row = 0
     for line in text.splitlines():
         line = line.strip()

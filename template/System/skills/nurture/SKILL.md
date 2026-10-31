@@ -175,6 +175,9 @@ status: open
 started: 2026-03-14
 last_completed: 2026-03-07
 limit: 15 minutes
+fixed: 0
+answered: 1
+deferred: 1
 ---
 # Context review
 
@@ -189,7 +192,10 @@ limit: 15 minutes
 - **`status:`** is `open` while a review has items with no decision, and
   `done` once every item has one. **`started:`** is the day the review
   started, **`last_completed:`** the day the last one was done, and empty
-  until then. **`limit:`** is the one the user chose.
+  until then. **`limit:`** is the one the user chose. **`fixed:`**,
+  **`answered:`** and **`deferred:`** count the items this review has
+  given each decision so far, whole numbers and nothing else: the status
+  page shows them.
 - **An item** is one finding. Its **Id** is the finding's `key`, as
   `nurture.py --json` gives it: twelve hex digits that say nothing of the
   file, the check or the material. Two findings on one file have two keys,
@@ -229,7 +235,8 @@ limit: 15 minutes
 
 1. **Open the record.** When its status is `open`, say so and go on from it:
    "The review from Saturday is unfinished. Go on with it?" Otherwise start
-   a new one: `status: open`, `started:` today.
+   a new one: `status: open`, `started:` today, and `fixed:`, `answered:`
+   and `deferred:` at 0.
 2. **Prepare from the current record**, changing nothing:
    - Run Nurture's *Gather* for the whole workspace, or for the scope the
      user named. It runs `check.py`, `wiki_lint.py` for each wiki and
@@ -305,9 +312,9 @@ limit: 15 minutes
      about one is.
 6. **Show what remains.** Run *Gather* again, so the count is the one after
    the changes. Update the record: each decision made, each source that
-   failed. When every item has a decision, set `status: done` and
-   `last_completed:` today, and take out the rows whose key Gather no
-   longer gives.
+   failed, and the three counts. When every item has a decision, set
+   `status: done` and `last_completed:` today, and take out the rows whose
+   key Gather no longer gives.
    Commit the record alone:
    ```sh
    git add -- System/nurture-review.md

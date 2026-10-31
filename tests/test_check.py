@@ -692,6 +692,15 @@ class TestReviewRecord(CheckCase):
         for word in ("cedar", "Cedar", "renewal", "acme", "March"):
             self.assertNotIn(word, said)
 
+    def test_the_counts_in_the_frontmatter_are_whole_numbers(self):
+        self.HEAD = self.HEAD.replace("limit:", "fixed: 6\nanswered: 0\ndeferred:\nlimit:")
+        self.record("3f2a9c1d0b4e | check.py | answered |  | 2026-03-14")
+        self.assertClean("review")
+        self.HEAD = self.HEAD.replace("answered: 0", "answered: the Cedar floor")
+        self.record("3f2a9c1d0b4e | check.py | answered |  | 2026-03-14")
+        found = self.assertFinds("review", "warning", "`answered` in the frontmatter is not a whole number")
+        self.assertNotIn("Cedar", " ".join(f.message + f.ear for f in found))
+
     def test_a_tool_name_is_an_id_only_for_a_source_that_did_not_run(self):
         self.record("drift.py | drift.py | skipped |  | 2026-03-14")
         self.assertFinds("review", "warning", "row 1 has an Id")

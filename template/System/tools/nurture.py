@@ -322,20 +322,27 @@ def strip_line(path: str) -> str:
 TODO_BROKEN = re.compile(r"^open actions name (.+), which lead to no live note")
 
 
+def check_items(f: dict) -> List[Item]:
+    """One finding of `check.py --json` as the items it makes here: one, or
+    one for each broken thread link a `todo` finding names. The status
+    page's Checks card sorts the findings it shows through this and
+    sort_item(), so its kinds are Nurture's."""
+    item = Item("check", f.get("check", ""), strip_line(f.get("path", "")), f.get("message", ""),
+                f.get("ear", ""), f.get("severity", "warning"))
+    m = TODO_BROKEN.match(item.message)
+    if item.check == "todo" and m:
+        # One finding names every broken thread link; each is its own fix.
+        return [Item("check", "todo", item.path, "an open action names [[%s]], which leads to no live note"
+                     % target, item.ear, item.severity, fix={"target": target})
+                for target in re.findall(r"\[\[([^\]]+)\]\]", m.group(1))]
+    return [item]
+
+
 def from_check(ctx: Ctx) -> List[Item]:
     found = run_tool(ctx, "check.py", "--json")
     out = []
     for f in (found or {}).get("findings", []) if isinstance(found, dict) else []:
-        item = Item("check", f.get("check", ""), strip_line(f.get("path", "")), f.get("message", ""),
-                    f.get("ear", ""), f.get("severity", "warning"))
-        m = TODO_BROKEN.match(item.message)
-        if item.check == "todo" and m:
-            # One finding names every broken thread link; each is its own fix.
-            for target in re.findall(r"\[\[([^\]]+)\]\]", m.group(1)):
-                out.append(Item("check", "todo", item.path, "an open action names [[%s]], which leads to no live note"
-                                % target, item.ear, item.severity, fix={"target": target}))
-            continue
-        out.append(item)
+        out += check_items(f)
     return out
 
 
@@ -400,12 +407,18 @@ def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
                 i.kind = i.kind or kind.name
                 items.append(i)
     for item in items:
-        if not item.kind:
-            for kind in ranked():
-                if kind.claim(ctx, item):
-                    item.kind = kind.name
-                    break
+        sort_item(ctx, item)
     return [i for i in items if in_scope(i, scopes)]
+
+
+def sort_item(ctx: Ctx, item: Item) -> Item:
+    """The item with its kind: the first kind, by rank, to claim it."""
+    if not item.kind:
+        for kind in ranked():
+            if kind.claim(ctx, item):
+                item.kind = kind.name
+                break
+    return item
 
 
 def in_scope(item: Item, scopes: List[str]) -> bool:
@@ -1637,6 +1650,30 @@ def debt_history(root: Path, today: datetime.date, days: int = 30) -> List[Tuple
         if isinstance(debt, dict) and debt.get("whole") and isinstance(debt.get("total"), (int, float)):
             out.append((day, debt))
     return out
+
+
+def day_outcome(root: Path, day: datetime.date) -> Optional[dict]:
+    """What the day's record says the runs did and left: `fixed` and
+    `answered`, how many; `left`, how many standing findings weigh
+    anything; and `scopes`, {scope: {kind: how many}} of those. None with no
+    record that day. Read from the record alone: nothing runs."""
+    try:
+        rec = json.loads(Path(root).joinpath(*REPORTS).joinpath("%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict):
+        return None
+    weights, _ = debt_settings(Path(root))
+    scopes: Dict[str, Dict[str, int]] = {}
+    left = 0
+    for f in rec.get("standing") or []:
+        kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
+        if kind and weights.get(kind, UNKNOWN_WEIGHT):
+            here = scopes.setdefault(debt_scope(str(f.get("path", ""))), {})
+            here[kind] = here.get(kind, 0) + 1
+            left += 1
+    return {"fixed": len(rec.get("fixed") or []), "answered": len(rec.get("answered") or []), "left": left,
+            "scopes": scopes}
 
 
 def rising(history: List[Tuple[datetime.date, dict]], today: datetime.date) -> bool:

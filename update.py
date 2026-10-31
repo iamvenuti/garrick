@@ -902,10 +902,12 @@ def old_jobs(root):
     return found
 
 
-def jobs_folder():
-    """The scheduled jobs' folder, as agent.py finds it."""
-    set_to = os.environ.get("GARRICK_JOBS_DIR")
-    if set_to:
+def jobs_folder(env):
+    """The jobs folder a launchd job writes to: GARRICK_JOBS_DIR in its own
+    plist's environment, or agent.py's default. Never this process's
+    environment, which is the Terminal's the update runs in, not the job's."""
+    set_to = env.get("GARRICK_JOBS_DIR") if isinstance(env, dict) else None
+    if isinstance(set_to, str) and set_to.strip():
         return Path(set_to).expanduser()
     return Path.home() / "Library" / "Logs" / "garrick-jobs"
 
@@ -922,9 +924,9 @@ def came_from(plist, data, cmd, old):
     logs = [data.get(k) for k in ("StandardOutPath", "StandardErrorPath")]
     return (str(data.get("Label")) == "garrick." + old or env.get("GARRICK_RENAMED_FROM") == old
             or any(Path(a).name == OLD_SCRIPTS[old] for a in cmd) and old in NEW_FROM
-            or any(isinstance(v, str) and v.endswith("/%s.launchd.log" % old) for v in logs)
+            or any(isinstance(v, str) and Path(v).name == "%s.launchd.log" % old for v in logs)
             or plist.with_name("garrick.%s.plist.retired" % old).exists()
-            or (jobs_folder() / ("%s.heartbeat.json" % old)).is_file())
+            or (jobs_folder(env) / ("%s.heartbeat.json" % old)).is_file())
 
 
 def rename_commands(plist, data, args, at, old, new, retired):
@@ -997,7 +999,7 @@ def rename_commands(plist, data, args, at, old, new, retired):
         edits.append("plutil -replace ProgramArguments -json %s %s" % (shlex.quote(json.dumps(want)), q(target)))
     for key in ("StandardOutPath", "StandardErrorPath"):
         value = data.get(key)
-        if isinstance(value, str) and value.endswith("/%s.launchd.log" % old):
+        if isinstance(value, str) and Path(value).name == "%s.launchd.log" % old:
             edits.append("plutil -replace %s -string %s %s" % (
                 key, q(value[:-len("%s.launchd.log" % old)] + "%s.launchd.log" % new), q(target)))
     if want_env != env:

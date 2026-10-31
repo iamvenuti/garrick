@@ -1224,8 +1224,13 @@ class TestJobsRenamed(ExtrasCase):
         self.agents = self.home / "Library" / "LaunchAgents"
         self.agents.mkdir(parents=True)
         self.logs = self.home / "Library" / "Logs" / "garrick-jobs"
+        # The jobs folder of the shell running the suite is never the one a launchd job writes to:
+        # GARRICK_JOBS_DIR points at a trap, which the tests fill to show it is not read.
+        self.trap = self.base / "shell-jobs"
+        self.trap.mkdir()
         for patch in (mock.patch.object(update, "on_mac", lambda: True),
-                      mock.patch.object(update, "launch_agents", lambda: self.agents)):
+                      mock.patch.object(update, "launch_agents", lambda: self.agents),
+                      mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(self.trap), "HOME": str(self.home)})):
             patch.start()
             self.addCleanup(patch.stop)
         self.old_plists()
@@ -1391,8 +1396,17 @@ class TestJobsRenamed(ExtrasCase):
         p = self.plan()
         self.assertEqual([], p["renames"])
         self.assertNotIn("scheduled jobs have new names", update.report(p))
-        # The old name's heartbeat in the jobs folder is evidence of a rename part way through.
+        # The jobs folder holding only gr- heartbeats and logs: still nothing. gr-backup is not backup.
         self.logs.mkdir(parents=True)
+        for name in ("gr-backup", "gr-nightly", "gr-todo-sweep", "gr-reading-sweep", "gr-whats-open"):
+            (self.logs / (name + ".heartbeat.json")).write_text(json.dumps({"job": name, "exit": 0}))
+            (self.logs / (name + ".log")).write_text("===== 2026-10-30 05:15:00  %s  exit 0  (3s) =====\n" % name)
+            (self.logs / (name + ".launchd.log")).write_text("")
+        self.assertEqual([], self.plan()["renames"])
+        # An old heartbeat in the shell's GARRICK_JOBS_DIR is not the jobs' folder: still nothing.
+        (self.trap / "backup.heartbeat.json").write_text(json.dumps({"job": "backup", "exit": 0}))
+        self.assertEqual([], self.plan()["renames"])
+        # The old name's heartbeat in the jobs folder is evidence of a rename part way through.
         (self.logs / "backup.heartbeat.json").write_text(json.dumps({"job": "backup", "exit": 0}))
         got = [(Path(r["plist"]).name, r["state"]) for r in self.plan()["renames"]]
         self.assertEqual([("garrick.gr-backup.plist", "part")], got)

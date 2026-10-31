@@ -2235,6 +2235,17 @@ class TestJobs(StatusCase):
         self.assertIn('<a class="act" href="%s">Open log</a>' % log, panel)
         self.assertIn("button.jname", status.JOBS_JS)
 
+    def test_the_log_tail_is_cut_and_starts_on_a_whole_line(self):
+        log = self.jobs / "brief.log"
+        log.write_text("x" * 70000 + "\nshort\n" + "y" * 400 + "\n")
+        self.assertEqual(["short", "y" * 300], status.log_tail(log))            # the part line the read began in is dropped
+        log.write_text("first\nsecond\n")
+        self.assertEqual(["first", "second"], status.log_tail(log))             # read from the start: nothing dropped
+
+    def test_an_about_that_is_not_text_is_not_shown(self):
+        with self.plists(brief={"StartCalendarInterval": {"Hour": 7}, "EnvironmentVariables": {"GARRICK_ABOUT": 7}}):
+            self.assertEqual("", status.launchd_jobs()["brief"]["about"])
+
     def test_every_shipped_plist_says_what_its_job_does(self):
         shipped = sorted((REPO / "extras" / "jobs" / "launchd").glob("*.plist")) + [REPO / "extras" / "status" / "garrick.status.plist"]
         self.assertGreater(len(shipped), 1)

@@ -2883,9 +2883,9 @@ GARRICK_LABELS = ("garrick.",)     # the label prefixes of the plists Garrick sh
 
 
 def garrick_job(label: Optional[str]) -> bool:
-    """Whether a launchd label is one of Garrick's own jobs, which an update
-    replaces, rather than one the user added: its label starts with one of
-    GARRICK_LABELS. A job with no plist has no label and is the user's."""
+    """Whether a launchd label is one of the jobs Garrick ships, rather than
+    one the user added: its label starts with one of GARRICK_LABELS. A job
+    with no plist has no label and is the user's."""
     return bool(label) and str(label).startswith(GARRICK_LABELS)
 
 
@@ -2918,7 +2918,7 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
         words, late = when(p)
         env = env if isinstance(env, dict) else {}
         out[args[at + 1]] = {"schedule": words, "late": late, "agent": "--agent" in flags, "env": env, "plist": plist,
-                             "label": str(p.get("Label") or plist.stem), "about": str(env.get("GARRICK_ABOUT") or "").strip()}
+                             "label": str(p.get("Label") or plist.stem), "about": env["GARRICK_ABOUT"].strip() if isinstance(env.get("GARRICK_ABOUT"), str) else ""}
     return out
 
 
@@ -3067,22 +3067,25 @@ def plist_facts(plist: Optional[dict]) -> dict:
     return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"), "garrick": garrick_job(label)}
 
 
-def log_tail(path: Path, lines: int = 30) -> List[str]:
-    """The last lines of a job's log, read from its end; none when there is no log."""
+def log_tail(path: Path, lines: int = 30, width: int = 300) -> List[str]:
+    """The last lines of a job's log, read from its end, each cut to `width`
+    characters; none when there is no log. A read that starts mid-file drops
+    its first line, which is likely a part of one."""
     try:
         with path.open("rb") as f:
             f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 64 * 1024))
+            start = max(0, f.tell() - 64 * 1024)
+            f.seek(start)
             text = f.read().decode("utf-8", errors="replace")
     except OSError:
         return []
-    return text.splitlines()[-lines:]
+    got = text.splitlines()[1 if start else 0:]
+    return [line[:width] for line in got[-lines:]]
 
 
 # A job's name opens its panel below its row, and closes it again (#273).
 JOBS_JS = r"""
-document.addEventListener('click',function(e){var b=e.target.closest('button.jname'),p=b&&document.getElementById(b.getAttribute('aria-controls'));
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.jname'),p=b&&document.getElementById(b.getAttribute('aria-controls'));
 if(!p)return;p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden))});
 """
 

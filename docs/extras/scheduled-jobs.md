@@ -123,7 +123,8 @@ python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEM
   <string>Sends the Acme digest each morning, with the assistant.</string>
   ```
 
-  The Garrick App shows the line under the job's name, and lists the job under *Yours*. A job without the line shows none.
+  The Garrick App shows the line under the job's name, and lists the job under *Yours*. A job without the line shows none. Install and update never touch `~/Library/LaunchAgents`, so a copy loaded before this release shows no description until you copy the plist in again.
+- **Log counts and paths, never content.** The Garrick App shows a job's last 30 log lines in its panel, so never log an assistant's answer or a note's text.
 
 ### Exit codes
 

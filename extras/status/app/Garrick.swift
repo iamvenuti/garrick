@@ -49,6 +49,7 @@ import Carbon.HIToolbox
 import IOKit.pwr_mgt
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 import WebKit
 
@@ -2394,14 +2395,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		decisionHandler(.cancel)
 		if checking { return heard.append("link:" + (url.scheme ?? "")) }
-		// a file, such as a job's log from its panel's Open log, comes up in front of
-		// this window, not behind it (#273)
-		if url.isFileURL {
-			let cfg = NSWorkspace.OpenConfiguration()
-			cfg.activates = true
-			return NSWorkspace.shared.open(url, configuration: cfg)
-		}
+		if openJobLog(url) { return }
 		NSWorkspace.shared.open(url)
+	}
+
+	// A job's log, from its panel's Open log (#273), opens in the app this Mac
+	// uses for plain text, TextEdit failing that, not in Console, which .log
+	// goes to by default and which shows its own system log first. Only a .log
+	// in the jobs folder; any other file opens as before.
+	func openJobLog(_ url: URL) -> Bool {
+		guard url.isFileURL, url.pathExtension == "log",
+		      url.resolvingSymlinksInPath().deletingLastPathComponent().path == jobsDir.resolvingSymlinksInPath().path,
+		      let app = NSWorkspace.shared.urlForApplication(toOpen: UTType.plainText)
+		          ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") else { return false }
+		NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+		return true
 	}
 
 	// target=_blank and window.open land here; nothing opens a second window.

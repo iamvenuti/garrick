@@ -32,10 +32,12 @@
 //     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
 //     its projects start folded, and it remembers the ones you unfold;
 //   - with the preview ask on, the fields of the menu and the panel, and the
-//     box the Ask hotkey opens from any app (⌘G until Settings sets another),
+//     window the Ask hotkey opens from any app (⌘G until Settings sets another),
 //     answer a request in plain words through
 //     ask.py, beside status.py, and run what it proposes; off, a field opens
-//     the default assistant with the words. Once the box has opened, it can
+//     the default assistant with the words. The window is one, kept: Escape
+//     hides it, and its exchange stays until New conversation or quit, with
+//     Stop while a request runs. Once the box has opened, it can
 //     start dictation (Settings › Then start dictation): macOS's own, or
 //     another tool's, by pressing its key;
 // Each time it fills the menu or the panel it leaves garrick-app-menu.json in
@@ -157,6 +159,9 @@ func askOn() -> Bool {
 	return flags["ask"] as? Bool == true
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+// Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
+// exchange stays on screen, and nothing of it reaches the new session.
+let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
 let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
@@ -184,9 +189,25 @@ func launcherOn(_ k: String) -> Bool {
 	return true
 }
 
-// ask.py with its arguments; its answer, parsed, back on the main queue.
-func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
-	let p = Process()
+// One request to ask.py, running: Stop interrupts it (SIGINT), and ask.py then says
+// stop on its connection to the server, which ends the turn (#261).
+final class AskRequest {
+	let process = Process()
+	var stopped = false
+	func stop() {
+		guard process.isRunning, !stopped else { return }
+		stopped = true
+		process.interrupt()
+	}
+}
+
+// ask.py with its arguments, its output read line by line as it comes (#261): each
+// {"progress": …} line to progress, then the final line, the reply with its kind, to done.
+// Both on the main queue. Nil when ask.py could not be run, done told so first.
+@discardableResult
+func askStream(_ args: [String], progress: @escaping (String) -> Void, done: @escaping ([String: Any]) -> Void) -> AskRequest? {
+	let r = AskRequest()
+	let p = r.process
 	p.executableURL = URL(fileURLWithPath: python)
 	p.arguments = [asker.path, "--workspace", workspace.path, "--json"] + args
 	p.currentDirectoryURL = workspace
@@ -194,30 +215,105 @@ func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
 	p.standardOutput = out
 	p.standardError = FileHandle.nullDevice
 	p.standardInput = FileHandle.nullDevice
-	do { try p.run() } catch { return done(["say": "Cannot run \(python)", "ok": false]) }
 	let late = DispatchWorkItem { if p.isRunning { p.terminate() } }
+	var pending = Data()
+	var final: [String: Any]?
+	// The handler runs on one queue of its own, a chunk at a time; the end of the output is the end of the request.
+	out.fileHandleForReading.readabilityHandler = { h in
+		let chunk = h.availableData
+		guard !chunk.isEmpty else {
+			h.readabilityHandler = nil
+			DispatchQueue.global().async {
+				p.waitUntilExit()
+				let timedOut = !late.isCancelled && !r.stopped && p.terminationReason == .uncaughtSignal
+				late.cancel()
+				// It may yet finish, so this says what to look at and never to ask again (#92).
+				let gaveUp = "Garrick did not answer in \(Int(askWait / 60)) minutes. The change may still be on its way: "
+					+ "an action that commits waits for the zone's wall check. Look at the Todo list, or the thread, "
+					+ "before you ask again, because asking again does it a second time."
+				let none: [String: Any] = r.stopped ? ["say": "Stopped.", "ok": false, "stopped": true]
+					: ["say": timedOut ? gaveUp : "No answer.", "ok": false, "failed": true]
+				DispatchQueue.main.async { done(final ?? none) }
+			}
+			return
+		}
+		pending.append(chunk)
+		while let nl = pending.firstIndex(of: 0x0A) {
+			let line = pending.subdata(in: pending.startIndex..<nl)
+			pending.removeSubrange(pending.startIndex...nl)
+			guard let said = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+			if said["kind"] == nil, let text = said["progress"] as? String {
+				DispatchQueue.main.async { progress(text) }
+			} else {
+				final = said
+			}
+		}
+	}
+	do { try p.run() } catch {
+		out.fileHandleForReading.readabilityHandler = nil
+		done(["say": "Cannot run \(python)", "ok": false, "failed": true])
+		return nil
+	}
 	DispatchQueue.global().asyncAfter(deadline: .now() + askWait, execute: late)
-	DispatchQueue.global().async {
-		let data = out.fileHandleForReading.readDataToEndOfFile()
-		p.waitUntilExit()
-		let timedOut = !late.isCancelled && p.terminationReason == .uncaughtSignal
-		late.cancel()
-		let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-		// It may yet finish, so this says what to look at and never to ask again (#92).
-		let gaveUp = "Garrick did not answer in \(Int(askWait / 60)) minutes. The change may still be on its way: "
-			+ "an action that commits waits for the zone's wall check. Look at the Todo list, or the thread, "
-			+ "before you ask again, because asking again does it a second time."
-		let none: [String: Any] = ["say": timedOut ? gaveUp : "No answer.", "ok": false]
-		DispatchQueue.main.async { done(said ?? none) }
+	return r
+}
+
+// ask.py with its arguments; its answer, parsed, back on the main queue.
+func askCall(_ args: [String], done: @escaping ([String: Any]) -> Void) {
+	askStream(args, progress: { _ in }, done: done)
+}
+
+// One request and what came back, as the Ask window shows it. The exchange is a list of
+// these, kept until New conversation or quit, however long the window is hidden (#261).
+struct AskTurn {
+	var request: String
+	var reply = ""
+	var kind = "command"
+	var stopped = false
+	var failed = false
+	var afresh = false        // a wall reset came before it: the assistant started again, and what is above is on screen only
+	var running = true
+}
+
+// The Ask window (preview ask): it takes the keys without bringing the app forward, as
+// Spotlight does. Escape hides it and keeps the exchange; the hotkey brings the same one back.
+final class AskPanel: NSPanel {
+	override var canBecomeKey: Bool { true }
+	override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+}
+
+// The field the request is typed in: Return sends it, Shift-Return starts a new line, and
+// Escape hides the window, where a text view would otherwise offer completions.
+final class AskInput: NSTextView {
+	var placeholder = "" { didSet { needsDisplay = true } }
+	var submit: () -> Void = {}
+	var hide: () -> Void = {}
+	var changed: () -> Void = {}
+
+	override func doCommand(by sel: Selector) {
+		if sel == #selector(insertNewline(_:)) {
+			if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { return insertNewlineIgnoringFieldEditor(nil) }
+			return submit()
+		}
+		if sel == #selector(cancelOperation(_:)) || sel == #selector(complete(_:)) { return hide() }
+		super.doCommand(by: sel)
+	}
+
+	override func didChangeText() {
+		super.didChangeText()
+		needsDisplay = true
+		changed()
+	}
+
+	override func draw(_ dirty: NSRect) {
+		super.draw(dirty)
+		guard string.isEmpty, !placeholder.isEmpty else { return }
+		let at = NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height)
+		(placeholder as NSString).draw(at: at, withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 20),
+		                                                        .foregroundColor: NSColor.placeholderTextColor])
 	}
 }
 
-// The box the Ask hotkey opens (preview ask): it takes the keys without bringing the app
-// forward, as Spotlight does; Escape closes it.
-final class AskPanel: NSPanel {
-	override var canBecomeKey: Bool { true }
-	override func cancelOperation(_ sender: Any?) { close() }
-}
 func savedMenu() -> [String: Any]? {
 	defaults.data(forKey: kMenu).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
 }
@@ -476,8 +572,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askPanel: AskPanel?
 	var askKeeper: Timer?             // the `keep` every askKeepEvery seconds (preview ask)
 	var askKept = false               // whether this app has a background session kept, for quit to stop it
-	var askField: NSTextField!
-	var askReply: NSTextField!
+	var askField: AskInput!
+	var askInputHeight: NSLayoutConstraint!
+	var askLog: NSTextView!           // the exchange, once the window has expanded
+	var askLogBox: NSScrollView!
+	var askWorking: NSStackView!      // what is happening now, with Stop
+	var askSpinner: NSProgressIndicator!
+	var askSaid: NSTextField!
+	var askStopButton: NSButton!
+	var askReply: NSTextField!        // the last reply, while the window is compact
+	var askFoot: NSStackView!
+	var askNewButton: NSButton!
+	var askTurns: [AskTurn] = []      // the exchange: only New conversation and quit clear it
+	var askRunning: AskRequest?       // the request on its way, which Stop interrupts
+	var askExpanded = false           // grown for an answer, a question back or a wall reset; compact again on New conversation
+	var askPreparing = false          // the session starting when the window opened: a request sent now waits for it once
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -1469,7 +1578,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if checking { return heard.append("menu:ask") }
 		if askOn() {
 			showAsk()
-			askField.stringValue = text
+			askField.string = text
 			askSubmit(askField)
 		} else if let app = assistant() {
 			launch(app, workspace.path, phrase: text)
@@ -1641,7 +1750,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if checking { return self.heard.append("panel:ask") }
 				m.answering = true
 				m.answer = ""
-				self.askGarrick(text) { say, ranAway in
+				self.askGarrick(text) { say, ranAway, _ in
 					m.answering = false
 					m.answer = say
 					if ranAway { m.after() }    // an app came forward with what was asked for
@@ -1667,10 +1776,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// what it proposes and runs it through page_action.py. What comes back to
 	// open, a project or a thread, opens here, as its row's icons open it, in
 	// the app the request named or the default assistant. The reply is the
-	// session's sentence and what was done; ranAway says an app came forward.
+	// session's sentence and what was done; ranAway says an app came forward;
+	// and the reply itself, with its kind. Progress comes before it, line by line.
 	// An app the request named must be switched on in Settings, as on the page.
-	func askGarrick(_ text: String, done: @escaping (String, Bool) -> Void) {
-		askCall(["ask", "--", text]) { [weak self] out in
+	@discardableResult
+	func askGarrick(_ text: String, progress: @escaping (String) -> Void = { _ in },
+	                done: @escaping (String, Bool, [String: Any]) -> Void) -> AskRequest? {
+		askStream(["ask", "--", text], progress: progress) { [weak self] out in
 			guard let self else { return }
 			let say = out["say"] as? String ?? ""
 			var lines = out["done"] as? [String] ?? []
@@ -1691,10 +1803,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil) { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
-			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok)
+			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok, out)
 		}
 	}
 
+	// One window, made once and kept: the hotkey brings this one forward, with the cursor in its
+	// field, and never makes a second. Compact, it is the field and the last reply; it grows for
+	// an answer, a question back or a wall reset, and shows the whole exchange (#261).
 	@objc func showAsk(_ sender: Any? = nil) {
 		guard askOn() else { return }
 		if askPanel == nil {
@@ -1708,19 +1823,69 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			p.hidesOnDeactivate = false
 			p.isReleasedWhenClosed = false
 			p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-			askField = NSTextField()
-			askField.placeholderString = askHint
+
+			askLog = NSTextView(frame: NSRect(x: 0, y: 0, width: 580, height: 320))
+			askLog.isEditable = false
+			askLog.isSelectable = true
+			askLog.drawsBackground = false
+			askLog.textContainerInset = NSSize(width: 0, height: 4)
+			askLog.isVerticallyResizable = true
+			askLog.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+			askLog.autoresizingMask = [.width]
+			askLog.textContainer?.widthTracksTextView = true
+			askLogBox = NSScrollView()
+			askLogBox.documentView = askLog
+			askLogBox.hasVerticalScroller = true
+			askLogBox.drawsBackground = false
+			askLogBox.borderType = .noBorder
+
+			askField = AskInput(frame: NSRect(x: 0, y: 0, width: 580, height: 28))
+			askField.placeholder = askHint
 			askField.font = .systemFont(ofSize: 20)
-			askField.isBordered = false
-			askField.focusRingType = .none
+			askField.isRichText = false
+			askField.allowsUndo = true
 			askField.drawsBackground = false
-			askField.target = self
-			askField.action = #selector(askSubmit(_:))
+			askField.focusRingType = .none
+			askField.textContainerInset = NSSize(width: 0, height: 2)
+			askField.isVerticallyResizable = true
+			askField.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+			askField.autoresizingMask = [.width]
+			askField.textContainer?.widthTracksTextView = true
+			askField.submit = { [weak self] in self?.askSubmit(nil) }
+			askField.hide = { [weak self] in self?.askPanel?.orderOut(nil) }
+			askField.changed = { [weak self] in self?.askFit() }
+			let input = NSScrollView()
+			input.documentView = askField
+			input.drawsBackground = false
+			input.borderType = .noBorder
+			input.hasVerticalScroller = false
+			askInputHeight = input.heightAnchor.constraint(equalToConstant: 28)
+
+			askSpinner = NSProgressIndicator()
+			askSpinner.style = .spinning
+			askSpinner.controlSize = .small
+			askSaid = NSTextField(labelWithString: "")
+			askSaid.textColor = .secondaryLabelColor
+			askSaid.font = .systemFont(ofSize: 13)
+			askStopButton = NSButton(title: "Stop", target: self, action: #selector(askStop(_:)))
+			askStopButton.controlSize = .small
+			askStopButton.bezelStyle = .rounded
+			askWorking = NSStackView(views: [askSpinner, askSaid, NSView(), askStopButton])
+			askWorking.orientation = .horizontal
+			askWorking.spacing = 8
+
 			askReply = NSTextField(wrappingLabelWithString: "")
 			askReply.textColor = .secondaryLabelColor
 			askReply.font = .systemFont(ofSize: 13)
 			askReply.isSelectable = true
-			let stack = NSStackView(views: [askField, askReply])
+
+			askNewButton = NSButton(title: "New conversation", target: self, action: #selector(askNew(_:)))
+			askNewButton.controlSize = .small
+			askNewButton.bezelStyle = .rounded
+			askFoot = NSStackView(views: [NSView(), askNewButton])
+			askFoot.orientation = .horizontal
+
+			let stack = NSStackView(views: [askLogBox, input, askWorking, askReply, askFoot])
 			stack.orientation = .vertical
 			stack.alignment = .leading
 			stack.spacing = 10
@@ -1733,10 +1898,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
 				stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
 				stack.topAnchor.constraint(equalTo: content.topAnchor),
-				askField.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
-				askReply.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
+				stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+				content.widthAnchor.constraint(equalToConstant: 620),
+				askLogBox.heightAnchor.constraint(equalToConstant: 320),
+				askInputHeight,
 			])
+			for v in [askLogBox, input, askWorking, askReply, askFoot] as [NSView] {
+				v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+			}
 			askPanel = p
+			askRender()
 		}
 		guard let p = askPanel else { return }
 		let opening = !(p.isVisible && p.isKeyWindow)   // pressed again on an open box, it starts nothing a second time
@@ -1745,8 +1916,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		p.makeKeyAndOrderFront(nil)
 		p.makeFirstResponder(askField)
-		askCall(["warm"]) { _ in }      // the session starts while the request is typed
+		askWarm()                       // the session starts while the request is typed
 		if opening { startDictation() }
+	}
+
+	// Preparing: the session may be starting. Said only when it takes a moment, so a warm
+	// session never makes the window flicker; a request sent meanwhile waits for it once.
+	func askWarm() {
+		askPreparing = true
+		askCall(["warm"]) { [weak self] _ in
+			self?.askPreparing = false
+			self?.askRender()
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.askRender() }
 	}
 
 	// MARK: dictation (preview ask)
@@ -1803,24 +1985,142 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		toast(spec == nil ? "No dictation key." : "The Ask box presses \(label) when it opens.")
 	}
 
-	// An answer, a question back or a refusal stays in the box to be read or
-	// answered; when an app came forward with what was asked for, the box goes.
-	@objc func askSubmit(_ sender: NSTextField) {
-		let text = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !text.isEmpty else { return }
-		sender.stringValue = ""
-		sender.placeholderString = text
-		askReply.stringValue = "…"
-		askGarrick(text) { [weak self] reply, ranAway in
+	// An answer, a question back or a refusal stays in the window to be read or
+	// answered; when an app came forward with what was asked for, the window hides.
+	// Either way the exchange is kept. One request at a time: Return while one runs does nothing.
+	@objc func askSubmit(_ sender: Any? = nil) {
+		let text = askField.string.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty, askRunning == nil else { return }
+		askField.string = ""
+		askTurns.append(AskTurn(request: text))
+		let at = askTurns.count - 1
+		askRunning = askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in
 			guard let self else { return }
-			if ranAway {
-				self.askReply.stringValue = ""
-				self.askField.placeholderString = askHint
-				self.askPanel?.close()
-				return
-			}
-			self.askReply.stringValue = reply.isEmpty ? "No answer." : reply
+			self.askRunning = nil
+			guard at < self.askTurns.count else { return self.askRender() }
+			var turn = self.askTurns[at]
+			turn.running = false
+			turn.reply = reply.isEmpty ? "No answer." : reply
+			turn.kind = out["kind"] as? String ?? "command"
+			turn.stopped = out["stopped"] as? Bool == true
+			turn.failed = out["failed"] as? Bool == true
+			turn.afresh = out["reset"] as? String == "wall"
+			self.askTurns[at] = turn
+			if turn.kind != "command" || turn.afresh { self.askExpanded = true }
+			// Stopped: nothing was done, so the question goes back in the field, to be sent again or changed.
+			if turn.stopped && self.askField.string.isEmpty { self.askField.string = text }
+			self.askRender()
+			if ranAway { self.askPanel?.orderOut(nil) }
 		}
+		askRender()
+	}
+
+	// Finding an answer: the window grows to show what is being done, with Stop.
+	func askProgress(_ said: String) {
+		guard askRunning != nil else { return }
+		askExpanded = true
+		askRender()
+		askSaid.stringValue = said
+	}
+
+	@objc func askStop(_ sender: Any?) {
+		askRunning?.stop()
+		askSaid.stringValue = "Stopping…"
+		askStopButton.isEnabled = false
+	}
+
+	// New conversation: the exchange goes, and so does the session's context (`reset`). The only
+	// place, with quit, that clears it. Not while a request runs: Stop it first.
+	@objc func askNew(_ sender: Any?) {
+		guard askRunning == nil else { return }
+		askTurns.removeAll()
+		askExpanded = false
+		askField.string = ""
+		askCall(["reset"]) { _ in }
+		askRender()
+		askPanel?.makeFirstResponder(askField)
+	}
+
+	// Each state the window can be in, from the exchange and the request on its way: Ready,
+	// Preparing, Command, Finding an answer, Answer, Clarification, Stopped or failed.
+	func askRender() {
+		guard askPanel != nil else { return }
+		let last = askTurns.last
+		let running = askRunning != nil
+		askLogBox.isHidden = !askExpanded
+		if askExpanded {
+			askLog.textStorage?.setAttributedString(askTranscript())
+			askLog.scrollToEndOfDocument(nil)
+		}
+		let preparing = askPreparing && !running
+		askWorking.isHidden = !running && !preparing
+		askStopButton.isHidden = !running
+		askStopButton.isEnabled = askRunning?.stopped != true
+		if running {
+			if askRunning?.stopped == true {
+				askSaid.stringValue = "Stopping…"
+			} else if askSaid.stringValue.isEmpty || askSaid.stringValue == "Preparing the assistant…" {
+				askSaid.stringValue = askPreparing ? "Waiting for the assistant to start…" : "Working…"
+			}
+			askSpinner.startAnimation(nil)
+		} else if preparing {
+			askSaid.stringValue = "Preparing the assistant…"
+			askSpinner.startAnimation(nil)
+		} else {
+			askSaid.stringValue = ""
+			askSpinner.stopAnimation(nil)
+		}
+		// Compact: the last request stands in the empty field, and its reply under it.
+		let reply = !askExpanded && !running ? last?.reply ?? "" : ""
+		askReply.stringValue = reply
+		askReply.isHidden = reply.isEmpty
+		askReply.textColor = last?.failed == true || last?.stopped == true ? .systemOrange : .secondaryLabelColor
+		askField.placeholder = askExpanded ? askHint : last?.request ?? askHint
+		askFoot.isHidden = askTurns.isEmpty
+		askNewButton.isEnabled = !running
+		askFit()
+	}
+
+	// The exchange as the expanded window shows it: each request, then what came back; a
+	// stop or a failure said as such; a wall reset as a divider above the turn it came with.
+	func askTranscript() -> NSAttributedString {
+		let out = NSMutableAttributedString()
+		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
+		for (i, turn) in askTurns.enumerated() {
+			if turn.afresh && i > 0 {
+				let centred = NSMutableParagraphStyle()
+				centred.alignment = .center
+				aside[.paragraphStyle] = centred
+				out.append(NSAttributedString(string: askAfresh + "\n\n", attributes: aside))
+				aside[.paragraphStyle] = nil
+			}
+			out.append(NSAttributedString(string: turn.request + "\n", attributes: asked))
+			if turn.running {
+				out.append(NSAttributedString(string: "…\n\n", attributes: aside))
+				continue
+			}
+			var reply = said
+			if turn.stopped || turn.failed { reply[.foregroundColor] = NSColor.systemOrange }
+			out.append(NSAttributedString(string: turn.reply + "\n\n", attributes: reply))
+		}
+		return out
+	}
+
+	// The field grows with what is typed, up to five lines; the window keeps its top edge where it is.
+	func askFit() {
+		guard let p = askPanel, let content = p.contentView, let lm = askField.layoutManager, let tc = askField.textContainer else { return }
+		lm.ensureLayout(for: tc)
+		let line = lm.defaultLineHeight(for: askField.font ?? .systemFont(ofSize: 20))
+		let used = max(lm.usedRect(for: tc).height, line)
+		askInputHeight.constant = ceil(min(used, line * 5) + askField.textContainerInset.height * 2)
+		content.layoutSubtreeIfNeeded()
+		let size = content.fittingSize
+		guard size.height > 0, size != content.frame.size else { return }
+		let top = p.frame.maxY
+		p.setContentSize(size)
+		p.setFrameTopLeftPoint(NSPoint(x: p.frame.minX, y: top))
 	}
 
 	// File › Ask Garrick… is there only with the preview on.
@@ -2074,7 +2374,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The Ask hotkey opens the Ask box. The hotkey opens the panel with the cursor in its
 	// field, or the icon's menu with the cursor in its own: both find and ask.
 	func hotKeyPressed(_ which: UInt32) {
-		if which == 2 { return showAsk() }
+		if which == 2 { return showAsk() }     // the one window, brought forward with the exchange it holds
 		if let panel = edgePanel {
 			if askOn() && !panel.shown { askCall(["warm"]) { _ in } }
 			panel.toggle()

@@ -21,6 +21,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -46,10 +47,11 @@ ask = _load()
 # arguments go to FAKE_ARGS; each process adds a line to FAKE_ARGS.procs, its
 # pid, how it was run and its environment, and each message it is sent to
 # FAKE_ARGS.msgs with its pid. An answer that is null is the error Claude
-# reports when the session's budget is spent.
+# reports when the session's budget is spent; one that is a number takes that
+# many seconds, then answers plainly.
 FAKE_CLAUDE = textwrap.dedent("""\
     #!%s
-    import json, os, sys
+    import json, os, sys, time
     open(os.environ["FAKE_ARGS"], "w").write(json.dumps(sys.argv[1:]))
     with open(os.environ["FAKE_ARGS"] + ".procs", "a") as f:
         f.write(json.dumps({"pid": os.getpid(), "run": sys.argv[0], "argv": sys.argv[1:], "env": dict(os.environ)}) + "\\n")
@@ -65,6 +67,9 @@ FAKE_CLAUDE = textwrap.dedent("""\
         n += 1
         print(json.dumps({"type": "assistant", "message": {"content": []}}), flush=True)
         answer = answers[seen - 1] if seen <= len(answers) else '{"say": "ok", "do": []}'
+        if isinstance(answer, (int, float)):
+            time.sleep(answer)
+            answer = '{"say": "Late.", "do": []}'
         if answer is None:
             print(json.dumps({"type": "result", "subtype": "error_max_budget_usd", "is_error": True, "num_turns": 1,
                               "total_cost_usd": 0.01 * n}), flush=True)
@@ -633,10 +638,8 @@ class TestWarmSession(StandInCase):
         self.assertEqual([], list(self.jobs.glob("*.sock")))                         # stopped, and gone
 
 
-@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
-class TestBackgroundSession(StandInCase):
-    """#261, slice A: the app keeps the session from launch. It is marked, out
-    of cmux's sight, started again if it dies, and stopped when the app goes."""
+class ServerCase(StandInCase):
+    """The server in a thread, and what the stand-in's processes were sent."""
 
     def setUp(self):
         super().setUp()
@@ -700,6 +703,12 @@ class TestBackgroundSession(StandInCase):
         except ProcessLookupError:
             return True
         return False
+
+
+@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
+class TestBackgroundSession(ServerCase):
+    """#261, slice A: the app keeps the session from launch. It is marked, out
+    of cmux's sight, started again if it dies, and stopped when the app goes."""
 
     def test_the_session_is_marked_and_kept_out_of_cmux(self):
         os.environ.update({"CMUX_SURFACE_ID": "S1", "CMUX_SOCKET_PASSWORD": "pw", "CLAUDECODE": "1"})
@@ -820,6 +829,134 @@ class TestBackgroundSession(StandInCase):
         self.assertEqual(ask.MARKER, notifications.BACKGROUND)
 
 
+@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
+class TestOneConnection(ServerCase):
+    """#261, slice B: a request's reply is JSON lines on its one connection,
+    progress first and one final line with its kind, and Stop is said there too."""
+
+    def connect(self, request):
+        import socket
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.connect(str(ask.sock_path(self.root)))
+        c.sendall((json.dumps(request) + "\n").encode("utf-8"))
+        return c
+
+    def lines(self, c):
+        with c:
+            return [json.loads(line) for line in c.makefile("rb")]
+
+    def reading(self, pause=0.0):
+        """Asker.ask as slice C's answers will run it: progress said as the turn goes."""
+        import time
+        real = ask.Asker.ask
+
+        def ask_(asker, request, today=None):
+            asker.progress("Reading the thread note")
+            asker.progress("Writing the answer")
+            time.sleep(pause)
+            return real(asker, request, today)
+        return mock.patch.object(ask.Asker, "ask", ask_)
+
+    def asked(self, wait=10.0):
+        """Once the stand-in has the request: the turn is under way."""
+        import time
+        msgs = Path(str(self.args) + ".msgs")
+        until = time.time() + wait
+        while not msgs.exists() and time.time() < until:
+            time.sleep(0.05)
+        self.assertTrue(msgs.exists(), "the session was never asked")
+
+    def test_progress_lines_then_one_final_line_with_its_kind(self):
+        self.up()
+        with self.reading():
+            lines = self.lines(self.connect({"op": "ask", "text": "what's open"}))
+        self.assertEqual([{"progress": "Reading the thread note"}, {"progress": "Writing the answer"}], lines[:-1])
+        self.assertEqual(("command", "ok"), (lines[-1]["kind"], lines[-1]["say"]))
+        (alone,) = self.lines(self.connect({"op": "ask", "text": "and now?"}))     # that connection's only
+        self.assertEqual("command", alone["kind"])
+        for op in ("warm", "keep", "status", "reset", "nonsense"):
+            (final,) = self.lines(self.connect({"op": op}))
+            self.assertIn(final["kind"], ask.KINDS, op)                            # every final line says what it is
+
+    def test_the_client_relays_progress_as_it_comes(self):
+        import contextlib
+        import io
+        import time
+        self.up()
+        heard = []
+        with self.reading(pause=0.6):
+            out = ask.call(self.root, "ask", "what's open", start=False, progress=lambda t: heard.append((t, time.time())))
+        done = time.time()
+        self.assertEqual(["Reading the thread note", "Writing the answer"], [t for t, _ in heard])
+        self.assertGreater(done - heard[-1][1], 0.4)                               # as it came, not at the end
+        self.assertEqual("command", out["kind"])
+        buf = io.StringIO()
+        with self.reading(), contextlib.redirect_stdout(buf):
+            code = ask.main(["--workspace", str(self.root), "--json", "ask", "what's", "open"])
+        printed = [json.loads(line) for line in buf.getvalue().splitlines()]
+        self.assertEqual(0, code)
+        self.assertEqual([{"progress": "Reading the thread note"}, {"progress": "Writing the answer"}], printed[:2])
+        self.assertEqual((3, "command"), (len(printed), printed[2]["kind"]))
+
+    def test_stop_on_the_connection_ends_the_session(self):
+        import time
+        self.answers.write_text(json.dumps([30]))                  # the first answer would take half a minute
+        self.up()
+        c = self.connect({"op": "ask", "text": "what's open"})
+        self.asked()
+        t0 = time.time()
+        c.sendall(ask.STOP)
+        (final,) = self.lines(c)
+        self.assertLess(time.time() - t0, 5)
+        self.assertEqual({"kind": "command", "ok": False, "stopped": True, "say": ask.STOPPED},
+                         {k: final[k] for k in ("kind", "ok", "stopped", "say")})
+        (first,) = self.procs()
+        self.assertTrue(self.gone(first["pid"]))                   # ended, never left to finish
+        self.assertFalse(self.op("status")["session"])
+        self.assertEqual("ok", self.op("ask", "what's open")["say"])   # the next request starts a new one
+        second = self.procs(2)[1]
+        self.assertNotEqual(first["pid"], second["pid"])
+        self.assertIn("<workspace>\n", self.first_message(second["pid"]))     # told everything again
+        ledger = [json.loads(line) for line in (self.jobs / "ledger.jsonl").read_text().splitlines()]
+        self.assertEqual(["stopped", "success"], [e["subtype"] for e in ledger])  # the stopped turn is a call all the same
+
+    def test_an_interrupt_is_a_stop_said_on_the_connection(self):
+        """The app's Stop sends SIGINT to ask.py, as Ctrl-C does: it says STOP
+        on its connection and waits for the final line."""
+        import signal
+        import threading
+        import time
+        self.answers.write_text(json.dumps([30]))
+        self.up()
+
+        def interrupt():
+            self.asked()
+            os.kill(os.getpid(), signal.SIGINT)
+        threading.Thread(target=interrupt, daemon=True).start()
+        t0 = time.time()
+        out = ask.call(self.root, "ask", "what's open", start=False)
+        self.assertLess(time.time() - t0, 10)
+        self.assertTrue(out["stopped"])
+        self.assertTrue(self.gone(self.procs()[0]["pid"]))
+        self.assertIs(signal.default_int_handler, signal.getsignal(signal.SIGINT))   # put back as it was
+
+    def test_new_conversation_is_a_reset(self):
+        """The window's New conversation sends `reset`: a new process, told
+        the whole list, and nothing of what was said before."""
+        self.answers.write_text(json.dumps(['{"say": "Parked.", "do": [{"verb": "park", "zone": "Work", '
+                                            '"project": "Acme Review", "thread": "Pricing"}]}']))
+        self.up()
+        self.assertEqual(["Acme Review, Pricing is parked"], self.op("ask", "park Pricing")["done"])
+        reset = self.op("reset")
+        self.assertEqual(("A fresh conversation.", "command"), (reset["say"], reset["kind"]))
+        self.op("ask", "what's open")
+        first, second = self.procs(2)
+        told = self.first_message(second["pid"])
+        self.assertIn("<workspace>\n", told)
+        self.assertNotIn("<last-results>", told)
+        self.assertNotIn("park Pricing", told)
+
+
 class TestTheAppKeepsIt(unittest.TestCase):
     """#261: what Garrick.swift does with the session, read from its source,
     since CI compiles no Swift."""
@@ -860,9 +997,84 @@ class TestTheAppKeepsIt(unittest.TestCase):
         self.assertLess(2 * every, ask.LEASE)
 
     def test_the_app_never_resets_unasked_and_still_warms(self):
-        self.assertNotIn('"reset"', self.swift)
-        self.assertIn('askCall(["warm"])', self.body("showAsk"))
+        self.assertEqual(1, self.swift.count('askCall(["reset"])'))
+        self.assertIn('askCall(["reset"])', self.body("askNew"))      # New conversation, and nothing else
+        self.assertIn("askWarm()", self.body("showAsk"))
+        self.assertIn('askCall(["warm"])', self.body("askWarm"))
         self.assertIn('askCall(["warm"])', self.body("hotKeyPressed"))
+
+
+class TestTheAskWindow(unittest.TestCase):
+    """#261, slice B: one window that expands, read from Garrick.swift's source."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    body = TestTheAppKeepsIt.body
+
+    def between(self, start, end):
+        return self.swift[self.swift.index(start):self.swift.index(end, self.swift.index(start))]
+
+    def test_return_sends_and_shift_return_breaks_the_line(self):
+        typed = self.between("final class AskInput: NSTextView {", "\n}\n")
+        command = typed[typed.index("override func doCommand(by sel: Selector)"):typed.index("override func didChangeText()")]
+        self.assertIn("if sel == #selector(insertNewline(_:)) {", command)
+        self.assertLess(command.index("modifierFlags.contains(.shift)"), command.index("return submit()"))
+        self.assertIn("insertNewlineIgnoringFieldEditor(nil)", command)
+        self.assertIn("askField = AskInput(", self.body("showAsk"))
+        self.assertIn("askField.submit = { [weak self] in self?.askSubmit(nil) }", self.body("showAsk"))
+        self.assertNotIn("askField.action", self.swift)                 # a field's action would send on any Return
+
+    def test_escape_hides_the_window_and_keeps_the_exchange(self):
+        panel = self.between("final class AskPanel: NSPanel {", "\n}\n")
+        self.assertIn("override func cancelOperation(_ sender: Any?) { orderOut(nil) }", panel)
+        typed = self.between("final class AskInput: NSTextView {", "\n}\n")
+        self.assertIn("if sel == #selector(cancelOperation(_:)) || sel == #selector(complete(_:)) { return hide() }", typed)
+        self.assertIn("askField.hide = { [weak self] in self?.askPanel?.orderOut(nil) }", self.body("showAsk"))
+        self.assertNotIn("askPanel?.close()", self.swift)
+
+    def test_only_new_conversation_and_quit_clear_the_exchange(self):
+        import re
+        self.assertEqual(["askTurns.removeAll()"], re.findall(r"askTurns\.remove\w*\([^)]*\)", self.swift))
+        self.assertIn("askTurns.removeAll()", self.body("askNew"))
+        self.assertEqual([], re.findall(r"askTurns\s*=[^=]", self.swift))  # never set anew, only appended to
+        self.assertIn("var askTurns: [AskTurn] = []", self.swift)          # held by the app, so it goes with it on quit
+        self.assertNotIn("askTurns", self.body("askWarm"))
+
+    def test_the_shortcut_brings_the_one_window_forward(self):
+        self.assertEqual(1, self.swift.count("AskPanel(contentRect"))
+        self.assertIn("if askPanel == nil {", self.body("showAsk"))
+        self.assertIn("if which == 2 { return showAsk() }", self.body("hotKeyPressed"))
+
+    def test_a_wall_reset_keeps_the_exchange_under_a_divider(self):
+        submit = self.body("askSubmit")
+        self.assertIn('turn.afresh = out["reset"] as? String == "wall"', submit)
+        self.assertIn("if turn.kind != \"command\" || turn.afresh { self.askExpanded = true }", submit)
+        shown = self.body("askTranscript")
+        self.assertLess(shown.index("if turn.afresh && i > 0 {"), shown.index("askAfresh"))
+        self.assertLess(shown.index("askAfresh"), shown.index("turn.request"))   # above the turn it came with
+        self.assertNotIn("askTurns", self.between("let askAfresh", "\n"))
+
+    def test_lines_are_read_as_they_come_and_stop_interrupts(self):
+        stream = self.between("func askStream(", "\n}\n")
+        self.assertIn("readabilityHandler", stream)
+        self.assertNotIn("readDataToEndOfFile", stream)                # never all of it at the end
+        self.assertIn('if said["kind"] == nil, let text = said["progress"] as? String {', stream)
+        self.assertIn("askStream(args, progress: { _ in }, done: done)", self.swift)   # askCall is one too
+        self.assertIn("process.interrupt()", self.between("final class AskRequest {", "\n}\n"))
+        self.assertIn("askRunning?.stop()", self.body("askStop"))
+        self.assertIn("signal.SIGINT", (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8"))
+        submit = self.body("askSubmit")
+        self.assertIn("guard !text.isEmpty, askRunning == nil else { return }", submit)   # one request at a time
+        self.assertIn("progress: { [weak self] said in self?.askProgress(said) }", submit)
+
+    def test_every_state_is_drawn_in_one_place(self):
+        drawn = self.body("askRender")
+        for said in ('"Preparing the assistant…"', '"Waiting for the assistant to start…"', '"Working…"', '"Stopping…"'):
+            self.assertIn(said, drawn)
+        self.assertIn("askStopButton.isHidden = !running", drawn)
+        self.assertIn("askNewButton.isEnabled = !running", drawn)
 
 
 class TestDesk(AskCase):

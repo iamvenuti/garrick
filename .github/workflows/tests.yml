@@ -32,6 +32,16 @@ jobs:
       - name: Install Claude Code, for the mod's checks
         # The version extras/mods/README.md names as tested.
         run: npm install -g @anthropic-ai/claude-code@2.1.295
+      - name: Type-check the Mac app
+        # Garrick.swift as make-app.sh compiles it: one file, the SDK's own frameworks, no flags.
+        # Once per run, since the Python matrix does not change it; skipped with no Swift compiler.
+        if: matrix.python == 'system'
+        run: |
+          if xcrun --find swiftc >/dev/null 2>&1; then
+            xcrun swiftc -typecheck extras/status/app/Garrick.swift
+          else
+            echo "No Swift compiler on this runner: Garrick.swift is not type-checked."
+          fi
       - name: Run the suite
         env:
           # Comma-separated real names that must never appear. Empty on forks: the test skips.

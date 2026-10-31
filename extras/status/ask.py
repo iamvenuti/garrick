@@ -3,7 +3,7 @@
 switches it on in System/garrick-flags.json.
 
     python3 ask.py --workspace ~/Garrick ask "open Pricing in Claude"
-    python3 ask.py --workspace ~/Garrick ask --json "park Pricing"   the whole answer, for the app
+    python3 ask.py --workspace ~/Garrick ask --json "park Pricing"   each line as it comes, for the app
     python3 ask.py --workspace ~/Garrick warm      start the session, answer nothing
     python3 ask.py --workspace ~/Garrick keep      the app's: start the session if it is not running, hold the lease
     python3 ask.py --workspace ~/Garrick reset     a fresh conversation now
@@ -43,6 +43,26 @@ never a terminal's wrapper, so cmux has no record of it. With
 `--no-session-persistence` it writes no transcript, so no list Garrick reads
 of work sessions shows it. A new process, however it started, is given the
 whole workspace list with its first request.
+
+**One connection, read line by line.** A request's reply is JSON lines on
+its connection: none or more `{"progress": "<text>"}` while it works, then
+exactly one final line, the reply, which always carries `kind`: `command`,
+`clarify` or `answer` (`command` where the reply names none). `call()`
+hands each progress line to whoever asked, and `--json` prints them as they
+come, so the app's window shows what is happening and never waits for the
+end to show anything. Asker.progress is what a turn says progress through;
+the server points it at the connection for that request only.
+
+**Stop is said on the same connection**, as the line `{"stop": true}`. While a Claude
+turn waits on the session, the server listens to the connection too, and on
+STOP ends the session process: `claude -p` documents no way to interrupt a
+turn in stream-json mode, so the conversation goes with it, and the next
+request starts a fresh session, told the whole list. The final line then
+says `"stopped": true`, and nothing the session proposed has run, because
+it had proposed nothing yet. A client that leaves is not a Stop: the turn
+runs on, as before. `call()` sends STOP when it is interrupted (Ctrl-C, or
+the app's Stop, which sends SIGINT). With Codex the one call runs to its
+end, and Stop is heard too late to matter.
 
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
@@ -104,9 +124,11 @@ import json
 import os
 import re
 import select
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -128,6 +150,9 @@ TICK = 15                   # seconds: how often a held lease looks for a dead s
 IDLE_TICK = 60              # seconds: the accept timeout with no lease
 MAX_REQUEST = 2000
 GONE = ("done",)
+STOP = b'{"stop": true}\n'    # said on a request's own connection: stop that request
+KINDS = ("command", "clarify", "answer")    # what a final line's `kind` says it is
+STOPPED = "Stopped. Nothing was done, and the next request starts a new conversation."
 APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
@@ -142,6 +167,10 @@ GAVE_UP = ("The ask server did not answer in %s. The change may still be on its 
 
 class Bad(Exception):
     pass
+
+
+class Stopped(Bad):
+    """The request was stopped on its connection, and the session with it."""
 
 
 def _load(name: str, path: Path):
@@ -393,19 +422,29 @@ class ClaudeSession:
         self.started = 0.0
         self.turns = 0
         self.spent = 0.0            # what the session has cost so far, as Claude reports it
+        self.watch = None           # the connection a turn listens to for STOP, while one is asked on it
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def stop(self) -> None:
+    def stop(self, at_once: bool = False) -> None:
+        """Ends the process: its input closed, so it finishes and goes; or, at
+        once, mid-turn, which is a Stop, ended and not waited on."""
         if self.proc is not None:
             try:
-                self.proc.stdin.close()
-                self.proc.wait(timeout=5)
+                if at_once:
+                    self.proc.terminate()
+                else:
+                    self.proc.stdin.close()
+                self.proc.wait(timeout=2 if at_once else 5)
             except Exception:
                 self.proc.kill()
                 self.proc.wait()
-            self.proc.stdout.close()
+            for pipe in (self.proc.stdin, self.proc.stdout):
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
         self.proc, self.turns, self.spent, self.pending = None, 0, 0.0, b""
 
     def command(self) -> List[str]:
@@ -442,13 +481,24 @@ class ClaudeSession:
 
     def line(self, deadline: float) -> str:
         """The session's next line of output. Read from the pipe itself, so a
-        line already read along with the one before is never waited for."""
+        line already read along with the one before is never waited for.
+        Listens to the request's connection too: STOP there ends the session."""
         fd = self.proc.stdout.fileno()
         while b"\n" not in self.pending:
-            ready, _, _ = select.select([fd], [], [], max(0.0, deadline - time.time()))
+            watch = [self.watch] if self.watch is not None else []
+            ready, _, _ = select.select([fd] + watch, [], [], max(0.0, deadline - time.time()))
             if not ready:
                 self.stop()
                 raise Bad("the session took too long and was stopped; ask again")
+            if watch and watch[0] in ready:
+                said = stop_said(watch[0])
+                if said is None:
+                    self.watch = None           # the client left: the turn runs on, as before
+                elif said:
+                    self.stop(at_once=True)
+                    raise Stopped("stopped")
+            if fd not in ready:
+                continue
             chunk = os.read(fd, 65536)
             if not chunk:
                 self.stop()
@@ -469,14 +519,19 @@ class ClaudeSession:
         start = time.time()
         self.proc.stdin.write((json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n").encode("utf-8"))
         self.proc.stdin.flush()
-        while True:
-            line = self.line(start + TURN_TIMEOUT)
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(event, dict) and event.get("type") == "result":
-                break
+        try:
+            while True:
+                line = self.line(start + TURN_TIMEOUT)
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "result":
+                    break
+        except Stopped:
+            # A call all the same, against the caps: what it cost so far is not reported.
+            a.append_ledger(ledger, a.ledger_entry(start, JOB, self.tier, {"subtype": "stopped"}, time.time() - start, 1))
+            raise
         self.turns += 1
         # The cost Claude reports runs for the whole session; the ledger wants this request's.
         total = cost_of(event)
@@ -555,6 +610,7 @@ class Asker:
         self.told = None            # the `started` of the process last given the whole list
         self.results = ""           # what the last actions did, for the next turn
         self.asked = {}             # each request the last turn was asked about: the action to confirm
+        self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
         if not flag_on(self.ws):
@@ -668,6 +724,37 @@ def log(line: str) -> None:
         pass
 
 
+def stop_said(conn) -> Optional[bool]:
+    """What came in on a request's connection while it ran: None when the
+    client has gone, else whether it said STOP."""
+    try:
+        data = conn.recv(4096)
+    except OSError:
+        data = b""
+    if not data:
+        return None
+    said = False
+    for line in data.splitlines():
+        try:
+            msg = json.loads(line.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        said = said or (isinstance(msg, dict) and msg.get("stop") is True)
+    return said
+
+
+def request_line(conn) -> bytes:
+    """The request, its first line. Read a byte at a time, so a STOP sent
+    straight after it stays on the connection for the turn to hear."""
+    got = bytearray()
+    while len(got) < 64 * 1024:
+        b = conn.recv(1)
+        if not b or b == b"\n":
+            break
+        got += b
+    return bytes(got)
+
+
 def send(conn, out: dict) -> None:
     """The answer, to a client that may have gone: a closed or stuck
     connection costs that answer, never the server."""
@@ -741,14 +828,27 @@ def serve_locked(ws: Path, path: Path) -> None:
             with conn:
                 conn.settimeout(5)
                 try:
-                    msg = json.loads(conn.makefile(encoding="utf-8").readline() or "{}")
-                except (ValueError, socket.timeout):
+                    msg = json.loads(request_line(conn).decode("utf-8", "replace") or "{}")
+                except (ValueError, OSError):
+                    continue
+                if not isinstance(msg, dict):
                     continue
                 conn.settimeout(None)
                 op, t0 = msg.get("op"), time.time()
                 try:
                     if op == "ask":
-                        out = asker.ask(str(msg.get("text", "")))
+                        # This connection only: its progress lines, and its STOP heard mid-turn.
+                        if asker.session is None and flag_on(ws):
+                            asker.session = session_for(ws)
+                        if asker.session is not None:
+                            asker.session.watch = conn
+                        asker.progress = lambda text, c=conn: send(c, {"progress": str(text)})
+                        try:
+                            out = asker.ask(str(msg.get("text", "")))
+                        finally:
+                            asker.progress = lambda text: None
+                            if asker.session is not None:
+                                asker.session.watch = None
                     elif op == "warm":
                         if asker.session is None:
                             asker.session = session_for(ws)
@@ -778,10 +878,16 @@ def serve_locked(ws: Path, path: Path) -> None:
                         break
                     else:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
+                except Stopped:
+                    asker.results, asker.asked = "", {}     # said to a process that is gone
+                    out = {"kind": "command", "say": STOPPED, "done": [], "launch": [], "ok": False, "stopped": True}
                 except Bad as e:
-                    out = {"say": "That did not work: %s." % e, "done": [], "launch": [], "ok": False}
+                    out = {"say": "That did not work: %s." % e, "done": [], "launch": [], "ok": False, "failed": True}
                 except Exception as e:  # a bug must still say so, and the server carry on
-                    out = {"say": "Something went wrong: %s: %s." % (type(e).__name__, e), "done": [], "launch": [], "ok": False}
+                    out = {"say": "Something went wrong: %s: %s." % (type(e).__name__, e), "done": [], "launch": [], "ok": False,
+                           "failed": True}
+                if out.get("kind") not in KINDS:
+                    out["kind"] = "command"
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
                     log("%s  ->  %s %s %d ms %s" % (json.dumps(str(msg.get("text", ""))[:200], ensure_ascii=False),
@@ -806,8 +912,33 @@ def how_long(seconds: float) -> str:
     return "%d minutes" % round(seconds / 60) if seconds >= 120 else "%d s" % round(seconds)
 
 
-def call(ws: Path, op: str, text: str = "", start: bool = True) -> Optional[dict]:
-    """One op to the workspace's server, starting it first if asked and needed."""
+@contextlib.contextmanager
+def stop_on_interrupt(conn):
+    """While a request waits, an interrupt (Ctrl-C, or the app's Stop, which
+    sends SIGINT) says STOP on its connection, once, and the wait goes on for
+    the final line, which says what stopped. Only the main thread can hear one."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    said = []
+
+    def heard(signum, frame):
+        if not said:
+            said.append(True)
+            try:
+                conn.sendall(STOP)
+            except OSError:
+                pass
+    old = signal.signal(signal.SIGINT, heard)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, old)
+
+
+def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None) -> Optional[dict]:
+    """One op to the workspace's server, starting it first if asked and needed:
+    its final line, each progress line before it handed to `progress`."""
     path = sock_path(ws)
     for attempt in range(100):
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -825,25 +956,44 @@ def call(ws: Path, op: str, text: str = "", start: bool = True) -> Optional[dict
             time.sleep(0.1)
     else:
         return {"say": "The ask server did not start.", "ok": False}
-    with c:
-        c.settimeout(ASK_WAIT)
+    reply, heard = None, False
+    with c, (stop_on_interrupt(c) if op == "ask" else contextlib.ExitStack()):
+        until = time.time() + ASK_WAIT         # the whole wait, however many lines come in it
         try:
+            c.settimeout(ASK_WAIT)
             c.sendall((json.dumps({"op": op, "text": text}) + "\n").encode("utf-8"))
-            reply = c.makefile(encoding="utf-8").readline()
+            lines = c.makefile("rb")
+            while reply is None:
+                c.settimeout(max(0.05, until - time.time()))
+                raw = lines.readline()
+                if not raw:
+                    break
+                try:
+                    msg = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if isinstance(msg, dict) and "kind" not in msg and isinstance(msg.get("progress"), str):
+                    heard = True
+                    if progress is not None:
+                        progress(msg["progress"])
+                    continue
+                reply = msg if isinstance(msg, dict) else {}
         except socket.timeout:
             return {"say": GAVE_UP % how_long(ASK_WAIT), "ok": False}
         except OSError:
-            reply = ""
-    if not reply and start and op != "stop":     # reached a server on its way out
+            pass
+    if reply is None and heard:                 # it was working on it: never asked a second time
+        return {"say": "The ask server stopped before it answered.", "ok": False, "failed": True}
+    if reply is None and start and op != "stop":     # reached a server on its way out
         time.sleep(0.3)
-        return call(ws, op, text, start)
-    return json.loads(reply or "{}")
+        return call(ws, op, text, start, progress)
+    return reply or {}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="The status app's ask box: a request in plain words, answered and acted on.")
     ap.add_argument("--workspace", required=True)
-    ap.add_argument("--json", action="store_true", help="print the whole answer as JSON, for the app")
+    ap.add_argument("--json", action="store_true", help="print the answer as JSON lines, each as it comes, for the app")
     ap.add_argument("--list", action="store_true", help="print the workspace list the session is given")
     ap.add_argument("op", nargs="?", choices=("ask", "warm", "keep", "reset", "stop", "status", "serve"))
     ap.add_argument("words", nargs="*")
@@ -869,7 +1019,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             if args.op == "ask":
                 text = " ".join(args.words).strip()
-                out = call(ws, "ask", text) if text else {"say": "Ask what?", "ok": False}
+                said = (lambda line: print(json.dumps({"progress": line}, ensure_ascii=False), flush=True)) if args.json else None
+                out = call(ws, "ask", text, progress=said) if text else {"say": "Ask what?", "ok": False}
             elif args.op in ("warm", "keep", "reset", "status"):
                 out = call(ws, args.op, start=args.op in ("warm", "keep")) or {"say": "Not running."}
             elif args.op == "stop":
@@ -880,6 +1031,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Bad as e:
             out = {"say": "That did not work: %s." % e, "ok": False}
     if args.json or args.op == "status":
+        if out.get("kind") not in KINDS:
+            out["kind"] = "command"                 # the final line always says what it is
         print(json.dumps(out, ensure_ascii=False))
     else:
         print(out.get("say", ""))

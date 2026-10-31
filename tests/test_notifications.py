@@ -294,6 +294,30 @@ class TestHooks(Case):
         n.hook({"hook_event_name": "Notification", "cwd": str(self.base)}, ws=self.ws, env={}, detach=False)
         self.assertEqual([], self.run_.calls)
 
+    def test_the_background_session_sends_nothing(self):
+        """#261: Ask's session, which the app keeps for itself, is nobody's
+        work session: no turn is marked, nothing held is flushed, nothing sent."""
+        self.assertFalse(n.background({}))
+        self.assertTrue(n.background({n.BACKGROUND: "ask"}))
+        self.send("job-failed", "Job failed", "held one", now=NIGHT)
+        held = self.ws / "System" / "generated" / "notifications" / "held.json"
+        self.assertTrue(held.exists())
+        night, morning = time.mktime(NIGHT.timetuple()), time.mktime(MORNING.timetuple())
+        n.hook({"hook_event_name": "UserPromptSubmit", "session_id": "ask-1", "cwd": str(self.ws)},
+               ws=self.ws, env={}, now=night, detach=False)        # an ordinary prompt, in quiet hours: a turn marked
+        turn = n._turn_file(self.ws, "ask-1")
+        began = turn.read_text()
+        marked = {n.BACKGROUND: "ask"}
+        for name, at in (("UserPromptSubmit", morning), ("Notification", morning), ("Stop", morning + 600)):
+            n.hook({"hook_event_name": name, "session_id": "ask-1", "cwd": str(self.ws),
+                    "notification_type": "permission_prompt"}, ws=self.ws, env=marked, now=at, detach=False)
+        n.hook({"hook_event_name": "UserPromptSubmit", "session_id": "ask-2", "cwd": str(self.ws)},
+               ws=self.ws, env=marked, now=morning, detach=False)
+        self.assertEqual([], self.run_.calls)                                   # nothing dispatched
+        self.assertTrue(held.exists())                                          # the held notice stays held
+        self.assertEqual(began, turn.read_text())                               # the turn neither marked again nor used
+        self.assertFalse(n._turn_file(self.ws, "ask-2").exists())               # and none written for it
+
     def test_places(self):
         self.assertEqual(("Work, Acme Review", "Work"), n.place(self.ws, str(self.ws / "Zones" / "Work" / "Acme Review")))
         self.assertEqual(("Work", "Work"), n.place(self.ws, str(self.ws / "Zones" / "Work")))

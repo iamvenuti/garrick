@@ -166,6 +166,11 @@ let troubleSaid = "Something on the Status tab failed"
 // while that commit runs used to invite the retry that added the line twice
 // (#92). A test holds this against ask.py's ASK_WAIT.
 let askWait = 510.0
+// Seconds between the app's `keep`s to ask.py (#261): the session starts with
+// the app and is started again if it dies. ask.py's LEASE outlasts two of
+// them, so a quit the app never heard of (a crash, a force quit) stops the
+// server within LEASE; a test holds the two apart.
+let askKeepEvery = 120.0
 
 // Settings › Opening a thread, from the choices the workspace keeps, as
 // status.py's shared_launchers() reads them (garrick_lib's PREFERENCES_FILE,
@@ -469,6 +474,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var agentsBusy: Bool?                       // the last check: nil when it could not tell
 	var awakeTimer: Timer?
 	var askPanel: AskPanel?
+	var askKeeper: Timer?             // the `keep` every askKeepEvery seconds (preview ask)
+	var askKept = false               // whether this app has a background session kept, for quit to stop it
 	var askField: NSTextField!
 	var askReply: NSTextField!
 
@@ -519,6 +526,44 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		watch()
 		if FileManager.default.fileExists(atPath: page.path) { load() }
 		freshen()
+		// The Ask session starts once the window is up, never before it: askCall() runs ask.py off
+		// the main queue, so the window waits for none of it (#261).
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+			guard let self = self else { return }
+			self.askKeep()
+			self.askKeeper = Timer.scheduledTimer(withTimeInterval: askKeepEvery, repeats: true) { [weak self] _ in self?.askKeep() }
+		}
+	}
+
+	// Ask's background session (#261): kept while the preview is on, started again by ask.py if it
+	// died, and stopped once the preview is switched off. Read at each tick, so the switch needs no restart.
+	func askKeep() {
+		if checking { return }
+		if askOn() {
+			askKept = true
+			askCall(["keep"]) { _ in }
+		} else if askKept {
+			askKept = false
+			askCall(["stop"]) { _ in }
+		}
+	}
+
+	// Quit stops the session this app kept. Run here and waited for, briefly: askCall() would return
+	// before the app is gone. A crash or a force quit never gets here, and ask.py's lease covers those.
+	func applicationWillTerminate(_ note: Notification) {
+		askKeeper?.invalidate()
+		guard askKept && !checking else { return }
+		let p = Process()
+		p.executableURL = URL(fileURLWithPath: python)
+		p.arguments = [asker.path, "--workspace", workspace.path, "--json", "stop"]
+		p.currentDirectoryURL = workspace
+		p.standardOutput = FileHandle.nullDevice
+		p.standardError = FileHandle.nullDevice
+		p.standardInput = FileHandle.nullDevice
+		guard (try? p.run()) != nil else { return }
+		let until = Date().addingTimeInterval(2)
+		while p.isRunning && Date() < until { usleep(50_000) }
+		if p.isRunning { p.terminate() }
 	}
 
 	// With the icon in the menu bar, or the panel at an edge, closing the window leaves the app there.

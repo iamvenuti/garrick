@@ -660,6 +660,51 @@ class TestKeptChoices(CheckCase):
         self.assertClean("preferences")
 
 
+class TestReviewRecord(CheckCase):
+    """#258: the review record sits in the root repository, which no wall hook
+    checks, so it holds keys and fixed words only."""
+
+    HEAD = ("---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed:\nlimit: 15 minutes\n---\n"
+            "# Context review\n\n| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n")
+
+    def record(self, *rows):
+        write(self.root / "System" / "nurture-review.md", self.HEAD + "".join("| %s |\n" % r for r in rows))
+
+    def test_no_record_and_a_record_in_its_form_are_clean(self):
+        self.assertClean("review")
+        self.record("3f2a9c1d0b4e | check.py | answered |  | 2026-03-14",
+                    "9b07e4a2c6d1 | wiki_lint.py, audit | fixed 1a2b3c4 |  | 2026-03-14",
+                    "c4d8e0f1a2b3 | check.py | deferred to 2026-03-21 | another session holds the file | 2026-03-14",
+                    "77aa01bc9e3f | check.py | skipped | not now | 2026-03-14",
+                    "drift.py | drift.py | source failed | source did not run | 2026-03-14")
+        self.assertClean("review")
+
+    def test_a_path_a_value_or_words_of_its_own_warn_without_being_repeated(self):
+        self.record("check:meetings:Wikis/Meetings/wiki/sources/260402-cedar-call.md | check.py | answered: Work, acme "
+                    "| the renewal floor is private | 2026-03-14",
+                    "3f2a9c1d0b4e | the Cedar folder | skipped |  | 14 March")
+        found = self.findings("review")
+        said = " ".join(f.message + f.ear for f in found)
+        for problem in ("row 1 has an Id", "row 1 has a Decision", "row 1 has a Reason", "row 2 has a Source",
+                        "row 2 has a Date"):
+            self.assertIn(problem, said)
+        self.assertEqual(5, len(found), said)
+        for word in ("cedar", "Cedar", "renewal", "acme", "March"):
+            self.assertNotIn(word, said)
+
+    def test_a_tool_name_is_an_id_only_for_a_source_that_did_not_run(self):
+        self.record("drift.py | drift.py | skipped |  | 2026-03-14")
+        self.assertFinds("review", "warning", "row 1 has an Id")
+
+    def test_the_skill_names_the_same_reasons_and_sources(self):
+        skill = (Path(check.__file__).resolve().parent.parent / "skills" / "nurture" / "SKILL.md").read_text()
+        review = " ".join(skill.split("### The review record", 1)[1].split("### The review\n", 1)[0].split())
+        for reason in check.REVIEW_REASONS:
+            self.assertIn('"%s"' % reason, review)
+        for source in check.REVIEW_SOURCES:
+            self.assertIn("`%s`" % source, review)
+
+
 class TestDeliverables(CheckCase):
     def test_pass(self):
         self.assertClean("deliverables")

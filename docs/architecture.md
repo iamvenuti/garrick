@@ -89,7 +89,7 @@ Where two say different things, the local file wins over the Garrick file beside
 | `meetings` | Files a conversation as a Meetings page, and briefs for a meeting | "file this transcript", "log this call", "prep me for X" |
 | `knowledge` | Freezes published material into the Knowledge wiki, and answers from it | "read this", "add this to knowledge", "what does my library say about X" |
 | `todo` | Sweeps actions the records hold into each zone's `Todo.md`, and tidies it | "sweep my actions", "what do I owe people", "what am I waiting on" |
-| `nurture` | Sorts what the checks found by what a fix needs, applies the mechanical fixes on one yes, and proposes which wiki pages fade | "nurture the context", "nurture Work", "fade the meetings", "what would fade", "keep X" |
+| `nurture` | Sorts what the checks found by what a fix needs, applies the mechanical fixes on one yes, and proposes which wiki pages fade | "nurture the context", "nurture Work", "review the context with me", "fade the meetings", "what would fade", "keep X" |
 | `interview` | Asks about your work one question at a time, then proposes parties, walls, projects and threads | "interview me", "help me set up my workspace" |
 | `setup` | Finds out what your Mac has and how you work, and writes it down | "set up Garrick", "check my setup", "add a rule", "set up notifications" |
 | `update` | Brings the workspace up to a newer Garrick, and merges what it leaves | "update Garrick", "merge the update", "split my rules" |

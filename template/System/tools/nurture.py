@@ -21,6 +21,12 @@ A scope is a path from the workspace's top: a zone (`Zones/Work`), a project
 for a party with several projects. Code never chooses which: the skill
 resolves a spoken name to a path, and asks when it could be two.
 
+**Each finding has a key**, `key` in `--json`: the first twelve hex digits
+of a SHA-1 over its source, check, file and message, made before a wall's
+message is blanked. Two findings on one file under one check have two keys;
+the same finding has the same key at every run. The skill's review record
+holds only the key, so it names no file, check or material.
+
 **The four kinds**, by what a fix needs, not by which tool found it:
 
 - *wall*: a file that names, links or quotes a party across a wall. Each is
@@ -117,6 +123,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -147,6 +154,7 @@ REPORTS = ("System", "generated", "nurture")
 WIKIS = ("Meetings", "Knowledge")
 EXIT_FAILED = 1
 EXIT_USAGE = 2
+KEY_LENGTH = 12              # hex digits of an item's key
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +178,16 @@ class Item:
     wall: str = ""                  # wall: "acme and birch"
     held: str = ""                  # why a fix was not applied
     said: str = ""                  # what a fix did, once applied
+    key: str = ""                   # opaque and stable: the review record's Id for this finding
+
+    def __post_init__(self) -> None:
+        # Made when the finding is, before a kind blanks what a wall matched,
+        # so two findings on one file and one check never share a key, and
+        # the same finding has the same key at every run. Only the digest is
+        # kept: the key says nothing of the file, the check or the message.
+        if not self.key:
+            said = "\0".join((self.source, self.check, self.path, self.message))
+            self.key = hashlib.sha1(said.encode("utf-8")).hexdigest()[:KEY_LENGTH]
 
     def line(self) -> str:
         return KINDS[self.kind].say(self) if self.kind in KINDS else "%s: %s" % (self.path, self.message)

@@ -3067,13 +3067,13 @@ class TestReviewContext(StatusCase):
     def test_the_dates_and_the_unfinished_flag_come_from_the_record(self):
         write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
                            "limit: 15 minutes\n---\n# Context review\n\n| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n"
-                           "| check:meetings:Wikis/Meetings/wiki/sources/260402-cedar-call.md | check.py | answered: Work, acme "
-                           "| the renewal floor is private | 2026-03-14 |\n")
+                           "| 3f2a9c1d0b4e | check.py | deferred to 2026-03-21 | waiting on someone | 2026-03-14 |\n"
+                           "| drift.py | drift.py | source failed | source did not run | 2026-03-14 |\n")
         html = self.page()
         b = self.block(html)
         self.assertIn("Last review Sat 07 Mar 2026 · one unfinished, started Sat 14 Mar 2026.", b)
-        for item in ("260402-cedar-call", "answered: Work", "renewal floor", "15 minutes"):    # nothing of its items
-            self.assertNotIn(item, html)
+        for item in ("3f2a9c1d0b4e", "deferred to", "waiting on someone", "source did not run", "15 minutes"):
+            self.assertNotIn(item, html)                                               # nothing of its items
         write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n---\n")
         b = self.block(self.page())
         self.assertIn("Last review Sat 14 Mar 2026.", b)

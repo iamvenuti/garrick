@@ -42,6 +42,7 @@ def _load(name, path):
 agent = _load("agent", JOBS / "agent.py")
 job = _load("garrick_job", JOBS / "job.py")
 whats_open = _load("garrick_whats_open", JOBS / "whats_open.py")
+nightly = _load("garrick_nightly", JOBS / "nightly.py")
 
 # How the status page reads a run from a job's log: a run's last line, or a skip.
 LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)|skipped)", re.M)
@@ -109,7 +110,7 @@ class FakeAssistants(unittest.TestCase):
             q.start()
         for key in ("GARRICK_CAP_CALLS_DAY", "GARRICK_CAP_CALLS_HOUR", "GARRICK_CAP_COST_DAY", "GARRICK_JOB",
                     "GARRICK_CAP_ASK_DAY", "GARRICK_CAP_ASK_HOUR", "GARRICK_CAP_ASK_COST_DAY",
-                    "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
+                    "GARRICK_ITEMS_FILE", "GARRICK_STEPS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
                     "GARRICK_NOTIFY", "GARRICK_NOTIFY_CMD", "GARRICK_QUIET_EXITS", "GARRICK_ALERT_REPEAT",
                     "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT", "GARRICK_WORKSPACE"):
             os.environ.pop(key, None)
@@ -334,14 +335,14 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual([], agent.connectors_available(["mail"], table))
 
     def test_launchd_example_is_a_valid_plist(self):
-        plist = plistlib.loads((JOBS / "launchd" / "garrick.whats-open.plist").read_bytes())
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-whats-open.plist").read_bytes())
         args = plist["ProgramArguments"]
         self.assertTrue(args[1].endswith("System/jobs/job.py"))
         self.assertIn("--agent", args)
         self.assertIn("--", args)
         # What job.py cannot log itself lands beside the jobs' logs, never in the log job.py rotates.
         for key in ("StandardOutPath", "StandardErrorPath"):
-            self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/whats-open.launchd.log", plist[key])
+            self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/gr-whats-open.launchd.log", plist[key])
 
     def test_every_shipped_plist_is_well_formed(self):
         # launchd loads a plist whose comment holds `--`, but a strict XML parser refuses it.
@@ -924,7 +925,7 @@ class JobExtrasTest(FakeAssistants):
         self.assertIn("%s: runs an assistant itself" % bare, r.stdout)
         self.assertIn("missing.sh: could not be read", r.stdout)       # unread is not clean
         self.assertEqual(agent.EXIT_USAGE, self.job("check-scripts").returncode)
-        self.assertEqual(0, self.job("check-scripts", str(JOBS / "launchd" / "garrick.whats-open.plist")).returncode)
+        self.assertEqual(0, self.job("check-scripts", str(JOBS / "launchd" / "garrick.gr-whats-open.plist")).returncode)
 
     def test_status_says_which_jobs_are_running(self):
         self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(3)")
@@ -1234,6 +1235,391 @@ class StopAndLockTest(FakeAssistants):
                      env={"GARRICK_ENV_FILE": str(envfile)})
         self.assertEqual(124, r.returncode)
         self.assertLess(time.time() - started, 20)
+
+
+class GarrickPrefixTest(FakeAssistants):
+    """#275: Garrick's own jobs run as gr-…, and a job of the user's under
+    that prefix still runs, with a line saying whose the prefix is."""
+
+    def job(self, *args):
+        return subprocess.run([sys.executable, str(JOBS / "job.py")] + list(args), capture_output=True, text=True)
+
+    def test_every_shipped_job_runs_under_its_label_and_the_prefix(self):
+        plists = sorted((JOBS / "launchd").glob("*.plist"))
+        self.assertEqual(["garrick.gr-backup.plist", "garrick.gr-nightly.plist", "garrick.gr-reading-sweep.plist",
+                          "garrick.gr-todo-sweep.plist", "garrick.gr-whats-open.plist"], [p.name for p in plists])
+        for path in plists:
+            with self.subTest(path.name):
+                plist = plistlib.loads(path.read_bytes())
+                args = plist["ProgramArguments"]
+                name = args[args.index("/Users/<you>/Garrick/System/jobs/job.py") + 1]
+                self.assertEqual("garrick." + name, plist["Label"])          # the label and the name, one from the other
+                self.assertEqual(path.stem, plist["Label"])
+                self.assertIn(name, agent.GARRICK_JOBS)
+                self.assertIsNone(agent.prefix_note(name))
+                for key in ("StandardOutPath", "StandardErrorPath"):
+                    self.assertTrue(plist[key].endswith("/garrick-jobs/%s.launchd.log" % name))
+                self.assertTrue(plist["EnvironmentVariables"]["GARRICK_ABOUT"].strip())
+        self.assertEqual(set(agent.GARRICK_JOBS), set(agent.RENAMED.values()))
+        self.assertEqual({"gr-nightly"}, set(agent.RETIRED.values()))
+
+    def test_a_job_of_yours_with_the_prefix_runs_and_is_told(self):
+        r = self.job("gr-mine", "--", sys.executable, "-c", "pass")
+        self.assertEqual(0, r.returncode)
+        self.assertIn("gr-mine starts with gr-, which marks Garrick's own jobs", r.stderr)
+        self.assertIn("gr-mine starts with gr-", (self.jobs / "gr-mine.log").read_text())
+        r = self.job("gr-backup", "--", sys.executable, "-c", "pass")
+        self.assertEqual(("", 0), (r.stderr, r.returncode))                  # Garrick's own: nothing said
+        self.assertNotIn("starts with gr-", (self.jobs / "gr-backup.log").read_text())
+
+    def test_a_renamed_plist_records_the_rename_in_the_heartbeat(self):
+        env = dict(os.environ, GARRICK_RENAMED_FROM="backup")
+        run = lambda name: subprocess.run([sys.executable, str(JOBS / "job.py"), name, "--", sys.executable, "-c", "pass"],
+                                          env=env, capture_output=True, text=True)
+        self.assertEqual(0, run("gr-backup").returncode)
+        first = json.loads((self.jobs / "gr-backup.heartbeat.json").read_text())
+        self.assertEqual("backup", first["renamed_from"])
+        self.assertEqual(0, run("gr-backup").returncode)
+        again = json.loads((self.jobs / "gr-backup.heartbeat.json").read_text())
+        self.assertEqual(first["renamed_at"], again["renamed_at"])                    # the first run under the name, kept
+        self.assertEqual(0, run("gr-nightly").returncode)                              # backup is not gr-nightly's old name
+        self.assertNotIn("renamed_from", json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text()))
+
+    def test_status_folds_only_garricks_runs_from_before_the_rename(self):
+        self.jobs.mkdir()
+        old = {"job": "backup", "finished": "2026-10-30 23:30:05", "finished_ts": 1000.0, "exit": 0}
+        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(old))
+        (self.jobs / "backup.log").write_text("===== 2026-10-30 23:30:05  backup  exit 0  (3s) =====\n")
+        new = dict(old, job="gr-backup", finished_ts=2000.0)
+        (self.jobs / "gr-backup.heartbeat.json").write_text(json.dumps(new))
+        (self.jobs / "gr-backup.log").write_text("")
+        # A gr-backup that never recorded a rename: the two stay apart, as a job of yours called backup would.
+        self.assertEqual(["backup", "gr-backup"], [j["job"] for j in job.status(self.jobs)["jobs"]])
+        (self.jobs / "gr-backup.heartbeat.json").write_text(json.dumps(dict(new, renamed_from="backup", renamed_at=1500.0)))
+        jobs = job.status(self.jobs)["jobs"]
+        self.assertEqual(["gr-backup"], [j["job"] for j in jobs])                          # one row, under the new name
+        self.assertEqual(("gr-backup", ["backup"]), (jobs[0]["heartbeat"]["job"], jobs[0]["renamed_from"]))
+        # A run under the old name after the rename is not Garrick's: it keeps its own row, failing as it is.
+        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(dict(old, finished_ts=3000.0, exit=1)))
+        jobs = {j["job"]: j for j in job.status(self.jobs)["jobs"]}
+        self.assertEqual(["backup", "gr-backup"], sorted(jobs))
+        self.assertEqual((1, "gr-backup"), (jobs["backup"]["heartbeat"]["exit"], jobs["gr-backup"]["heartbeat"]["job"]))
+
+
+class NightlyTest(FakeAssistants):
+    """#276: one nightly job, four steps, each run whatever the one before
+    did; the exit is the worst, and the heartbeat says which step failed."""
+
+    def setUp(self):
+        super().setUp()
+        self.ws = self.tmp / "ws"
+        (self.ws / "System" / "jobs").mkdir(parents=True)
+        self.status_dir = self.tmp / "status"
+        self.status_dir.mkdir()
+        self.record = self.tmp / "ran.txt"
+        self.nurture = self.fake(self.tmp / "nurture_sweep.py", "nurture")
+        self.fake(self.status_dir / "effort.py", "effort")
+        self.fake(self.status_dir / "status.py", "status")
+        self.steps_file = self.tmp / "steps.json"
+        for patch in (mock.patch.object(nightly, "NURTURE", self.nurture),
+                      mock.patch.object(nightly, "STATUS", self.status_dir),
+                      mock.patch.dict(os.environ, {"GARRICK_STEPS_FILE": str(self.steps_file)})):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fake(self, path, step, code=0):
+        """A step that records it ran, with its arguments, and exits `code`."""
+        path.write_text("import sys\nopen(%r, 'a').write(%r + ' ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+                        "print('%s did its part')\nsys.exit(%d)\n" % (str(self.record), step, step, code))
+        return path
+
+    def local(self, code=0, executable=True):
+        path = self.ws / "System" / "jobs" / "nightly.local"
+        path.write_text("#!/bin/sh\necho 'nightly.local' \"$@\" >> %s\necho 'my check found 2'\nexit %d\n"
+                        % (self.record, code))
+        path.chmod(0o755 if executable else 0o644)
+
+    def ran(self):
+        return [line.split()[0] for line in self.record.read_text().splitlines()] if self.record.exists() else []
+
+    def steps(self):
+        return {s["step"]: s for s in json.loads(self.steps_file.read_text())}
+
+    def run_nightly(self, *extra):
+        return nightly.main(["--workspace", str(self.ws), "--digest", "--scope", "Zones/Work",
+                             "--also", "/old/ws", "--moved", "Zones/Work/A=Zones/Work/B"] + list(extra))
+
+    def test_the_four_steps_run_in_order_with_their_flags(self):
+        self.local()
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "effort", "nightly.local", "status"], self.ran())
+        lines = self.record.read_text().splitlines()
+        self.assertEqual("nurture --workspace %s --scope Zones/Work --digest" % self.ws.resolve(), lines[0])
+        self.assertEqual("effort --workspace %s --record --also /old/ws --moved Zones/Work/A=Zones/Work/B"
+                         % self.ws.resolve(), lines[1])
+        self.assertEqual("status --workspace %s --same-flags" % self.ws.resolve(), lines[3])
+        steps = self.steps()
+        self.assertEqual(["my check found 2"], steps["nightly.local"]["tail"])
+        self.assertEqual({0}, {s["exit"] for s in steps.values()})
+
+    def test_each_step_failing_alone_leaves_the_others_to_run(self):
+        for failing, code in (("nurture", 1), ("effort", 2), ("nightly.local", 3), ("status", 4)):
+            with self.subTest(failing):
+                self.record.unlink(missing_ok=True)
+                self.fake(self.nurture, "nurture", code if failing == "nurture" else 0)
+                self.fake(self.status_dir / "effort.py", "effort", code if failing == "effort" else 0)
+                self.fake(self.status_dir / "status.py", "status", code if failing == "status" else 0)
+                self.local(code if failing == "nightly.local" else 0)
+                self.assertEqual(1, self.run_nightly())                                  # its own code is in the steps
+                self.assertEqual(["nurture", "effort", "nightly.local", "status"], self.ran())
+                self.assertEqual({failing: code}, {k: s["exit"] for k, s in self.steps().items() if s["exit"]})
+
+    def test_any_failed_step_exits_1_whatever_its_code(self):
+        """75 is a skip to job.py and 8 a spending cap: a step's own code never
+        speaks for the job."""
+        for code in (75, 8, 6, 143):
+            with self.subTest(code):
+                self.fake(self.nurture, "nurture", 1)
+                self.local(code)
+                self.assertEqual(1, self.run_nightly())
+                self.assertEqual({"nurture": 1, "nightly.local": code},
+                                 {k: s["exit"] for k, s in self.steps().items() if s["exit"]})
+
+    def test_without_nightly_local_the_step_is_skipped_and_no_fault(self):
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "effort", "status"], self.ran())
+        self.assertEqual({"step": "nightly.local", "exit": 0, "skipped": "none"}, self.steps()["nightly.local"])
+        self.local(executable=False)                                    # there, but not executable: skipped, said why
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual("not executable (chmod +x %s)" % (self.ws.resolve() / "System" / "jobs" / "nightly.local"),
+                         self.steps()["nightly.local"]["skipped"])
+
+    def test_a_step_that_hangs_is_stopped_with_all_it_started_and_the_rest_run(self):
+        """The step's whole group goes at its limit: a child it started, as
+        nurture starts git, does not go on outside the job's lock."""
+        late = self.tmp / "grandchild-wrote"
+        self.nurture.write_text(
+            "import subprocess, sys, time\n"
+            "late = %r\n"
+            "subprocess.Popen([sys.executable, '-c', 'import sys, time; time.sleep(3); open(sys.argv[1], \"w\").write(\"x\")', late])\n"
+            "print('nurture started its child', flush=True)\n"
+            "print('a warning on stderr', file=sys.stderr, flush=True)\n"
+            "time.sleep(30)\n" % str(late))
+        with mock.patch.dict(nightly.LIMITS, {"nurture": 1}), mock.patch.object(nightly, "GRACE", 1):
+            self.assertEqual(1, self.run_nightly())
+        self.assertEqual(["effort", "status"], self.ran())
+        step = self.steps()["nurture"]
+        self.assertEqual(nightly.EXIT_TIMEOUT, step["exit"])
+        self.assertEqual(["nurture started its child", "a warning on stderr", "stopped after 1s, with everything it started"],
+                         step["tail"])                                       # stderr kept on a timeout
+        time.sleep(4)
+        self.assertFalse(late.exists())                                      # the child was stopped with it
+
+    def start_stubborn_nightly(self):
+        """nightly.py started as job.py starts a command, its first step one
+        that ignores SIGTERM; (the process, the step's pid) once it runs."""
+        pidfile = self.tmp / "step.pid"
+        self.nurture.write_text("import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                                "open(%r, 'w').write(str(os.getpid()))\ntime.sleep(60)\n" % str(pidfile))
+        runner = self.tmp / "run_nightly.py"
+        runner.write_text("import sys\nfrom pathlib import Path\nsys.path.insert(0, %r)\nimport nightly\n"
+                          "nightly.NURTURE = Path(%r)\nnightly.STATUS = Path(%r)\n"
+                          "sys.exit(nightly.main(['--workspace', %r]))\n"
+                          % (str(JOBS), str(self.nurture), str(self.status_dir), str(self.ws)))
+        proc = subprocess.Popen([sys.executable, str(runner)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text():
+                break
+            time.sleep(0.1)
+        step = int(pidfile.read_text())
+        self.addCleanup(self.kill_quietly, step)
+        group, started = agent.groups_file(proc.pid).read_text().split()             # on record for job.py,
+        self.assertEqual((step, True), (int(group), abs(float(started) - time.time()) < 30))   # with when it started
+        return proc, step
+
+    @staticmethod
+    def kill_quietly(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    def gone(self, pid, wait=5.0):
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_job_pys_stop_leaves_no_step_behind(self):
+        """launchctl bootout: job.py's stop_group sends SIGTERM, then SIGKILL
+        STOP_GRACE later. nightly.py's own grace is shorter, so it stops the
+        step that ignores SIGTERM before its own end."""
+        self.assertLess(nightly.GRACE * 2, job.STOP_GRACE)
+        proc, step = self.start_stubborn_nightly()
+        job.stop_group(proc, job.STOP_GRACE)
+        self.assertEqual(128 + signal.SIGTERM, proc.wait(timeout=10))           # nightly.py went its own way
+        self.assertTrue(self.gone(step))
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def test_a_nightly_killed_outright_still_leaves_no_step_behind(self):
+        proc, step = self.start_stubborn_nightly()
+        os.kill(proc.pid, signal.SIGKILL)                                       # no chance to stop its step
+        proc.wait(timeout=10)
+        job.stop_group(proc, job.STOP_GRACE)                                    # the recorded group goes too
+        self.assertTrue(self.gone(step))
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def sleeper(self):
+        """A process in a group of its own, as a step is, that lives a minute."""
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc
+
+    def stop_with_record(self, line):
+        """job.py's stop_group() on a short command whose record says `line`;
+        run in a session of its own, so a kill of its own group ends only it.
+        Its last line is "alive" when it lived through the stop."""
+        script = ("import os, subprocess, sys, time\nsys.path.insert(0, %r)\nimport agent, job\n"
+                  "proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+                  "line = %r.replace('OWN', str(os.getpgrp()))\n"
+                  "agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)\n"
+                  "agent.groups_file(proc.pid).write_text(line + '\\n')\n"
+                  "job.stop_group(proc, 1)\nprint('alive' if not agent.groups_file(proc.pid).exists() else 'kept')\n"
+                  % (str(JOBS), line))
+        return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, start_new_session=True,
+                              timeout=60)
+
+    def test_a_record_of_group_0_1_or_job_pys_own_is_never_killed(self):
+        now = time.time()
+        for line in ("0 %f" % now, "1 %f" % now, "OWN %f" % now, "0", "-5 %f" % now, "abc 1"):
+            with self.subTest(line):
+                done = self.stop_with_record(line)
+                self.assertEqual((0, "alive"), (done.returncode, done.stdout.strip()), done.stderr)
+        record = self.tmp / "record"
+        record.write_text("0 %f\n1 %f\n%d %f\n" % (now, now, os.getpgrp(), now))
+        self.assertEqual([], job.recorded_groups(record))
+
+    def test_a_record_whose_number_now_names_another_process_is_not_killed(self):
+        """A stale record, its number since given to another process: that
+        process started after the record's time, so it is left alone."""
+        other = self.sleeper()
+        time.sleep(0.3)
+        proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)
+        agent.groups_file(proc.pid).write_text("%d %f\n" % (other.pid, time.time() - 3 * 86400))
+        job.stop_group(proc, 1)
+        self.assertIsNone(other.poll())                                          # still running
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def test_a_valid_record_still_stops_its_group(self):
+        step = self.sleeper()
+        proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        agent.groups_file(proc.pid).parent.mkdir(parents=True, exist_ok=True)
+        agent.groups_file(proc.pid).write_text("%d %f\n" % (step.pid, time.time()))
+        job.stop_group(proc, 1)
+        self.assertIsNotNone(step.wait(timeout=10))
+
+    def test_an_orphans_record_is_taken_away_unread(self):
+        step = self.sleeper()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        gone.wait()
+        record = agent.groups_file(gone.pid)
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("%d %f\n" % (step.pid, time.time()))
+        job.stop_orphan(gone.pid)
+        self.assertFalse(record.exists())
+        self.assertIsNone(step.poll())                                           # nothing killed on its word
+
+    def test_job_py_clears_a_record_its_command_did_not_write(self):
+        record = self.tmp / "stale.groups"
+        record.write_text("4242 1.0\n")
+        log = io.StringIO()
+        with mock.patch.object(job.agent, "groups_file", lambda pid: record), \
+                mock.patch.object(job, "catch_signals", lambda: None), mock.patch.object(job, "hold_signals", lambda: None):
+            with (self.tmp / "w.log").open("w") as out:
+                code, _ = job.watchdog([sys.executable, "-c", "import time; time.sleep(0.5)"], 30, self.tmp, dict(os.environ), out)
+        self.assertEqual(0, code)
+        self.assertFalse(record.exists())
+
+    def test_a_popen_that_fails_oddly_holds_no_stop_for_good(self):
+        with mock.patch.object(nightly.subprocess, "Popen", side_effect=ValueError("odd")), \
+                self.assertRaises(ValueError):
+            self.run_nightly()
+        self.assertFalse(nightly._starting)
+
+    def test_a_stop_while_a_step_starts_waits_for_it(self):
+        """A SIGTERM between Popen and the step's record is held until the
+        step is on record, then stops it."""
+        started = []
+        real = subprocess.Popen
+
+        def popen(*a, **k):
+            proc = real(*a, **k)
+            started.append(proc)
+            nightly.stopped(signal.SIGTERM, None)                               # the signal lands mid-start
+            return proc
+        with mock.patch.object(nightly.subprocess, "Popen", popen), \
+                self.assertRaises(SystemExit) as stop:
+            self.nurture.write_text("import time\ntime.sleep(60)\n")
+            self.run_nightly()
+        self.assertEqual(128 + signal.SIGTERM, stop.exception.code)
+        self.assertIsNotNone(started[0].poll())                                 # the step was stopped, not left
+        self.assertEqual([], nightly._running)
+        nightly._deferred.clear()
+
+    def test_output_reaches_the_log_as_it_comes(self):
+        self.nurture.write_text("import sys, time\nprint('first', flush=True)\ntime.sleep(1)\nprint('second', flush=True)\n")
+        seen = []
+        with mock.patch("builtins.print", lambda *a, **k: seen.append((time.time(), " ".join(map(str, a))))):
+            self.run_nightly()
+        times = {line.strip(): t for t, line in seen}
+        self.assertGreater(times["second"] - times["first"], 0.5)          # printed as it came, not at the end
+
+    def test_no_status_page_extra_skips_its_two_steps(self):
+        with mock.patch.object(nightly, "STATUS", self.tmp / "none"):
+            self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture"], self.ran())
+        self.assertEqual({"effort", "nightly.local", "status"}, {k for k, s in self.steps().items() if s.get("skipped")})
+
+    def test_the_heartbeat_says_which_step_failed(self):
+        script = self.tmp / "fake_nightly.py"
+        script.write_text("import sys\nsys.path.insert(0, %r)\nimport agent\nagent.report_steps(["
+                          "{'step': 'nurture', 'exit': 0}, {'step': 'effort', 'exit': 0},"
+                          "{'step': 'nightly.local', 'exit': 2, 'tail': ['2 links point nowhere']},"
+                          "{'step': 'status', 'exit': 0}])\nsys.exit(2)\n" % str(JOBS))
+        os.environ.pop("GARRICK_STEPS_FILE")
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "gr-nightly", "--", sys.executable, str(script)],
+                           capture_output=True, text=True)
+        self.assertEqual(2, r.returncode, r.stderr)
+        beat = json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text())
+        self.assertEqual("exited 2 after 0s; nightly.local (exit 2) failed", beat["reason"])
+        self.assertEqual(["2 links point nowhere"], beat["steps"][2]["tail"])
+
+    def test_the_shipped_plist_runs_it_at_05_15_with_no_assistant(self):
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-nightly.plist").read_bytes())
+        args = plist["ProgramArguments"]
+        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
+        self.assertNotIn("--agent", args)
+        self.assertEqual("3600", args[args.index("--timeout") + 1])
+        self.assertGreaterEqual(3600, sum(nightly.LIMITS.values()))
+        self.assertEqual("/Users/<you>/Garrick/System/jobs/nightly.py", args[args.index("--") + 2])
+        self.assertIn("--digest", args)
+        self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "check-scripts", str(JOBS / "nightly.py")],
+                           capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stdout)
+
+    def test_it_calls_no_assistant_so_the_caps_are_untouched(self):
+        self.local()
+        self.run_nightly()
+        self.assertEqual([], self.calls())
+        self.assertEqual([], self.ledger())
 
 
 class WhatsOpenTest(FakeAssistants):

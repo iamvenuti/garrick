@@ -31,12 +31,10 @@ dormant and 9 to the archive. Say "fade the meetings"."), and either line
 alone is worth sending. Nothing fades overnight: a fade waits for a yes on
 its written proposal.
 
-No assistant is called. Run it through job.py, so it has a log, a lock and a
-watchdog:
-
-    python3 job.py nurture --cwd /Users/<you>/Garrick -- \\
-        /usr/bin/python3 /Users/<you>/Garrick/System/jobs/nurture_sweep.py \\
-        --workspace /Users/<you>/Garrick --digest
+No assistant is called. It is the first step of the nightly job,
+nightly.py (`gr-nightly`), which job.py runs, so it has a log, a lock and a
+watchdog. A plist from before 0.49.0 that runs it under job.py as `nurture`
+still works, until it is renamed as update.py says.
 
 Exit codes: 0; 1 when a commit was refused or a source did not run; 64 for
 a workspace without System/tools/nurture.py.

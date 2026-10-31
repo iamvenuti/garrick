@@ -6,7 +6,7 @@ the wall check refuses. A scheduled job; it calls no assistant.
 
 Run it through job.py, twice a day, so it has a log, a lock and a watchdog:
 
-    python3 job.py backup --cwd /Users/<you>/Garrick -- \\
+    python3 job.py gr-backup --cwd /Users/<you>/Garrick -- \\
         /usr/bin/python3 /Users/<you>/Garrick/System/jobs/backup.py --workspace /Users/<you>/Garrick
 
 with GARRICK_QUIET_EXITS="5 6" in its environment, so the two quiet outcomes
@@ -249,7 +249,7 @@ def run(ws: Path, now: Optional[datetime.datetime] = None, folder: Optional[Path
         if held:
             job.notify("message", "Backup held files back",
                        "The wall check refused %d file(s); the rest is backed up: %s" % (len(held), ", ".join(held)),
-                       job="backup")
+                       job=os.environ.get("GARRICK_JOB") or "gr-backup")
         state["held"] = sorted(held)
     if outcome == OFFLINE:
         since = state.setdefault("offline_since", now.isoformat(timespec="seconds"))
@@ -261,7 +261,7 @@ def run(ws: Path, now: Optional[datetime.datetime] = None, folder: Optional[Path
         since = state.pop("offline_since")
         say("pushed again, held since %s" % since)
         job.notify("recovered", "Backup pushed again", "Every push held since %s has gone through." % since,
-                   job="backup")
+                   job=os.environ.get("GARRICK_JOB") or "gr-backup")
     write_state(folder, state)
     agent.report_items(len(repos))            # the repositories looked at: none means a wrong --workspace
     return outcome

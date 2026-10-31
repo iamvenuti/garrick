@@ -15,7 +15,7 @@ It needs no connector, so it runs the same under Claude or Codex. The number
 of live threads goes to job.py's idle alarm. Run it through job.py, so it has
 a log, a lock and a watchdog:
 
-    python3 job.py whats-open --agent --cwd /Users/<you>/Garrick -- \\
+    python3 job.py gr-whats-open --agent --cwd /Users/<you>/Garrick -- \\
         /usr/bin/python3 /Users/<you>/Garrick/System/jobs/whats_open.py \\
         --workspace /Users/<you>/Garrick --zone Work
 

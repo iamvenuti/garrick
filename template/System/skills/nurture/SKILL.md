@@ -419,7 +419,7 @@ only on "keep". A page carrying `superseded:` never wakes, whatever links it.
 
 ## Overnight
 
-The jobs extra's nightly run, `nurture_sweep.py`, applies the mechanical
+The jobs extra's nightly job, `gr-nightly`, applies the mechanical
 kind with nobody watching, and nothing else: attribution, wall and judgment
 findings, and corrections, never change headless. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file

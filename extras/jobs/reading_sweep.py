@@ -17,7 +17,7 @@ by name, through its hooks.
 
 Run it through job.py:
 
-    python3 job.py reading-sweep --agent --cwd /Users/<you>/Garrick -- \\
+    python3 job.py gr-reading-sweep --agent --cwd /Users/<you>/Garrick -- \\
         /usr/bin/python3 /Users/<you>/Garrick/System/jobs/reading_sweep.py \\
         --workspace /Users/<you>/Garrick --zone Work
 

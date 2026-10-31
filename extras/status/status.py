@@ -710,7 +710,7 @@ def todo(ws: Path) -> Dict[str, dict]:
 # drops its flag. Settings lists them, and which are on.
 FLAGS = {
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
-               "time, read from Claude Code's own transcripts. Run effort.py --record nightly to keep days past their clean-up."),
+               "time, read from Claude Code's own transcripts. The nightly job, gr-nightly, records them, so days outlive their clean-up."),
     "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
             "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
     "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
@@ -2921,14 +2921,113 @@ def when(p: dict) -> Tuple[str, Optional[dt.timedelta]]:
     return prefix + ", ".join(words), late
 
 
-GARRICK_LABELS = ("garrick.",)     # the label prefixes of the plists Garrick ships
+# The label prefixes of the plists Garrick ships: `garrick.`, which every one
+# has carried, and `gr-`, the prefix of the jobs' own names since #275.
+GARRICK_LABELS = ("garrick.", "gr-")
+GARRICK_PREFIX = "gr-"
+# Garrick's jobs by the names they ran under before #275 and #276, and the
+# names they run under now: agent.py's RENAMED and RETIRED, kept here too so
+# the page reads the jobs folder without the jobs extra; a test holds them
+# equal. A renamed job's old heartbeat and logs are read under its new name;
+# a retired job's are not, and its row only goes once the nightly is there.
+RENAMED_JOBS = {"backup": "gr-backup", "nurture": "gr-nightly", "reading-sweep": "gr-reading-sweep",
+                "todo-sweep": "gr-todo-sweep", "whats-open": "gr-whats-open"}
+RETIRED_JOBS = {"status": "gr-nightly"}
 
 
-def garrick_job(label: Optional[str]) -> bool:
-    """Whether a launchd label is one of the jobs Garrick ships, rather than
-    one the user added: its label starts with one of GARRICK_LABELS. A job
-    with no plist has no label and is the user's."""
-    return bool(label) and str(label).startswith(GARRICK_LABELS)
+def garrick_job(label: Optional[str], name: Optional[str] = None) -> bool:
+    """Whether a job is one of those Garrick ships, rather than one the user
+    added: its launchd label starts with one of GARRICK_LABELS. A job with no
+    plist has no label, and is Garrick's only when its name has Garrick's
+    prefix, as a renamed job's does before its new plist is loaded."""
+    if label:
+        return str(label).startswith(GARRICK_LABELS)
+    return bool(name) and str(name).startswith(GARRICK_PREFIX)
+
+
+RENAMED_FROM = "GARRICK_RENAMED_FROM"     # set in a renamed plist by update.py's commands: the old name
+
+
+def superseded(folder: Path, sched: Dict[str, dict]) -> Tuple[Dict[str, List[Tuple[str, float]]], set]:
+    """Garrick's jobs that run under a new name now (#275): new name ->
+    [(old name, cutoff)], the old names whose runs from before `cutoff`
+    (epoch seconds) are read under the new one, and the old names no longer
+    shown as a row of their own.
+
+    Only what is Garrick's moves. The old name is folded in only when the
+    new name's plist carries GARRICK_RENAMED_FROM naming it, which update.py's
+    commands write into a plist it found running Garrick's own script under
+    that name, or when a run under the new name recorded it (job.py's
+    `renamed_from`), and only while no plist runs the old name. The cutoff is
+    the first run under the new name (`renamed_at`), or before it the
+    renamed plist's last change: a run under the old name after it is not
+    Garrick's, and the old name keeps a row of its own while it has one. The
+    retired evening build, `status`, is hidden once the nightly is there (a
+    plist or a heartbeat), no plist runs `status`, and no `status` run has
+    finished since the nightly's first run; its runs are never the
+    nightly's. Nothing outside the jobs folder decides it, so deleting the
+    plist set aside as .retired changes nothing."""
+    earlier: Dict[str, List[Tuple[str, float]]] = {}
+    hidden = set()
+
+    def beat(name: str) -> dict:
+        try:
+            got = json.loads((folder / (name + ".heartbeat.json")).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return got if isinstance(got, dict) else {}
+
+    def finished(name: str) -> Optional[float]:
+        hb = beat(name)
+        if isinstance(hb.get("finished_ts"), (int, float)):
+            return float(hb["finished_ts"])
+        try:
+            return dt.datetime.strptime(str(hb.get("finished"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S").timestamp()
+        except ValueError:
+            return None
+
+    for old, new in RENAMED_JOBS.items():
+        if old in sched:
+            continue
+        hb = beat(new)
+        plist = sched.get(new) or {}
+        cutoff = None
+        if hb.get("renamed_from") == old and isinstance(hb.get("renamed_at"), (int, float)):
+            cutoff = float(hb["renamed_at"])
+        elif (plist.get("env") or {}).get(RENAMED_FROM) == old and plist.get("plist"):
+            try:
+                cutoff = Path(plist["plist"]).stat().st_mtime
+            except OSError:
+                cutoff = None
+        if cutoff is None:
+            continue
+        earlier.setdefault(new, []).append((old, cutoff))
+        last = finished(old)
+        if last is None or last < cutoff:
+            hidden.add(old)
+    def first_run(name: str) -> Optional[float]:
+        """When the job first ran, as far as its logs and heartbeat go back."""
+        hb = beat(name)
+        seen = [float(hb["renamed_at"])] if isinstance(hb.get("renamed_at"), (int, float)) else []
+        if finished(name) is not None:
+            seen.append(finished(name))
+        for path in (folder / (name + ".log.1"), folder / (name + ".log")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            m = next((LOGLINE.match(line) for line in text.splitlines() if LOGLINE.match(line)), None)
+            if m:
+                seen.append(dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp())
+        return min(seen) if seen else None
+
+    for old, new in RETIRED_JOBS.items():
+        if old in sched or not (new in sched or (folder / (new + ".heartbeat.json")).is_file()):
+            continue
+        first, last = first_run(new), finished(old)
+        if first is None or last is None or last < first:
+            hidden.add(old)
+    return earlier, hidden
 
 
 def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
@@ -2964,20 +3063,24 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
     return out
 
 
-def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime, int, bool]]:
-    """(when, exit, quiet) for each run the job's logs record in the last DAYS days."""
+def history(folder: Path, name: str, now: dt.datetime,
+            earlier: Tuple[Tuple[str, float], ...] = ()) -> List[Tuple[dt.datetime, int, bool]]:
+    """(when, exit, quiet) for each run the job's logs record in the last DAYS
+    days, and those the logs of the names it ran under before record from
+    before each one's cutoff (superseded())."""
     since = now - dt.timedelta(days=DAYS)
     runs = []
-    for path in (folder / (name + ".log.1"), folder / (name + ".log")):
-        if not path.is_file():
-            continue
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            m = LOGLINE.match(line)
-            if not m:
+    for n, cutoff in (*earlier, (name, None)):
+        for path in (folder / (n + ".log.1"), folder / (n + ".log")):
+            if not path.is_file():
                 continue
-            when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-            if when >= since:
-                runs.append((when, int(m.group(3)) if m.group(3) else 75, bool(m.group(5))))
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                m = LOGLINE.match(line)
+                if not m:
+                    continue
+                when = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                if when >= since and (cutoff is None or when.timestamp() < cutoff):
+                    runs.append((when, int(m.group(3)) if m.group(3) else 75, bool(m.group(5))))
     return runs
 
 
@@ -3047,9 +3150,12 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     with the schedule its plist gives. A heartbeat with no plist is a job a
     hook or a session starts: "started by a session", and the user's. Each
     row carries its plist's label, GARRICK_ABOUT and --agent, and whether it
-    is Garrick's (garrick_job)."""
+    is Garrick's (garrick_job). A job of Garrick's that ran under an older
+    name is one row under its new name, with the older runs in its strip
+    (superseded())."""
     sched = launchd_jobs() if sched is None else sched
-    out = []
+    earlier, hidden = superseded(folder, sched) if folder.is_dir() else ({}, set())
+    beats: Dict[str, Tuple[dict, Optional[dt.datetime]]] = {}
     for beat in sorted(folder.glob("*.heartbeat.json")) if folder.is_dir() else []:
         try:
             hb = json.loads(beat.read_text(encoding="utf-8"))
@@ -3063,6 +3169,16 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             when = dt.datetime.strptime(str(hb.get("finished"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
+        beats[name] = (hb, when)
+    for new, olds in earlier.items():             # the newest heartbeat of a renamed job, under its new name
+        got = ([beats[new]] if new in beats else []) + [beats[o] for o, cut in olds if o in beats and o in hidden]
+        if got:
+            beats[new] = max(got, key=lambda b: b[1] or dt.datetime.min)
+    out = []
+    for name, (hb, when) in sorted(beats.items()):
+        if name in hidden:
+            continue
+        olds = tuple(earlier.get(name, ()))
         code = int(hb.get("exit", -1)) if str(hb.get("exit", "")).lstrip("-").isdigit() else -1
         env = sched[name].get("env", {}) if name in sched else {}
         # job.py says itself whether the exit was fine (`ok`, `quiet`); an older
@@ -3086,27 +3202,72 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "good", "ok, called no assistant"   # fine when there was nothing to do
         else:
             state, status = "good", "ok"
+        running = lock_held(folder / (name + ".lock"), now)
+        steps = hb["steps"] if isinstance(hb.get("steps"), list) else None
+        unrun = [x for x in steps or [] if isinstance(x, dict) and str(x.get("skipped") or "").startswith("not executable")]
+        if unrun and state == "good":             # the job is fine, but a step of yours never runs (#276)
+            state, status = "warning", "%s skipped: %s" % (unrun[0].get("step"), unrun[0]["skipped"])
+        live = steps_now(folder, name) if running else None
+        if live is not None:                      # the nightly building this page mid-run says what failed so far
+            steps = live
+            if failed_steps(live):
+                state, status = "critical", "%s failed in the run under way" % failed_steps(live)
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
-                    "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log"),
-                    "quiet": tuple(sorted(quiet)), "running": lock_held(folder / (name + ".lock"), now),
-                    "idle": state == "warning" and status.startswith("idle"), **plist_facts(sched.get(name))})
+                    "schedule": words, "runs": history(folder, name, now, olds), "log": job_log(folder, name, olds),
+                    "quiet": tuple(sorted(quiet)), "running": running,
+                    "idle": state == "warning" and status.startswith("idle"), "steps": steps,
+                    **plist_facts(sched.get(name), name)})
     beaten = {j["name"] for j in out}
     for name, plist in sched.items():
         if name not in beaten:
-            out.append({"name": name, "when": None, "seconds": None, "state": "none", "status": "not run yet",
-                        "schedule": plist["schedule"], "runs": history(folder, name, now), "log": folder / (name + ".log"),
-                        "quiet": quiet_exits(plist.get("env", {})), "running": lock_held(folder / (name + ".lock"), now),
-                        "idle": False, **plist_facts(plist)})
+            olds = tuple(earlier.get(name, ()))
+            running = lock_held(folder / (name + ".lock"), now)
+            live = steps_now(folder, name) if running else None
+            state, status = ("critical", "%s failed in the run under way" % failed_steps(live)) if failed_steps(live) \
+                else ("none", "not run yet")
+            out.append({"name": name, "when": None, "seconds": None, "state": state, "status": status,
+                        "schedule": plist["schedule"], "runs": history(folder, name, now, olds),
+                        "log": job_log(folder, name, olds),
+                        "quiet": quiet_exits(plist.get("env", {})), "running": running,
+                        "idle": False, "steps": live, **plist_facts(plist, name)})
     return sorted(out, key=lambda j: j["name"].casefold())
 
 
-def plist_facts(plist: Optional[dict]) -> dict:
+def steps_now(folder: Path, name: str) -> Optional[List[dict]]:
+    """The steps a run still going has reported so far (job.py's
+    `<name>.steps.json`, which the nightly job writes after each step), or
+    None. The nightly rebuilds this page as its last step, before its
+    heartbeat is written, so this is how a step that failed tonight shows."""
+    try:
+        data = json.loads((folder / (name + ".steps.json")).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else None
+
+
+def failed_steps(steps: Optional[List[dict]]) -> str:
+    """The steps that failed, in words, as job.py says them: `effort (exit 1)`."""
+    return ", ".join("%s (exit %s)" % (x.get("step"), x.get("exit")) for x in steps or []
+                     if isinstance(x.get("exit"), int) and x["exit"] != 0)
+
+
+def job_log(folder: Path, name: str, earlier: Tuple[Tuple[str, float], ...] = ()) -> Path:
+    """The job's log; before a renamed job's first run under its new name,
+    the log it left under the newest of its old ones."""
+    for n in (name, *(o for o, _ in reversed(earlier))):
+        if (folder / (n + ".log")).is_file():
+            return folder / (n + ".log")
+    return folder / (name + ".log")
+
+
+def plist_facts(plist: Optional[dict], name: Optional[str] = None) -> dict:
     """What a job's row takes from its plist: the label, the line it gives in
     GARRICK_ABOUT, whether it calls the assistant (None with no plist), and
     whether it is Garrick's."""
     plist = plist or {}
     label = plist.get("label")
-    return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"), "garrick": garrick_job(label)}
+    return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"),
+            "garrick": garrick_job(label, name)}
 
 
 def log_tail(path: Path, lines: int = 30, width: int = 300) -> List[str]:
@@ -3145,10 +3306,15 @@ def job_panel(j: dict, i: int, ok: bool, log_link: str) -> str:
     said = "".join('<li>%s · %s</li>' % (E(w.strftime("%a %d %b %H:%M")), E(
         "ok" if c == 0 else "skipped" if c == 75 else "exit %d, quiet" % c if q or c in j["quiet"] else "exit %d" % c)) for w, c, q in runs)
     tail = log_tail(j["log"])
-    return ('<div class="jpanel" id="jp-%d" data-ok="%d" hidden>%s<dl>%s</dl><h4>Last runs</h4>%s<h4>Log</h4>%s'
+    # A job of several steps (the nightly, #276) says how each went on its last run.
+    steps = "".join('<li>%s · %s</li>' % (E(str(s.get("step"))), E(
+        "skipped: %s" % s["skipped"] if s.get("skipped") else "ok" if s.get("exit") == 0 else "exit %s" % s.get("exit")))
+        for s in j.get("steps") or [] if isinstance(s, dict))
+    return ('<div class="jpanel" id="jp-%d" data-ok="%d" hidden>%s<dl>%s</dl>%s<h4>Last runs</h4>%s<h4>Log</h4>%s'
             '<div class="gacts"><a class="act" href="%s">Open log</a></div></div>'
             % (i, ok, '<p>%s</p>' % E(j["about"]) if j.get("about") else "",
                "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), E(v)) for k, v in facts),
+               '<h4>Steps, last run</h4><ul>%s</ul>' % steps if steps else "",
                '<ul>%s</ul>' % said if said else '<p class="muted">None in %d days.</p>' % DAYS,
                '<pre>%s</pre>' % E("\n".join(tail)) if tail else '<p class="muted">No log yet.</p>', E(log_link)))
 
@@ -3246,9 +3412,16 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
     jobs = [e for e in calls if ask is None or e.get("job") != ask]
     day = [e for e in jobs if now.timestamp() - e["ts"] < 86400]
     hour = [e for e in jobs if now.timestamp() - e["ts"] < 3600]
+    earlier, _ = superseded(folder, sched)
+    was = {old: (new, cut) for new, olds in earlier.items() for old, cut in olds}   # a renamed job's calls from before its cutoff
+
+    def whose(e: dict) -> str:
+        name = e.get("job", "?")
+        new, cut = was.get(name, (None, 0))
+        return new if new and e["ts"] < cut else name
     by = {}
     for e in entries:
-        j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
+        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
         if e.get("refused"):
             j["refused"] += 1
             continue

@@ -1,70 +1,65 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The todo sweep for the Work zone, every night at 05:45: the actions the
-  week's calls and threads hold, swept into Todo.md, then expired, archived
-  and tidied, and committed in the zone. Copy it to ~/Library/LaunchAgents/ and edit the copy.
+  The reading sweep for the Work zone, every morning at 06:00: what the
+  mail fetcher saved from an address kept for reading, filed into Knowledge
+  or skipped, and committed in the wikis' repository. Copy it to ~/Library/LaunchAgents/ and edit the copy.
   If your workspace is not ~/Garrick, replace each /Users/&lt;you&gt;/Garrick
   with its full path. Then replace every other &lt;you&gt; (written that way
   because this is XML) with your macOS user name; launchd does not expand ~.
   Load it:
 
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.todo-sweep.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-reading-sweep.plist
 
-  Unload with `launchctl bootout gui/$(id -u)/garrick.todo-sweep`.
+  Unload with `launchctl bootout gui/$(id -u)/garrick.gr-reading-sweep`.
   PATH must include the folder your assistant's command is installed in.
   Where its notices go (failed, recovered, idle) is the status page's
   Settings › Notifications; GARRICK_NOTIFY or GARRICK_NOTIFY_CMD added to
   EnvironmentVariables override that for this job alone. See
   docs/extras/scheduled-jobs.md for the other variables.
-  The digest argument below sends each zone's morning summary as the Todo
-  summary notice, to wherever Settings › Notifications sends it; remove it
-  for none. Add a second zone with another pair of lines: the zone argument
-  and the zone's name.
   Whatever job.py cannot write to its own log, such as the error from a path
-  left wrong, goes to todo-sweep.launchd.log in the jobs' log folder.
+  left wrong, goes to gr-reading-sweep.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>garrick.todo-sweep</string>
+  <string>garrick.gr-reading-sweep</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
     <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
-    <string>todo-sweep</string>
+    <string>gr-reading-sweep</string>
     <string>--agent</string>
     <string>--cwd</string>
     <string>/Users/&lt;you&gt;/Garrick</string>
     <string>--</string>
     <string>/usr/bin/python3</string>
-    <string>/Users/&lt;you&gt;/Garrick/System/jobs/todo_sweep.py</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/reading_sweep.py</string>
     <string>--workspace</string>
     <string>/Users/&lt;you&gt;/Garrick</string>
     <string>--zone</string>
     <string>Work</string>
-    <string>--digest</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>GARRICK_ABOUT</key>
-    <string>Sweeps open actions into each zone's Todo.md and tidies it, with the assistant; sends a morning digest.</string>
+    <string>Files mail kept for reading into Knowledge, with the assistant.</string>
     <key>PATH</key>
     <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GARRICK_HARNESS</key>
     <string>claude</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/todo-sweep.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-reading-sweep.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/todo-sweep.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-reading-sweep.launchd.log</string>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>5</integer>
+    <integer>6</integer>
     <key>Minute</key>
-    <integer>45</integer>
+    <integer>0</integer>
   </dict>
 </dict>
 </plist>

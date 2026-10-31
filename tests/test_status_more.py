@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import html as htmllib
+import importlib.util
 import io
 import inspect
 import json
@@ -801,14 +802,20 @@ class TestSameFlags(StatusCase):
             self.assertIsNone(self.main("--same-flags", "--settle", "10")[1])     # a later request builds it
 
 
-    def test_the_evening_schedule_builds_with_the_stored_flags(self):
-        """The 23:30 build is nobody choosing flags: it draws with the stored
-        ones and stores none, so it cannot undo the app's (0.46.1)."""
-        with open(REPO / "extras" / "status" / "garrick.status.plist", "rb") as f:
-            args = plistlib.load(f)["ProgramArguments"]
-        build = args[args.index("--") + 1:]
-        self.assertTrue(build[1].endswith("/System/status/status.py"), build)
+    def test_the_nightly_build_uses_the_stored_flags(self):
+        """The nightly job's build (#276), as the 23:30 build was, is nobody
+        choosing flags: it draws with the stored ones and stores none, so it
+        cannot undo the app's (0.46.1)."""
+        import argparse
+        spec = importlib.util.spec_from_file_location("garrick_nightly_flags", REPO / "extras" / "jobs" / "nightly.py")
+        nightly = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nightly)
+        steps = {step: cmd for step, cmd, _ in nightly.steps(Path("/Users/<you>/Garrick"), argparse.Namespace(
+            scope=[], digest=False, also=["/old"], moved=[]))}
+        build = steps["status"]
+        self.assertTrue(build[1].endswith("/status/status.py"), build)
         self.assertEqual(["--workspace", "/Users/<you>/Garrick", "--same-flags"], build[2:])
+        self.assertIn("--also", steps["effort"])                  # the effort record takes them; the page has them stored
         self.main("--no-graph", "--also", "/old")
         self.main(*build[4:])                                      # what follows the workspace
         self.assertEqual({"args": ["--no-graph", "--also", "/old"]}, json.loads(self.stored.read_text(encoding="utf-8")))

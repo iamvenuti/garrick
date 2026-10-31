@@ -2211,7 +2211,12 @@ class TestJobs(StatusCase):
         self.assertIn('aria-controls="jp-1">sweep</button><small>daily 06:00</small>', card)    # none given: nothing guessed
 
     def test_garricks_jobs_and_the_users_are_two_groups(self):
-        self.assertEqual((True, False, False, False), tuple(status.garrick_job(l) for l in ("garrick.todo-sweep", "com.acme.digest", "", None)))
+        self.assertEqual((True, True, True, False, False, False),
+                         tuple(status.garrick_job(l) for l in ("garrick.gr-todo-sweep", "garrick.todo-sweep", "gr-backup",
+                                                               "com.acme.digest", "", None)))
+        # No plist, no label: Garrick's only by the prefix of its name (#275).
+        self.assertEqual((True, False, False), (status.garrick_job(None, "gr-nightly"), status.garrick_job(None, "nurture"),
+                                                status.garrick_job("com.acme.gr-x", "gr-x")))
         with self.plists(brief={"StartCalendarInterval": {"Hour": 7}},
                          digest={"Label": "com.acme.digest", "StartCalendarInterval": {"Hour": 8}}):
             J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
@@ -2267,13 +2272,169 @@ class TestJobs(StatusCase):
             self.assertEqual("", status.launchd_jobs()["brief"]["about"])
 
     def test_every_shipped_plist_says_what_its_job_does(self):
-        shipped = sorted((REPO / "extras" / "jobs" / "launchd").glob("*.plist")) + [REPO / "extras" / "status" / "garrick.status.plist"]
-        self.assertGreater(len(shipped), 1)
+        shipped = sorted(REPO.joinpath("extras").rglob("*.plist"))
+        self.assertEqual(5, len(shipped))                       # the evening status build is the nightly's last step (#276)
         for plist in shipped:
             with self.subTest(plist.name):
                 p = plistlib.loads(plist.read_bytes())
                 self.assertTrue(status.garrick_job(p["Label"]))
                 self.assertTrue(p["EnvironmentVariables"].get("GARRICK_ABOUT", "").strip())
+    def test_the_page_knows_the_renames_the_jobs_extra_makes(self):
+        agent = importlib.util.module_from_spec(spec := importlib.util.spec_from_file_location(
+            "garrick_agent_names", REPO / "extras" / "jobs" / "agent.py"))
+        spec.loader.exec_module(agent)
+        self.assertEqual((agent.RENAMED, agent.RETIRED, agent.GARRICK_PREFIX),
+                         (status.RENAMED_JOBS, status.RETIRED_JOBS, status.GARRICK_PREFIX))
+
+    def old_runs(self, name, days=(2, 1)):
+        """A job's heartbeat and log under `name`, from runs `days` ago."""
+        runs = [(self.now - dt.timedelta(days=d)).replace(hour=5, minute=15, second=0, microsecond=0) for d in days]
+        (self.jobs / (name + ".log")).write_text("".join("===== %s  %s  exit 0  (40s) =====\n\n" % (stamp(t.timestamp()), name)
+                                                         for t in runs))
+        (self.jobs / (name + ".heartbeat.json")).write_text(json.dumps(
+            {"job": name, "finished": stamp(runs[-1].timestamp()), "exit": 0, "ok": True}))
+        return runs
+
+    def test_a_renamed_job_is_one_row_with_its_history(self):
+        """#275: before the rename the old plist's row is as it was; after it,
+        one row under the new name, with the runs from before."""
+        runs = self.old_runs("nurture")
+        self.old_runs("status", days=(1,))
+        old = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "nurture", "--", "true"],
+               "Label": "garrick.nurture", "StartCalendarInterval": {"Hour": 5, "Minute": 15}}
+        stat = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "status", "--", "true"],
+                "Label": "garrick.status", "StartCalendarInterval": {"Hour": 23, "Minute": 30}}
+        with self.plists(nurture=old, status=stat):
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(["nurture", "status"], sorted(J))                     # nothing renamed yet: as it was
+        self.assertTrue(J["nurture"]["garrick"])
+        new = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-nightly", "--", "true"],
+               "StartCalendarInterval": {"Hour": 5, "Minute": 15}}
+        agents = self.jobs.parent / "LaunchAgents"
+        with self.plists(**{"gr-nightly": new}):                                 # a gr-nightly not renamed from nurture
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+        (agents / "gr-nightly.plist").unlink()
+        self.assertEqual(["gr-nightly", "nurture", "status"], sorted(J))        # nothing of nurture's is read as its
+        self.assertEqual([], J["gr-nightly"]["runs"])
+        (agents / "nurture.plist").unlink()                                      # renamed as update.py says,
+        (agents / "status.plist").unlink()                                       # and the evening build unloaded
+        new["EnvironmentVariables"] = {"GARRICK_RENAMED_FROM": "nurture"}
+        with self.plists(**{"gr-nightly": new}):                                 # renamed, not run yet
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+            card = self.card(self.page())
+        self.assertEqual(["gr-nightly"], list(J))                                # no row for nurture, nor for status
+        row = J["gr-nightly"]
+        self.assertEqual(("good", True, "garrick.gr-nightly"), (row["state"], row["garrick"], row["label"]))
+        self.assertEqual(runs, [r[0] for r in row["runs"]])                      # the strip keeps its days
+        self.assertEqual(self.jobs / "nurture.log", row["log"])
+        self.assertNotIn(">nurture</button>", card)
+        self.assertNotIn(">status</button>", card)
+        t = self.now - dt.timedelta(hours=3)                                     # its first run under the new name
+        (self.jobs / "gr-nightly.log").write_text("===== %s  gr-nightly  exit 1  (50s) =====\n\n" % stamp(t.timestamp()))
+        (self.jobs / "gr-nightly.heartbeat.json").write_text(json.dumps(
+            {"job": "gr-nightly", "finished": stamp(t.timestamp()), "exit": 1, "ok": False,
+             "reason": "exited 1 after 50s; effort (exit 1) failed", "renamed_from": "nurture",
+             "renamed_at": t.timestamp() - 60,
+             "steps": [{"step": "nurture", "exit": 0}, {"step": "effort", "exit": 1},
+                       {"step": "nightly.local", "exit": 0, "skipped": "none"}, {"step": "status", "exit": 0}]}))
+        with self.plists(**{"gr-nightly": new}):
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+            card = self.card(self.page())
+        row = J["gr-nightly"]
+        self.assertEqual(["gr-nightly"], list(J))
+        self.assertEqual(("critical", "exit 1: exited 1 after 50s; effort (exit 1) failed"), (row["state"], row["status"]))
+        self.assertEqual(3, len(row["runs"]))
+        self.assertEqual(self.jobs / "gr-nightly.log", row["log"])
+        self.assertIn("<h4>Steps, last run</h4><ul><li>nurture · ok</li><li>effort · exit 1</li>"
+                      "<li>nightly.local · skipped: none</li><li>status · ok</li></ul>", card)
+
+    def test_the_nightly_building_the_page_shows_a_step_that_failed_tonight(self):
+        """#276: the page is the nightly's last step, built before its
+        heartbeat, so a run under way says what failed from its steps so far."""
+        self.old_runs("gr-nightly", days=(1,))
+        (self.jobs / "gr-nightly.steps.json").write_text(json.dumps(
+            [{"step": "nurture", "exit": 0}, {"step": "effort", "exit": 0}, {"step": "nightly.local", "exit": 2}]))
+        new = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-nightly", "--", "true"],
+               "StartCalendarInterval": {"Hour": 5, "Minute": 15}}
+        with self.plists(**{"gr-nightly": new}):
+            self.assertEqual("good", status.jobs(self.jobs, self.now)[0]["state"])         # not running: last night's
+            with mock.patch.object(status, "lock_held", lambda lock, now: lock.name == "gr-nightly.lock"):
+                row = status.jobs(self.jobs, self.now)[0]
+                html = self.page()
+        self.assertEqual(("critical", "nightly.local (exit 2) failed in the run under way"), (row["state"], row["status"]))
+        self.assertIn("gr-nightly: nightly.local (exit 2) failed in the run under way", self.attention(html))
+
+    def test_a_renamed_jobs_calls_count_under_its_new_name(self):
+        self.ledger({"job": "todo-sweep", "cost_usd": 0.5, "exit": 0}, {"job": "gr-todo-sweep", "cost_usd": 0.25, "exit": 0})
+        sweep = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-todo-sweep", "--agent", "--", "true"],
+                 "StartCalendarInterval": {"Hour": 5, "Minute": 45}}
+        with self.plists(**{"gr-todo-sweep": sweep}):
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual({"gr-todo-sweep": 1, "todo-sweep": 1}, {k: v["calls"] for k, v in L["by"].items()})   # not renamed
+        sweep["EnvironmentVariables"] = {"GARRICK_RENAMED_FROM": "todo-sweep"}
+        with self.plists(**{"gr-todo-sweep": sweep}):                            # renamed now: the calls from before move
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual({"gr-todo-sweep": 2}, {k: v["calls"] for k, v in L["by"].items()})
+        self.ledger({"job": "todo-sweep", "cost_usd": 0.5, "exit": 0, "ts": self.now.timestamp() + 60})
+        with self.plists(**{"gr-todo-sweep": sweep}):                            # a call under the old name since: not Garrick's
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now + dt.timedelta(minutes=5))
+        self.assertEqual({"todo-sweep": 1}, {k: v["calls"] for k, v in L["by"].items()})
+
+    def test_the_evening_builds_row_goes_by_the_nightlys_first_run(self):
+        """#276: the jobs folder decides, not the .retired file, which the
+        user may delete: status is hidden once the nightly is there and no
+        status run has finished since the nightly's first."""
+        self.old_runs("status", days=(2,))
+        nightly = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-nightly", "--", "true"],
+                   "StartCalendarInterval": {"Hour": 5, "Minute": 15}}
+        stat = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "status", "--", "true"],
+                "StartCalendarInterval": {"Hour": 23, "Minute": 30}}
+        with self.plists(status=stat):
+            self.assertEqual(["status"], [j["name"] for j in status.jobs(self.jobs, self.now)])   # no nightly yet
+        (self.jobs.parent / "LaunchAgents" / "status.plist").unlink()                           # unloaded; no .retired kept
+        self.assertEqual(["status"], [j["name"] for j in status.jobs(self.jobs, self.now)])       # still no nightly
+        self.old_runs("gr-nightly", days=(1,))
+        with self.plists(**{"gr-nightly": nightly}):
+            self.assertEqual(["gr-nightly"], [j["name"] for j in status.jobs(self.jobs, self.now)])
+            t = self.now - dt.timedelta(hours=1)                                                 # a status run since: yours
+            (self.jobs / "status.heartbeat.json").write_text(json.dumps({"job": "status", "finished": stamp(t.timestamp()),
+                                                                         "exit": 1, "ok": False}))
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(["gr-nightly", "status"], sorted(J))
+        self.assertEqual("critical", J["status"]["state"])
+
+    def test_a_job_of_yours_under_an_old_name_keeps_its_row(self):
+        """#275: a backup of yours, run by cron or a hook, that fails after
+        Garrick's backup was renamed does not hide behind gr-backup's row."""
+        self.old_runs("backup", days=(3,))
+        backup = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-backup", "--", "true"],
+                  "StartCalendarInterval": {"Hour": 12, "Minute": 30}, "EnvironmentVariables": {"GARRICK_RENAMED_FROM": "backup"}}
+        with self.plists(**{"gr-backup": backup}):
+            renamed = (self.now - dt.timedelta(days=2)).timestamp()               # the plist renamed two days ago
+            os.utime(self.jobs.parent / "LaunchAgents" / "gr-backup.plist", (renamed, renamed))
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+            self.assertEqual(["gr-backup"], list(J))                              # Garrick's, from before: folded
+            t = self.now - dt.timedelta(minutes=10)                               # then a run of yours, failing
+            (self.jobs / "backup.log").write_text((self.jobs / "backup.log").read_text()
+                                                  + "===== %s  backup  exit 1  (2s) =====\n\n" % stamp(t.timestamp()))
+            (self.jobs / "backup.heartbeat.json").write_text(json.dumps({"job": "backup", "finished": stamp(t.timestamp()),
+                                                                         "exit": 1, "ok": False}))
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(["backup", "gr-backup"], sorted(J))
+        self.assertEqual("critical", J["backup"]["state"])
+        self.assertEqual(1, len(J["gr-backup"]["runs"]))                          # only Garrick's run from before
+        self.assertEqual("none", J["gr-backup"]["state"])
+
+    def test_a_nightly_local_not_executable_is_amber(self):
+        self.old_runs("gr-nightly", days=(1,))
+        hb = json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text())
+        hb["steps"] = [{"step": "nurture", "exit": 0},
+                       {"step": "nightly.local", "exit": 0, "skipped": "not executable (chmod +x /w/System/jobs/nightly.local)"}]
+        (self.jobs / "gr-nightly.heartbeat.json").write_text(json.dumps(hb))
+        row = status.jobs(self.jobs, self.now, {})[0]
+        self.assertEqual(("warning", "nightly.local skipped: not executable (chmod +x /w/System/jobs/nightly.local)"),
+                         (row["state"], row["status"]))
+
     def test_ask_has_meters_of_its_own_beside_the_jobs(self):
         """#282: Ask's calls count against Ask's caps, so the jobs' meters
         leave them out and Ask's own sit beside them."""
@@ -2712,7 +2873,13 @@ class TestWhatThisMachineHas(StatusCase):
 
     def test_main_asks_the_machine_and_honours_the_switches(self):
         out = Path(self._tmp.name).resolve() / "page.html"
-        with mock.patch.object(status, "launchers_installed", return_value=("cmux",)), \
+        # main() finds the jobs folder, the transcripts and the launchd plists itself: the test's own, never this Mac's.
+        mine = Path(self._tmp.name).resolve()
+        for d in ("jobs-here", "claude-here", "agents-here"):
+            (mine / d).mkdir()
+        with mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(mine / "jobs-here"), "CLAUDE_CONFIG_DIR": str(mine / "claude-here")}), \
+                mock.patch.object(status, "launch_agents", lambda: mine / "agents-here"), \
+                mock.patch.object(status, "launchers_installed", return_value=("cmux",)), \
                 mock.patch.object(status, "obsidian_vaults", return_value=[(self.root, "Workspace")]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             status.main(["--workspace", str(self.root), "--out", str(out)])

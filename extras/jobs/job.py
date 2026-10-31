@@ -6,9 +6,12 @@
     python3 job.py notify [--event EVENT] <title> <message>  send a line through the notifier
     python3 job.py check-scripts <file>...   find job scripts that call an assistant directly
 
-The name is letters, digits, hyphens and underscores, and not `agent`. The
-scheduler (launchd, cron) runs this, and this runs the job. One place for
-everything a run needs when nobody is watching it:
+The name is letters, digits, hyphens and underscores, and not `agent`. A
+name that starts with `gr-` marks one of Garrick's own jobs
+(agent.GARRICK_JOBS): a job of yours given one still runs, with a line on
+standard error and in its log saying so. The scheduler (launchd, cron) runs
+this, and this runs the job. One place for everything a run needs when
+nobody is watching it:
 
 1. **A log**, `<name>.log` in the jobs folder (~/Library/Logs/garrick-jobs/
    on a Mac, or GARRICK_JOBS_DIR), rotated at 1 MB with one older generation
@@ -86,13 +89,17 @@ of them, GARRICK_JOBS_DIR included. Its values are never written to the log.
 
 The command runs in `--cwd` (or GARRICK_WORKSPACE, or your home folder; never
 `/`, where a scheduler starts) with GARRICK_JOB, GARRICK_ITEMS_FILE,
-GARRICK_JOBS_DIR and GARRICK_HEADLESS=1 set.
+GARRICK_STEPS_FILE, GARRICK_JOBS_DIR and GARRICK_HEADLESS=1 set. A command made
+of several steps, as the nightly job is, writes them to GARRICK_STEPS_FILE
+(agent.report_steps): they go into the heartbeat as `steps`, and the reason a
+failed run gives names the steps that failed.
 
 What the status page reads, all in the jobs folder:
 
     <name>.heartbeat.json  the last run: job, started, finished, finished_ts,
                            exit, seconds, ok, quiet, reason, items, idle_days,
-                           idle, agent, no_call, failing_since
+                           idle, agent, no_call, failing_since, and
+                           steps when the command reported them
     <name>.lock/until      while a run holds it: "<until> <pid> <started>",
                            then " <group> <group started>" once the
                            command runs; times in epoch seconds
@@ -102,10 +109,19 @@ What the status page reads, all in the jobs folder:
                            with `  quiet` before the closing `=====` when
                            the exit was quiet
 
-`job.py status` reads them for you. `job.py check-scripts` reads a job's
-scripts, or the plists that run them, for a line that runs `claude -p` or
-`codex exec` itself instead of going through agent.py, and exits 1 when it
-finds one.
+`job.py status` reads them for you. A job of Garrick's that ran under an
+older name (agent.RENAMED: `nurture` is `gr-nightly` now) is read under its
+new name once a run under the new name has recorded the rename: its plist,
+renamed as update.py says, sets GARRICK_RENAMED_FROM to the old name, and
+the heartbeat keeps it as `renamed_from`, with `renamed_at`, the first run
+under the new name. The old heartbeat counts only if it finished before that
+run; the newer of the two is the job's last run, and the old name is no
+longer listed of its own. A run under the old name since then is not
+Garrick's, and the old name stays listed as it is.
+
+`job.py check-scripts` reads a job's scripts, or the plists that run them,
+for a line that runs `claude -p` or `codex exec` itself instead of going
+through agent.py, and exits 1 when it finds one.
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -251,7 +267,10 @@ def signal_name(signum: int) -> str:
 
 def stop_group(proc: subprocess.Popen, grace: float) -> None:
     """SIGTERM to the command's whole process group, then SIGKILL if it is
-    still there after `grace` seconds."""
+    still there after `grace` seconds. Then SIGKILL to any group the command
+    recorded as its own (agent.groups_file(): the nightly job's step, which
+    runs in a group of its own), so a command killed before it could stop it
+    leaves none behind."""
     for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 5)):
         try:
             os.killpg(proc.pid, sig)
@@ -262,12 +281,49 @@ def stop_group(proc: subprocess.Popen, grace: float) -> None:
             break
         except subprocess.TimeoutExpired:
             continue
+    record = agent.groups_file(proc.pid) if hasattr(agent, "groups_file") else None
+    for group, started in recorded_groups(record):
+        if same_process(group, started) is True:   # still the step recorded: never a number reused since
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except OSError:
+                pass                                # gone already
+    if record is not None:
+        record.unlink(missing_ok=True)
+
+
+def recorded_groups(record: Optional[Path]) -> List[Tuple[int, float]]:
+    """The groups a command recorded (agent.groups_file()), each line
+    `<group> <started>`: a group number above 1 that is not this process's
+    own group, with the time its first process started. A line that is not
+    that is passed over, so nothing is killed on its word."""
+    try:
+        text = record.read_text(encoding="utf-8") if record else ""
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        words = line.split()
+        try:
+            group, started = int(words[0]), float(words[1])
+        except (IndexError, ValueError):
+            continue
+        if group > 1 and group != os.getpgrp() and started == started and started > 0:
+            out.append((group, started))
+    return out
 
 
 def stop_orphan(group: int) -> None:
     """The same for a group this process did not start, left by a run whose
     job.py was killed: it is nobody's child here, so it is watched, not
-    waited on."""
+    waited on. A record of groups that command left (agent.groups_file()) is
+    taken away unread: whatever its numbers name now is not known to be the
+    run's, so nothing is killed on its word."""
+    if hasattr(agent, "groups_file"):
+        try:
+            agent.groups_file(group).unlink(missing_ok=True)
+        except OSError:
+            pass
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
         try:
             os.killpg(group, sig)
@@ -487,6 +543,11 @@ def watchdog(cmd: List[str], timeout: float, cwd: Path, env: dict, log,
         log.write("job: could not start %s: %s\n" % (cmd[0], exc))
         catch_signals()
         return EXIT_START, "start"
+    if hasattr(agent, "groups_file"):              # a record left by an earlier process of this number is not this run's
+        try:
+            agent.groups_file(proc.pid).unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
         began = time.time()
         for lock in locks:
@@ -705,6 +766,37 @@ def read_items(path: Path) -> Optional[int]:
     return int(digits) if digits else None
 
 
+def renamed_fields(name: str, beat: Path, now: float) -> dict:
+    """`renamed_from` and `renamed_at` for the heartbeat of a job of Garrick's
+    whose plist says, in GARRICK_RENAMED_FROM, the name it ran under before
+    (#275): the old name, and when the first run under this one began, kept
+    from run to run. Nothing for any other job."""
+    old = os.environ.get("GARRICK_RENAMED_FROM", "").strip()
+    if not old or getattr(agent, "RENAMED", {}).get(old) != name:
+        return {}
+    before = read_json(beat) or {}
+    at = before.get("renamed_at") if before.get("renamed_from") == old else None
+    return {"renamed_from": old, "renamed_at": at if isinstance(at, (int, float)) else round(now, 3)}
+
+
+def read_steps(path: Path) -> Optional[List[dict]]:
+    """The steps a command reported (agent.report_steps), each with its
+    `step` and `exit`; None when it reported none or wrote something else."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return [s for s in data if isinstance(s, dict) and isinstance(s.get("step"), str)]
+
+
+def failed_steps(steps: Optional[List[dict]]) -> str:
+    """The steps that failed, in words: `effort (exit 1), nightly.local (exit 2)`."""
+    return ", ".join("%s (exit %s)" % (s["step"], s.get("exit")) for s in steps or []
+                     if isinstance(s.get("exit"), int) and s["exit"] != 0)
+
+
 def idle_days(items: Optional[int], lastwork: Path, now: float) -> Optional[int]:
     """Days since the last run that did anything, for jobs that report. The
     first report starts the clock rather than raising the alarm at once."""
@@ -775,22 +867,43 @@ def status(folder: Optional[Path] = None, names: Optional[List[str]] = None) -> 
                     stem = path.name[:-len(suffix)]
                     if not agent.name_problem(stem):
                         found.add(stem)
+    # A job of Garrick's renamed (#275) is read under its new name once a run
+    # under it has recorded the rename (`renamed_from`, from the plist's
+    # GARRICK_RENAMED_FROM): the old heartbeat counts only when it finished
+    # before that first run (`renamed_at`). A run under the old name since
+    # then is not Garrick's, and the old name stays listed on its own.
+    earlier: Dict[str, List[str]] = {}
+    for old, new in getattr(agent, "RENAMED", {}).items():
+        hb = read_json(folder / ("%s.heartbeat.json" % new)) or {}
+        cutoff = hb.get("renamed_at")
+        if old not in found or hb.get("renamed_from") != old or not isinstance(cutoff, (int, float)):
+            continue
+        last = (read_json(folder / ("%s.heartbeat.json" % old)) or {}).get("finished_ts")
+        if isinstance(last, (int, float)) and last >= cutoff:
+            continue
+        earlier.setdefault(new, []).append(old)
+        found.discard(old)
     jobs = []
     for name in sorted(names or found):
         state = read_json(folder / ("%s.alert.json" % name))
         idle_at = read_epoch(folder / ("%s.idle-alert" % name))
         held = lock_state(folder / ("%s.lock" % name))
+        beats = [b for b in (read_json(folder / ("%s.heartbeat.json" % n)) for n in [name] + earlier.get(name, [])) if b]
+        log = next((folder / ("%s.log" % n) for n in [name] + earlier.get(name, []) if (folder / ("%s.log" % n)).exists()),
+                   folder / ("%s.log" % name))
         jobs.append({
             "job": name,
             "running": held is not None,
             "lock": held,
-            "heartbeat": read_json(folder / ("%s.heartbeat.json" % name)),
+            "heartbeat": max(beats, key=lambda b: b.get("finished_ts") if isinstance(b.get("finished_ts"), (int, float))
+                             else 0) if beats else None,
             "failing": {"exit": state.get("exit"),
                         "since": stamp(state["since"]) if isinstance(state.get("since"), (int, float)) else None,
                         "notified": stamp(state["alerted"]) if isinstance(state.get("alerted"), (int, float)) else None}
                        if state else None,
             "idle_notified": stamp(idle_at) if idle_at else None,
-            "log": str(folder / ("%s.log" % name)),
+            "log": str(log),
+            **({"renamed_from": earlier[name]} if name in earlier else {}),
         })
     return {"folder": str(folder), "assistant_lock": lock_state(folder / "agent.lock"), "jobs": jobs}
 
@@ -908,6 +1021,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if problem:
         print("job.py: %s" % problem, file=sys.stderr)
         return agent.EXIT_USAGE
+    prefixed = agent.prefix_note(args.name) if hasattr(agent, "prefix_note") else None
+    if prefixed and not args.detach:
+        print("job.py: %s" % prefixed, file=sys.stderr)
     if args.timeout is not None and not 0 < args.timeout < float("inf"):
         print("job.py: --timeout is %g; give the seconds a run may take, above zero" % args.timeout,
               file=sys.stderr)
@@ -923,6 +1039,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     idle_limit = number("GARRICK_IDLE_DAYS", 7, warnings)
     repeat = number("GARRICK_ALERT_REPEAT", 3600, warnings)
     quiet = quiet_exits(warnings) | {EXIT_LOCKED}   # a command's own "skipped" is never a failure
+    if prefixed:
+        warnings.append("job: %s\n" % prefixed)
 
     jobs = agent.jobs_dir()
     jobs.mkdir(parents=True, exist_ok=True)
@@ -930,10 +1048,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     log_path = jobs / ("%s.log" % name)
     beat = jobs / ("%s.heartbeat.json" % name)
     items_file = jobs / ("%s.items" % name)
+    steps_file = jobs / ("%s.steps.json" % name)
     lastwork = jobs / ("%s.lastwork" % name)
     alert_state = jobs / ("%s.alert.json" % name)
     idle_alert = jobs / ("%s.idle-alert" % name)
     cwd = Path(args.cwd or os.environ.get("GARRICK_WORKSPACE") or Path.home()).expanduser()
+    renamed = renamed_fields(name, beat, time.time())
     # The job's lock covers the wait for the shared one, the sign-in retry and
     # the run; the shared one covers the retry and the run.
     hold_job = 2 * args.timeout + retry + SLACK
@@ -956,13 +1076,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         # skipped must not rotate the log of the run it found still going.
         agent.rotate(log_path)
         items_file.unlink(missing_ok=True)
+        steps_file.unlink(missing_ok=True)
         with log_path.open("a", encoding="utf-8") as log:
             start = time.time()
             log.write("===== %s  %s  start =====\n" % (stamp(start), name))
             log.writelines(env_lines + warnings + notes)
             log.flush()
             env = dict(os.environ, GARRICK_JOB=name, GARRICK_ITEMS_FILE=str(items_file),
-                       GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
+                       GARRICK_STEPS_FILE=str(steps_file), GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
             code, cause = 0, None
             try:
                 if args.agent:
@@ -1000,13 +1121,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if cause == "timeout":
                         log.write("job: stopped by the watchdog after %ds\n" % args.timeout)
             except Stopped as stop:
-                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent))
+                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent), renamed)
             hold_signals()
             now = time.time()
             seconds = now - start
             is_quiet = code in quiet
             ok = code == 0 or is_quiet
             reason = None if code == 0 else describe(code, seconds, args.timeout, cause)
+            steps = read_steps(steps_file)
+            failed = failed_steps(steps)
+            if reason and failed:
+                reason += "; %s failed" % failed
             if is_quiet:
                 log.write("job: exit %d is quiet: logged, no notice\n" % code)
             elif reason:
@@ -1037,7 +1162,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                               "finished_ts": round(now, 3), "exit": code, "seconds": round(seconds),
                               "ok": ok, "quiet": is_quiet, "reason": reason, "items": items,
                               "idle_days": idle, "idle": is_idle, "agent": bool(args.agent), "no_call": no_call,
-                              "failing_since": stamp(failing_since) if failing_since else None})
+                              "failing_since": stamp(failing_since) if failing_since else None,
+                              **({"steps": steps} if steps is not None else {}), **renamed})
             return code
     except Stopped as stop:
         return 128 + stop.signum                      # before the log was open: nothing to write it in
@@ -1062,7 +1188,8 @@ def detach(argv: List[str]) -> int:
     return 0
 
 
-def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool) -> int:
+def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool,
+            renamed: Optional[dict] = None) -> int:
     """This process was asked to stop mid-run, and has stopped its command:
     a line in the log and a heartbeat that say so, and exit 128 plus the
     signal's number. No notice: a stop is something you or the Mac did, and
@@ -1078,7 +1205,7 @@ def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: 
                       "finished_ts": round(now, 3), "exit": code, "seconds": round(now - start),
                       "ok": False, "quiet": False, "reason": reason, "items": None,
                       "idle_days": None, "idle": False, "agent": agent_job, "no_call": False,
-                      "failing_since": stamp(since) if since else None})
+                      "failing_since": stamp(since) if since else None, **(renamed or {})})
     return code
 
 if __name__ == "__main__":

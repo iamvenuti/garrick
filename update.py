@@ -67,6 +67,14 @@ version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
 changes nothing the second time.
 
+Garrick's scheduled jobs run under names that start with `gr-` since 0.49.0,
+and one nightly job does what `nurture` and the evening status build did
+(#275, #276). Your plists in `~/Library/LaunchAgents` are yours, so the update
+never changes them: for each one that runs a job of Garrick's for this
+workspace under its old name, the report names it and gives the commands that
+unload it, rename it and load it again, for you to run. Until you do, it
+keeps working as it is.
+
 Python 3.9+, standard library only. Writes nothing outside the workspace but
 the app it rebuilds and the desk link it points, both named in the report
 first, and never through a symbolic link. `System/tools/release.py update`
@@ -81,6 +89,7 @@ import json
 import os
 import plistlib
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -340,7 +349,8 @@ def plan(root, zones=None):
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
             "recorded": recorded, "listed": listed, "extras": extras,
-            "allowlist": allowlist(root, zones)}
+            "allowlist": allowlist(root, zones),
+            "renames": old_jobs(root) if "jobs" in extras and on_mac() else []}
 
 
 def ever_committed(root, path, history):
@@ -451,6 +461,7 @@ def report(p, applied=None):
     if steps:
         lines += ["", "Then%s:" % (", with --apply" if applied is None else "")]
         lines += ["  - " + what + "." for what in steps]
+    lines += say_renames(p.get("renames"))
     return "\n".join(lines)
 
 
@@ -789,6 +800,7 @@ def say_applied(p, result):
     elif result["stamped"]:
         lines.append("System/garrick-version.json now records %s." % say_commit(p["to"]))
     lines += result.get("then") or []
+    lines += say_renames(p.get("renames"))
     if not lines:
         lines.append("Nothing to do: the workspace is up to date.")
     return "\n".join(lines)
@@ -809,6 +821,247 @@ PAGE = "System/generated/status.html"
 
 def on_mac():
     return sys.platform == "darwin"
+
+
+# --------------------------------------------------------------------------- jobs renamed (#275, #276)
+
+JOBS_SOURCE = REPO / "extras" / "jobs"
+# The script each of Garrick's jobs ran under its old name: a plist that runs
+# job.py under that name and this script is Garrick's, whatever its label.
+OLD_SCRIPTS = {"backup": "backup.py", "nurture": "nurture_sweep.py", "reading-sweep": "reading_sweep.py",
+               "todo-sweep": "todo_sweep.py", "whats-open": "whats_open.py", "status": "status.py"}
+NEW_SCRIPTS = {"gr-nightly": "nightly.py"}      # the job whose script changed with its name
+NEW_FROM = {"nurture"}                           # its old name: its old script in a gr- plist shows the rename
+
+
+def launch_agents():
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def job_names():
+    """(RENAMED, RETIRED) from this Garrick's agent.py: each old name of a job
+    of Garrick's, and the name it runs under now."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("garrick_update_agent", str(JOBS_SOURCE / "agent.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.RENAMED, mod.RETIRED
+
+
+def shipped_about(job):
+    """The GARRICK_ABOUT line this Garrick's plist for `job` gives, or ""."""
+    try:
+        with (JOBS_SOURCE / "launchd" / ("garrick.%s.plist" % job)).open("rb") as f:
+            return str(plistlib.load(f).get("EnvironmentVariables", {}).get("GARRICK_ABOUT", ""))
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def old_jobs(root):
+    """Each plist in ~/Library/LaunchAgents that runs one of Garrick's jobs for
+    this workspace under the name it had before 0.49.0, or part way through
+    its rename, with the commands that finish it: [{plist, label, job, new,
+    retired, state, commands}]. A plist counts only when it runs this
+    workspace's System/jobs/job.py under an old or new name of Garrick's with
+    Garrick's own script for it. Reads the folder and nothing else; never
+    writes there, and runs none of the commands."""
+    folder = launch_agents()
+    if not folder.is_dir():
+        return []
+    renamed, retired = job_names()
+    back = {new: old for old, new in renamed.items()}
+    jobs_dir = root / "System" / "jobs"
+    found = []
+    for plist in sorted(folder.glob("*.plist")):
+        try:
+            with plist.open("rb") as f:
+                data = plistlib.load(f)
+        except Exception:
+            continue
+        args = data.get("ProgramArguments") if isinstance(data, dict) else None
+        if not isinstance(args, list):
+            continue
+        args = [str(a) for a in args]
+        at = next((i for i, a in enumerate(args) if a.endswith("job.py")), None)
+        if at is None or at + 1 >= len(args) or not same_place(Path(args[at]).parent, jobs_dir):
+            continue
+        name = args[at + 1]
+        cmd = args[args.index("--", at) + 1:] if "--" in args[at:] else []
+        old = name if name in renamed or name in retired else back.get(name)
+        if old is None:
+            continue
+        new = renamed.get(old) or retired[old]
+        scripts = {OLD_SCRIPTS[old], NEW_SCRIPTS.get(new, OLD_SCRIPTS[old])} if old in renamed else {OLD_SCRIPTS[old]}
+        if not any(Path(a).name in scripts for a in cmd):
+            continue
+        if name == new and not came_from(plist, data, cmd, old):
+            continue                               # a gr- plist with no old name behind it: as shipped, nothing to do
+        block = rename_commands(plist, data, args, at, old, new, old in retired)
+        if block["commands"] or block["state"] == "manual":
+            found.append(block)
+    return found
+
+
+def jobs_folder(env):
+    """The jobs folder a launchd job writes to: GARRICK_JOBS_DIR in its own
+    plist's environment, or agent.py's default. Never this process's
+    environment, which is the Terminal's the update runs in, not the job's."""
+    set_to = env.get("GARRICK_JOBS_DIR") if isinstance(env, dict) else None
+    if isinstance(set_to, str) and set_to.strip():
+        return Path(set_to).expanduser()
+    return Path.home() / "Library" / "Logs" / "garrick-jobs"
+
+
+def came_from(plist, data, cmd, old):
+    """Whether a plist that already runs a job under its gr- name was once
+    the job under its old name, part way through its rename: an old label or
+    marker in it, the old script or the old log in it, the old plist set
+    aside as .retired beside it, or the old name's heartbeat in the jobs
+    folder. A gr- plist copied as shipped has none of these, and is left
+    alone. An old plist still beside it is not counted: its own block, set
+    aside as a duplicate, marks this one."""
+    env = data.get("EnvironmentVariables") if isinstance(data.get("EnvironmentVariables"), dict) else {}
+    logs = [data.get(k) for k in ("StandardOutPath", "StandardErrorPath")]
+    return (str(data.get("Label")) == "garrick." + old or env.get("GARRICK_RENAMED_FROM") == old
+            or any(Path(a).name == OLD_SCRIPTS[old] for a in cmd) and old in NEW_FROM
+            or any(isinstance(v, str) and Path(v).name == "%s.launchd.log" % old for v in logs)
+            or plist.with_name("garrick.%s.plist.retired" % old).exists()
+            or (jobs_folder(env) / ("%s.heartbeat.json" % old)).is_file())
+
+
+def rename_commands(plist, data, args, at, old, new, retired):
+    """The commands that take one plist to its new name, kept as the user
+    edited it otherwise, each safe to run again: unload it, move the file
+    first, then set on the moved file its label, its whole ProgramArguments,
+    its log paths and its environment (the job's line of description, and
+    GARRICK_RENAMED_FROM, the old name, so the jobs card reads the runs from
+    before as this job's), then load it. For the nightly job, its script and
+    `--timeout 3600` too. Only what is still to do: a plist part way through
+    gets the rest, and one already done gets none. A retired job is unloaded
+    and set aside as `.plist.retired`, which launchd does not load."""
+    label = str(data.get("Label") or plist.stem)
+    out = {"plist": str(plist), "label": label, "job": old, "new": new, "retired": retired, "state": "old",
+           "commands": []}
+    cmds = out["commands"]
+
+    def q(path):                                # a path under the home folder as ~/..., as the docs write it
+        try:
+            return "~/" + shlex.quote(str(Path(path).relative_to(Path.home())))
+        except ValueError:
+            return shlex.quote(str(path))
+
+    target = plist.with_name("garrick.%s.plist" % new)
+    if retired or (target.exists() and not same_place(target, plist)):
+        out["state"] = "retire" if retired else "duplicate"
+        mark = None
+        if not retired:                            # the copy already there learns the old name, its other keys kept
+            try:
+                with target.open("rb") as f:
+                    there = plistlib.load(f).get("EnvironmentVariables")
+                there = dict(there) if isinstance(there, dict) else {}
+                if there.get("GARRICK_RENAMED_FROM") != old:
+                    mark = "plutil -replace EnvironmentVariables -json %s %s" % (
+                        shlex.quote(json.dumps(dict(there, GARRICK_RENAMED_FROM=old), ensure_ascii=False)), q(target))
+            except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+                pass
+            except TypeError:
+                out["state"] = "manual"
+                return out
+        cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(label))
+        cmds.append("mv -n %s %s" % (q(plist), q(str(plist) + ".retired")))
+        if mark:
+            cmds.append(mark)
+        return out
+
+    want = list(args)
+    want[at + 1] = new
+    if new == "gr-nightly":
+        for i, a in enumerate(want):
+            if i > at and Path(a).name == OLD_SCRIPTS[old]:
+                want[i] = str(Path(a).with_name(NEW_SCRIPTS[new]))
+        stop = want.index("--", at) if "--" in want[at:] else len(want)
+        flags = want[at + 2:stop]
+        while "--timeout" in flags:                # four steps need the hour, whatever was set for nurture alone
+            i = flags.index("--timeout")
+            del flags[i:i + 2]
+        want[at + 2:stop] = ["--timeout", "3600"] + flags
+    env = data.get("EnvironmentVariables")
+    env = dict(env) if isinstance(env, dict) else {}
+    want_env = dict(env)
+    about = shipped_about(new)
+    if about:
+        want_env["GARRICK_ABOUT"] = about
+    want_env["GARRICK_RENAMED_FROM"] = old
+    edits = []
+    if label != "garrick." + new:
+        edits.append("plutil -replace Label -string %s %s" % (shlex.quote("garrick." + new), q(target)))
+    if want != args:
+        edits.append("plutil -replace ProgramArguments -json %s %s" % (shlex.quote(json.dumps(want)), q(target)))
+    for key in ("StandardOutPath", "StandardErrorPath"):
+        value = data.get(key)
+        if isinstance(value, str) and Path(value).name == "%s.launchd.log" % old:
+            edits.append("plutil -replace %s -string %s %s" % (
+                key, q(value[:-len("%s.launchd.log" % old)] + "%s.launchd.log" % new), q(target)))
+    if want_env != env:
+        try:
+            edits.append("plutil -replace EnvironmentVariables -json %s %s" % (
+                shlex.quote(json.dumps(want_env, ensure_ascii=False)), q(target)))
+        except TypeError:                          # a <date> or <data> value, which JSON cannot carry
+            out["state"] = "manual"
+            return out
+    moved = same_place(target, plist)
+    if moved and not edits:
+        return out                                 # done
+    out["state"] = "part" if moved or args[at + 1] == new or label == "garrick." + new else "old"
+    for name in dict.fromkeys([label] + (["garrick." + old, "garrick." + new] if out["state"] == "part" else [])):
+        cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(name))
+    if not moved:
+        cmds.append("mv -n %s %s" % (q(plist), q(target)))
+    cmds += edits
+    cmds.append("launchctl bootstrap gui/$(id -u) %s" % q(target))
+    return out
+
+
+def say_renames(renames):
+    """The report's lines for the plists still running Garrick's jobs under
+    their old names, or part way through a rename: one message, then each
+    plist and its commands."""
+    if not renames:
+        return []
+    folder = str(Path(renames[0]["plist"]).parent)
+    n = len(renames)
+    lines = ["", "Garrick's scheduled jobs have new names, which start with gr-, so they read apart from yours "
+             "(#275). %d plist%s in %s still need%s the change. Each keeps working as it is until you make it: this "
+             "update changes nothing in that folder and runs none of these commands. To make it, run a plist's lines "
+             "in Terminal, in order. Each line is safe to run again; launchctl may say a job is not loaded, and mv "
+             "that a file is already moved, which is fine. Leave out the last line of a job you keep unloaded." % (
+                 n, "" if n == 1 else "s", folder, "s" if n == 1 else "")]
+    for r in renames:
+        name = Path(r["plist"]).name
+        if r["state"] == "retire":
+            lines.append("  %s runs %s, which the nightly job gr-nightly now does. Once garrick.gr-nightly is loaded, "
+                         "unload this one and set it aside as %s.retired, which launchd does not load. You may delete "
+                         "that file afterwards:" % (name, r["job"], name))
+        elif r["state"] == "duplicate":
+            lines.append("  %s runs %s, and garrick.%s.plist is already there. Unload the old one and set it aside as "
+                         "%s.retired, which launchd does not load; you may delete that file afterwards. The last line, "
+                         "when there is one, marks garrick.%s.plist with the old name, so the runs from before count "
+                         "as its own:" % (name, r["job"], r["new"], name, r["new"]))
+        elif r["state"] == "manual":
+            lines.append("  %s runs %s, which is now %s, but has a value plutil -json cannot write, a date or data; "
+                         "rename it by hand, as docs/extras/scheduled-jobs.md says." % (name, r["job"], r["new"]))
+        elif r["state"] == "part":
+            lines.append("  %s is part way through its rename from %s to %s. The lines still to run:" % (
+                name, r["job"], r["new"]))
+        else:
+            lines.append("  %s runs %s, which is now %s:" % (name, r["job"], r["new"]))
+        lines += ["    " + c for c in r["commands"]]
+    if any(r["new"] == "gr-nightly" for r in renames):
+        lines.append("  The nightly job now also records effort for the Effort view and rebuilds the status page "
+                     "(#276). A job of your own that did either can go: put the checks it ran in "
+                     "System/jobs/nightly.local, make that file executable, and unload your job. "
+                     "The update does not touch your own jobs.")
+    return lines
 
 
 def app_folders():

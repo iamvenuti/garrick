@@ -196,16 +196,17 @@ URI_RE = re.compile(r"obsidian://[^\s)\]>\"'`]+")
 # called `Brief (1).pdf`, then an optional title. Each pattern below stays
 # linear on any input: no two of its branches can match the same character,
 # and a run that cannot close is bounded.
-MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)")
 # A reference-style link's definition, `[1]: <path>` or `[1]: path`, and an
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
-HREF_RE = re.compile(r"(?i)<a\b[^>]{0,300}?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+HREF_RE = re.compile(r"(?i)<a\b[^<>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
 # character at least as long.
-CODE_SPAN_RE = re.compile(r"(?<![`\\])(`+)(?!`)(.{1,1000}?)(?<!`)\1(?!`)", re.S)  # a path is never longer
+BACKTICKS_RE = re.compile(r"`+")
+MAX_CODE_PATH = 1000  # a code span longer than this is not a path: its body is not read
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 DELIVERABLE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2}) - \S")
 MEETING_NAME_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -236,7 +237,7 @@ class Workspace:
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
     wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
-    vault_links: Dict[Path, "PathIndex"] = field(default_factory=dict)  # each vault's files, indexed on first use
+    vault_files: Dict[Path, Dict[str, List[str]]] = field(default_factory=dict)  # each vault's files by name, on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
     git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
@@ -524,7 +525,8 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             target = unquote(found.strip()).split("#", 1)[0]
             if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
                 continue  # web or obsidian URI, handled above or not ours
-            links.append((m.group(0).strip(), target))
+            written = '<a href="%s">' % found if regex is HREF_RE else m.group(0).strip()
+            links.append((written, target))
     return links
 
 
@@ -536,12 +538,41 @@ def code_texts(text: str) -> List[Tuple[str, str]]:
     para: List[str] = []
 
     def spans() -> None:
-        for m in CODE_SPAN_RE.finditer("\n".join(para)):
-            body = m.group(2).replace("\n", " ")
-            if body.startswith(" ") and body.endswith(" ") and body.strip():
-                body = body[1:-1]
-            out.append((" ".join(m.group(0).split()), body))
+        # Each run of backticks opens a span that the next run of the same
+        # length closes; a run with none after it is plain text. One pass
+        # over the runs, each length's next run found by a pointer: linear
+        # whatever the paragraph holds.
+        block = "\n".join(para)
         para.clear()
+        runs = []
+        for m in BACKTICKS_RE.finditer(block):
+            start, end = m.start(), m.end()
+            if start and block[start - 1] == "\\":
+                start += 1  # an escaped backtick is text; the rest of the run may still open
+            if start < end:
+                runs.append((start, end))
+        by_length: Dict[int, List[int]] = {}
+        for i, (start, end) in enumerate(runs):
+            by_length.setdefault(end - start, []).append(i)
+        pointer = {n: 0 for n in by_length}
+        i = 0
+        while i < len(runs):
+            start, end = runs[i]
+            n = end - start
+            same = by_length[n]
+            while pointer[n] < len(same) and same[pointer[n]] <= i:
+                pointer[n] += 1
+            if pointer[n] == len(same):
+                i += 1
+                continue  # nothing closes it: plain text
+            j = same[pointer[n]]
+            body = block[end:runs[j][0]]
+            if len(body) <= MAX_CODE_PATH:
+                body = body.replace("\n", " ")
+                if body.startswith(" ") and body.endswith(" ") and body.strip():
+                    body = body[1:-1]
+                out.append((" ".join(block[start:runs[j][1]].split()), body))
+            i = j + 1
 
     fence = ""
     for line in text.split("\n"):
@@ -3637,59 +3668,97 @@ def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
     return False
 
 
-def vault_of(ws: Workspace, path: Path) -> Path:
-    """The Obsidian vault a note is read in: the nearest folder at or above
+def vaults_of(ws: Workspace, path: Path) -> List[Path]:
+    """Every Obsidian vault a note can be read in: each folder at or above
     it, up to the workspace's top, that holds a `.obsidian` folder. Garrick
-    makes none; the user opens the workspace, `Wikis/` or a zone as a vault.
-    With none opened yet, the workspace's top, the widest a vault can be."""
+    makes none; the user opens the workspace, `Wikis/` or a zone as a vault,
+    and may open more than one. With none opened yet, the workspace's top,
+    the widest a vault can be."""
+    found = []
     for folder in path.parents:
         if (folder / ".obsidian").is_dir():
-            return folder
+            found.append(folder)
         if folder == ws.root or ws.root not in folder.parents:
             break
-    return ws.root
+    return found or [ws.root]
 
 
-def vault_index(ws: Workspace, vault: Path) -> "PathIndex":
-    """The files of one vault a link may land on: every project's, every
-    file in a zone outside its projects, every wiki's, System's and the
-    top's own. A Garrick checkout or a repository kept inside a project is
-    left out, as for the walls' other indexes: a match left out can only
-    make the first pick one across a wall, never hide one."""
-    if vault not in ws.vault_links:
-        project_index(ws)
-        files = set(ws.project_files or {})
-        skip = set(checkouts(ws)) | {project for project, _ in ws.projects}
-        for zone in ws.zones:
-            files.update(walk_files(zone, skip))
-        for top in (ws.root / "Wikis", ws.root / "System"):
-            if top.is_dir():
-                files.update(walk_files(top, skip))
-        if ws.root.is_dir():
-            files.update(p for p in ws.root.iterdir() if p.is_file())
-        ws.vault_links[vault] = PathIndex(ws, sorted(f for f in files if vault in f.parents))
-    return ws.vault_links[vault]
+def vault_files(ws: Workspace, vault: Path) -> Dict[str, List[str]]:
+    """The files Obsidian indexes in a vault, by lower-cased file name, each
+    as its path in the vault: everything outside hidden folders, nested
+    repositories, Garrick checkouts, `node_modules` and `dist` included, as
+    Obsidian does. In staged mode, a file deleted from disk but still in git
+    counts too."""
+    if vault not in ws.vault_files:
+        by_name: Dict[str, List[str]] = {}
+
+        def add(path: Path) -> None:
+            try:
+                by_name.setdefault(path.name.lower(), []).append(path.relative_to(vault).as_posix())
+            except ValueError:
+                pass
+
+        for dirpath, dirnames, filenames in os.walk(vault):
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            for name in sorted(filenames):
+                if not name.startswith("."):
+                    add(Path(dirpath) / name)
+        for path in ws.git_view:
+            if not path.exists():
+                add(path)
+        ws.vault_files[vault] = by_name
+    return ws.vault_files[vault]
 
 
-def obsidian_picks(ws: Workspace, source: Path, hits: List[Path]) -> List[Path]:
-    """Which of the files a link matches Obsidian opens, as its own
-    resolution does: the matches under the note's own folder first, its
-    subfolders included, then the rest, each by the length of its path in the
-    vault, shortest first. All the files tied for first are returned: which
+def obsidian_dest(ws: Workspace, vault: Path, source: Path, linkpath: str) -> List[Path]:
+    """The file a link opens in `vault`, as Obsidian's own resolution
+    (getLinkpathDest) finds it: `./` and `../` from the note's folder; else
+    the files of the link's name, lower-cased, with `.md` added when the name
+    has no dot; one alone wins; else one whose path in the vault is the link
+    exactly; else those whose path ends with the link, as plain text, those
+    under the note's folder first, as a plain prefix, then each group by
+    length, shortest first. All the files tied for first are returned: which
     of them Obsidian takes is not known, so each counts."""
-    vault = vault_of(ws, source)
-
-    def key(hit: Path) -> Tuple[bool, int]:
-        try:
-            length = len(hit.relative_to(vault).as_posix())
-        except ValueError:
-            length = len(hit.as_posix())
-        return source.parent not in hit.parents, length
-
-    if not hits:
+    linkpath = linkpath.replace("\\", "/")
+    if linkpath.startswith(("./", "../")):
+        base = Path(os.path.normpath(str(source.parent / linkpath)))
+        return [f for f in (base, Path(str(base) + ".md")) if f.is_file() or f in ws.git_view][:1]
+    name = linkpath.rsplit("/", 1)[-1].lower()
+    want = linkpath.lower() if "." in name else linkpath.lower() + ".md"
+    if "." not in name:
+        name += ".md"
+    found = vault_files(ws, vault).get(name, [])
+    if len(found) == 1:
+        return [vault / found[0]]
+    exact = [f for f in found if f.lower() == want.lstrip("/")]
+    if exact:
+        return [vault / exact[0]]
+    found = [f for f in found if f.lower().endswith(want)]
+    if not found:
         return []
-    best = min(key(h) for h in hits)
-    return [h for h in hits if key(h) == best]
+    try:
+        folder = source.parent.relative_to(vault).as_posix()
+    except ValueError:
+        folder = ""
+    folder = "" if folder == "." else folder.lower()
+    best = min((not f.lower().startswith(folder), len(f)) for f in found)
+    return [vault / f for f in found if (not f.lower().startswith(folder), len(f)) == best]
+
+
+def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
+    """Every file a link may open: Obsidian's pick in each vault the note is
+    in (obsidian_dest), and, for a path from the top or from outside the
+    workspace, the file it names (resolve)."""
+    out: List[Path] = []
+    if target.startswith("obsidian:"):
+        _, _, target = target.split(":", 2)
+    if target.startswith(("/", "~")):
+        files = [folder / f for folder in vaults_of(ws, source) for paths in vault_files(ws, folder).values() for f in paths]
+        out += resolve(ws, source, target, files)
+        target = target.lstrip("/")
+    for vault in vaults_of(ws, source):
+        out += [d for d in obsidian_dest(ws, vault, source, target) if d not in out]
+    return out
 
 
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
@@ -3747,7 +3816,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # written for a party walled from this thread's.
     #
     # A link is read as Obsidian reads it, in the vault the note is in
-    # (obsidian_picks): when the file it opens is across a wall, it is
+    # (obsidian_dest): when the file it opens is across a wall, it is
     # refused. A path written as code is followed by a reader, not by
     # Obsidian: one that lands in this project means it; one that lands on a
     # single file, or only on files across a wall, or that names the far
@@ -3759,15 +3828,13 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
         named = set()
         for verb, written, target in targets:
             code = verb != "links"
-            if code:
-                hits = resolve(ws, path, target, index)
-            else:
-                hits = obsidian_picks(ws, path, resolve(ws, path, target, vault_index(ws, vault_of(ws, path))))
+            hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
             far_hits, near = [], []
             for hit in hits:
-                other = (ws.project_files or {}).get(hit)
-                if other is None:
+                owner = project_of(ws, hit)
+                if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
+                other = owner[0]
                 pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, hit) if walled(ws.context, a, b))
                 if pair:
                     far_hits.append((hit, other, pair[0]))

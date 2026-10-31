@@ -889,7 +889,9 @@ class TestProjectLinks(GapCase):
         (sources / "Vendors").mkdir()
         (sources / "Okta.md").rename(sources / "Vendors" / "Okta.md")       # now the longer path
         self.assertEqual([], self.says("[[Okta]]"))
-        # In a vault over the zone alone, the Knowledge page is not there to open.
+        (self.root / ".obsidian").mkdir()
+        self.assertEqual([], self.says("[[Okta]]"))
+        # A vault over the zone as well: there the Knowledge page is not there to open, and every vault counts.
         (self.work / ".obsidian").mkdir()
         self.assertEqual([("error", "links [[Okta]]" + self.TAIL)], self.says("[[Okta]]"))
 
@@ -909,6 +911,43 @@ class TestProjectLinks(GapCase):
                          self.says("[[Harbour/Deliverables/published]]"))
         self.assertEqual([("error", "writes the path `Harbour/Deliverables/published.md`" + self.TAIL)],
                          self.says("`Harbour/Deliverables/published.md`"))
+
+    def test_the_note_folder_is_a_plain_prefix(self):
+        # As Obsidian compares it: Harbour's path starts with "Zones/Work/Har".
+        self.project("Har", "acme")
+        self.project("Lim", "cobalt")
+        write(self.work / "Harbour" / "Threads" / "Rates" / "Rates.md", thread_note("Harbour", "Rates", "birch"))
+        write(self.work / "Lim" / "Rates.md", "# Rates\n")
+        hub = self.work / "Har" / "Har.md"
+        hub.write_text(hub.read_text() + "\nSee [[Rates]].\n")
+        self.assertEqual([("error", "links [[Rates]]" + self.TAIL)],
+                         [(f.severity, f.message) for f in self.walls("Zones/Work/Har/Har.md")])
+        # And a sibling folder that starts with the note's folder's name comes first too.
+        write(self.work / "Northwind" / "Threads" / "Freight 2" / "Plan.md", "# Plan\n")
+        write(self.work / "Harbour" / "Plan.md", "# Plan\n")
+        self.assertEqual([], self.says("[[Plan]]"))
+
+    def test_the_end_of_a_path_is_plain_text(self):
+        self.assertEqual([("error", "links [[bour/Threads/Tender/Tender]]" + self.TAIL)],
+                         self.says("[[bour/Threads/Tender/Tender]]"))
+
+    def test_what_obsidian_indexes_counts(self):
+        harbour = self.work / "Harbour"
+        (harbour / "Code" / ".git").mkdir(parents=True)                     # a repository of its own
+        write(harbour / "Code" / "docs" / "Spec.md", "# Spec\n")
+        write(harbour / "node_modules" / "kit" / "Kit notes.md", "# Kit\n")
+        write(harbour / ".hidden" / "Hidden plan.md", "# Hidden\n")        # Obsidian leaves dot-folders out
+        self.assertEqual([("error", "links [[Spec]]" + self.TAIL)], self.says("[[Spec]]"))
+        self.assertEqual([("error", "links [[Kit notes]]" + self.TAIL)], self.says("[[Kit notes]]"))
+        self.assertEqual([], self.says("[[Hidden plan]]"))
+
+    def test_a_long_tag_or_code_span_does_not_hide_a_path(self):
+        attrs = " ".join('data-x%d="1"' % i for i in range(60))
+        self.assertEqual("error", self.says('<a %s href="../../../Harbour/Threads/Tender/Tender.md">t</a>' % attrs)[0][0])
+        for n in (999, 1001, 5000):
+            with self.subTest(n):
+                found = self.says("`%s` then `Harbour/Threads/Tender/Tender.md`" % ("x" * n))
+                self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)], found)
 
     def test_a_code_path_on_one_file_is_refused(self):
         write(self.work / "Harbour" / "Threads" / "Tender" / "Rate card.md", "# Rate card\n")
@@ -934,7 +973,9 @@ class TestProjectLinks(GapCase):
 
     def test_the_link_parsers_stay_fast(self):
         import time
-        for text in ("<a " * 30000, "](" + "a" * 80000, "](a" * 30000, "".join("`" * k + "a" for k in range(1, 400))):
+        for text in ("<a " * 30000, "<a " + "x=1 " * 20000 + 'href="a/b">', "](" + "a" * 80000, "](a" * 30000,
+                     "](a (" * 20000, "".join("`" * k + "a" for k in range(1, 400)), "`a " * 30000,
+                     "`" + "x" * 80000 + "`"):
             started = time.monotonic()
             check.extract_links(text)
             check.code_paths(text)

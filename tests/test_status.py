@@ -1448,7 +1448,7 @@ class TestSettingsLayout(StatusCase):
     them beside it (#205): a link per section, grouped by what people come
     for, and the one being read marked."""
 
-    ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "menu-settings", "wait-settings",
+    ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
              "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):

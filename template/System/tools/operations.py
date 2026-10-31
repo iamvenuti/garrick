@@ -204,7 +204,7 @@ DECLARED: Dict[str, Op] = {
     "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
-    "settings": _op(("launchers", "default", "zones", "notifications", "while-you-wait", "home", "memory",
+    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "while-you-wait", "home", "memory",
                      "desk-agent"), (), "workspace"),
     # Settings › Memory's unsaved values, counted by fade.py (#108): it only reads.
     "memory-preview": _op(("memory",), (), "none", retry="safe"),

@@ -2066,8 +2066,10 @@ def release_repository(root: PathLike) -> str:
 # Memory, how pages fade out of the wikis, which System/tools/fade.py reads;
 # "catch-up" is the period "catch me up" covers when none is said, which
 # System/tools/briefing.py reads and checks; Settings no longer offers it
-# (#226), so it is set by hand, and a workspace that set it keeps it.
-PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up")
+# (#226), so it is set by hand, and a workspace that set it keeps it;
+# "graph" is Settings › Graph colours, the colour of each kind of note the
+# status page's Explore draws (#291).
+PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up", "graph")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

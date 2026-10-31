@@ -606,7 +606,7 @@ def checkpoint_chip(r: dict) -> str:
             "Its checkpoint from %s was written against an older resume point, so a wrap has left it behind: "
             "read it, do not resume from it" % mark["full"])
     return '<span class="chip" title="%s">unwrapped since %s</span>' % (
-        E("Work this session recorded at %s and no wrap has folded in yet. Open the thread to read it: "
+        E("Work recorded at %s that no wrap has folded in yet. Open the thread to read it: "
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
 
 
@@ -1111,16 +1111,134 @@ def debt_block(ws: Path, today: dt.date) -> str:
     when = "" if day == today else " as of %s" % day.strftime("%a %d %b")
     phrase = (said(heavy[0])[1] if heavy else "") or ""      # the request that nurtures the heaviest, on a button (#234)
     button = request_button(phrase[:1].upper() + phrase[1:], phrase, ws, "act dask") if phrase else ""
+    # What the button does, and what the last run did (#278), from that day's record.
+    outcome = nurture_outcome(ws, day) or {}
+    does = nurture_said((outcome.get("scopes") or {}).get(heavy[0], {})) if heavy and phrase else ""
+    lines = ""
+    if does:
+        lines += '<p class="hint">%s</p>' % E("One pass over %s: %s." % (said(heavy[0])[0], does))
+    if outcome:
+        lines += '<p class="hint">%s</p>' % E(
+            "Last nurture %s: %d fixed, %d answered, %d left. The figure is that run's; the list below is this "
+            "build's quick check." % (day.strftime("%a %d %b"), outcome.get("fixed", 0), outcome.get("answered", 0),
+                                       outcome.get("left", 0)))
     return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
-            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p></div>'
+            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p>%s</div>'
             % (E(str(total)), E(when), " late" if over else "",
                E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
                "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
-               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button))
+               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button, lines))
 
 
 def debt_points(n):
     return int(n) if float(n).is_integer() else round(n, 2)
+
+
+def nurture_outcome(ws: Path, day: dt.date) -> Optional[dict]:
+    """What Nurture's record for `day` says it fixed, was answered and left,
+    as nurture.py's day_outcome() reads it; None without one."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not callable(getattr(N, "day_outcome", None)):
+        return None
+    try:
+        return N.day_outcome(ws, day)
+    except Exception:
+        return None
+
+
+def counted(n: int, one: str, many: str = "") -> str:
+    return "%d %s" % (n, one if n == 1 else (many or one + "s"))
+
+
+def nurture_said(kinds: Dict[str, int]) -> str:
+    """What one pass of Nurture over a scope does with what stands there, by
+    kind: "2 walls named, 4 fixes on one yes, 1 question one at a time"."""
+    said = [(kinds.get("wall", 0), counted(kinds.get("wall", 0), "wall") + " named"),
+            (kinds.get("mechanical", 0), counted(kinds.get("mechanical", 0), "fix", "fixes") + " on one yes"),
+            (kinds.get("attribution", 0), counted(kinds.get("attribution", 0), "question") + " one at a time")]
+    said.append((kinds.get("correction", 0), counted(kinds.get("correction", 0), "correction") + " to confirm"))
+    rest = sum(n for k, n in kinds.items() if k not in ("wall", "mechanical", "attribution", "correction"))
+    said.append((rest, "%d for your judgment" % rest))
+    return ", ".join(words for n, words in said if n)
+
+
+# The Checks card's findings (#278), sorted by Nurture's kinds, so the list
+# and the debt above it use one vocabulary. Each row's path opens the file;
+# what follows it is said as Nurture says it, and its button is what handles
+# it: Fix for a mechanical fix on a note in a zone, which page_action.py's
+# `fix` applies as the thread row's check chip does, and otherwise the
+# request that nurtures its scope. A judgment is opened and read: its path is
+# its action. Without nurture.py the findings are one list, by check.
+CHECK_KINDS = (("wall", "Walls", "Take it out"), ("mechanical", "Mechanical", "Fix"),
+               ("attribution", "Attribution", "Answer"), ("judgment", "Judgment", ""))
+
+
+def check_groups(ws: Path, C: dict, link: "Links") -> str:
+    """The Checks card's list: one fold per kind, the largest open, and any
+    holding an error."""
+    lib = nurture_lib(ws)
+    rows: Dict[str, List[str]] = {}
+    errors: Dict[str, int] = {}
+    for f in C.get("findings", []):
+        for kind, line, act in sorted_finding(ws, lib, f):
+            rows.setdefault(kind, []).append(
+                '<li>%s<span class="cline"><a href="%s">%s</a>: %s</span>%s</li>'
+                % (ICON["critical" if f.get("severity") == "error" else "warning"], E(link(ws / line[0])), E(line[0]),
+                   E(line[1]), act))
+            errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
+    if not rows:
+        return '<div class="clean">%sNo problems found.</div>' % ICON["good"]
+    titles = {k: t for k, t, _ in CHECK_KINDS}
+    order = [k for k, _, _ in CHECK_KINDS if k in rows] + sorted(k for k in rows if k not in titles)
+    largest = max(order, key=lambda k: len(rows[k]))
+    body = ""
+    for kind in order:
+        errs, n = errors[kind], len(rows[kind])
+        counts = "".join('<span class="chip">%s %d</span>' % (ICON[k].replace("<svg ", '<svg width="12" height="12" '), c)
+                         for k, c in (("critical", errs), ("warning", n - errs)) if c)
+        body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
+                 % (" open" if errs or kind == largest else "", CHEV, E(titles.get(kind) or (C.get("titles") or {}).get(kind, kind)),
+                    counts, "".join(rows[kind])))
+    return body
+
+
+def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], str]]:
+    """(kind, (path, what is said), the button) for each item nurture.py
+    makes of a check finding; without nurture.py, the check's name for the
+    kind, its own words, and no button."""
+    path, message = re.sub(r":\d+$", "", str(f.get("path") or "")), str(f.get("message") or "")
+    if lib is None or not callable(getattr(lib[0], "check_items", None)) or not callable(getattr(lib[0], "sort_item", None)):
+        return [(str(f.get("check") or "?"), (path, message), "")]
+    N, ctx = lib
+    try:
+        # Only a note in a zone can get Fix, so only there is the fix worked out in full: the rest are sorted
+        # without the history a rename reads, which costs a git call a file (#278).
+        light = not re.match(r"Zones/[^/]+/.+\.md$", path)
+        items = [N.sort_item(ctx, i, light=light) for i in N.check_items(f)]
+        ask = N.scope_said(N.debt_scope(path))[1]
+    except Exception:
+        return [("judgment", (path, message), "")]
+    out = []
+    for item in items:
+        kind = item.kind if item.kind in ("wall", "mechanical", "attribution") else "judgment"
+        label = dict((k, a) for k, _, a in CHECK_KINDS)[kind]
+        # A wall is said in the check's own words, which say what to take out, since Nurture blanks them; the rest as Nurture says them.
+        said = message if kind == "wall" else item.message if kind == "judgment" else item.line()
+        said = said[len(item.path) + 2:] if said.startswith(item.path + ": ") else said
+        zone = re.match(r"Zones/([^/]+)/(.+\.md)$", item.path)
+        if kind == "mechanical" and zone:
+            act = ('<button class="act primary tacts" type="button" data-act="%s" data-say="%s" title="%s">Fix</button>'
+                   '<span class="webonly">%s</span>'
+                   % (E(json.dumps({"verb": "fix", "zone": zone.group(1), "file": zone.group(2)})),
+                      E("Fixing %s…" % Path(item.path).name), E(said[:1].upper() + said[1:]),
+                      request_button(ask[:1].upper() + ask[1:], ask, ws)))
+        elif label:
+            act = request_button("Nurture" if kind == "mechanical" else label, ask, ws)
+        else:
+            act = ""
+        out.append((kind, (item.path, said), act))
+    return out
 
 
 # Review context (#258), under the debt: the button that hands Nurture's
@@ -1129,6 +1247,8 @@ def debt_points(n):
 # Nothing of its items is read: they are the user's decisions, across zones.
 REVIEW_RECORD = ("System", "nurture-review.md")
 REVIEW_REQUEST = "review the context with me"
+REVIEW_SAID = "A short session through what is left, across the workspace, up to a limit you choose; the next goes on where it stopped."
+REVIEW_COUNTS = ("fixed", "answered", "deferred")
 
 
 def review_block(ws: Path) -> str:
@@ -1145,11 +1265,17 @@ def review_block(ws: Path) -> str:
         except ValueError:
             return None
     done, started = day("last_completed"), day("started")
+    # The decisions the latest review has made so far (#278), as the skill counts them in its frontmatter.
+    made = ", ".join("%s %s" % (str(fm[k]).strip(), k) for k in REVIEW_COUNTS
+                     if re.fullmatch(r"\d+", str(fm.get(k) or "").strip(), re.ASCII))
+    unfinished = str(fm.get("status") or "").strip().lower() == "open"
     said = ["Last review %s" % done.strftime("%a %d %b %Y") if done else "No review done yet"]
-    if str(fm.get("status") or "").strip().lower() == "open":
+    if unfinished:
         said.append("one unfinished" + (", started %s" % started.strftime("%a %d %b %Y") if started else ""))
+    tail = (": %s so far" if unfinished else ": %s") % made if made and (unfinished or done) else ""
     return ('<div class="gacts review" id="review">%s<span class="hint">%s</span></div>'
-            % (request_button("Review context", REVIEW_REQUEST, ws), E(" · ".join(said) + ".")))
+            % (request_button("Review context", REVIEW_REQUEST, ws),
+               E(REVIEW_SAID + " " + " · ".join(said) + tail + ".")))
 
 
 DEBT_CSS = r"""
@@ -3874,8 +4000,27 @@ GLASS = ('<svg class="lico lglass" viewBox="0 0 16 16" aria-hidden="true"><circl
          'stroke-linecap="round"/></svg>')
 
 
+# Which assistant a cmux tab starts (#279): the cmux extra's `agent` setting,
+# in System/desk.json, which the desk reads for every tab it opens. Settings
+# shows it under Open in cmux while that is switched on, and saves it through
+# the desk itself (page_action.py), so the two never disagree.
+DESK_AGENTS = (("claude", "Claude Code"), ("codex", "Codex"))
+
+
+def desk_agent(ws: Path) -> str:
+    """The assistant a new cmux tab starts, as the desk reads it: `agent` in
+    System/desk.json, or the file GARRICK_DESK_CONFIG names; claude when it
+    is not set or the file does not read."""
+    f = Path(os.environ.get("GARRICK_DESK_CONFIG") or ws / "System" / "desk.json").expanduser()
+    try:
+        agent = json.loads(f.read_text(encoding="utf-8")).get("agent")
+    except (OSError, ValueError, AttributeError):
+        agent = None
+    return agent if agent in dict(DESK_AGENTS) else "claude"
+
+
 def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
-                     why: Optional[Dict[str, Optional[str]]] = None) -> str:
+                     why: Optional[Dict[str, Optional[str]]] = None, agent: Optional[str] = None) -> str:
     """Settings › Opening a thread: the note's own link, then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
     (what clicking a thread's name does), each with its card icon. Explore's
@@ -3884,7 +4029,9 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     rather than after: not installed, or installed without the launcher it
     opens a folder through. How each app takes the resume phrase is in the
     docs, not here (#227). Kept in this viewer's own storage, so the page
-    still writes nothing."""
+    still writes nothing. `agent`, given where the desk can open cmux tabs,
+    adds which assistant a tab starts under Open in cmux (#279); the app
+    saves that one in System/desk.json when Settings closes."""
     why = launcher_state() if why is None else why
     rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "",
              LAUNCH_ICON % ("var(--icon-obsidian,var(--icon-note))" if obsidian else "var(--icon-note)"))]
@@ -3899,6 +4046,13 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     # nothing, and only where the host reads a note for the page, as the card offers it
     html.insert(1, '<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
                    '%s<span>Preview</span></label></div>' % GLASS)
+    if agent is not None:
+        at = next(i for i, h in enumerate(html) if 'data-launcher="cmux"' in h) + 1
+        html.insert(at, '<div class="launcher-row apponly" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
+                        '<span>A cmux tab starts<small>Saved in System/desk.json</small></span></label>'
+                        '<select id="desk-agent" class="menu-style">%s</select></div>'
+                        % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
+                                  for k, label in DESK_AGENTS))
     html = "".join(html)
     return ('<section class="setsec" id="launcher-settings">%s%s%s</section>'
             % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
@@ -3988,7 +4142,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     Reset view at the foot. Each section shows its choices and one line at
     most saying what they are for; how a feature works is behind its "?"
     and in docs/extras/status-page.md (#227)."""
-    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian"))),
+    agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
+    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}), menu_settings(),
                       wait_settings(ws)],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
@@ -6002,6 +6157,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .group>summary .counts{margin-left:auto;display:flex;gap:6px}
 .group ul{list-style:none;margin:2px 0 8px;padding:0 0 0 32px}.group li{display:flex;gap:8px;padding:5px 0;color:var(--ink2);font-size:12.5px;border-top:1px solid var(--grid)}
 .group li:first-child{border-top:0}.group li svg{width:14px;height:14px;flex:none;margin-top:2px}
+.group li .cline{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.group li .act{flex:none;align-self:flex-start;font-size:11.5px;padding:2px 8px}
 .clean{display:flex;align-items:center;gap:8px;color:var(--ink2);padding:8px 2px}.clean svg{width:16px;height:16px}
 .bullet{display:grid;grid-template-columns:110px minmax(0,1fr) 40px;align-items:center;gap:10px;font-size:12.5px;padding:5px 0}
 .bar{position:relative;height:10px;background:var(--track);border-radius:3px}.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:3px}
@@ -6404,7 +6560,7 @@ StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.clo
    (⌘,) calls StatusSettings.open(). */
 var sd=document.getElementById('settings');
 function sdShut(){sd.close()}
-var sdChanged=false,lpChanged=false;sd.addEventListener('change',function(){sdChanged=true});
+var sdChanged=false,lpChanged=false,daChanged=false;sd.addEventListener('change',function(){sdChanged=true});
 /* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once; a change
    to the apps or the zones is saved for every viewer first, through page_action.py, which rebuilds the page after it */
 sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdChanged||!host)return;
@@ -6414,8 +6570,9 @@ sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessa
 /* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed.
    null when there is nothing. */
 function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
-if(!(lpChanged||zChanged||n||w||m))return null;
+if(!(lpChanged||zChanged||daChanged||n||w||m))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
+if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
 lpChanged=zChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
@@ -6449,7 +6606,10 @@ sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.oncha
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
 c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
-say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.')}});radios();
+say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.');daRow()}});radios();
+/* which assistant a cmux tab starts (#279): shown while Open in cmux is on, saved through the desk when Settings closes */
+var daSel=document.getElementById('desk-agent');function daRow(){var r=document.getElementById('desk-agent-row'),c=sd.querySelector('input[data-launcher="cmux"]');
+if(r)r.style.display=!c||c.disabled||!c.checked?'none':''}daRow();if(daSel)daSel.onchange=function(){daChanged=true;say('A cmux tab now starts '+daSel.options[daSel.selectedIndex].text+'.')};
 /* Settings › Zones: each row draws its zone as chosen; every zone's choice goes with the request when Settings closes */
 var zChanged=false,zIcons={};try{zIcons=JSON.parse(document.getElementById('zone-icons').textContent)}catch(e){}
 function zpick(r,k){return r.querySelector(k).value}
@@ -7605,6 +7765,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     of each transcript, so one unchanged is not read again (#260). Without it
     nothing is kept, the check always runs and every transcript is read."""
     now = now or dt.datetime.now()
+    _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)
@@ -7910,17 +8071,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        groups = {}
-        for f in C.get("findings", []):
-            groups.setdefault(f.get("check", "?"), []).append(f)
-        body = "" if groups else '<div class="clean">%sNo problems found.</div>' % ICON["good"]
-        for name, fs in groups.items():
-            errs = sum(1 for f in fs if f.get("severity") == "error")
-            counts = "".join('<span class="chip">%s %d</span>' % (ICON[k].replace("<svg ", '<svg width="12" height="12" '), n)
-                             for k, n in (("critical", errs), ("warning", len(fs) - errs)) if n)
-            lis = "".join('<li>%s<span>%s: %s</span></li>' % (ICON["critical" if f.get("severity") == "error" else "warning"], E(f.get("path", "")), E(f.get("message", ""))) for f in fs)
-            body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
-                     % (" open" if errs else "", CHEV, E(C["titles"].get(name, name)), counts, lis))
+        body = check_groups(ws, C, link)
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)

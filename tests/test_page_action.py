@@ -800,6 +800,42 @@ class TestZoneSettings(ActionCase):
         self.assertEqual(tuple(status.ZONE_ICONS), pa.ZONE_ICONS)
 
 
+class TestDeskAgentSettings(ActionCase):
+    """Settings › Opening a thread: which assistant a cmux tab starts (#279), the desk's own setting."""
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(pa, "run_desk")          # never this Mac's own cmux
+        self.desk = p.start()
+        self.addCleanup(p.stop)
+
+    def test_saved_through_the_desk_and_beside_the_launchers(self):
+        self.assertEqual("Settings saved", self.act(verb="settings", **{"desk-agent": "codex"}))
+        self.assertEqual([mock.call(self.root, "agent", "codex", timeout=20)], self.desk.call_args_list)
+        self.assertFalse((self.root / "System" / "garrick-settings.json").exists())   # not the page's own file
+        self.desk.reset_mock()
+        self.act(verb="settings", launchers=["note", "cmux"], default="cmux", **{"desk-agent": "claude"})
+        self.assertEqual([mock.call(self.root, "agent", "claude", timeout=20)], self.desk.call_args_list)
+        self.assertEqual("cmux", json.loads((self.root / "System" / "garrick-settings.json").read_text())["default"])
+
+    def test_another_name_or_no_desk_is_refused(self):
+        with self.assertRaisesRegex(pa.Refused, "claude or codex"):
+            self.act(verb="settings", **{"desk-agent": "opencode"})
+        self.desk.assert_not_called()
+        self.desk.side_effect = pa.Refused("cmux is not installed here")
+        with self.assertRaisesRegex(pa.Refused, "cmux is not installed"):
+            self.act(verb="settings", **{"desk-agent": "codex"})
+
+    def test_a_refused_desk_saves_nothing_else(self):
+        # One request, all or nothing: the launchers and the zones wait for the desk.
+        self.desk.side_effect = pa.Refused("cmux is not installed here")
+        with self.assertRaisesRegex(pa.Refused, "cmux is not installed"):
+            self.act(verb="settings", launchers=["note", "cmux"], default="cmux",
+                     zones={"Work": {"color": "Teal"}}, **{"desk-agent": "codex"})
+        self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
+        self.assertEqual([mock.call(self.root, "agent", "codex", timeout=20)], self.desk.call_args_list)   # no recolour
+
+
 class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""
 

@@ -42,22 +42,29 @@ ask = _load()
 
 # A stand-in for `claude -p --input-format stream-json`: each user message gets
 # the next answer from FAKE_ANSWERS, counted across every process started, with
-# the session's running cost, and its arguments go to FAKE_ARGS. An answer that
-# is null is the error Claude reports when the session's budget is spent.
+# the session's running cost, and a plain answer once they run out. Its
+# arguments go to FAKE_ARGS; each process adds a line to FAKE_ARGS.procs, its
+# pid, how it was run and its environment, and each message it is sent to
+# FAKE_ARGS.msgs with its pid. An answer that is null is the error Claude
+# reports when the session's budget is spent.
 FAKE_CLAUDE = textwrap.dedent("""\
     #!%s
     import json, os, sys
     open(os.environ["FAKE_ARGS"], "w").write(json.dumps(sys.argv[1:]))
+    with open(os.environ["FAKE_ARGS"] + ".procs", "a") as f:
+        f.write(json.dumps({"pid": os.getpid(), "run": sys.argv[0], "argv": sys.argv[1:], "env": dict(os.environ)}) + "\\n")
     answers = json.load(open(os.environ["FAKE_ANSWERS"]))
     n = 0
     for line in sys.stdin:
         msg = json.loads(line)
         with open(os.environ["FAKE_ARGS"] + ".seen", "a") as f:
             f.write(json.dumps(msg["message"]["content"]) + "\\n")
+        with open(os.environ["FAKE_ARGS"] + ".msgs", "a") as f:
+            f.write(json.dumps({"pid": os.getpid(), "content": msg["message"]["content"]}) + "\\n")
         seen = len(open(os.environ["FAKE_ARGS"] + ".seen").read().splitlines())
         n += 1
         print(json.dumps({"type": "assistant", "message": {"content": []}}), flush=True)
-        answer = answers[seen - 1]
+        answer = answers[seen - 1] if seen <= len(answers) else '{"say": "ok", "do": []}'
         if answer is None:
             print(json.dumps({"type": "result", "subtype": "error_max_budget_usd", "is_error": True, "num_turns": 1,
                               "total_cost_usd": 0.01 * n}), flush=True)
@@ -72,15 +79,14 @@ class AskCase(ActionCase):
         super().setUp()
         write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
         self.names = ask.scan(self.root)
-        self._saved = {k: os.environ.get(k) for k in ("GARRICK_HARNESS", "GARRICK_ASK_TIER", "GARRICK_CAP_CALLS_HOUR", "PATH", "GARRICK_CMUX")}
+        # All of it: a server run in a thread here changes this process's own
+        # environment, as it does its own (the marker, PATH, no CMUX_*).
+        self._saved = dict(os.environ)
         os.environ["GARRICK_CMUX"] = str(self.root / "no-cmux")        # whatever this Mac has: no cmux, so no desk
 
     def tearDown(self):
-        for k, v in self._saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+        os.environ.clear()
+        os.environ.update(self._saved)
         super().tearDown()
 
 
@@ -165,6 +171,7 @@ class TestProposals(AskCase):
 
 class FakeSession:
     remembers = True
+    started = 0.0
 
     def __init__(self, *answers):
         self.answers, self.seen = list(answers), []
@@ -420,14 +427,31 @@ class TestHarness(AskCase):
         self.assertEqual("sonnet", session.tier)
 
     def test_the_claude_session_loads_the_deny_profile(self):
+        cli = self.root.parent / "bin" / "claude"
+        write(cli, "#!/usr/bin/env node\n")             # the CLI as npm installs it, never a wrapper
+        cli.chmod(0o755)
+        os.environ["GARRICK_CLAUDE"] = str(cli)
         cmd = ask.ClaudeSession(self.root, "haiku").command()
-        self.assertEqual(["claude", "-p"], cmd[:2])
+        self.assertEqual([str(cli), "-p"], cmd[:2])
         for flag, value in (("--model", "haiku"), ("--tools", ""), ("--permission-mode", "default"),
                             ("--settings", str(ask.agent().PROFILE)), ("--setting-sources", "user,project")):
             self.assertEqual(value, cmd[cmd.index(flag) + 1], flag)
         self.assertIn("--no-session-persistence", cmd)
         self.assertIn("--strict-mcp-config", cmd)
         self.assertEqual(ask.BRIEF.read_text(), cmd[cmd.index("--system-prompt") + 1])
+
+    def test_the_cli_is_the_one_continue_finds(self):
+        """#261: handoff.find_claude(), never a terminal's wrapper on PATH; GARRICK_CLAUDE wins."""
+        os.environ["GARRICK_CLAUDE"] = str(self.root.parent / "no-claude")      # names nothing: looks nowhere else
+        self.assertEqual(str(self.root.parent / "no-claude"), ask.claude_binary())
+        os.environ.pop("GARRICK_CLAUDE")
+        h = ask.handoff()
+        real = h.find_claude
+        h.find_claude = lambda env=None: None                                   # none found, whatever this Mac has
+        try:
+            self.assertEqual("claude", ask.claude_binary())
+        finally:
+            h.find_claude = real
 
     def test_codex_runs_read_only_with_history(self):
         calls = []
@@ -444,9 +468,8 @@ class TestHarness(AskCase):
         self.assertTrue(calls[1][1].startswith(ask.BRIEF.read_text()))
 
 
-@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
-class TestWarmSession(AskCase):
-    """The warm Claude session, with a stand-in `claude`: two turns, one process, the ledger and the caps."""
+class StandInCase(AskCase):
+    """A stand-in `claude`, named by GARRICK_CLAUDE and first on PATH."""
 
     def setUp(self):
         super().setUp()
@@ -456,11 +479,24 @@ class TestWarmSession(AskCase):
         fake.write_text(FAKE_CLAUDE)
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         os.environ["PATH"] = str(bin_) + os.pathsep + os.environ.get("PATH", "")
+        os.environ["GARRICK_CLAUDE"] = str(fake)          # the CLI it runs, so nothing on this Mac is looked for
+        self.fake = fake
         self.args = Path(self._tmp.name) / "args.json"
         self.answers = Path(self._tmp.name) / "answers.json"
         os.environ["FAKE_ARGS"], os.environ["FAKE_ANSWERS"] = str(self.args), str(self.answers)
         self.addCleanup(os.environ.pop, "FAKE_ARGS", None)
         self.addCleanup(os.environ.pop, "FAKE_ANSWERS", None)
+
+    def serve_in_thread(self):
+        import threading
+        t = threading.Thread(target=ask.serve, args=(self.root,), daemon=True)
+        t.start()
+        return t
+
+
+@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
+class TestWarmSession(StandInCase):
+    """The warm Claude session, with a stand-in `claude`: two turns, one process, the ledger and the caps."""
 
     def test_two_turns_one_process_and_the_ledger(self):
         self.answers.write_text(json.dumps(['{"say": "Two projects in Work.", "do": []}',
@@ -504,12 +540,6 @@ class TestWarmSession(AskCase):
             self.assertIn("<workspace>", (Path(str(self.args) + ".seen")).read_text().splitlines()[1])   # told it all again
         finally:
             asker.session.stop()
-
-    def serve_in_thread(self):
-        import threading
-        t = threading.Thread(target=ask.serve, args=(self.root,), daemon=True)
-        t.start()
-        return t
 
     def test_one_server_per_workspace(self):
         import socket
@@ -601,6 +631,238 @@ class TestWarmSession(AskCase):
         self.assertEqual("open Pricing", out["launch"][0]["phrase"])
         self.assertIn('"open Pricing"  ->  "Opening Pricing."', (self.jobs / "ask.log").read_text())
         self.assertEqual([], list(self.jobs.glob("*.sock")))                         # stopped, and gone
+
+
+@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
+class TestBackgroundSession(StandInCase):
+    """#261, slice A: the app keeps the session from launch. It is marked, out
+    of cmux's sight, started again if it dies, and stopped when the app goes."""
+
+    def setUp(self):
+        super().setUp()
+        self.answers.write_text(json.dumps([]))                 # a plain answer to everything
+        self._clock = {k: getattr(ask, k) for k in ("LEASE", "TICK", "IDLE_TICK", "CLEAR_AFTER")}
+        self.server = None
+
+    def tearDown(self):
+        if self.server is not None and self.server.is_alive():
+            ask.call(self.root, "stop", start=False)
+            self.server.join(10)
+        for k, v in self._clock.items():
+            setattr(ask, k, v)
+        super().tearDown()
+
+    def up(self):
+        """The server, in a thread, once it answers."""
+        import time
+        self.server = self.serve_in_thread()
+        for _ in range(200):
+            try:
+                if ask.call(self.root, "status", start=False) is not None:
+                    return
+            except (ConnectionRefusedError, FileNotFoundError):
+                pass
+            time.sleep(0.05)
+        self.fail("the server never listened")
+
+    def op(self, op, text=""):
+        return ask.call(self.root, op, text, start=False)
+
+    def procs(self, at_least=1, wait=10.0):
+        """Each stand-in process started, in order, once there are this many."""
+        import time
+        path = Path(str(self.args) + ".procs")
+        until = time.time() + wait
+        while time.time() < until:
+            got = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+            if len(got) >= at_least:
+                return got
+            time.sleep(0.05)
+        self.fail("%d stand-in processes, not %d" % (len(got), at_least))
+
+    def first_message(self, pid):
+        path = Path(str(self.args) + ".msgs")
+        for line in path.read_text().splitlines():
+            m = json.loads(line)
+            if m["pid"] == pid:
+                return m["content"]
+        self.fail("process %d was sent nothing" % pid)
+
+    def kill(self, pid):
+        import signal
+        import time
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)                                         # dead, for the server's poll() to see
+
+    def gone(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    def test_the_session_is_marked_and_kept_out_of_cmux(self):
+        os.environ.update({"CMUX_SURFACE_ID": "S1", "CMUX_SOCKET_PASSWORD": "pw", "CLAUDECODE": "1"})
+        self.up()
+        self.assertEqual("Kept.", self.op("keep")["say"])
+        (p,) = self.procs()
+        self.assertEqual("ask", p["env"].get(ask.MARKER))
+        self.assertEqual([], [k for k in p["env"] if k.startswith("CMUX_") or k == "CLAUDECODE"])
+        self.assertEqual(str(self.fake), p["run"])                                  # GARRICK_CLAUDE's, never a wrapper
+        self.assertIn("--no-session-persistence", p["argv"])                       # no transcript, so in no list
+        self.assertTrue(self.op("status")["leased"])
+
+    def test_keep_starts_a_session_and_never_replaces_a_live_one(self):
+        ask.CLEAR_AFTER = 1
+        self.up()
+        self.assertFalse(self.op("status")["leased"])
+        self.op("keep")
+        (first,) = self.procs()
+        __import__("time").sleep(1.2)                           # past the age a request replaces
+        self.op("keep")
+        self.assertTrue(self.op("status")["session"])
+        self.assertEqual([first["pid"]], [p["pid"] for p in self.procs()])         # kept, not replaced
+        self.op("ask", "what's open")
+        procs = self.procs(2)
+        self.assertEqual(2, len(procs))                                           # a request still replaces it
+        self.assertTrue(self.gone(first["pid"]))
+
+    def test_a_session_that_dies_is_started_again(self):
+        ask.TICK = 0.2
+        self.up()
+        self.op("keep")
+        (first,) = self.procs()
+        self.kill(first["pid"])
+        second = self.procs(2, wait=5)[1]                       # within a tick, asked for by nobody
+        self.assertNotEqual(first["pid"], second["pid"])
+        self.kill(second["pid"])
+        __import__("time").sleep(1)                             # five ticks
+        self.assertEqual(2, len(self.procs()))                  # once between keeps, never every tick
+        self.op("keep")                                         # and the app's next keep starts it at once
+        third = self.procs(3, wait=2)[2]
+        self.assertNotIn(third["pid"], (first["pid"], second["pid"]))
+        log = (self.jobs / "ask.log").read_text()
+        self.assertEqual(2, log.count("session restarted"))
+        self.assertNotIn("what", log)                           # the line says so, and nothing else
+
+    def test_a_lapsed_lease_stops_the_server(self):
+        ask.LEASE, ask.TICK = 0.5, 0.1
+        self.up()
+        self.op("keep")
+        (p,) = self.procs()
+        self.server.join(5)
+        self.assertFalse(self.server.is_alive())                # the app went without a word: so does the server
+        self.assertTrue(self.gone(p["pid"]))
+        self.assertEqual([], list(self.jobs.glob("*.sock")))
+        self.assertIn("lease lapsed", (self.jobs / "ask.log").read_text())
+
+    def test_with_no_lease_the_idle_rule_is_unchanged(self):
+        import time
+        ask.LEASE, ask.IDLE_TICK, ask.CLEAR_AFTER = 0.2, 0.1, 1.5
+        self.up()
+        self.op("warm")
+        time.sleep(0.6)
+        self.assertTrue(self.server.is_alive())                 # no lease to lapse
+        self.server.join(5)
+        self.assertFalse(self.server.is_alive())                # idle for CLEAR_AFTER: gone, as before
+        self.assertEqual([], list(self.jobs.glob("*.sock")))
+
+    def test_keep_with_the_flag_off_stops_the_server(self):
+        import contextlib
+        import io
+        self.up()
+        self.op("keep")
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = ask.main(["--workspace", str(self.root), "--json", "keep"])
+        self.assertEqual(1, code)
+        self.assertIn("preview feature, and it is off", json.loads(buf.getvalue())["say"])
+        self.server.join(10)
+        self.assertFalse(self.server.is_alive())
+        self.assertEqual([], list(self.jobs.glob("*.sock")))
+        with contextlib.redirect_stdout(io.StringIO()):
+            ask.main(["--workspace", str(self.root), "--json", "keep"])       # and starts nothing
+        self.assertEqual([], list(self.jobs.glob("*.sock")))
+        self.assertEqual(1, len(self.procs()))
+
+    def test_a_new_session_is_told_the_names(self):
+        """The regression: a new process, after a reset, a warm that replaced an
+        aged session, or a restart, used to be told `<workspace unchanged/>`."""
+        import time
+        ask.CLEAR_AFTER = 1
+        self.up()
+        self.op("keep")                                         # held, so the short age is no idle limit
+        self.op("ask", "what's open")
+        self.op("ask", "and Birch?")
+        (kept,) = self.procs()
+        self.assertIn("<workspace>\n", self.first_message(kept["pid"]))
+        said = [json.loads(l)["content"] for l in Path(str(self.args) + ".msgs").read_text().splitlines()]
+        self.assertIn("<workspace unchanged/>", said[1])        # the same process, told once
+        self.op("reset")
+        self.op("ask", "what's open")
+        time.sleep(1.2)
+        self.op("warm")                                         # an aged session, replaced
+        self.op("ask", "what's open")
+        self.kill(self.procs(3)[2]["pid"])
+        self.op("keep")                                         # started again
+        self.op("ask", "what's open")
+        procs = self.procs(4)
+        self.assertEqual(4, len(procs))
+        for p in procs:
+            self.assertIn("<workspace>\n", self.first_message(p["pid"]), p["pid"])
+
+    def test_the_marker_is_the_hooks(self):
+        spec = importlib.util.spec_from_file_location("garrick_notifications_for_ask",
+                                                      REPO / "template" / "System" / "tools" / "notifications.py")
+        notifications = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(notifications)
+        self.assertEqual(ask.MARKER, notifications.BACKGROUND)
+
+
+class TestTheAppKeepsIt(unittest.TestCase):
+    """#261: what Garrick.swift does with the session, read from its source,
+    since CI compiles no Swift."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def body(self, signature):
+        import re
+        m = re.search(r"\n(\t)(?:@objc )?func %s\b[^\n]*\{\n(.*?)\n\1\}\n" % re.escape(signature), self.swift, re.S)
+        self.assertIsNotNone(m, signature)
+        return m.group(2)
+
+    def test_launch_keeps_it_once_the_window_shows(self):
+        launch = self.body("applicationDidFinishLaunching")
+        self.assertLess(launch.index("showWindow()"), launch.index("askKeep()"))
+        self.assertLess(launch.index("freshen()"), launch.index("askKeep()"))
+        self.assertIn("asyncAfter", launch[launch.index("freshen()"):])
+        self.assertIn("askKeepEvery", launch)
+
+    def test_keep_does_nothing_under_check(self):
+        keep = self.body("askKeep")
+        self.assertTrue(keep.strip().startswith("if checking { return }"), keep)
+        self.assertIn('askCall(["keep"])', keep)
+        self.assertIn('askCall(["stop"])', keep)
+
+    def test_quit_stops_it_and_waits(self):
+        quit_ = self.body("applicationWillTerminate")
+        self.assertIn('"stop"', quit_)
+        self.assertIn("addingTimeInterval(2)", quit_)
+        self.assertIn("isRunning", quit_)
+        self.assertNotIn("askCall", quit_)                      # it would return before the app is gone
+
+    def test_the_lease_outlasts_two_keeps(self):
+        import re
+        every = float(re.search(r"let askKeepEvery = ([\d.]+)", self.swift).group(1))
+        self.assertLess(2 * every, ask.LEASE)
+
+    def test_the_app_never_resets_unasked_and_still_warms(self):
+        self.assertNotIn('"reset"', self.swift)
+        self.assertIn('askCall(["warm"])', self.body("showAsk"))
+        self.assertIn('askCall(["warm"])', self.body("hotKeyPressed"))
 
 
 class TestDesk(AskCase):

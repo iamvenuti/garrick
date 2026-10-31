@@ -5,6 +5,7 @@ switches it on in System/garrick-flags.json.
     python3 ask.py --workspace ~/Garrick ask "open Pricing in Claude"
     python3 ask.py --workspace ~/Garrick ask --json "park Pricing"   the whole answer, for the app
     python3 ask.py --workspace ~/Garrick warm      start the session, answer nothing
+    python3 ask.py --workspace ~/Garrick keep      the app's: start the session if it is not running, hold the lease
     python3 ask.py --workspace ~/Garrick reset     a fresh conversation now
     python3 ask.py --workspace ~/Garrick stop      stop the server and its session
     python3 ask.py --workspace ~/Garrick status    the server, the session's age and its turns
@@ -23,6 +24,25 @@ transcript on disk, so a request answers in a second or two and a follow-up
 before the next request, and the server exits after three hours with nothing
 asked of it. Codex has no such mode: each request is one `codex exec`
 through agent.py, read-only, given the last few exchanges again.
+
+**The session starts with the app, belongs to it, and is marked.** With Ask
+on, Garrick.app sends `keep` a second after its window shows and every two
+minutes after: the server starts the session when it is not running, and
+never replaces one that is (the age rule above stays with `warm` and the
+requests). Each `keep` holds a lease of LEASE seconds. While it is held, a
+session that has died is started again within TICK seconds, once between
+two keeps so a CLI that dies as it starts is not started every tick, and by
+the next keep after that, each time with one line in ask.log that says so
+and nothing else. When the lease lapses (the app crashed, or was
+force-quit) the server stops, session and all. The app sends `stop` when it
+quits, and `keep` with the flag off stops the server. Every process the
+server starts carries MARKER (notifications.BACKGROUND), so the user's
+assistant hooks send no notice for it; and none carries `CLAUDECODE` or a
+`CMUX_*` variable, and the CLI is the real binary (handoff.find_claude()),
+never a terminal's wrapper, so cmux has no record of it. With
+`--no-session-persistence` it writes no transcript, so no list Garrick reads
+of work sessions shows it. A new process, however it started, is given the
+whole workspace list with its first request.
 
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
@@ -102,6 +122,10 @@ CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a 
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
+MARKER = "GARRICK_BACKGROUND"   # notifications.BACKGROUND: every process this server starts carries it
+LEASE = 10 * 60             # seconds: the server stays up this long after the app's last `keep`
+TICK = 15                   # seconds: how often a held lease looks for a dead session, the accept timeout then
+IDLE_TICK = 60              # seconds: the accept timeout with no lease
 MAX_REQUEST = 2000
 GONE = ("done",)
 APPS = ("claude", "codex", "cmux", "finder")
@@ -141,6 +165,27 @@ def agent():
             raise Bad("ask needs agent.py from the scheduled jobs extra in %s" % path.parent)
         _AGENT = _load("garrick_agent", path)
     return _AGENT
+
+
+_HANDOFF = None
+
+
+def handoff():
+    """handoff.py, beside this file: find_claude(), the real CLI and never a wrapper."""
+    global _HANDOFF
+    if _HANDOFF is None:
+        _HANDOFF = _load("garrick_ask_handoff", HERE / "handoff.py")
+    return _HANDOFF
+
+
+def claude_binary() -> str:
+    """The `claude` the session runs: handoff.find_claude()'s, which takes
+    GARRICK_CLAUDE first and passes over a shell wrapper; GARRICK_CLAUDE as
+    given when it names nothing there, so it still wins; else `claude`."""
+    found = handoff().find_claude()
+    if found is not None:
+        return str(found)
+    return os.environ.get("GARRICK_CLAUDE") or "claude"
 
 
 def page_action():
@@ -368,7 +413,7 @@ class ClaudeSession:
         problem = a.profile_problem(a.PROFILE)
         if problem:
             raise Bad("the deny profile %s %s, so nothing was asked" % (a.PROFILE.name, problem))
-        cmd = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        cmd = [claude_binary(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--model", self.tier, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
                "--permission-mode", "default", "--settings", str(a.PROFILE), "--setting-sources", "user,project",
                "--system-prompt", BRIEF.read_text(encoding="utf-8")]
@@ -383,7 +428,7 @@ class ClaudeSession:
         try:
             self.proc = subprocess.Popen(cmd, cwd=str(self.ws), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL)
-        except FileNotFoundError:
+        except OSError:
             raise Bad("claude is not installed, or not on PATH")
         self.started = time.time()
 
@@ -507,6 +552,7 @@ class Asker:
         self.ws = ws
         self.session = session
         self.sent = None            # the hash of the list the session was last given
+        self.told = None            # the `started` of the process last given the whole list
         self.results = ""           # what the last actions did, for the next turn
         self.asked = {}             # each request the last turn was asked about: the action to confirm
 
@@ -518,14 +564,17 @@ class Asker:
         names = scan(self.ws)
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
+        # A process other than the one last told knows nothing: after a reset,
+        # a warm that replaced an aged session, or a restart, the hash alone
+        # would leave it with no names at all.
+        whole = sent != self.sent or self.session.fresh() or self.session.started != self.told
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
-                 "<workspace>\n%s\n</workspace>" % listing if sent != self.sent or self.session.fresh()
-                 else "<workspace unchanged/>"]
+                 "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         parts.append("<request>\n%s\n</request>" % request[:MAX_REQUEST])
         text, usage = self.session.turn("\n".join(parts))
-        self.sent = sent
+        self.sent, self.told = sent, self.session.started
         say, do = parse(text)
         if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
             # It cannot know what is open; the brief says so, and this holds it to that once more.
@@ -533,6 +582,15 @@ class Asker:
                                             "the request above; never answer \"already open\".</correction>")
             say, do = parse(text)
         return self.carry_out(say, do, names, usage)
+
+    def revive(self) -> bool:
+        """Start a warm session that is not running: never replace a live one.
+        True when it started one."""
+        s = self.session
+        if s is None or not s.remembers or s.alive():
+            return False
+        s.start()
+        return True
 
     def carry_out(self, say: str, do: list, names, usage=None) -> dict:
         if do and not flag_on(self.ws):             # switched off while the session was answering
@@ -637,6 +695,12 @@ def serve(ws: Path) -> None:
 def serve_locked(ws: Path, path: Path) -> None:
     have = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
     os.environ["PATH"] = os.pathsep.join(have + [os.path.expanduser(p) for p in EXTRA_PATH if os.path.expanduser(p) not in have])
+    # Every process started from here is the app's background session: marked,
+    # so the hooks stay quiet, and out of reach of the cmux tab or the session
+    # this server may have been started from.
+    os.environ[MARKER] = "ask"
+    for k in [k for k in os.environ if k == "CLAUDECODE" or k.startswith("CMUX_")]:
+        del os.environ[k]
     if path.exists():                           # a server that died without taking it away
         path.unlink()
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -647,11 +711,28 @@ def serve_locked(ws: Path, path: Path) -> None:
         os.umask(old)
     mine = path.stat().st_ino
     srv.listen(8)
-    srv.settimeout(60)
     asker = Asker(ws)
     last = time.time()
+    leased = None                               # when the app last sent `keep`
+    kept = False                                # whether a dead session is started again
     try:
-        while time.time() - last < CLEAR_AFTER:
+        while True:
+            if leased is not None:
+                if time.time() - leased > LEASE:   # the app has gone without a word
+                    log("lease lapsed; stopped")
+                    break
+            elif time.time() - last >= CLEAR_AFTER:
+                break
+            if kept and asker.session is not None and asker.session.started and not asker.session.alive():
+                # Once between keeps: a CLI that dies as it starts is not started
+                # again every tick, and the app's next keep tries again.
+                kept = False
+                try:
+                    if asker.revive():
+                        log("session restarted")
+                except Bad as e:
+                    log("session not restarted: %s" % e)
+            srv.settimeout(TICK if leased is not None else IDLE_TICK)
             try:
                 conn, _ = srv.accept()
             except socket.timeout:
@@ -673,6 +754,14 @@ def serve_locked(ws: Path, path: Path) -> None:
                             asker.session = session_for(ws)
                         asker.session.ready()
                         out = {"say": "Ready."}
+                    elif op == "keep":
+                        if asker.session is None:
+                            asker.session = session_for(ws)
+                        leased, kept = time.time(), True
+                        before = asker.session.started
+                        if asker.revive() and before:
+                            log("session restarted")
+                        out = {"say": "Kept.", "leased": True}
                     elif op == "reset":
                         if asker.session is not None:
                             asker.session.start()
@@ -681,7 +770,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                     elif op == "status":
                         s = asker.session
                         out = {"pid": os.getpid(), "session": bool(s and s.alive()), "turns": s.turns if s else 0,
-                               "age_min": round((time.time() - s.started) / 60) if s and s.alive() else None}
+                               "age_min": round((time.time() - s.started) / 60) if s and s.alive() else None,
+                               "leased": leased is not None}
                     elif op == "stop":
                         path.unlink()
                         send(conn, {"say": "Stopped."})
@@ -755,7 +845,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--json", action="store_true", help="print the whole answer as JSON, for the app")
     ap.add_argument("--list", action="store_true", help="print the workspace list the session is given")
-    ap.add_argument("op", nargs="?", choices=("ask", "warm", "reset", "stop", "status", "serve"))
+    ap.add_argument("op", nargs="?", choices=("ask", "warm", "keep", "reset", "stop", "status", "serve"))
     ap.add_argument("words", nargs="*")
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
@@ -767,6 +857,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.op == "serve":
         serve(ws)
         return 0
+    elif args.op == "keep" and not flag_on(ws):
+        try:
+            call(ws, "stop", start=False)       # switched off: the app's next keep frees the process
+        except Bad:
+            pass
+        out = off()
     elif args.op in ("ask", "warm") and not flag_on(ws):
         out = off()
     else:
@@ -774,8 +870,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.op == "ask":
                 text = " ".join(args.words).strip()
                 out = call(ws, "ask", text) if text else {"say": "Ask what?", "ok": False}
-            elif args.op in ("warm", "reset", "status"):
-                out = call(ws, args.op, start=args.op == "warm") or {"say": "Not running."}
+            elif args.op in ("warm", "keep", "reset", "status"):
+                out = call(ws, args.op, start=args.op in ("warm", "keep")) or {"say": "Not running."}
             elif args.op == "stop":
                 out = call(ws, "stop", start=False) or {"say": "Not running."}
             else:

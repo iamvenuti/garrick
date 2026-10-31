@@ -52,8 +52,10 @@ and to Codex's UserPromptSubmit and Stop (~/.codex/hooks.json): Codex has no
 event for a session waiting on you. The prompt marks when a turn began, so
 Finished can wait for a turn longer than the set minutes. A hook never
 blocks the session: it answers nothing, sends from a process of its own,
-and does nothing for a session outside this workspace or for a headless job
-(GARRICK_HEADLESS=1).
+and does nothing for a session outside this workspace. It stays quiet, too,
+for a headless job (GARRICK_HEADLESS=1) and for Ask's background session
+(GARRICK_BACKGROUND, which ask.py sets): it writes no turn file, flushes
+nothing quiet hours held, and sends nothing.
 
 What it keeps for itself, never committed, is in
 System/generated/notifications/: the notices quiet hours hold, and when each
@@ -120,6 +122,10 @@ CMUX_APPS = ("/Applications/cmux.app/Contents/Resources/bin/cmux", "~/Applicatio
 HOOK_TIMEOUT = 10
 CLAUDE_HOOKS = ("UserPromptSubmit", "Notification", "Stop")
 CODEX_HOOKS = ("UserPromptSubmit", "Stop")       # Codex has no event for a session waiting on you
+# Set in the environment of a session Garrick runs in the background for
+# itself, Ask's (extras/status/ask.py's MARKER): nobody started it, so its
+# turns are nobody's to be told about.
+BACKGROUND = "GARRICK_BACKGROUND"
 
 # The way out, as a module attribute, so a test puts a fake in its place and
 # nothing reaches this Mac's notifications.
@@ -553,10 +559,16 @@ def _turn_file(ws: Path, session: str) -> Path:
     return state_dir(ws) / "turns" / (SESSION_ID.sub("", session)[:80] or "unnamed")
 
 
+def background(env=None) -> bool:
+    """Whether this is a session Garrick runs in the background, Ask's."""
+    env = os.environ if env is None else env
+    return bool(env.get(BACKGROUND))
+
+
 def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float] = None, detach: bool = True) -> None:
     """One hook event from Claude Code or Codex. Never raises, never prints."""
     env = os.environ if env is None else env
-    if env.get("GARRICK_HEADLESS") == "1" or not isinstance(payload, dict):
+    if env.get("GARRICK_HEADLESS") == "1" or background(env) or not isinstance(payload, dict):
         return
     ws = ws or workspace(None, {})          # the workspace this file is in, whatever the session set
     if ws is None:

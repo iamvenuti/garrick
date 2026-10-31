@@ -3129,8 +3129,13 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
     sched = launchd_jobs() if sched is None else sched
     caps, caps_from = caps_in_use(agent, sched)
     calls = [e for e in entries if not e.get("refused")]
-    day = [e for e in calls if now.timestamp() - e["ts"] < 86400]
-    hour = [e for e in calls if now.timestamp() - e["ts"] < 3600]
+    # Ask's calls count against Ask's own caps (#282), so the jobs' meters
+    # count the jobs' calls alone. An agent.py from before that has one
+    # budget for every call, and the meters count them all, as it does.
+    ask = getattr(agent, "ASK", None) if hasattr(agent, "cap_reached") else None
+    jobs = [e for e in calls if ask is None or e.get("job") != ask]
+    day = [e for e in jobs if now.timestamp() - e["ts"] < 86400]
+    hour = [e for e in jobs if now.timestamp() - e["ts"] < 3600]
     by = {}
     for e in entries:
         j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
@@ -3155,8 +3160,24 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             "by": by, "refused_today": [e for e in entries if e.get("refused") and now.timestamp() - e["ts"] < 86400],
             "per_day": [(d,) + tuple(per_day.get(d, (0, 0.0))) for d in days],
             "began": dt.datetime.fromtimestamp(entries[0]["ts"]) if entries else None,
-            "over_budget": [e for e in day if e.get("subtype") == "error_max_budget_usd"],
-            "budget": call_budget(agent, sched), "deny": deny_list(agent)}
+            "over_budget": [e for e in calls if now.timestamp() - e["ts"] < 86400 and e.get("subtype") == "error_max_budget_usd"],
+            "budget": call_budget(agent, sched), "deny": deny_list(agent),
+            "ask": ask_calls(agent, calls, now) if ask and any(e.get("job") == ask for e in entries) else None}
+
+
+def ask_calls(agent, calls: List[dict], now: dt.datetime) -> dict:
+    """The ask box's calls against its own caps (#282), shown once the
+    ledger holds a line of Ask's. Ask runs in the Garrick App's environment,
+    not a launchd plist's, so its caps are the GARRICK_CAP_ASK_* this page
+    was built with, or agent.py's defaults."""
+    mine = [e for e in calls if e.get("job") == agent.ASK]
+    day = [e for e in mine if now.timestamp() - e["ts"] < 86400]
+    hour = [e for e in mine if now.timestamp() - e["ts"] < 3600]
+    named = any(var in os.environ for var in agent.CAP_VARS[agent.ASK].values())
+    return {"caps": agent.caps(agent.ASK), "day": len(day), "hour": len(hour),
+            "cost_day": sum(float(e.get("cost_usd") or 0) for e in day),
+            "caps_from": "Ask's own caps, from the GARRICK_CAP_ASK_* settings the page was built with; the app may run under others."
+                         if named else "Ask's own caps, agent.py's defaults; GARRICK_CAP_ASK_* in the app's environment changes them."}
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -7782,10 +7803,19 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
             return "%s / %s%g" % (text, unit, cap) if cap else "%s, no cap" % text
         # where the caps were read, in the meters' tooltip; the per-call budget a figure beside them (#232)
-        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
-             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
-             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"])
-             + '<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
+        jobs_word = "Job calls" if L.get("ask") else "Calls"     # with Ask on caps of its own, these are the jobs'
+        m = (meter(L["day"], c["calls_day"], jobs_word + ", last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
+             + meter(L["hour"], c["calls_hour"], jobs_word + ", last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
+             + meter(L["cost_day"], c["cost_day"], ("Job cost" if L.get("ask") else "Cost") + ", last 24 h",
+                     against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"]))
+        A = L.get("ask")
+        if A:                                   # Ask's own caps, beside the jobs' (#282)
+            k = A["caps"]
+            m += (meter(A["hour"], k["calls_hour"], "Ask, last hour", against("%d" % A["hour"], k["calls_hour"]), A["caps_from"])
+                  + meter(A["day"], k["calls_day"], "Ask, last 24 h", against("%d" % A["day"], k["calls_day"]), A["caps_from"])
+                  + meter(A["cost_day"], k["cost_day"], "Ask cost, last 24 h", against("$%.2f" % A["cost_day"], k["cost_day"], "$"),
+                          A["caps_from"]))
+        m += ('<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
                '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
         def refused(tools):

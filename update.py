@@ -894,7 +894,7 @@ def old_jobs(root):
         if not any(Path(a).name in scripts for a in cmd):
             continue
         block = rename_commands(plist, data, args, at, old, new, old in retired)
-        if block["commands"]:
+        if block["commands"] or block["state"] == "manual":
             found.append(block)
     return found
 
@@ -923,8 +923,24 @@ def rename_commands(plist, data, args, at, old, new, retired):
     target = plist.with_name("garrick.%s.plist" % new)
     if retired or (target.exists() and not same_place(target, plist)):
         out["state"] = "retire" if retired else "duplicate"
+        mark = None
+        if not retired:                            # the copy already there learns the old name, its other keys kept
+            try:
+                with target.open("rb") as f:
+                    there = plistlib.load(f).get("EnvironmentVariables")
+                there = dict(there) if isinstance(there, dict) else {}
+                if there.get("GARRICK_RENAMED_FROM") != old:
+                    mark = "plutil -replace EnvironmentVariables -json %s %s" % (
+                        shlex.quote(json.dumps(dict(there, GARRICK_RENAMED_FROM=old), ensure_ascii=False)), q(target))
+            except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+                pass
+            except TypeError:
+                out["state"] = "manual"
+                return out
         cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(label))
         cmds.append("mv -n %s %s" % (q(plist), q(str(plist) + ".retired")))
+        if mark:
+            cmds.append(mark)
         return out
 
     want = list(args)
@@ -957,8 +973,12 @@ def rename_commands(plist, data, args, at, old, new, retired):
             edits.append("plutil -replace %s -string %s %s" % (
                 key, q(value[:-len("%s.launchd.log" % old)] + "%s.launchd.log" % new), q(target)))
     if want_env != env:
-        edits.append("plutil -replace EnvironmentVariables -json %s %s" % (
-            shlex.quote(json.dumps(want_env, ensure_ascii=False)), q(target)))
+        try:
+            edits.append("plutil -replace EnvironmentVariables -json %s %s" % (
+                shlex.quote(json.dumps(want_env, ensure_ascii=False)), q(target)))
+        except TypeError:                          # a <date> or <data> value, which JSON cannot carry
+            out["state"] = "manual"
+            return out
     moved = same_place(target, plist)
     if moved and not edits:
         return out                                 # done
@@ -994,8 +1014,12 @@ def say_renames(renames):
                          "that file afterwards:" % (name, r["job"], name))
         elif r["state"] == "duplicate":
             lines.append("  %s runs %s, and garrick.%s.plist is already there. Unload the old one and set it aside as "
-                         "%s.retired, which launchd does not load. You may delete that file afterwards:" % (
-                             name, r["job"], r["new"], name))
+                         "%s.retired, which launchd does not load; you may delete that file afterwards. The last line, "
+                         "when there is one, marks garrick.%s.plist with the old name, so the runs from before count "
+                         "as its own:" % (name, r["job"], r["new"], name, r["new"]))
+        elif r["state"] == "manual":
+            lines.append("  %s runs %s, which is now %s, but has a value plutil -json cannot write, a date or data; "
+                         "rename it by hand, as docs/extras/scheduled-jobs.md says." % (name, r["job"], r["new"]))
         elif r["state"] == "part":
             lines.append("  %s is part way through its rename from %s to %s. The lines still to run:" % (
                 name, r["job"], r["new"]))

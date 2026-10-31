@@ -267,7 +267,10 @@ def signal_name(signum: int) -> str:
 
 def stop_group(proc: subprocess.Popen, grace: float) -> None:
     """SIGTERM to the command's whole process group, then SIGKILL if it is
-    still there after `grace` seconds."""
+    still there after `grace` seconds. Then SIGKILL to any group the command
+    recorded as its own (agent.groups_file(): the nightly job's step, which
+    runs in a group of its own), so a command killed before it could stop it
+    leaves none behind."""
     for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 5)):
         try:
             os.killpg(proc.pid, sig)
@@ -278,6 +281,18 @@ def stop_group(proc: subprocess.Popen, grace: float) -> None:
             break
         except subprocess.TimeoutExpired:
             continue
+    record = agent.groups_file(proc.pid) if hasattr(agent, "groups_file") else None
+    try:
+        groups = [int(w) for w in record.read_text(encoding="utf-8").split() if w.isdigit()] if record else []
+    except OSError:
+        groups = []
+    for group in groups:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except OSError:
+            pass                                    # gone already
+    if record is not None:
+        record.unlink(missing_ok=True)
 
 
 def stop_orphan(group: int) -> None:

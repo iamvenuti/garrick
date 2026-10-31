@@ -1415,6 +1415,85 @@ class NightlyTest(FakeAssistants):
         time.sleep(4)
         self.assertFalse(late.exists())                                      # the child was stopped with it
 
+    def start_stubborn_nightly(self):
+        """nightly.py started as job.py starts a command, its first step one
+        that ignores SIGTERM; (the process, the step's pid) once it runs."""
+        pidfile = self.tmp / "step.pid"
+        self.nurture.write_text("import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                                "open(%r, 'w').write(str(os.getpid()))\ntime.sleep(60)\n" % str(pidfile))
+        runner = self.tmp / "run_nightly.py"
+        runner.write_text("import sys\nfrom pathlib import Path\nsys.path.insert(0, %r)\nimport nightly\n"
+                          "nightly.NURTURE = Path(%r)\nnightly.STATUS = Path(%r)\n"
+                          "sys.exit(nightly.main(['--workspace', %r]))\n"
+                          % (str(JOBS), str(self.nurture), str(self.status_dir), str(self.ws)))
+        proc = subprocess.Popen([sys.executable, str(runner)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text():
+                break
+            time.sleep(0.1)
+        step = int(pidfile.read_text())
+        self.addCleanup(self.kill_quietly, step)
+        self.assertEqual("%d\n" % step, agent.groups_file(proc.pid).read_text())   # on record for job.py
+        return proc, step
+
+    @staticmethod
+    def kill_quietly(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+    def gone(self, pid, wait=5.0):
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_job_pys_stop_leaves_no_step_behind(self):
+        """launchctl bootout: job.py's stop_group sends SIGTERM, then SIGKILL
+        STOP_GRACE later. nightly.py's own grace is shorter, so it stops the
+        step that ignores SIGTERM before its own end."""
+        self.assertLess(nightly.GRACE * 2, job.STOP_GRACE)
+        proc, step = self.start_stubborn_nightly()
+        job.stop_group(proc, job.STOP_GRACE)
+        self.assertEqual(128 + signal.SIGTERM, proc.wait(timeout=10))           # nightly.py went its own way
+        self.assertTrue(self.gone(step))
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def test_a_nightly_killed_outright_still_leaves_no_step_behind(self):
+        proc, step = self.start_stubborn_nightly()
+        os.kill(proc.pid, signal.SIGKILL)                                       # no chance to stop its step
+        proc.wait(timeout=10)
+        job.stop_group(proc, job.STOP_GRACE)                                    # the recorded group goes too
+        self.assertTrue(self.gone(step))
+        self.assertFalse(agent.groups_file(proc.pid).exists())
+
+    def test_a_stop_while_a_step_starts_waits_for_it(self):
+        """A SIGTERM between Popen and the step's record is held until the
+        step is on record, then stops it."""
+        started = []
+        real = subprocess.Popen
+
+        def popen(*a, **k):
+            proc = real(*a, **k)
+            started.append(proc)
+            nightly.stopped(signal.SIGTERM, None)                               # the signal lands mid-start
+            return proc
+        with mock.patch.object(nightly.subprocess, "Popen", popen), \
+                self.assertRaises(SystemExit) as stop:
+            self.nurture.write_text("import time\ntime.sleep(60)\n")
+            self.run_nightly()
+        self.assertEqual(128 + signal.SIGTERM, stop.exception.code)
+        self.assertIsNotNone(started[0].poll())                                 # the step was stopped, not left
+        self.assertEqual([], nightly._running)
+        nightly._deferred.clear()
+
     def test_output_reaches_the_log_as_it_comes(self):
         self.nurture.write_text("import sys, time\nprint('first', flush=True)\ntime.sleep(1)\nprint('second', flush=True)\n")
         seen = []

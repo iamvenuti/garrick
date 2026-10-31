@@ -1356,13 +1356,43 @@ class TestJobsRenamed(ExtrasCase):
                       update.report(self.plan()))
 
     def test_a_new_plist_already_there_leaves_only_the_old_one_to_put_away(self):
-        (self.agents / "garrick.gr-backup.plist").write_bytes((self.agents / "garrick.backup.plist").read_bytes())
-        got = next(r for r in self.plan()["renames"] if r["job"] == "backup" and r["state"] == "duplicate")
+        """The user copied the shipped gr-backup plist in: the old one is set
+        aside, and the copy learns the old name, its other keys kept, so the
+        old row does not stay for good."""
+        import plistlib
+        shipped = self.filled(plistlib.loads((REPO / "extras/jobs/launchd/garrick.gr-backup.plist").read_bytes()))
+        (self.agents / "garrick.gr-backup.plist").write_bytes(plistlib.dumps(shipped))
+        got = next(r for r in self.plan()["renames"] if r["job"] == "backup")
+        self.assertEqual("duplicate", got["state"])
+        env = dict(shipped["EnvironmentVariables"], GARRICK_RENAMED_FROM="backup")
         self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.backup",
                           "mv -n ~/Library/LaunchAgents/garrick.backup.plist ~/Library/LaunchAgents/garrick.backup.plist.retired"],
-                         got["commands"])
+                         got["commands"][:2])
+        mark = update.shlex.split(got["commands"][2])
+        self.assertEqual(["plutil", "-replace", "EnvironmentVariables", "-json"], mark[:4])
+        self.assertEqual((env, "~/Library/LaunchAgents/garrick.gr-backup.plist"), (json.loads(mark[4]), mark[5]))
         self.assertIn("garrick.backup.plist runs backup, and garrick.gr-backup.plist is already there.",
                       update.report(self.plan()))
+        if shutil.which("plutil") and sys.platform == "darwin":
+            self.run_blocks(2)
+            there = plistlib.loads((self.agents / "garrick.gr-backup.plist").read_bytes())
+            self.assertEqual(env, there["EnvironmentVariables"])
+            self.assertEqual(shipped["ProgramArguments"], there["ProgramArguments"])
+            self.assertFalse([r for r in self.plan()["renames"] if r["job"] == "backup"])     # nothing left for it
+
+    def test_a_plist_with_a_date_is_left_for_you_and_the_rest_go_on(self):
+        import datetime as dt
+        import plistlib
+        path = self.agents / "garrick.whats-open.plist"
+        data = plistlib.loads(path.read_bytes())
+        data["EnvironmentVariables"]["SINCE"] = dt.datetime(2026, 1, 1)
+        path.write_bytes(plistlib.dumps(data))
+        p = self.plan()                                                    # no TypeError: the update goes on
+        got = next(r for r in p["renames"] if r["job"] == "whats-open")
+        self.assertEqual(("manual", []), (got["state"], got["commands"]))
+        self.assertIn("garrick.whats-open.plist runs whats-open, which is now gr-whats-open, but has a value plutil -json "
+                      "cannot write, a date or data; rename it by hand", update.report(p))
+        self.assertEqual(6, len(p["renames"]))
 
     def run_blocks(self, times):
         """Run every printed line but launchctl's, `times` over, as a user

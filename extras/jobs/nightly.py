@@ -71,9 +71,14 @@ LIMITS = {"nurture": 1800, "effort": 600, "nightly.local": 600, "status": 480}
 TAIL = 10
 EXIT_TIMEOUT = 124
 EXIT_FAILED = 1
-GRACE = 5                                  # seconds between SIGTERM and SIGKILL to a step's group
+# Seconds between SIGTERM and SIGKILL to a step's group: well under job.py's
+# STOP_GRACE (5), so that when job.py is stopped, and stops this script, the
+# step is gone before job.py's SIGKILL reaches this script.
+GRACE = 2
 NOT_EXECUTABLE = "not executable (chmod +x %s)"
 _running: List[subprocess.Popen] = []      # the step under way, for a stop asked of this script
+_starting = False                          # a step is being started: a stop waits until it is recorded
+_deferred: List[int] = []
 
 
 def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[str]], str]]:
@@ -128,13 +133,22 @@ def run_step(cmd: List[str], cwd: Path, limit: float) -> Tuple[int, List[str], f
             print("  " + line, flush=True)
             tail.append(line[:300])
 
+    global _starting
+    _starting = True                            # a stop now waits until the step is in _running and on record
     try:
         proc = subprocess.Popen(cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, errors="replace", start_new_session=True)
     except OSError as exc:
+        _starting = False
         said("could not start: %s" % exc)
+        if _deferred:
+            stopped(_deferred[0], None)
         return 127, list(tail), time.time() - start
     _running.append(proc)
+    record_group(proc.pid)
+    _starting = False
+    if _deferred:
+        stopped(_deferred[0], None)
     pump = threading.Thread(target=lambda: [said(line) for line in proc.stdout], daemon=True)
     pump.start()
     try:
@@ -143,7 +157,9 @@ def run_step(cmd: List[str], cwd: Path, limit: float) -> Tuple[int, List[str], f
         stop_group(proc)
         code = EXIT_TIMEOUT
     finally:
-        _running.remove(proc)
+        if proc in _running:                    # a stop asked meanwhile has cleared it
+            _running.remove(proc)
+        record_group(None)
     try:
         os.killpg(proc.pid, signal.SIGKILL)     # anything the step left behind in its group
     except OSError:
@@ -154,10 +170,33 @@ def run_step(cmd: List[str], cwd: Path, limit: float) -> Tuple[int, List[str], f
     return code, list(tail), time.time() - start
 
 
+def record_group(group: Optional[int]) -> None:
+    """Keep the running step's process group where job.py's stop_group()
+    finds it (agent.groups_file(), named after this process), so that a
+    SIGKILL to this script, which it cannot catch, still leaves no step
+    behind. None takes the record away."""
+    path = agent.groups_file(os.getpid())
+    try:
+        if group is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("%d\n" % group, encoding="utf-8")
+    except OSError:
+        pass                                    # no record: this script's own stop still stops the step
+
+
 def stopped(signum, frame):
-    """Asked to stop: stop the step under way with its group, then go."""
+    """Asked to stop: stop the step under way with its group, then go. A stop
+    that comes while a step is being started waits until it is recorded."""
+    if _starting:
+        _deferred.append(signum)
+        return
     for proc in list(_running):
         stop_group(proc)
+    _running.clear()
+    _deferred.clear()
+    record_group(None)
     raise SystemExit(128 + signum)
 
 
@@ -175,8 +214,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not (ws / "System").is_dir():
         print("nightly: %s is not a workspace: it has no System/ folder" % ws, file=sys.stderr)
         return agent.EXIT_USAGE
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, stopped)
+    before = {sig: signal.signal(sig, stopped) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    try:
+        return run_steps(ws, args)
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+
+def run_steps(ws: Path, args: argparse.Namespace) -> int:
     done: List[dict] = []
     for step, cmd, why in steps(ws, args):
         if cmd is None:

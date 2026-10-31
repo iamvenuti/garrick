@@ -2317,7 +2317,7 @@ class TestJobs(StatusCase):
         self.assertEqual(["gr-nightly", "nurture", "status"], sorted(J))        # nothing of nurture's is read as its
         self.assertEqual([], J["gr-nightly"]["runs"])
         (agents / "nurture.plist").unlink()                                      # renamed as update.py says,
-        (agents / "status.plist").rename(agents / "garrick.status.plist.retired")   # and the evening build put away
+        (agents / "status.plist").unlink()                                       # and the evening build unloaded
         new["EnvironmentVariables"] = {"GARRICK_RENAMED_FROM": "nurture"}
         with self.plists(**{"gr-nightly": new}):                                 # renamed, not run yet
             J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
@@ -2379,6 +2379,29 @@ class TestJobs(StatusCase):
         with self.plists(**{"gr-todo-sweep": sweep}):                            # a call under the old name since: not Garrick's
             L = status.ledger(status.load_agent(self.root), self.jobs, self.now + dt.timedelta(minutes=5))
         self.assertEqual({"todo-sweep": 1}, {k: v["calls"] for k, v in L["by"].items()})
+
+    def test_the_evening_builds_row_goes_by_the_nightlys_first_run(self):
+        """#276: the jobs folder decides, not the .retired file, which the
+        user may delete: status is hidden once the nightly is there and no
+        status run has finished since the nightly's first."""
+        self.old_runs("status", days=(2,))
+        nightly = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-nightly", "--", "true"],
+                   "StartCalendarInterval": {"Hour": 5, "Minute": 15}}
+        stat = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "status", "--", "true"],
+                "StartCalendarInterval": {"Hour": 23, "Minute": 30}}
+        with self.plists(status=stat):
+            self.assertEqual(["status"], [j["name"] for j in status.jobs(self.jobs, self.now)])   # no nightly yet
+        (self.jobs.parent / "LaunchAgents" / "status.plist").unlink()                           # unloaded; no .retired kept
+        self.assertEqual(["status"], [j["name"] for j in status.jobs(self.jobs, self.now)])       # still no nightly
+        self.old_runs("gr-nightly", days=(1,))
+        with self.plists(**{"gr-nightly": nightly}):
+            self.assertEqual(["gr-nightly"], [j["name"] for j in status.jobs(self.jobs, self.now)])
+            t = self.now - dt.timedelta(hours=1)                                                 # a status run since: yours
+            (self.jobs / "status.heartbeat.json").write_text(json.dumps({"job": "status", "finished": stamp(t.timestamp()),
+                                                                         "exit": 1, "ok": False}))
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(["gr-nightly", "status"], sorted(J))
+        self.assertEqual("critical", J["status"]["state"])
 
     def test_a_job_of_yours_under_an_old_name_keeps_its_row(self):
         """#275: a backup of yours, run by cron or a hook, that fails after

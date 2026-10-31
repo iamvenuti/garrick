@@ -3046,9 +3046,11 @@ def superseded(folder: Path, sched: Dict[str, dict]) -> Tuple[Dict[str, List[Tup
     the first run under the new name (`renamed_at`), or before it the
     renamed plist's last change: a run under the old name after it is not
     Garrick's, and the old name keeps a row of its own while it has one. The
-    retired evening build, `status`, is hidden only when its plist was put
-    away as update.py says (garrick.status.plist.retired) and it has not run
-    since; its runs are never the nightly's."""
+    retired evening build, `status`, is hidden once the nightly is there (a
+    plist or a heartbeat), no plist runs `status`, and no `status` run has
+    finished since the nightly's first run; its runs are never the
+    nightly's. Nothing outside the jobs folder decides it, so deleting the
+    plist set aside as .retired changes nothing."""
     earlier: Dict[str, List[Tuple[str, float]]] = {}
     hidden = set()
 
@@ -3087,16 +3089,28 @@ def superseded(folder: Path, sched: Dict[str, dict]) -> Tuple[Dict[str, List[Tup
         last = finished(old)
         if last is None or last < cutoff:
             hidden.add(old)
+    def first_run(name: str) -> Optional[float]:
+        """When the job first ran, as far as its logs and heartbeat go back."""
+        hb = beat(name)
+        seen = [float(hb["renamed_at"])] if isinstance(hb.get("renamed_at"), (int, float)) else []
+        if finished(name) is not None:
+            seen.append(finished(name))
+        for path in (folder / (name + ".log.1"), folder / (name + ".log")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            m = next((LOGLINE.match(line) for line in text.splitlines() if LOGLINE.match(line)), None)
+            if m:
+                seen.append(dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp())
+        return min(seen) if seen else None
+
     for old, new in RETIRED_JOBS.items():
-        put_away = launch_agents() / ("garrick.%s.plist.retired" % old)
-        if old in sched or not put_away.is_file():
+        if old in sched or not (new in sched or (folder / (new + ".heartbeat.json")).is_file()):
             continue
-        last = finished(old)
-        try:
-            if last is None or last < put_away.stat().st_mtime:
-                hidden.add(old)
-        except OSError:
-            pass
+        first, last = first_run(new), finished(old)
+        if first is None or last is None or last < first:
+            hidden.add(old)
     return earlier, hidden
 
 

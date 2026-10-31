@@ -650,6 +650,14 @@ def report_items(n: int) -> None:
         Path(target).write_text("%d\n" % n, encoding="utf-8")
 
 
+def groups_file(pid: int) -> Path:
+    """Where a job's command that runs work in process groups of its own (the
+    nightly job's steps) records them, named after the command's process, so
+    that job.py's stop_group() stops them too, even after a SIGKILL to the
+    command."""
+    return jobs_dir() / ("%d.groups" % pid)
+
+
 def report_steps(steps: List[dict]) -> None:
     """The steps of a run made of several, as the nightly job's, for job.py to
     put in the heartbeat: each a dict with `step` and `exit`, and `seconds`

@@ -75,7 +75,19 @@ Every call adds one line to `~/Library/Logs/garrick-jobs/ledger.jsonl`, beside t
 | `GARRICK_CAP_COST_DAY` | 20 | dollars in the last 24 hours |
 | `GARRICK_MAX_CALL_USD` | 5 | dollars for one Claude call, after which Claude stops and the call exits 8 |
 
-Set one to 0 to remove it. The ledger line also names the model the call used, which the tier alone does not say. The cost is Claude Code's own estimate at list prices, so on a subscription it measures how much you use rather than what you pay. Codex reports neither turns nor cost; its lines leave them empty, and only the call limits hold it.
+Set one to 0 to remove it.
+
+The Garrick App's [Ask box](status-page.md#ask) has limits of its own. Its requests go into the same ledger, as job `ask`, so `agent.py ledger` and the *Assistant calls* card show them, but they count against Ask's limits and never against the ones above: a morning of asking leaves the night's jobs their budget, and jobs that reach their limits leave Ask its own.
+
+| Variable | Default | Limit on Ask |
+|---|---|---|
+| `GARRICK_CAP_ASK_HOUR` | 60 | requests in the last hour |
+| `GARRICK_CAP_ASK_DAY` | 300 | requests in the last 24 hours |
+| `GARRICK_CAP_ASK_COST_DAY` | 20 | dollars in the last 24 hours |
+
+From a script, `agent.caps("jobs")` and `agent.caps("ask")` read each set, and `agent.cap_reached(entries, now, limits, budget)` says which limit stops the next call and when it clears. A call counts against the budget of its job (`agent.budget_of(job)`): `ask` for the Ask box, `jobs` for any other.
+
+The ledger line also names the model the call used, which the tier alone does not say. The cost is Claude Code's own estimate at list prices, so on a subscription it measures how much you use rather than what you pay. Codex reports neither turns nor cost; its lines leave them empty, and only the call limits hold it.
 
 ### Write your own job
 

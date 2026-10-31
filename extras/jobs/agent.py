@@ -43,14 +43,32 @@ connectors you have configured.
 folder (~/Library/Logs/garrick-jobs/ on a Mac, or GARRICK_JOBS_DIR): when,
 which job, assistant, tier, model, turns, cost, seconds, exit code and any
 tool the assistant was refused. The ledger keeps the last 60 days. Before a call, the
-ledger is read and the call is refused, with exit 8, when the last 24 hours
-already hold GARRICK_CAP_CALLS_DAY calls (48), the last hour
-GARRICK_CAP_CALLS_HOUR (12), or the last 24 hours GARRICK_CAP_COST_DAY
-dollars (20). Each Claude call is also stopped at GARRICK_MAX_CALL_USD
+ledger is read and the call is refused, with exit 8, when its budget's caps
+are reached. Each Claude call is also stopped at GARRICK_MAX_CALL_USD
 dollars (5), and then exits 8 as well. Set a cap to 0 to remove it. The cost
 is Claude's own estimate at list prices, so on a subscription it measures use
 rather than a bill. Codex reports neither turns nor cost, so its lines carry
 none and only the call caps hold it.
+
+**Two budgets, one ledger.** A ledger line counts against the budget its job
+falls in (budget_of()): the ask box's lines, job `ask` (ASK), against Ask's
+caps, and every other line against the scheduled jobs' caps. Neither budget
+spends the other's, and both stay in the one ledger, so `ledger` and the
+status page show every call.
+
+    budget  variable                   default  counts
+    jobs    GARRICK_CAP_CALLS_DAY      48       calls in the last 24 hours
+            GARRICK_CAP_CALLS_HOUR     12       calls in the last hour
+            GARRICK_CAP_COST_DAY       20       dollars in the last 24 hours
+    ask     GARRICK_CAP_ASK_DAY        300      requests in the last 24 hours
+            GARRICK_CAP_ASK_HOUR       60       requests in the last hour
+            GARRICK_CAP_ASK_COST_DAY   20       dollars in the last 24 hours
+
+From Python: `caps(budget)` reads a budget's caps from the environment (or a
+mapping given, such as a launchd plist's), `cap_reached(entries, now,
+limits, budget)` says whether the next call of that budget must wait, which
+cap stopped it and when it clears, and `cap_reason()` says the same as one
+line of text. `run()` applies the budget of the job it is given.
 
 **How long it may take.** With `--timeout` (or `timeout=`), a call still going
 after that many seconds is stopped and exits 124, so a job can keep time for
@@ -69,6 +87,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -76,7 +95,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 sys.dont_write_bytecode = True
 
@@ -92,7 +111,19 @@ EXIT_USAGE = 64
 EXIT_TIMEOUT = 124
 EXIT_MISSING = 127
 
-DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}
+# The two budgets a ledger line counts against: the scheduled jobs', and the
+# ask box's, which is every line of the job ASK. Each has its own caps, with
+# the same three keys, read from its own variables.
+ASK = "ask"
+BUDGETS = ("jobs", ASK)
+DEFAULT_CAPS = {"calls_day": 48, "calls_hour": 12, "cost_day": 20.0}          # the scheduled jobs'
+DEFAULT_ASK_CAPS = {"calls_day": 300, "calls_hour": 60, "cost_day": 20.0}     # the ask box's
+CAP_VARS = {
+    "jobs": {"calls_day": "GARRICK_CAP_CALLS_DAY", "calls_hour": "GARRICK_CAP_CALLS_HOUR",
+             "cost_day": "GARRICK_CAP_COST_DAY"},
+    ASK: {"calls_day": "GARRICK_CAP_ASK_DAY", "calls_hour": "GARRICK_CAP_ASK_HOUR",
+          "cost_day": "GARRICK_CAP_ASK_COST_DAY"},
+}
 DEFAULT_MAX_CALL_USD = 5.0
 JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
 ITEMS_LINE = re.compile(r"^ITEMS (\d+)\s*$", re.M)
@@ -140,19 +171,27 @@ def name_problem(name: str) -> Optional[str]:
     return None
 
 
-def _number(name: str, default: float) -> float:
+def _number(name: str, default: float, env: Optional[Mapping[str, str]] = None) -> float:
     try:
-        return float(os.environ.get(name, default))
-    except ValueError:
+        return float((os.environ if env is None else env).get(name, default))
+    except (TypeError, ValueError):
         return default
 
 
-def caps() -> Dict[str, float]:
-    return {
-        "calls_day": _number("GARRICK_CAP_CALLS_DAY", DEFAULT_CAPS["calls_day"]),
-        "calls_hour": _number("GARRICK_CAP_CALLS_HOUR", DEFAULT_CAPS["calls_hour"]),
-        "cost_day": _number("GARRICK_CAP_COST_DAY", DEFAULT_CAPS["cost_day"]),
-    }
+def budget_of(job: Optional[str]) -> str:
+    """The budget a call of `job` counts against: ASK for the ask box's
+    calls, `jobs` for every other, a call with no job named among them."""
+    return ASK if job == ASK else "jobs"
+
+
+def caps(budget: str = "jobs", env: Optional[Mapping[str, str]] = None) -> Dict[str, float]:
+    """A budget's caps, `calls_day`, `calls_hour` and `cost_day`, from `env`
+    (the environment unless given), each its default when unset or not a
+    number. 0 removes a cap."""
+    if budget not in BUDGETS:
+        raise ValueError("budget %r; use %s" % (budget, ", ".join(BUDGETS)))
+    defaults = DEFAULT_ASK_CAPS if budget == ASK else DEFAULT_CAPS
+    return {key: _number(var, defaults[key], env) for key, var in CAP_VARS[budget].items()}
 
 
 def rotate(path: Path) -> None:
@@ -189,20 +228,56 @@ def read_ledger(path: Path, now: float, hours: float = 24) -> List[dict]:
     return out
 
 
-def cap_reason(entries: Iterable[dict], now: float, limits: Dict[str, float]) -> Optional[str]:
-    """Why the next call must not run, or None. Refused calls cost nothing and
-    are not counted, so a refusal never extends its own window."""
-    calls = [e for e in entries if not e.get("refused")]
+def counted(entries: Iterable[dict], budget: str) -> List[dict]:
+    """The ledger lines that count against `budget`."""
+    return [e for e in entries if budget_of(e.get("job")) == budget]
+
+
+def cap_reached(entries: Iterable[dict], now: float, limits: Dict[str, float],
+                budget: str = "jobs") -> Optional[dict]:
+    """None when the next call of `budget` may run. Otherwise which cap
+    stopped it: `cap` (`calls_day`, `calls_hour` or `cost_day`), `limit`,
+    `used` (the calls or the dollars in its window), `reason`, one line that
+    says so, and `clears`, the time the call may run again, when every cap
+    reached has let go. With more than one reached, the one that clears last
+    is named. Only the lines of `budget` count, and refused calls cost
+    nothing and are not counted, so a refusal never extends its own window."""
+    calls = sorted((e for e in counted(entries, budget) if not e.get("refused")), key=lambda e: e["ts"])
     day = [e for e in calls if now - e["ts"] < 86400]
     hour = [e for e in calls if now - e["ts"] < 3600]
-    if limits["calls_day"] and len(day) >= limits["calls_day"]:
-        return "%d calls in the last 24 hours, the cap is %g" % (len(day), limits["calls_day"])
-    if limits["calls_hour"] and len(hour) >= limits["calls_hour"]:
-        return "%d calls in the last hour, the cap is %g" % (len(hour), limits["calls_hour"])
+    found = []
+    for key, window, seconds, words in (("calls_day", day, 86400, "the last 24 hours"),
+                                        ("calls_hour", hour, 3600, "the last hour")):
+        limit = limits.get(key) or 0
+        if limit and len(window) >= limit:
+            # the call that has to leave the window for one more to fit
+            leaving = window[len(window) - int(math.ceil(limit))]
+            found.append({"cap": key, "limit": limit, "used": len(window),
+                          "reason": "%d calls in %s, the cap is %g" % (len(window), words, limit),
+                          "clears": leaving["ts"] + seconds})
     spent = sum(float(e.get("cost_usd") or 0) for e in day)
-    if limits["cost_day"] and spent >= limits["cost_day"]:
-        return "$%.2f spent in the last 24 hours, the cap is $%g" % (spent, limits["cost_day"])
-    return None
+    limit = limits.get("cost_day") or 0
+    if limit and spent >= limit:
+        left, clears = spent, now
+        for e in day:                       # the oldest first, until what is left is under the cap
+            left -= float(e.get("cost_usd") or 0)
+            clears = e["ts"] + 86400
+            if left < limit:
+                break
+        found.append({"cap": "cost_day", "limit": limit, "used": spent,
+                      "reason": "$%.2f spent in the last 24 hours, the cap is $%g" % (spent, limit),
+                      "clears": clears})
+    if not found:
+        return None
+    last = max(found, key=lambda f: f["clears"])
+    return dict(last, budget=budget)
+
+
+def cap_reason(entries: Iterable[dict], now: float, limits: Dict[str, float],
+               budget: str = "jobs") -> Optional[str]:
+    """Why the next call of `budget` must not run, as one line, or None."""
+    reached = cap_reached(entries, now, limits, budget)
+    return reached["reason"] if reached else None
 
 
 def append_ledger(path: Path, entry: dict) -> None:
@@ -410,9 +485,11 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
         return EXIT_USAGE, ""
     ledger = ledger_path()
     now = time.time()
-    reason = cap_reason(read_ledger(ledger, now), now, caps())
+    budget = budget_of(job)
+    reason = cap_reason(read_ledger(ledger, now), now, caps(budget), budget)
     if reason:
-        print("agent: not run, %s. Raise GARRICK_CAP_* or wait." % reason, file=sys.stderr)
+        print("agent: not run, %s. Raise %s or wait." % (reason, "GARRICK_CAP_ASK_*" if budget == ASK else "GARRICK_CAP_*"),
+              file=sys.stderr)
         append_ledger(ledger, ledger_entry(now, job, tier, {}, 0, EXIT_CAP, refused=reason))
         return EXIT_CAP, ""
 

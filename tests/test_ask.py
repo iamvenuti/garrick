@@ -558,15 +558,61 @@ class TestWarmSession(StandInCase):
 
     def test_a_cap_asks_nothing(self):
         self.answers.write_text(json.dumps([]))
-        os.environ["GARRICK_CAP_CALLS_HOUR"] = "1"
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
         a = ask.agent()
-        a.append_ledger(a.ledger_path(), a.ledger_entry(__import__("time").time(), "whats-open", "haiku", {}, 1, 0))
+        a.append_ledger(a.ledger_path(), a.ledger_entry(__import__("time").time(), "ask", "haiku", {}, 1, 0))
         session = ask.ClaudeSession(self.root, "haiku")
-        with self.assertRaisesRegex(ask.Bad, "not asked: 1 calls in the last hour"):
+        with self.assertRaisesRegex(ask.Capped, r"^Ask has reached its limit of 1 request an hour\. "
+                                                r"It can answer again (tomorrow )?at \d\d:\d\d\.$"):
             ask.Asker(self.root, session).ask("open Pricing")
         self.assertIsNone(session.proc)                                               # no process started
         self.assertFalse(self.args.exists())
         self.assertTrue(json.loads((self.jobs / "ledger.jsonl").read_text().splitlines()[-1])["refused"])
+
+    def test_ask_has_caps_of_its_own(self):
+        """#282: more than twelve requests in an hour all go through, and a
+        scheduled job still runs after them; the jobs' caps reached leave Ask
+        its own."""
+        for key in [k for k in os.environ if k.startswith("GARRICK_CAP_")]:
+            del os.environ[key]
+        self.answers.write_text(json.dumps([]))
+        asker = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        try:
+            for _ in range(13):
+                self.assertEqual("ok", asker.ask("what's open")["say"])
+        finally:
+            asker.session.stop()
+        a = ask.agent()
+        ledger = [json.loads(line) for line in (self.jobs / "ledger.jsonl").read_text().splitlines()]
+        self.assertEqual(13, len([e for e in ledger if e["job"] == "ask" and not e.get("refused")]))
+        now = __import__("time").time()
+        self.assertIsNone(a.cap_reason(a.read_ledger(a.ledger_path(), now), now, a.caps()))  # the jobs' budget untouched
+        os.environ["GARRICK_HARNESS"] = "claude"
+        code, _ = a.run("haiku", "One sweep.", job="sweep", timeout=30)
+        self.assertNotEqual(a.EXIT_CAP, code)
+        self.assertNotIn("refused", json.loads((self.jobs / "ledger.jsonl").read_text().splitlines()[-1]))
+        # the other way: the jobs' caps reached, and Ask still answers
+        for i in range(48):
+            a.append_ledger(a.ledger_path(), a.ledger_entry(now - i, "sweep", "haiku", {"cost_usd": 0.5}, 1, 0))
+        self.assertIsNotNone(a.cap_reason(a.read_ledger(a.ledger_path(), now), now, a.caps()))
+        asker = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        try:
+            self.assertEqual("ok", asker.ask("what's open")["say"])
+        finally:
+            asker.session.stop()
+
+    def test_the_cap_says_when_it_clears(self):
+        import time
+        today = dt.date.today()
+        at = lambda h, m, s=0, day=today: time.mktime(dt.datetime.combine(day, dt.time(h, m, s)).timetuple())
+        said = ask.capped({"cap": "calls_hour", "limit": 60, "clears": at(15, 30, 20)}, now=at(15, 0))
+        self.assertEqual("Ask has reached its limit of 60 requests an hour. It can answer again at 15:31.", said)
+        said = ask.capped({"cap": "calls_day", "limit": 300, "clears": at(9, 12, day=today + dt.timedelta(days=1))},
+                          now=at(23, 50))
+        self.assertEqual("Ask has reached its limit of 300 requests a day. It can answer again tomorrow at 09:12.", said)
+        said = ask.capped({"cap": "cost_day", "limit": 20.0, "clears": at(18, 5)}, now=at(17, 0))
+        self.assertEqual("Ask has reached its spending limit of $20 a day. It can answer again at 18:05.", said)
+        self.assertNotIn("GARRICK", said)
 
 
     def test_a_spent_budget_starts_a_fresh_session(self):
@@ -674,6 +720,16 @@ class TestWarmSession(StandInCase):
         self.assertRegex(log, r"  ask command \d+ ms \{\"input_tokens\": 100, ")      # the time, the op, the ms, the tokens
         self.assertNotIn("Pricing", log)                                             # and no request or answer text (#261)
         self.assertEqual([], list(self.jobs.glob("*.sock")))                         # stopped, and gone
+
+    def test_the_log_says_a_request_was_stopped(self):
+        line = ask.log_line("open Pricing", {"kind": "command", "say": ask.STOPPED, "done": [], "ok": False,
+                                             "stopped": True, "ms": 1636})
+        self.assertEqual("ask command stopped 1636 ms {}", line)                   # not "not ok" (#283)
+        line = ask.log_line("open Pricing", {"kind": "command", "say": "Ask has reached its limit.", "ok": False,
+                                             "capped": True, "ms": 2})
+        self.assertEqual("ask command capped 2 ms {}", line)
+        line = ask.log_line("open Pricing", {"kind": "command", "say": "That did not work.", "ok": False, "ms": 3})
+        self.assertEqual("ask command not ok 3 ms {}", line)
 
     def test_the_log_keeps_text_only_when_asked(self):
         line = ask.log_line("open Pricing", {"kind": "command", "say": "Opening Pricing.", "done": ["Opening Pricing"],
@@ -965,6 +1021,19 @@ class TestOneConnection(ServerCase):
         self.assertIn("<workspace>\n", self.first_message(second["pid"]))     # told everything again
         ledger = [json.loads(line) for line in (self.jobs / "ledger.jsonl").read_text().splitlines()]
         self.assertEqual(["stopped", "success"], [e["subtype"] for e in ledger])  # the stopped turn is a call all the same
+        self.assertRegex((self.jobs / "ask.log").read_text(), r"  ask command stopped \d+ ms ")   # said so in ask.log (#283)
+
+    def test_a_cap_is_said_plainly(self):
+        """#282: at Ask's cap the box says which limit and when it can answer
+        again, with no "That did not work" and no variable."""
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
+        self.up()
+        self.assertEqual("ok", self.op("ask", "what's open")["say"])
+        out = self.op("ask", "what's open")
+        self.assertEqual(("command", False, True), (out["kind"], out["ok"], out["capped"]))
+        self.assertRegex(out["say"], r"^Ask has reached its limit of 1 request an hour\. It can answer again (tomorrow )?at \d\d:\d\d\.$")
+        self.assertNotIn("failed", out)
+        self.assertRegex((self.jobs / "ask.log").read_text(), r"  ask command capped \d+ ms ")
 
     def test_an_interrupt_is_a_stop_said_on_the_connection(self):
         """The app's Stop sends SIGINT to ask.py, as Ctrl-C does: it says STOP
@@ -1058,6 +1127,17 @@ class TestTheAskWindow(unittest.TestCase):
         cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
 
     body = TestTheAppKeepsIt.body
+
+    def test_a_done_line_that_repeats_the_sentence_is_shown_once(self):
+        """#283: "Opening Pricing in Claude." over "Opening Pricing in Claude"
+        is the sentence once: a done line equal to it, case and a final full
+        stop aside, is left out."""
+        reply = self.between("func askGarrick(", "\n\t}\n")
+        self.assertIn(".lowercased()", reply)
+        self.assertIn('if t.hasSuffix(".") { t.removeLast() }', reply)
+        self.assertIn("let shown = lines.filter { same($0) != same(say) }", reply)
+        self.assertIn('done(([say] + shown.map { "  " + $0 })', reply)
+        self.assertNotIn("lines.map { \"  \" + $0 }", reply)
 
     def between(self, start, end):
         return self.swift[self.swift.index(start):self.swift.index(end, self.swift.index(start))]

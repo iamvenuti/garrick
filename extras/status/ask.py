@@ -76,15 +76,20 @@ waits for the zone's wall check among them; and a client that gives up all
 the same says the change may still be on its way and what to look at, never
 just to ask again. ASK_WAIT is operations.py's, from its clock.
 
-**The tier and the caps are the scheduled jobs'.** The session runs on
-GARRICK_ASK_TIER (`haiku`, or `sonnet`, `opus`), named as a tier, never a
-model, as agent.py names them. It loads agent.py's deny profile,
-headless-settings.json. Every request is one call against agent.py's caps
-(GARRICK_CAP_CALLS_HOUR and the rest) and one line in its ledger, as job
-`ask`; a request past a cap is refused and calls nothing. A Claude session
-as a whole stops at GARRICK_MAX_CALL_USD, and the next request starts
-another. ask.py needs agent.py, from the scheduled jobs extra, in
-System/jobs/ beside System/status/.
+**The tier is the scheduled jobs' kind; the caps are Ask's own (#282).** The
+session runs on GARRICK_ASK_TIER (`haiku`, or `sonnet`, `opus`), named as a
+tier, never a model, as agent.py names them. It loads agent.py's deny
+profile, headless-settings.json. Every request is one line in agent.py's
+ledger, as job `ask`, and one call against Ask's own caps there,
+GARRICK_CAP_ASK_HOUR (60), GARRICK_CAP_ASK_DAY (300) and
+GARRICK_CAP_ASK_COST_DAY (20 dollars), never the scheduled jobs': a
+morning of asking leaves the night's jobs their budget, and the jobs'
+caps reached leave Ask its own. A request past a cap is refused, calls
+nothing, and says in plain words which limit it reached and the time it
+can answer again (capped()); the variables are for the docs, not the box.
+A Claude session as a whole stops at GARRICK_MAX_CALL_USD, and the next
+request starts another. ask.py needs agent.py, from the scheduled jobs
+extra, in System/jobs/ beside System/status/.
 
 **The model proposes, this file disposes.** The session sees only names and
 states: each request carries the live projects and threads of every zone,
@@ -165,6 +170,7 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import select
@@ -224,6 +230,11 @@ class Bad(Exception):
 
 class Stopped(Bad):
     """The request was stopped on its connection, and the session with it."""
+
+
+class Capped(Bad):
+    """Ask's own cap was reached, and nothing was asked: the message is the
+    box's, said as it is, with no "That did not work"."""
 
 
 def _load(name: str, path: Path):
@@ -517,6 +528,38 @@ def bill(entries) -> None:
                                                     sum(e[3] for e in entries), max(e[4] for e in entries)))
 
 
+def capped(reached: dict, now: Optional[float] = None) -> str:
+    """What the box says at Ask's cap: which limit, and the minute it can
+    answer again, rounded up so a request at that minute goes through. A
+    time tomorrow says so. No variable is named: the app has no place to set
+    one, and the docs say which they are."""
+    now = time.time() if now is None else now
+    at = math.ceil(reached["clears"] / 60) * 60
+    when = time.strftime("%H:%M", time.localtime(at))
+    if time.localtime(at)[:3] != time.localtime(now)[:3]:
+        when = "tomorrow at " + when
+    else:
+        when = "at " + when
+    n = reached["limit"]
+    if reached["cap"] == "cost_day":
+        limit = "spending limit of $%g a day" % n
+    else:
+        limit = "limit of %g request%s %s" % (n, "" if n == 1 else "s", "an hour" if reached["cap"] == "calls_hour" else "a day")
+    return "Ask has reached its %s. It can answer again %s." % (limit, when)
+
+
+def check_caps(tier_: str) -> None:
+    """Refuse the request, with one refused line in the ledger and nothing
+    asked, when Ask's own caps are reached. The scheduled jobs' calls in the
+    ledger do not count, and Ask's do not count against them (#282)."""
+    a = agent()
+    ledger, now = a.ledger_path(), time.time()
+    reached = a.cap_reached(a.read_ledger(ledger, now), now, a.caps(a.ASK), a.ASK)
+    if reached:
+        a.append_ledger(ledger, a.ledger_entry(now, JOB, tier_, {}, 0, a.EXIT_CAP, refused=reached["reason"]))
+        raise Capped(capped(reached, now))
+
+
 def sealed_folder(ws: Path) -> Path:
     """An empty folder of a session's own, outside the workspace, for it to
     run in: from there no instruction file, project setting or memory keyed
@@ -530,7 +573,7 @@ def sealed_folder(ws: Path) -> Path:
 
 
 class ClaudeSession:
-    """One `claude -p` kept open in stream-json mode, every turn counted against agent.py's caps."""
+    """One `claude -p` kept open in stream-json mode, every request counted against Ask's caps in agent.py's ledger."""
 
     remembers = True
 
@@ -646,13 +689,9 @@ class ClaudeSession:
         past a cap, unless `cap` is off for the second turn of one request.
         With `record` off the turn's ledger entry is left in `last`, for the
         caller to write as part of the request's one line, error or not."""
-        a = agent()
         self.last = None
-        ledger, now = a.ledger_path(), time.time()
-        reason = a.cap_reason(a.read_ledger(ledger, now), now, a.caps()) if cap else None
-        if reason:
-            a.append_ledger(ledger, a.ledger_entry(now, JOB, self.tier, {}, 0, a.EXIT_CAP, refused=reason))
-            raise Bad("not asked: %s. Raise GARRICK_CAP_* or wait" % reason)
+        if cap:
+            check_caps(self.tier)
         self.ready()
         start = time.time()
         self.proc.stdin.write((json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n").encode("utf-8"))
@@ -724,6 +763,8 @@ class OnceSession:
             self.start()
 
     def turn(self, text: str, cap: bool = True, record: bool = True) -> Tuple[str, dict]:
+        if cap:
+            check_caps(self.tier)
         self.ready()
         before = "".join("<earlier-request>\n%s\n</earlier-request>\n<earlier-answer>\n%s\n</earlier-answer>\n" % h
                          for h in self.history[-HISTORY:])
@@ -734,7 +775,8 @@ class OnceSession:
         finally:
             shutil.rmtree(str(home), ignore_errors=True)
         if code == agent().EXIT_CAP:
-            raise Bad("not asked: a cap on assistant calls was reached. Raise GARRICK_CAP_* or wait")
+            check_caps(self.tier)           # reached since the check above: says when it clears
+            raise Bad("the call passed its spending limit for one call and was stopped")
         if code:
             raise Bad("%s exited %d" % (agent().harness(), code))
         request = re.search(r"<request>\n(.*?)\n</request>", text, re.S)
@@ -1133,11 +1175,17 @@ def request_line(conn) -> bytes:
 
 def log_line(request: str, out: dict) -> str:
     """ask.log's line for one request: the op, the kind of reply, whether a
-    wall reset ran, the milliseconds and the tokens. No request or answer
+    wall reset ran, how it ended when not well (`stopped` by Stop, `capped`
+    by Ask's cap, `not ok` otherwise), the milliseconds and the tokens. No request or answer
     text, since an answer carries what the records say, unless LOG_TEXT is 1."""
+    if out.get("stopped"):
+        how = " stopped"                    # by Stop, which is not a failure (#283)
+    elif out.get("capped"):
+        how = " capped"                     # by Ask's own cap, and nothing was asked (#282)
+    else:
+        how = "" if out.get("ok", True) else " not ok"
     line = "ask %s%s%s %d ms %s" % (out.get("kind", "-"), " reset" if out.get("reset") else "",
-                                    "" if out.get("ok", True) else " not ok", out.get("ms", 0),
-                                    json.dumps(out.get("usage", {})))
+                                    how, out.get("ms", 0), json.dumps(out.get("usage", {})))
     if os.environ.get(LOG_TEXT) == "1":
         line += "  %s  ->  %s %s" % (json.dumps(request[:200], ensure_ascii=False),
                                      json.dumps(out.get("say", ""), ensure_ascii=False),
@@ -1269,6 +1317,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                 except Stopped:
                     asker.results, asker.asked = "", {}     # said to a process that is gone
                     out = {"kind": "command", "say": STOPPED, "done": [], "launch": [], "ok": False, "stopped": True}
+                except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
+                    out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}
                 except Bad as e:
                     out = {"say": "That did not work: %s." % e, "done": [], "launch": [], "ok": False, "failed": True}
                 except Exception as e:  # a bug must still say so, and the server carry on

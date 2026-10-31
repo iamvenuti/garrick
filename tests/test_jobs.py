@@ -108,6 +108,7 @@ class FakeAssistants(unittest.TestCase):
         for q in self.quiet:
             q.start()
         for key in ("GARRICK_CAP_CALLS_DAY", "GARRICK_CAP_CALLS_HOUR", "GARRICK_CAP_COST_DAY", "GARRICK_JOB",
+                    "GARRICK_CAP_ASK_DAY", "GARRICK_CAP_ASK_HOUR", "GARRICK_CAP_ASK_COST_DAY",
                     "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
                     "GARRICK_NOTIFY", "GARRICK_NOTIFY_CMD", "GARRICK_QUIET_EXITS", "GARRICK_ALERT_REPEAT",
                     "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT", "GARRICK_WORKSPACE"):
@@ -206,6 +207,51 @@ class LedgerTest(unittest.TestCase):
     def test_zero_removes_a_cap(self):
         entries = [self.entry(60), self.entry(120), self.entry(180)]
         self.assertIsNone(agent.cap_reason(entries, self.now, {"calls_day": 0, "calls_hour": 0, "cost_day": 0}))
+
+    # Two budgets in one ledger (#282): the ask box's lines, job `ask`, count
+    # against Ask's caps only, and every other line against the jobs' only.
+
+    def asked(self, ago, cost=0.0):
+        return dict(self.entry(ago, cost), job=agent.ASK)
+
+    def test_sixty_ask_requests_leave_a_job_its_calls(self):
+        entries = [self.asked(30 + i) for i in range(60)]
+        jobs = agent.caps("jobs", env={})
+        self.assertIsNone(agent.cap_reason(entries, self.now, jobs))
+        self.assertIsNone(agent.cap_reached(entries, self.now, jobs, "jobs"))
+        reached = agent.cap_reached(entries, self.now, agent.caps(agent.ASK, env={}), agent.ASK)
+        self.assertEqual(("calls_hour", 60, 60, agent.ASK), (reached["cap"], reached["limit"], reached["used"], reached["budget"]))
+
+    def test_the_jobs_caps_reached_leave_ask_its_requests(self):
+        entries = [self.entry(30 + i, cost=0.1) for i in range(48)]
+        self.assertIn("48 calls in the last 24 hours", agent.cap_reason(entries, self.now, agent.caps("jobs", env={})))
+        self.assertIsNone(agent.cap_reason(entries, self.now, agent.caps(agent.ASK, env={}), agent.ASK))
+
+    def test_the_budget_of_a_job(self):
+        self.assertEqual(("ask", "jobs", "jobs", "jobs"),
+                         tuple(agent.budget_of(j) for j in ("ask", "sweep", "manual", None)))
+
+    def test_each_budget_reads_its_own_variables(self):
+        self.assertEqual({"calls_day": 300, "calls_hour": 60, "cost_day": 20.0}, agent.caps(agent.ASK, env={}))
+        self.assertEqual(agent.DEFAULT_CAPS, agent.caps("jobs", env={}))
+        env = {"GARRICK_CAP_ASK_HOUR": "5", "GARRICK_CAP_ASK_COST_DAY": "nonsense", "GARRICK_CAP_CALLS_HOUR": "3"}
+        self.assertEqual({"calls_day": 300, "calls_hour": 5, "cost_day": 20.0}, agent.caps(agent.ASK, env=env))
+        self.assertEqual(3, agent.caps("jobs", env=env)["calls_hour"])
+        with self.assertRaises(ValueError):
+            agent.caps("nightly")
+
+    def test_when_a_cap_clears(self):
+        hour = [self.entry(3000), self.entry(600), self.entry(60)]       # two allowed: the oldest of the last two must go
+        reached = agent.cap_reached(hour, self.now, self.limits)
+        self.assertEqual(("calls_hour", self.now - 600 + 3600), (reached["cap"], reached["clears"]))
+        cost = [self.entry(80000, cost=0.4), self.entry(70000, cost=0.4), self.entry(100, cost=0.4)]
+        reached = agent.cap_reached(cost, self.now, {"calls_day": 0, "calls_hour": 0, "cost_day": 1.0})
+        self.assertEqual(("cost_day", self.now - 80000 + 86400), (reached["cap"], reached["clears"]))   # $0.80 left, under $1
+
+    def test_the_cap_that_clears_last_is_named(self):
+        entries = [self.entry(80000, cost=0)] + [self.entry(4000 * i, cost=0) for i in range(1, 4)] + [self.entry(60, cost=0)]
+        reached = agent.cap_reached(entries, self.now, {"calls_day": 5, "calls_hour": 1, "cost_day": 0})
+        self.assertEqual(("calls_day", self.now - 80000 + 86400), (reached["cap"], reached["clears"]))
 
 
 class ProfileTest(unittest.TestCase):
@@ -323,6 +369,18 @@ class RunTest(FakeAssistants):
         self.assertEqual("", text)
         self.assertEqual(1, len(self.calls()))
         self.assertIn("refused", self.ledger()[-1])
+
+    def test_a_call_counts_against_its_own_budget(self):
+        os.environ["GARRICK_CAP_CALLS_HOUR"] = "1"
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
+        self.assertEqual(0, agent.run("haiku", "One.", job="sweep")[0])
+        self.assertEqual(0, agent.run("haiku", "Asked.", job=agent.ASK)[0])         # the jobs' cap is not Ask's
+        self.assertEqual(agent.EXIT_CAP, agent.run("haiku", "Two.", job="sweep")[0])
+        self.assertEqual(agent.EXIT_CAP, agent.run("haiku", "Asked again.", job=agent.ASK)[0])
+        self.assertIn("GARRICK_CAP_ASK_*", sys.stderr.getvalue())
+        self.assertEqual(2, len(self.calls()))
+        self.assertEqual([("sweep", False), ("ask", False), ("sweep", True), ("ask", True)],
+                         [(e["job"], "refused" in e) for e in self.ledger()])
 
     def test_codex_returns_the_last_message_and_keeps_the_transcript(self):
         os.environ["GARRICK_HARNESS"] = "codex"

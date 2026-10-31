@@ -2177,6 +2177,28 @@ class TestJobs(StatusCase):
         self.assertIn(">1, no cap<", html)
         self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
 
+    def test_ask_has_meters_of_its_own_beside_the_jobs(self):
+        """#282: Ask's calls count against Ask's caps, so the jobs' meters
+        leave them out and Ask's own sit beside them."""
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0},
+                    *[{"job": "ask", "cost_usd": 0.01, "exit": 0} for _ in range(13)])
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GARRICK_CAP_")}
+        with self.plists(), mock.patch.dict(os.environ, clean, clear=True):
+            html = self.page()
+        card = html[html.index('id="calls"'):html.index("</details>", html.index('id="calls"'))]
+        self.assertIn("Job calls, last hour</span><span class=\"num\">1 / 12<", card)   # Ask's 13 are not the jobs'
+        self.assertIn("Ask, last hour</span><span class=\"num\">13 / 60<", card)
+        self.assertIn("Ask, last 24 h</span><span class=\"num\">13 / 300<", card)
+        self.assertIn("Ask cost, last 24 h</span><span class=\"num\">$0.13 / $20<", card)
+        self.assertIn("Ask&#x27;s own caps, agent.py&#x27;s defaults", card)
+
+    def test_no_ask_lines_no_ask_meters(self):
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
+        with self.plists():
+            html = self.page()
+        self.assertNotIn("Ask, last hour", html)
+        self.assertIn("Calls, last hour", html)
+
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"
         folder.mkdir()

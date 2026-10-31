@@ -180,43 +180,57 @@ limit: 15 minutes
 
 | Id | Source | Decision | Reason | Date |
 |---|---|---|---|---|
-| check:meetings:Wikis/Meetings/wiki/sources/260310-acme-kickoff.md | check.py | answered: Work, acme | | 2026-03-14 |
-| wiki-lint:orphan:Wikis/Knowledge/wiki/concepts/pricing-floors.md | wiki_lint.py | answered: leave it | read from the Acme hub | 2026-03-14 |
-| check:links:Zones/Work/Acme Review/Threads/Pricing/Notes.md | check.py | deferred to 2026-03-21 | another session is changing it | 2026-03-14 |
-| drift.py | drift.py | source failed | the share did not read | 2026-03-14 |
+| 3f2a9c1d0b4e | check.py | answered | | 2026-03-14 |
+| 9b07e4a2c6d1 | wiki_lint.py | skipped | not now | 2026-03-14 |
+| c4d8e0f1a2b3 | check.py | deferred to 2026-03-21 | another session holds the file | 2026-03-14 |
+| drift.py | drift.py | source failed | source did not run | 2026-03-14 |
 ```
 
 - **`status:`** is `open` while a review has items with no decision, and
   `done` once every item has one. **`started:`** is the day the review
   started, **`last_completed:`** the day the last one was done, and empty
   until then. **`limit:`** is the one the user chose.
-- **An item** is one finding. Its **Id** is the finding's source, check and
-  file, as `nurture.py --json` gives them, so the same finding has the same
-  id in the next session. A source that did not run is an item of its own,
-  named by its tool. **Source** names every tool or report that found it.
-  **Decision** is one of: `fixed` and the commit, `answered:` and the answer,
-  `deferred to` a date, `skipped`, or `source failed`. **Reason** is the
-  user's, in a few words. **Date** is the day of the decision.
+- **An item** is one finding. Its **Id** is the finding's `key`, as
+  `nurture.py --json` gives it: twelve hex digits that say nothing of the
+  file, the check or the material. Two findings on one file have two keys,
+  and the same finding has the same key in the next session. A source that
+  did not run is an item of its own, and its Id is the tool's name, such as
+  `drift.py`. An item that only an audit report holds has no key and gets no
+  row: the next audit names it again while it stands.
+- **Source** names the tools that found it: `check.py`, `wiki_lint.py`,
+  `drift.py`, `fade.py`, and `audit` for the audit report, with a comma
+  between two.
+- **Decision** is one of: `fixed` and the commit, `answered`, `deferred to`
+  a date, `skipped`, or `source failed`. It never holds the answer. An
+  answer goes into the files it changes, never into the record.
+- **Reason** is empty, or one of these, the nearest to what the user said:
+  "another session holds the file", "waiting on someone", "needs the user's
+  own records", "source did not run", "not now". Never the user's own words.
+  **Date** is the day of the decision.
+- **Each session finds an item again by its key.** The record names no
+  file, so run *Gather* and match each item's `key` to an Id. An Id that
+  Gather no longer gives is a finding that is gone.
 - **What is settled stays settled.** An item `fixed` or `answered` is never
-  asked again while its finding is the same. A `deferred` item waits until
-  its date. A `skipped` item comes back in the next review.
-- **It holds decisions, never material.** No quote, no paraphrase of a
-  page, no question as it was asked. A wall item is its id and its decision,
-  and names no wall. The status page reads only the frontmatter: the date of
-  the last review completed, and whether one is unfinished.
-- **It stays short.** When a review is done, take out each row whose finding
-  is gone. Git holds the rows taken out.
+  asked again while Gather gives its key. A `deferred` item waits until its
+  date. A `skipped` item comes back in the next review.
+- **A wall item is never settled.** It is asked in every review while its
+  finding stands. Its only decisions are `fixed` and the commit, or
+  `deferred to` a date; never `answered`, never `skipped`.
+- **It holds decisions, never material.** No path, no quote, no answer, no
+  question as it was asked. A wall item names no wall. The record sits in
+  the root repository, which no wall hook checks, and `check.py` warns about
+  a row outside this form, by its number. The status page reads only the
+  frontmatter: the date of the last review completed, and whether one is
+  unfinished.
+- **It stays short.** When a review is done, take out each row whose key
+  Gather no longer gives. Git holds the rows taken out.
 
 ### The review
 
 1. **Open the record.** When its status is `open`, say so and go on from it:
    "The review from Saturday is unfinished. Go on with it?" Otherwise start
    a new one: `status: open`, `started:` today.
-2. **The limit.** Ask once: "Fifteen minutes or ten questions?" No answer is
-   the default, fifteen minutes or ten questions, whichever comes first.
-   Write it in `limit:`. The mechanical batch counts as one question. At the
-   limit, finish the item in hand and go to step 6.
-3. **Prepare from the current record**, changing nothing:
+2. **Prepare from the current record**, changing nothing:
    - Run Nurture's *Gather* for the whole workspace, or for the scope the
      user named. It runs `check.py`, `wiki_lint.py` for each wiki and
      `drift.py` now. Offer each wiki's reading pass; do not run it unasked.
@@ -234,12 +248,19 @@ limit: 15 minutes
      finding that still stands is proposed. One that no longer stands is
      named as gone, once, and never proposed.
    - **One finding, one item.** The same file and the same problem from two
-     sources is one item, with both sources named.
+     sources is one item, with both sources named. It has a row for each
+     key, all with the same decision.
    - **Three groups, never mixed:** current findings, older observations
      that no recheck confirmed, and sources that failed. For a source that
      failed, say what it covers: the review cannot vouch for that part.
-   - Leave out every item the record has settled, and each deferred item
-     whose date has not come.
+   - Match each finding's `key` to the record's Ids. Leave out every item
+     the record has settled, and each deferred item whose date has not
+     come. A wall item is settled only by its fix.
+3. **The limit.** Once the items are gathered, ask once: "Fifteen minutes
+   or ten questions?" No answer is the default, fifteen minutes or ten
+   questions, whichever comes first. Write it in `limit:`. The mechanical
+   batch counts as one question. At the limit, finish the item in hand and
+   go to step 6.
 4. **The order.**
    1. **Walls**, as *Nurture* step 4, and **what failed**: a source that did
       not run, and a scheduled job whose last run failed, as the status
@@ -255,9 +276,11 @@ limit: 15 minutes
    4. **Behind the share** last, as *Nurture* step 6: named, and never
       fixed.
 
-   The user can say "skip" or "later", and why. "Later" asks for a date, with
-   next week as the default. Write each decision in the record as it is
-   made, not at the end.
+   The user can say "skip" or "later", and why: write the nearest reason
+   from the record's list. "Later" asks for a date, with next week as the
+   default. A wall is fixed or deferred, never skipped. Write each decision
+   in the record as it is made, not at the end, as its key and the fixed
+   words above.
 5. **Apply through the owning procedures.** Each answer goes through the
    step above that owns its kind: a correction through *A correction*, a
    wiki page through its wiki's skill, each commit through its repository's
@@ -266,7 +289,8 @@ limit: 15 minutes
      now, and the user's yes on it.
    - **A raw record is never edited.**
    - **A file another session has changes in is held**, as `nurture.py`
-     holds it. Defer the item, and give that as the reason.
+     holds it. Defer the item, with the reason "another session holds the
+     file".
    - **Nothing crosses a wall.** Never move, merge or quote material from
      one side of a wall into a file on the other. When an answer would need
      it, change nothing, and say the sentence *Zones and walls* in
@@ -276,12 +300,14 @@ limit: 15 minutes
    - **A shared-file difference never causes an overwrite**, in either
      direction. Name it, and change nothing.
    - **A finding never becomes a Needs you question.** Technical findings
-     stay on the Checks card. When a wiki keeps its open questions in a
-     record of its own, ask those from there, and do not copy them here.
+     stay on the Checks card. The questions a wiki keeps in its
+     `questions/` folder are not part of this review yet; a check's finding
+     about one is.
 6. **Show what remains.** Run *Gather* again, so the count is the one after
    the changes. Update the record: each decision made, each source that
    failed. When every item has a decision, set `status: done` and
-   `last_completed:` today, and take out the rows whose finding is gone.
+   `last_completed:` today, and take out the rows whose key Gather no
+   longer gives.
    Commit the record alone:
    ```sh
    git add -- System/nurture-review.md

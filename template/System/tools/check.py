@@ -148,6 +148,7 @@ CHECKS = [
     ("raw", "Raw records"),
     ("generated", "Generated files"),
     ("preferences", "Kept choices"),
+    ("review", "Review record"),
     ("updates", "Updates to merge"),
 ]
 
@@ -181,6 +182,7 @@ EAR_GROUP = {
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
     "preferences": "{n} of the choices you keep are not in the workspace history",
+    "review": "the review record has {n} entries outside its fixed form",
 }
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
@@ -4436,6 +4438,64 @@ def check_preferences(ws: Workspace) -> List[Finding]:
     return out
 
 
+# The review record, System/nurture-review.md (#258): the nurture skill's
+# guided review keeps its decisions there, in the root repository, which no
+# wall hook checks. So each cell is one of a fixed few, and nothing in it can
+# carry a file name, an answer or a reason in someone's words.
+REVIEW_RECORD = "System/nurture-review.md"
+REVIEW_KEY_RE = re.compile(r"^[0-9a-f]{12}$")            # nurture.py's key for a finding
+REVIEW_TOOLS = ("check.py", "wiki_lint.py", "drift.py", "fade.py")
+REVIEW_SOURCES = REVIEW_TOOLS + ("audit",)
+REVIEW_DECISION_RE = re.compile(r"^(?:fixed [0-9a-f]{7,40}|answered|deferred to \d{4}-\d{2}-\d{2}|skipped|source failed)$")
+REVIEW_REASONS = ("another session holds the file", "waiting on someone", "needs the user's own records",
+                  "source did not run", "not now")
+REVIEW_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def check_review(ws: Workspace) -> List[Finding]:
+    """Each row of the review record's table is an Id that is a key from
+    `nurture.py --json`, or the tool's name for a source that did not run; a
+    Source of tool names; a Decision and a Reason from the fixed sets; and a
+    date. A finding names the row and the column, never what the cell says."""
+    out = []
+    text = read_text(ws.root / REVIEW_RECORD)
+    if text is None:
+        return out
+    row = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if cells and (cells[0] == "Id" or set("".join(cells)) <= set("-: ")):
+            continue                                   # the header and the line under it
+        row += 1
+        wrong = []
+        if len(cells) != 5:
+            wrong.append("does not have the five columns Id, Source, Decision, Reason and Date")
+        else:
+            key, source, decision, reason, date = cells
+            failed = decision == "source failed"
+            if not (key in REVIEW_TOOLS if failed else REVIEW_KEY_RE.match(key)):
+                wrong.append("has an Id that is not a key from `nurture.py --json`"
+                             + (", nor the name of the tool that did not run" if failed else ""))
+            if not all(s.strip() in REVIEW_SOURCES for s in source.split(",")):
+                wrong.append("has a Source that is not %s" % ", ".join(REVIEW_SOURCES))
+            if not REVIEW_DECISION_RE.match(decision):
+                wrong.append("has a Decision that is not fixed and a commit, answered, deferred to a date, "
+                             "skipped or source failed")
+            if reason and reason not in REVIEW_REASONS:
+                wrong.append("has a Reason that is not one of the skill's own")
+            if not REVIEW_DATE_RE.match(date):
+                wrong.append("has a Date not written YYYY-MM-DD")
+        for problem in wrong:
+            out.append(Finding(WARNING, "review", REVIEW_RECORD,
+                               "row %d %s; the record holds keys and fixed words only, and an answer goes into "
+                               "the files it changes" % (row, problem),
+                               "A row of the review record is outside its fixed form"))
+    return out
+
+
 def check_updates(ws: Workspace) -> List[Finding]:
     """An update leaves Garrick's newer version of a file you changed beside it,
     as `<name>.new`, for you and your assistant to merge. Until then the file
@@ -4505,7 +4565,7 @@ ALL_CHECKS = [
     check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
-    check_raw, check_generated, check_preferences, check_updates,
+    check_raw, check_generated, check_preferences, check_review, check_updates,
 ]
 
 

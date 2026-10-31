@@ -25,6 +25,8 @@ At first the graph shows every note as the same grey dot. A few settings make it
 - **Link notes rather than quoting their paths.** Obsidian draws a line only for a `[[wikilink]]`. A path in backticks, such as `` `Sources/brief.md` ``, is plain text to it, so a note your Resume here block names that way shows up unconnected. If you browse in Obsidian, ask your assistant to name notes as wikilinks and keep backticks for files that aren't notes, like spreadsheets and scripts.
 - **Faded pages stay out of view.** When a wiki's old pages [fade](../commands.md#fading) into its `dormant/` and `archive/` folders, the fade adds both folders to the excluded files (`userIgnoreFilters` in `app.json`) of each vault that holds the wiki, after any you set, so they leave the graph and the default search as well as the index. `python3 System/tools/fade.py filters` adds them now, to a vault you opened since.
 
+These groups colour Obsidian's own graph only. The graph in the [Garrick App](status-page.md#reading-the-graph) never reads them: it colours every note by its kind, the same with Obsidian or without it.
+
 Obsidian reads these settings when the vault opens. If you or your assistant change a file in `.obsidian/` while Obsidian is running, reopen the vault. Otherwise the change won't show, and Obsidian may save its own copy over it.
 
 Opening a folder as a vault puts `.obsidian/` inside that folder's git repository. Obsidian rewrites `workspace.json` and `graph.json` all the time, even when you only pan or zoom, so the installer's `.gitignore` files leave both out. Your other settings, such as excluded files in `app.json`, are still tracked. The colour groups live in `graph.json`, so copy it to `graph.json.backup` if you want to keep them.

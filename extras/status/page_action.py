@@ -67,7 +67,9 @@ zone's repository, as the skills would:
                 "default": "cmux"}, with "preview" for whether Explore's cards
                 offer Preview, which is never the default; each zone's colour
                 and icon: {"zones": {"Work": {"color": "Teal", "icon":
-                "briefcase"}}}; or both.
+                "briefcase"}}}; or both. Settings › Graph colours: {"graph":
+                {"project": "Teal"}}, a colour for each kind of note Explore
+                draws, the whole section; a kind left out keeps its default.
                 Kept in System/garrick-settings.json, committed with the
                 workspace, so the app, Obsidian and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
@@ -251,11 +253,18 @@ DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmux
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
+# What Settings › Graph colours offers (#291): the same, less the three a ring on the graph uses; status.py's
+# GRAPH_OFF. A kind is one of status.py's KINDS, or one found from a wiki's pages, which is named by its type
+# as status.py names it: lower case, of letters, digits, spaces, hyphens and underscores. This request cannot
+# see the pages, so it holds a found kind to that shape; a kind no page has is never drawn.
+GRAPH_OFF = ("Red", "Crimson", "Amber")
+GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity")
+GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
 # Settings › Home: which the page opens on. Its words are status.py's HOMES too.
 HOMES = ("simple", "full")
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
-LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones",
+LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
           "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
           "do", "id", "answer", "suggested", "path", "version")       # never "token"
 LOGGED_TEXT = 60
@@ -1572,10 +1581,11 @@ def save_settings(ws: Path, req: dict) -> str:
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175).
+    {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "notifications", "while-you-wait", "home", "memory", "desk-agent"} & set(req):
+    if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
@@ -1600,6 +1610,8 @@ def save_settings(ws: Path, req: dict) -> str:
         new = {"launchers": {k: k in on for k in LAUNCHERS}, "default": default}
     if "zones" in req:
         new["zones"] = zone_styles(ws, req["zones"])
+    if "graph" in req:
+        new["graph"] = graph_styles(req["graph"])
     if "notifications" in req:
         notify = notifications_lib(ws)
         if notify is None or not hasattr(notify, "TELL"):
@@ -1664,6 +1676,27 @@ def zone_styles(ws: Path, given) -> dict:
         chosen = {k: v for k, v in (("color", colour), ("icon", icon)) if v}
         if chosen:
             out[zone] = chosen
+    return out
+
+
+def graph_styles(given) -> dict:
+    """Settings › Graph colours as the page sends it, every kind it lists
+    with its colour: {"project": "Teal", "thread": ""}. A kind on its default,
+    "" or left out, is not kept. An unknown kind or colour is refused, and so
+    is a colour a ring on the graph uses."""
+    if not isinstance(given, dict):
+        raise Refused("not a colour for each kind of note")
+    out = {}
+    for kind, colour in given.items():
+        if not isinstance(kind, str) or not (kind in GRAPH_KINDS or GRAPH_FOUND.fullmatch(kind) and kind == kind.lower()):
+            raise Refused("no kind of note called %r" % (kind,))
+        if colour in ("", None):
+            continue
+        if colour not in ZONE_COLOURS:
+            raise Refused("no colour called %r" % (colour,))
+        if colour in GRAPH_OFF:
+            raise Refused("%s marks a late next action on the graph, so no kind of note takes it" % colour)
+        out[kind] = colour
     return out
 
 

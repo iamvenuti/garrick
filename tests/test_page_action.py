@@ -800,6 +800,50 @@ class TestZoneSettings(ActionCase):
         self.assertEqual(tuple(status.ZONE_ICONS), pa.ZONE_ICONS)
 
 
+class TestGraphColourSettings(ActionCase):
+    """Settings › Graph colours (#291): a colour for each kind of note in Explore, saved beside the zones."""
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(pa, "run_desk")          # never this Mac's own cmux
+        self.desk = p.start()
+        self.addCleanup(p.stop)
+
+    def saved(self):
+        return json.loads((self.root / "System" / "garrick-settings.json").read_text())
+
+    def test_saved_beside_the_zones_and_each_kept_by_the_other(self):
+        self.act(verb="settings", zones={"Work": {"color": "Teal"}})
+        self.assertEqual("Settings saved", self.act(verb="settings", graph={"project": "Teal", "thread": "", "domain": "Olive"}))
+        data = self.saved()
+        self.assertEqual({"project": "Teal", "domain": "Olive"}, data["graph"])     # a kind on Default is left out
+        self.assertEqual({"Work": {"color": "Teal"}}, data["zones"])
+        self.act(verb="settings", zones={"Work": {"color": "Navy"}})
+        self.assertEqual({"project": "Teal", "domain": "Olive"}, self.saved()["graph"])
+        self.act(verb="settings", graph={})                                           # Reset colours
+        self.assertEqual({}, self.saved()["graph"])
+        self.assertEqual({"Work": {"color": "Navy"}}, self.saved()["zones"])
+        # cmux is told of the two zone colours, never of the graph's
+        self.assertEqual([mock.call(self.root, "colour", "--", "Work", timeout=20)] * 2, self.desk.call_args_list)
+
+    def test_refused_kinds_and_colours(self):
+        for graph in ({"project": "Mauve"}, {"Project": "Teal"}, {"../x": "Teal"}, {"project": 3}, ["project"],
+                      {"project": "Red"}, {"thread": "Crimson"}, {"meeting": "Amber"}):
+            with self.assertRaises(pa.Refused, msg=graph):
+                self.act(verb="settings", graph=graph)
+        with self.assertRaisesRegex(pa.Refused, "late next action"):
+            self.act(verb="settings", graph={"project": "Red"})
+        self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
+
+    def test_the_names_are_the_pages(self):
+        spec = importlib.util.spec_from_file_location("garrick_status_for_graph", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        self.assertEqual(tuple(status.GRAPH_OFF), pa.GRAPH_OFF)
+        self.assertEqual(tuple(k for k, _, _ in status.KINDS), pa.GRAPH_KINDS)
+        self.assertEqual(status.GRAPH_COLOURS, tuple(k for k in pa.ZONE_COLOURS if k not in pa.GRAPH_OFF))
+
+
 class TestDeskAgentSettings(ActionCase):
     """Settings › Opening a thread: which assistant a cmux tab starts (#279), the desk's own setting."""
 

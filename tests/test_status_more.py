@@ -909,12 +909,14 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        # A change to the launchers, the zones, the notifications, While you wait, Memory or which assistant a
-        # cmux tab starts (#279) makes a request; none makes none. The launchers lead it, the zones and the
-        # notifications ride on it, and the desk's choice goes as desk-agent, read from its select.
-        self.assertIn("if(!(lpChanged||zChanged||daChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
-                      "if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();\n"
+        # A change to the launchers, the zones, the graph's colours (#291), the notifications, While you wait,
+        # Memory or which assistant a cmux tab starts (#279) makes a request; none makes none. The launchers lead
+        # it, the zones, the graph's colours and the notifications ride on it, and the desk's choice goes as
+        # desk-agent, read from its select. Each change flag is cleared once its part is in the request.
+        self.assertIn("if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+                      "if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();\n"
                       "if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}", status.JS)
+        self.assertIn("lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}", status.JS)
         self.assertIn("daSel.onchange=function(){daChanged=true;", status.JS)            # set by the select alone
 
 
@@ -1027,6 +1029,108 @@ class TestZoneColours(StatusCase):
         icons = json.loads(re.search(r'id="zone-icons">(.*?)</script>', section).group(1))
         self.assertEqual(set(status.ZONE_ICONS), set(icons))
         self.assertIn("function zreq(){", status.JS)
+
+    def test_a_palette_pick_counts_as_a_change(self):
+        # a cell sets the hidden select and runs its onchange, which fires no change event: the pick says so itself
+        self.assertIn("s.value=c.dataset.v;s.onchange();sdChanged=true;zface(b,s);", status.JS)
+
+
+class TestGraphColours(StatusCase):
+    """Settings › Graph colours (#291): a colour for each kind of note in Explore, from the zones' palette."""
+
+    def save(self, graph):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"graph": graph}))
+
+    def section(self, html):
+        start = html.index('id="graph-colour-settings"')
+        return html[start:html.index("</section>", start)]
+
+    def test_read_with_unknown_names_and_ring_colours_dropped(self):
+        self.assertEqual({}, status.graph_styles(self.root))
+        self.save({"project": "teal", "thread": "Red", "meeting": "Mauve", "person": 3, "domain": "Navy"})
+        self.assertEqual({"project": "Teal", "domain": "Navy"}, status.graph_styles(self.root))
+        self.save(["project"])
+        self.assertEqual({}, status.graph_styles(self.root))
+
+    def test_the_palette_is_the_zones_less_the_rings(self):
+        self.assertEqual(("Red", "Crimson", "Amber"), status.GRAPH_OFF)
+        self.assertEqual([k for k in status.ZONE_COLOURS if k not in status.GRAPH_OFF], list(status.GRAPH_COLOURS))
+        self.assertIn("function ring(n){return n.s||!n.lt?null:C['--critical']}", status.GRAPH_JS)   # what a kind must not look like
+
+    def test_the_settings_section(self):
+        self.save({"project": "Teal"})
+        html = self.page()
+        section = self.section(html)
+        self.assertIn('<section class="setsec apponly" id="graph-colour-settings"><h3>Graph colours', html)   # the app saves it
+        data = graph_data(html)
+        rows = re.findall(r'<div class="gkrow" data-kind="([^"]+)" data-def="([^"]+)">', section)
+        shipped = dict((k, c) for k, _, c in status.KINDS)
+        self.assertEqual([(k, shipped[k]) for k, _, _ in status.KINDS], rows[:len(status.KINDS)])   # every kind, as shipped
+        self.assertEqual(data["keys"], [k for k, _ in rows])
+        project = section[section.index('data-kind="project"'):section.index('data-kind="thread"')]
+        self.assertIn('<span class="zprev"><i class="zsw" style="background:var(--zc-teal)"></i>Projects</span>', project)
+        self.assertIn('<option value="Teal" selected>Teal</option>', project)
+        self.assertIn('aria-label="Colour for Projects"><i class="zsw" style="background:var(--zc-teal)"></i><span>Teal</span></button>', project)
+        palette = re.search(r'<span class="zpop zp-col" hidden[^>]*>(.*?)</span></span>', project).group(1)
+        self.assertEqual([""] + list(status.GRAPH_COLOURS), re.findall(r'data-v="([^"]*)"', palette))
+        self.assertIn('data-v="" title="Default"><i class="zsw" style="background:%s"></i>' % shipped["project"], palette)
+        for ring in status.GRAPH_OFF:
+            self.assertNotIn('data-v="%s"' % ring, section)
+        thread = section[section.index('data-kind="thread"'):]
+        self.assertIn('<i class="zsw" style="background:%s"></i>Threads</span>' % shipped["thread"], thread)
+        self.assertIn('<span>Default</span></button>', thread[:thread.index("</div>")])
+        self.assertIn('<button class="act" type="button" id="graph-reset">Reset colours</button>', section)
+        self.assertNotIn('id="graph-colour-settings"', self.page(show_graph=False))
+
+    def test_a_kind_found_from_pages_has_a_row(self):
+        m = self.root / "Wikis" / "Meetings" / "wiki" / "domains"
+        for i in range(3):
+            write(m / ("d%d.md" % i), "---\ntitle: Domain %d\ntype: domain\n---\n" % i)
+        self.save({"domain": "Olive"})
+        html = self.page()
+        data = graph_data(html)
+        i = data["keys"].index("domain")
+        self.assertEqual("var(--zc-olive)", data["colors"][i])
+        shipped = next(c for k, _, c in status.page_kinds({"Meetings": {"domain": 3}}) if k == "domain")
+        self.assertIn('<div class="gkrow" data-kind="domain" data-def="%s"><span class="zprev"><i class="zsw" style="background:var(--zc-olive)">'
+                      '</i>Domains</span>' % shipped, self.section(html))
+
+    def test_the_legend_and_the_graph_take_the_choice(self):
+        self.save({"project": "Teal", "meeting": "Indigo"})
+        html = self.page()
+        data = graph_data(html)
+        shipped = [c for _, _, c in status.KINDS]
+        want = ["var(--zc-teal)" if k == "project" else "var(--zc-indigo)" if k == "meeting" else c
+                for (k, _, _), c in zip(status.KINDS, shipped)]
+        self.assertEqual(want, data["colors"][:len(status.KINDS)])
+        self.assertIn('<i style="background:var(--zc-teal)"></i>Projects</button>', html)
+        self.assertIn('<i style="background:%s"></i>Threads</button>' % shipped[1], html)
+
+    def test_reset_and_the_request(self):
+        self.assertIn("function greq(){", status.JS)
+        self.assertIn("if(c)o[r.dataset.kind]=c", status.JS)                  # a kind on Default is left out
+        self.assertIn("gReset.onclick=function(){sd.querySelectorAll('.gkrow')", status.JS)
+        self.assertIn("gChanged=sdChanged=true;", status.JS)                  # Reset colours is saved when Settings closes
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestGraphColoursDrawn(StatusCase):
+    """#291: a chosen colour is drawn in the theme's own shade, on the canvas and in a card's links."""
+
+    def test_each_theme_its_shade(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"graph": {"project": "Teal"}}))
+        html = self.page()
+        data = graph_data(html)
+        project = next(n["n"] for n in data["nodes"] if n["z"] == "Work" and n["h"])
+        thread = next(n["n"] for n in data["nodes"] if n["z"] == "Work" and data["keys"][n["k"]] == "thread")
+        light, dark = status.ZONE_COLOURS["Teal"]
+        for shade in (light, dark):
+            out = run_canvas(html, {"garrick-graph-place": "Work"}, css={"--zc-teal": shade})[0]
+            fills = dict(out["fills"])
+            self.assertEqual(shade, fills[project])
+            self.assertEqual(status.KINDS[1][2], fills[thread])               # a kind left on Default keeps its own
+        self.assertIn("function fill(n){var c=G.colors[n.k],v=cvar(c);return(v?C[v]:c)||C['--muted']}", status.GRAPH_JS)
+        self.assertIn("function recolor(){colors();draw()}", status.GRAPH_JS)  # the theme switched: read again, drawn again
 
 
 if __name__ == "__main__":
@@ -1974,10 +2078,11 @@ class TestTheLegendFiltersAndTheBoxFinds(StatusCase):
 # a place and the kinds a window stored. The graph settles and fits as it
 # would on screen, and the last frame says each name drawn, where, in which
 # font and how wide; and, for each step, what the legend and each node's
-# colour look like, and what the window keeps.
+# colour look like, and what the window keeps. `css` is what the page's
+# variables hold, as the theme in use sets them; any other reads #000.
 CANVAS_HARNESS = r"""
 const vm = require("vm");
-const [js, data, saved, W, H, legend, steps] = JSON.parse(process.argv[1]);
+const [js, data, saved, W, H, legend, steps, css] = JSON.parse(process.argv[1]);
 const any = new Proxy(function () {}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "length" ? 0 : any,
                                         apply: () => any, construct: () => any });
 const store = Object.assign({}, saved || {});
@@ -2006,7 +2111,8 @@ const ctx = { JSON, String, Array, Object, Math, Date, performance: { now: () =>
               Panel: any, requestAnimationFrame: (fn) => queue.push(fn), setTimeout: () => 0, addEventListener: () => {},
               matchMedia: () => ({ matches: true }), ResizeObserver: any, MutationObserver: any,
               IntersectionObserver: function (cb) { this.observe = () => cb([{ isIntersecting: true }]); },
-              getComputedStyle: () => ({ getPropertyValue: () => "#000" }), location: any, navigator: any, devicePixelRatio: 1 };
+              getComputedStyle: () => ({ getPropertyValue: (k) => (css && k in css ? css[k] : "#000") }),
+              location: any, navigator: any, devicePixelRatio: 1 };
 ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(js, ctx);
@@ -2033,11 +2139,11 @@ def overlaps(names):
             if a[1] < b[3] and b[1] < a[3] and a[2] < b[4] and b[2] < a[4]]
 
 
-def run_canvas(html, saved=None, size=(900, 520), steps=()):
+def run_canvas(html, saved=None, size=(900, 520), steps=(), css=None):
     data = graph_data_text(html)
     legend = {"kinds": [[int(k), said] for k, said in re.findall(r'data-k="(\d+)" aria-pressed="true"><i[^>]*></i>([^<]+)</button>', html)]}
     done = subprocess.run(["node", "-e", CANVAS_HARNESS, json.dumps([status.GRAPH_JS, data, saved or {}, size[0], size[1], legend,
-                                                                    [list(s) for s in steps]])],
+                                                                    [list(s) for s in steps], css or {}])],
                           capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)

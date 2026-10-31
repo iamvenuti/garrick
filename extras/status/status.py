@@ -3933,10 +3933,12 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
-             layout: str = "full", link: Optional["Links"] = None) -> str:
+             layout: str = "full", link: Optional["Links"] = None,
+             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
     """The Settings dialog: what Garrick opens on, which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
-    each zone's colour and icon, the menu bar, While you wait; which notices
+    each zone's colour and icon, the colour of each kind of note Explore
+    draws (`kinds`, with the graph), the menu bar, While you wait; which notices
     this Mac shows; how older material fades (`link` opens the full list);
     About Garrick, and the preview features with which are switched on;
     Reset view at the foot. Each section shows its choices and one line at
@@ -3944,7 +3946,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     and in docs/extras/status-page.md (#227)."""
     agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
     filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
-                      follow_settings() if graph else "", zone_settings(list(zones), styles or {}), menu_settings(),
+                      follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
+                      graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings(),
                       wait_settings(ws)],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
@@ -4082,8 +4085,8 @@ def zone_css() -> str:
             '.zi{width:1.15em;height:1.15em;flex:none;vertical-align:-.2em;margin-right:.4em}.seg button .zi{margin-right:0}\n'
             '.gzw{position:relative;display:inline-flex;align-items:center}.gzw .gzi{position:absolute;left:9px;display:flex;pointer-events:none}\n'
             '.gzw .gzi .zi{margin:0}.gzw.hasi .gzsel{padding-left:27px}\n'
-            '.zrow{display:flex;align-items:center;gap:8px;padding:3px 0}.zrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n'
+            '.zrow,.gkrow{display:flex;align-items:center;gap:8px;padding:3px 0}.zrow .zprev,.gkrow .zprev{flex:1;min-width:0;font-size:13px;font-weight:560;'
+            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gkrow .zprev .zsw{display:inline-block;vertical-align:-.15em;margin-right:.5em}\n'
             '.zpick{position:relative}.zbtn{display:inline-flex;align-items:center;gap:6px;min-width:112px;font:inherit;font-size:12px;'
             'color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 9px;cursor:pointer}'
             '.zbtn .zi{margin:0}.zbtn:focus-visible,.zcell:focus-visible{outline:2px solid var(--accent,#2D6CDF);outline-offset:1px}\n'
@@ -4104,34 +4107,34 @@ def zone_swatch(colour: Optional[str]) -> str:
     return '<i class="zsw" style="background:var(--zc-%s)"></i>' % colour.lower()
 
 
+def swatch_pick(kind: str, label: str, owner: str, chosen: Optional[str], names, none_label: str, none_face: str, draw) -> str:
+    """A button that shows the choice, over a palette that shows every one:
+    a select's list cannot draw a colour or an icon. The select stays,
+    hidden, as what the row reads and saves. `draw` draws one of `names`;
+    the first cell, drawn as `none_face` and said as `none_label`, takes the
+    choice away. Settings › Zones and Settings › Graph colours share it."""
+    said = lambda n: n[:1].upper() + n[1:]
+    options = '<option value="">%s</option>' % E(none_label) + "".join(
+        '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(said(n))) for n in names)
+    face = (draw(chosen) if chosen else none_face) + '<span>%s</span>' % E(said(chosen) if chosen else none_label)
+    cells = '<button type="button" class="zcell" data-v="" title="%s">%s</button>' % (E(none_label), none_face) + "".join(
+        '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(said(n)), draw(n)) for n in names)
+    return ('<span class="zpick"><select class="z%s" hidden aria-hidden="true" tabindex="-1">%s</select>'
+            '<button type="button" class="zbtn" aria-haspopup="true" aria-expanded="false" aria-label="%s for %s">%s</button>'
+            '<span class="zpop zp-%s" hidden role="group" aria-label="%s for %s">%s</span></span>'
+            % (kind, options, label, E(owner), face, kind, label, E(owner), cells))
+
+
 def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
     """Settings › Zones: a row per zone, its name drawn as chosen, a colour
     and an icon. In the app only: what is chosen is saved for every viewer,
     and for the cmux desk, through page_action.py when Settings closes."""
     if not zones:
         return ""
-    def options(none, names, chosen):
-        return '<option value="">%s</option>' % none + "".join(
-            '<option value="%s"%s>%s</option>' % (E(n), " selected" if n == chosen else "", E(n[:1].upper() + n[1:]))
-            for n in names)
     def pick(kind, zone, chosen):
-        # A button that shows the choice, over a palette that shows every one:
-        # a select's list cannot draw a colour or an icon. The select stays,
-        # hidden, as what the row reads and saves.
         if kind == "col":
-            names, label = ZONE_COLOURS, "Colour"
-            face = zone_swatch(chosen) + '<span>%s</span>' % (E(chosen) if chosen else "No colour")
-            cells = '<button type="button" class="zcell" data-v="" title="No colour">%s</button>' % zone_swatch("") + "".join(
-                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n), zone_swatch(n)) for n in names)
-        else:
-            names, label = ZONE_ICONS, "Icon"
-            face = (zone_icon(chosen) or '<i class="znone"></i>') + '<span>%s</span>' % (E(chosen[:1].upper() + chosen[1:]) if chosen else "No icon")
-            cells = '<button type="button" class="zcell" data-v="" title="No icon"><i class="znone"></i></button>' + "".join(
-                '<button type="button" class="zcell" data-v="%s" title="%s">%s</button>' % (E(n), E(n[:1].upper() + n[1:]), zone_icon(n)) for n in names)
-        return ('<span class="zpick"><select class="z%s" hidden aria-hidden="true" tabindex="-1">%s</select>'
-                '<button type="button" class="zbtn" aria-haspopup="true" aria-expanded="false" aria-label="%s for %s">%s</button>'
-                '<span class="zpop zp-%s" hidden role="group" aria-label="%s for %s">%s</span></span>'
-                % (kind, options("No " + label.lower(), names, chosen), label, E(zone), face, kind, label, E(zone), cells))
+            return swatch_pick("col", "Colour", zone, chosen, ZONE_COLOURS, "No colour", zone_swatch(""), zone_swatch)
+        return swatch_pick("ico", "Icon", zone, chosen, ZONE_ICONS, "No icon", '<i class="znone"></i>', zone_icon)
     rows = "".join('<div class="zrow" data-zone="%s"><span class="zprev%s">%s</span>%s%s</div>'
                    % (E(z), zone_class(z, styles), zone_name(z, styles),
                       pick("col", z, styles.get(z, {}).get("color")), pick("ico", z, styles.get(z, {}).get("icon")))
@@ -4142,6 +4145,60 @@ def zone_settings(zones: List[str], styles: Dict[str, dict]) -> str:
                'shown wherever the page names it. With the cmux extra, a tab the desk opens takes its zone&#39;s colour too. '
                'Saved for every viewer when you close Settings, in <code>%s</code>, which is committed with your '
                'workspace.' % E(prefs().FILE)), rows, script_json({k: zone_icon(k) for k in ZONE_ICONS})))
+
+
+# Settings › Graph colours (#291): a colour for each kind of note Explore
+# draws, from the zones' sixteen less the three that read as the graph's ring
+# for a late next action (--critical) and the page's warnings, so no kind
+# looks like one; KINDS keeps clear of them for the same reason. Saved beside the zones, in the workspace's own
+# settings file: {"graph": {"project": "Teal", "thread": "Indigo"}}. A kind
+# left out keeps its shipped colour (KINDS, PAGE_COLOURS); a chosen one is
+# drawn in its light ink in the light theme and its dark ink in the dark.
+GRAPH_OFF = ("Red", "Crimson", "Amber")
+GRAPH_COLOURS = tuple(k for k in ZONE_COLOURS if k not in GRAPH_OFF)
+
+
+def graph_styles(ws: Path) -> Dict[str, str]:
+    """Settings › Graph colours as saved: {kind: one of GRAPH_COLOURS}. A
+    colour is matched whatever its case; one the graph does not offer, or a
+    value that is not a name, is dropped, and its kind keeps its default."""
+    given = prefs().read(ws).get("graph")
+    if not isinstance(given, dict):
+        return {}
+    named = {k.lower(): k for k in GRAPH_COLOURS}
+    return {k: named[c.lower()] for k, c in given.items()
+            if isinstance(k, str) and isinstance(c, str) and c.lower() in named}
+
+
+def graph_colours(keys: List[str], shipped: List[str], chosen: Dict[str, str]) -> List[str]:
+    """Each kind's colour as the page draws it: a chosen colour as the page's
+    variable for it (zone_css()), which holds a shade for each theme, else
+    the kind's shipped colour. The canvas reads the variable (GRAPH_JS)."""
+    return ["var(--zc-%s)" % chosen[k].lower() if k in chosen else c for k, c in zip(keys, shipped)]
+
+
+def graph_colour_settings(kinds: List[Tuple[str, str, str]], chosen: Dict[str, str]) -> str:
+    """Settings › Graph colours (#291): a row for each kind the legend can
+    show, (key, as the legend says it, shipped colour), its dot drawn as
+    chosen, and the palette Settings › Zones uses, Default first; Reset
+    colours puts every kind back. In the app only: what is chosen is saved
+    for every viewer, through page_action.py, when Settings closes. Only on
+    a page with the graph."""
+    if not kinds:
+        return ""
+    dot = lambda colour: '<i class="zsw" style="background:%s"></i>' % E(colour)
+    rows = "".join('<div class="gkrow" data-kind="%s" data-def="%s"><span class="zprev">%s%s</span>%s</div>'
+                   % (E(k), E(c), dot(graph_colours([k], [c], chosen)[0]), E(said),
+                      swatch_pick("col", "Colour", said, chosen.get(k), GRAPH_COLOURS, "Default", dot(c), zone_swatch))
+                   for k, said, c in kinds)
+    return ('<section class="setsec apponly" id="graph-colour-settings">%s%s%s<div class="gacts">'
+            '<button class="act" type="button" id="graph-reset">Reset colours</button></div></section>'
+            % (set_head("Graph colours", "graphcol", "A colour for each kind of note in Explore."),
+               help_text("graphcol", 'Each kind of note in Explore&#39;s legend takes the colour chosen here, in its legend dot '
+               'and on the graph, with a shade for the light theme and one for the dark. <em>Default</em> keeps the colour Garrick '
+               'ships. Red, Crimson and Amber are not offered, since the rings for a late next action use them. Saved for every '
+               'viewer when you close Settings, in <code>%s</code>, which is committed with your workspace.' % E(prefs().FILE)),
+               rows))
 
 
 _NL: Dict[Path, object] = {}
@@ -6366,14 +6423,14 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed.
-   null when there is nothing. */
+/* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications, While you wait,
+   Memory, each only when it changed. null when there is nothing. */
 function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
-if(!(lpChanged||zChanged||daChanged||n||w||m))return null;
-var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
+if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m))return null;
+var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
-lpChanged=zChanged=false;if(n)N.saved();return q}
+lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
 /* Settings' list of sections (#205): a link brings its section to the top of the column and gives it the focus,
@@ -6416,20 +6473,26 @@ sd.querySelectorAll('.zrow').forEach(function(r){r.querySelectorAll('select').fo
 var c=zpick(r,'.zcol'),p=r.querySelector('.zprev');p.className='zprev'+(c?' zc zc-'+c.toLowerCase():'');p.innerHTML=zIcons[zpick(r,'.zico')]||'';
 p.appendChild(document.createTextNode(r.dataset.zone))}})});
 /* Each choice is a button over a palette: the palette sets the hidden select and runs its onchange */
-function zface(b,s){var v=s.value,o=s.options[s.selectedIndex],ico=s.classList.contains('zico');
-b.innerHTML=(ico?(zIcons[v]||'<i class="znone"></i>'):(v?'<i class="zsw" style="background:var(--zc-'+v.toLowerCase()+')"></i>':'<i class="zsw znone"></i>'))+'<span></span>';
-b.lastChild.textContent=o?o.textContent:''}
+function zface(b,s){var o=s.options[s.selectedIndex],c=[].filter.call(b.nextSibling.querySelectorAll('.zcell'),function(x){return x.dataset.v===s.value})[0];
+b.innerHTML=(c?c.innerHTML:'')+'<span></span>';b.lastChild.textContent=o?o.textContent:''}
 function zshut(except){sd.querySelectorAll('.zpop').forEach(function(p){if(p!==except&&!p.hidden){p.hidden=true;p.previousSibling.setAttribute('aria-expanded','false')}})}
 sd.querySelectorAll('.zpick').forEach(function(k){var s=k.querySelector('select'),b=k.querySelector('.zbtn'),p=k.querySelector('.zpop');
 function mark(){p.querySelectorAll('.zcell').forEach(function(c){c.classList.toggle('on',c.dataset.v===s.value)})}mark();
 b.onclick=function(e){e.stopPropagation();zshut(p);p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden){mark();var on=p.querySelector('.zcell.on')||p.querySelector('.zcell');on.focus()}};
-p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
+p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();sdChanged=true;zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
 p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()}}});
 sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
 /* each "?" shows or hides its section's explanation where it stands */
 sd.addEventListener('click',function(e){var q=e.target.closest('.qhelp'),p=q&&document.getElementById(q.getAttribute('aria-controls'));if(!p)return;
 p.hidden=!p.hidden;q.setAttribute('aria-expanded',String(!p.hidden))});
 function zreq(){var o={};sd.querySelectorAll('.zrow').forEach(function(r){var s={},c=zpick(r,'.zcol'),i=zpick(r,'.zico');if(c)s.color=c;if(i)s.icon=i;o[r.dataset.zone]=s});return o}
+/* Settings › Graph colours (#291): each kind's dot drawn as chosen, Default its shipped colour; Reset colours puts every
+   kind back. The whole section goes with the request when Settings closes, a kind on Default left out. */
+var gChanged=false;function gdot(r){r.querySelector('.zprev .zsw').style.background=zpick(r,'.zcol')?'var(--zc-'+zpick(r,'.zcol').toLowerCase()+')':r.dataset.def}
+sd.querySelectorAll('.gkrow').forEach(function(r){r.querySelector('.zcol').onchange=function(){gChanged=true;gdot(r)}});
+var gReset=document.getElementById('graph-reset');if(gReset)gReset.onclick=function(){sd.querySelectorAll('.gkrow').forEach(function(r){var s=r.querySelector('.zcol');s.value='';gdot(r);zface(r.querySelector('.zbtn'),s)});
+gChanged=sdChanged=true;say('Every kind of note back to its default colour.')};
+function greq(){var o={};sd.querySelectorAll('.gkrow').forEach(function(r){var c=zpick(r,'.zcol');if(c)o[r.dataset.kind]=c});return o}
 /* A thread's card: opens under its row on hover, or on focus from the keyboard,
    with what the graph panel shows for that note. It is fixed, so a scrolled
    page cannot push it out of view, and overlaps its row by a pixel, so the
@@ -7357,9 +7420,11 @@ k=Math.min((W-l-r)/Math.max(1,b[1]-b[0]),(H-t-u)/Math.max(1,b[3]-b[2]),2.2),
 x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
 if(now){scale=k;px=x;py=y;return false}var going=Math.abs(k-scale)>scale*.001||Math.abs(x-px)>.2||Math.abs(y-py)>.2;
 scale+=(k-scale)*.08;px+=(x-px)*.08;py+=(y-py)*.08;return going}
-function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
-/* a note takes its kind's colour, in every place (#292) */
-function fill(n){return G.colors[n.k]||C['--muted']}
+/* the theme's colours, and each kind's chosen in Settings › Graph colours (#291), a variable with a shade for each theme */
+function cvar(c){var m=/^var\((--[\w-]+)\)$/.exec(c||'');return m&&m[1]}
+function colors(){var cs=getComputedStyle(document.documentElement);['--ink','--ink2','--muted','--base','--accent','--warning','--critical','--raise'].concat(G.colors.map(cvar).filter(Boolean)).forEach(function(v){C[v]=cs.getPropertyValue(v).trim()})}
+/* a note takes its kind's colour, in every place (#292): the one chosen for the theme in use, or the one shipped (#291) */
+function fill(n){var c=G.colors[n.k],v=cvar(c);return(v?C[v]:c)||C['--muted']}
 /* a ring for a thread whose own next action is late (lt), never for age alone */
 function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
@@ -7628,6 +7693,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
     lists = todo_list(ws, link, now.date())
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
+    GS = graph_styles(ws)       # each kind's colour, from Settings › Graph colours (#291)
+    GK: List[Tuple[str, str, str]] = []
     # What each thread owes, on its own row: its next action, and whether that
     # action makes it urgent. Every card that says a thread is in trouble
     # reads this, and none of them reads its age.
@@ -7989,6 +8056,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     graph_card = ""
     if show_graph:
         GR = graph(ws, T, link, now, cmux, acting, S, DK, urgent)
+        GK = [(k, plural(k), c) for k, c in zip(GR["keys"], GR["colors"])]    # each kind as shipped, for Settings (#291)
+        GR["colors"] = graph_colours(GR["keys"], GR["colors"], GS)
         core = sum(1 for n in GR["nodes"] if n["c"])
         # each kind a toggle that shows or hides it (#250), then the two states
         legend = "".join('<button type="button" data-k="%d" aria-pressed="true"><i style="background:%s"></i>%s</button>'
@@ -8103,7 +8172,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                 E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link),
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

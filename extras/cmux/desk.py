@@ -46,8 +46,10 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +74,7 @@ AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex"}
 # Where the two assistants' installers put their command, looked in when the
 # PATH desk was started with lacks it: the status app and launchd start it
 # with a bare one. The user's own shell is asked last (agent_found()).
+SHELL_WAIT_S = 10                                  # for the user's shell to say where a command is
 AGENT_DIRS = ("~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin",
               "~/.npm-global/bin", "~/.bun/bin", "~/.volta/bin", "~/.cargo/bin")
 
@@ -433,27 +436,43 @@ def agent_found(agent: str) -> bool:
     """Whether the assistant's command is installed: on this PATH, in one of
     AGENT_DIRS, or found by the user's own shell, which a tab starts in. A
     shell that cannot be asked, or does not answer in time, is taken to have
-    it, so a tab is never refused on a guess."""
+    it, so a tab is never refused on a guess. The shell's answer goes to a
+    file, not a pipe: a job its startup files leave running in the
+    background would hold a pipe open, and the check would wait it out."""
     if shutil.which(agent):
         return True
     for folder in AGENT_DIRS:
         p = Path(folder).expanduser() / agent
         if p.is_file() and os.access(str(p), os.X_OK):
             return True
-    try:
-        r = subprocess.run([os.environ.get("SHELL") or "/bin/zsh", "-ilc", "command -v %s" % shlex.quote(agent)],
-                           capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired):
-        return True
-    return r.returncode == 0 and bool(r.stdout.strip())
+    with tempfile.TemporaryFile() as out:
+        try:
+            proc = subprocess.Popen([os.environ.get("SHELL") or "/bin/zsh", "-ilc", "command -v %s" % shlex.quote(agent)],
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+        except OSError:
+            return True
+        try:
+            code = proc.wait(timeout=SHELL_WAIT_S)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)       # the shell and whatever it started
+            except OSError:
+                pass
+            proc.wait()
+            return True
+        out.seek(0)
+        return code == 0 and bool(out.read().strip())
 
 
-def require_agent(agent: str) -> None:
-    """Refuse, in words, a tab whose assistant would fail to start."""
+def require_agent(agent: str, named: bool = False) -> None:
+    """Refuse, in words, a tab whose assistant would fail to start. `named`:
+    the assistant was given with --agent, not taken from the setting."""
     if not agent_found(agent):
         other = next(k for k in cx.AGENTS if k != agent)
-        raise DeskError("%s is not installed here, so the tab would not start. Install it, or choose %s "
-                        "for cmux tabs in Settings › Opening a thread" % (agent, AGENT_NAMES[other]))
+        raise DeskError("%s is not installed here, so the tab would not start. Install it, or %s"
+                        % (agent, "start it with --agent %s" % other if named else
+                           "choose %s for cmux tabs in Settings › Opening a thread" % AGENT_NAMES[other]))
 
 
 def start_command(agent: str, name: str, prompt: Optional[str]) -> str:
@@ -692,7 +711,7 @@ def cmd_open(desk: Desk, a) -> None:
                        else folder.name or "Workspace")
     command = start_command(agent, name, a.prompt)
     target = a.target or desk.workspace_for(place["zone"] if not at_root else "root")
-    require_agent(agent)
+    require_agent(agent, named=bool(a.agent))
     if a.dry_run:
         print("would open %s in %s, running: %s" % (r or "the workspace root", target, command))
         return
@@ -803,7 +822,7 @@ def cmd_workspace(desk: Desk, a) -> None:
     if a.folder:
         place = desk.resolve(a.folder)
         agent = a.agent or desk.cfg["agent"]
-        require_agent(agent)
+        require_agent(agent, named=bool(a.agent))
         args += ["--cwd", str(place["path"]), "--command", start_command(agent, desk.say_place(place), None)]
     cmux(*args)
     print("made the workspace %s" % name)
@@ -820,7 +839,14 @@ def cmd_agent(desk: Desk, a) -> None:
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     data["agent"] = a.agent
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(prefix=".desk-", suffix=".json", dir=str(path.parent))
+    try:                                  # whole or not at all: the desk refuses a half-written file
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, str(path))
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     desk.cfg["agent"] = a.agent
     print("a new cmux tab starts %s%s" % (AGENT_NAMES[a.agent], "" if agent_found(a.agent)
                                          else "; %s is not installed here yet" % a.agent))

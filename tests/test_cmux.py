@@ -429,6 +429,11 @@ class DeskVerbTest(CmuxCase):
             self.assertNotIn("new-workspace", self.verbs())
             self.assertIn("not installed here yet", self.run_desk("agent", "codex")[1])
             self.assertEqual(self.run_desk("open", "pricing", "--agent", "claude")[0], 0)
+            write(self.ws / "System" / "desk.json", json.dumps({"agent": "claude"}))
+            code, _, err = self.run_desk("open", "pricing", "--new", "--agent", "codex")   # named here, not in Settings
+            self.assertEqual(code, 2)
+            self.assertIn("or start it with --agent claude", err)
+            self.assertNotIn("Settings", err)
         with patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(self.tmp / "no-shell")}):
             self.assertTrue(desk.agent_found("codex"))                      # cannot ask: never refused on a guess
         with patch.object(desk, "AGENT_DIRS", (str(self.tmp / "elsewhere"),)), \
@@ -436,6 +441,34 @@ class DeskVerbTest(CmuxCase):
             write(self.tmp / "elsewhere" / "codex", "#!/bin/sh\n")
             (self.tmp / "elsewhere" / "codex").chmod(0o755)
             self.assertTrue(desk.agent_found("codex"))
+
+    def test_a_shell_that_leaves_a_job_running_answers_at_once(self):
+        # A startup file that backgrounds a job keeps a pipe open: the answer goes to a file instead.
+        # The PATH here is the stand-ins' alone, so the shell names its programs in full.
+        (self.agents / "codex").unlink()
+        shell = self.tmp / "shell"
+        write(shell, "#!/bin/sh\n(/bin/sleep 5) &\necho %s\n" % (self.tmp / "nvm" / "codex"))
+        shell.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(shell)}):
+            began = time.time()
+            self.assertTrue(desk.agent_found("codex"))
+            self.assertLess(time.time() - began, 3)
+        # One that never answers is stopped, with what it started, and taken to have it.
+        marker = self.tmp / "still-running"
+        write(shell, "#!/bin/sh\n(/bin/sleep 2; /usr/bin/touch %s) &\n/bin/sleep 30\n" % marker)
+        with patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(shell)}), \
+                patch.object(desk, "SHELL_WAIT_S", 0.5):
+            began = time.time()
+            self.assertTrue(desk.agent_found("codex"))
+            self.assertLess(time.time() - began, 3)
+        time.sleep(2.5)
+        self.assertFalse(marker.exists())
+
+    def test_the_three_lists_of_assistants_agree(self):
+        status = _load("garrick_status_for_agents", REPO / "extras" / "status" / "status.py")
+        self.assertEqual(cx.AGENTS, pa.DESK_AGENTS)
+        self.assertEqual(cx.AGENTS, tuple(k for k, _ in status.DESK_AGENTS))
+        self.assertEqual(set(cx.AGENTS), set(desk.AGENT_NAMES))
 
     def test_settings_saves_it_through_the_desk(self):
         # The page's request, through page_action.py, then a tab opened from the app.

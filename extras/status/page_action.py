@@ -1624,13 +1624,13 @@ def save_settings(ws: Path, req: dict) -> str:
     keep.migrate(ws)             # a choice an older Garrick left in System/generated/ comes first
     was = keep.read(ws).get("zones")
     before = was if isinstance(was, dict) else {}
+    if "desk-agent" in req:             # first: a desk that refuses leaves every other choice unsaved
+        run_desk(ws, "agent", req["desk-agent"], timeout=20)
     if new:
         try:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "desk-agent" in req:
-        run_desk(ws, "agent", req["desk-agent"], timeout=20)
     if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
         return "Garrick now opens on %s" % ("the simple home" if new["home"] == "simple" else "the full page")
     if "zones" in new:

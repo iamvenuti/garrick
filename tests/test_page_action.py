@@ -826,6 +826,15 @@ class TestDeskAgentSettings(ActionCase):
         with self.assertRaisesRegex(pa.Refused, "cmux is not installed"):
             self.act(verb="settings", **{"desk-agent": "codex"})
 
+    def test_a_refused_desk_saves_nothing_else(self):
+        # One request, all or nothing: the launchers and the zones wait for the desk.
+        self.desk.side_effect = pa.Refused("cmux is not installed here")
+        with self.assertRaisesRegex(pa.Refused, "cmux is not installed"):
+            self.act(verb="settings", launchers=["note", "cmux"], default="cmux",
+                     zones={"Work": {"color": "Teal"}}, **{"desk-agent": "codex"})
+        self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
+        self.assertEqual([mock.call(self.root, "agent", "codex", timeout=20)], self.desk.call_args_list)   # no recolour
+
 
 class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""

@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-10-31
+
+Nurture runs a guided context review that goes on where the last one stopped, started by voice or from the Checks card; a question the wikis raise is a file of its own; and the docs call the status page the Garrick App and draw the architecture in four layers.
+
 ### Added
 
 - **A guided context review.** "Review the context with me", or "review the latest audit with me", has the `nurture` skill work through what the checks left in a short session: it gathers the check, the wiki lint, the shared-file comparison and any audit report the workspace keeps, checks each finding again, and asks walls and failed sources first, then one batch of mechanical fixes, then one decision at a time, up to a limit you choose, fifteen minutes or ten questions by default. `System/nurture-review.md` keeps the decisions, so the next review goes on where this one stopped. It sits in the root repository, which no wall hook checks, so it holds no material: each item is the finding's key, twelve hex digits that `nurture.py --json` now gives every finding, so two findings on one file are two items; a decision is `fixed` and its commit, `answered`, `deferred to` a date, `skipped` or `source failed`, never the answer; a reason is one of the skill's fixed few; and a wall is never settled, only fixed or deferred. `check.py` warns about a row outside that form. The Garrick App's Checks card has *Review context*, which hands the request to your assistant, beside the day of the last review and whether one is unfinished, read from that file's frontmatter alone. ([#258](https://github.com/iamvenuti/garrick/issues/258))
@@ -1056,7 +1060,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.47.2...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/iamvenuti/garrick/compare/v0.47.2...v0.48.0
 [0.47.2]: https://github.com/iamvenuti/garrick/compare/v0.47.1...v0.47.2
 [0.47.1]: https://github.com/iamvenuti/garrick/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/iamvenuti/garrick/compare/v0.46.0...v0.47.0

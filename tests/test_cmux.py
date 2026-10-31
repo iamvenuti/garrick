@@ -121,7 +121,13 @@ class CmuxCase(unittest.TestCase):
         write(fake, FAKE % sys.executable)
         fake.chmod(0o755)
         self.state({})
-        env = {"GARRICK_CMUX": str(fake), "FAKE_CMUX_STATE": str(self.state_file), "FAKE_CMUX_LOG": str(self.log),
+        # Both assistants' commands, stand-ins on the PATH: whether a tab may
+        # start one never depends on what this Mac has installed.
+        self.agents = self.tmp / "agents"
+        for name in cx.AGENTS:
+            write(self.agents / name, "#!/bin/sh\n")
+            (self.agents / name).chmod(0o755)
+        env = {"PATH": str(self.agents) + os.pathsep + os.environ.get("PATH", ""), "GARRICK_CMUX": str(fake), "FAKE_CMUX_STATE": str(self.state_file), "FAKE_CMUX_LOG": str(self.log),
                "GARRICK_JOBS_DIR": str(self.tmp / "jobs"), "GARRICK_WORKSPACE": str(self.ws)}
         for gone in ("CMUX_SOCKET_PASSWORD", "GARRICK_CMUX_PASSWORD_FILE", "GARRICK_DESK_CONFIG"):
             env[gone] = ""
@@ -131,6 +137,9 @@ class CmuxCase(unittest.TestCase):
         for gone in ("CMUX_SOCKET_PASSWORD", "GARRICK_CMUX_PASSWORD_FILE", "GARRICK_DESK_CONFIG"):
             os.environ.pop(gone, None)
         self.addCleanup(setattr, cx, "PASSWORD_FILE", None)
+        dirs = patch.object(desk, "AGENT_DIRS", ())
+        dirs.start()
+        self.addCleanup(dirs.stop)
         for name in ("notify", "quit_cmux", "bring_forward"):
             p = patch.object(desk, name)
             p.start()
@@ -387,6 +396,68 @@ class DeskVerbTest(CmuxCase):
         call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-workspace")
         self.assertEqual(call[call.index("--name") + 1], "Clients")
         self.assertEqual(call[call.index("--command") + 1], "codex")
+
+    def test_the_agent_verb_reads_and_writes_the_setting_keeping_the_rest(self):
+        # Settings › Opening a thread and the setup skill set it this way (#279).
+        self.assertEqual(self.run_desk("agent")[1].strip(), "claude")
+        write(self.ws / "System" / "desk.json", json.dumps({"workspaces": {"Work": "Clients"}}))
+        code, out, _ = self.run_desk("agent", "codex")
+        self.assertEqual(code, 0)
+        self.assertIn("starts Codex", out)
+        self.assertEqual(json.loads((self.ws / "System" / "desk.json").read_text()),
+                         {"workspaces": {"Work": "Clients"}, "agent": "codex"})
+        self.assertEqual(self.run_desk("agent")[1].strip(), "codex")
+        self.assertEqual(self.run_desk("open", "pricing")[0], 0)
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-workspace")
+        self.assertEqual(call[call.index("--command") + 1], "codex")
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            desk.main(["--workspace", str(self.ws), "agent", "opencode"])  # argparse refuses another name
+
+    def test_a_tab_whose_assistant_is_missing_is_not_opened(self):
+        # The status app starts desk with a bare PATH, so the user's shell is asked last.
+        (self.agents / "codex").unlink()
+        shell = self.tmp / "shell"
+        write(shell, "#!/bin/sh\nexit 1\n")
+        shell.chmod(0o755)
+        write(self.ws / "System" / "desk.json", json.dumps({"agent": "codex"}))
+        with patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(shell)}):
+            code, _, err = self.run_desk("open", "pricing")
+            self.assertEqual(code, 2)
+            self.assertIn("codex is not installed here", err)
+            self.assertIn("choose Claude Code for cmux tabs in Settings", err)
+            self.assertNotIn("new-surface", self.verbs())
+            self.assertNotIn("new-workspace", self.verbs())
+            self.assertIn("not installed here yet", self.run_desk("agent", "codex")[1])
+            self.assertEqual(self.run_desk("open", "pricing", "--agent", "claude")[0], 0)
+        with patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(self.tmp / "no-shell")}):
+            self.assertTrue(desk.agent_found("codex"))                      # cannot ask: never refused on a guess
+        with patch.object(desk, "AGENT_DIRS", (str(self.tmp / "elsewhere"),)), \
+                patch.dict(os.environ, {"PATH": str(self.agents), "SHELL": str(shell)}):
+            write(self.tmp / "elsewhere" / "codex", "#!/bin/sh\n")
+            (self.tmp / "elsewhere" / "codex").chmod(0o755)
+            self.assertTrue(desk.agent_found("codex"))
+
+    def test_settings_saves_it_through_the_desk(self):
+        # The page's request, through page_action.py, then a tab opened from the app.
+        self.assertEqual(pa.act(self.ws, {"verb": "settings", "desk-agent": "codex"}), "Settings saved")
+        self.assertEqual(json.loads((self.ws / "System" / "desk.json").read_text())["agent"], "codex")
+        self.assertEqual(desk.load_config(self.ws)["agent"], "codex")
+        pa.act(self.ws, {"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Pricing"})
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] in ("new-surface", "new-workspace"))
+        self.assertEqual(shlex.split(call[call.index("--command") + 1]), ["codex", "open Acme Review, Pricing"])
+
+    def test_a_codex_tab_is_asked_to_wrap_in_words(self):
+        s = self.session("a", self.pricing, [event("task_started"), event("task_complete")], agent="codex")
+        self.state({"sessions": [s]})
+        sent = []
+
+        def answer(surface, text):
+            sent.append(text)
+            self.append(s["transcript_path"], [event("task_started", "w"), event("task_complete", "w")])
+
+        with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep"):
+            self.assertEqual(self.run_desk("close", "pricing", "--wrap", "--yes")[0], 0)
+        self.assertTrue(sent[0].startswith("Use the threads skill to wrap it. "))
 
     def test_open_dry_run_and_the_folders_that_hold_projects(self):
         code, out, _ = self.run_desk("open", "pricing", "--dry-run")

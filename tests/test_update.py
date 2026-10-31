@@ -1211,6 +1211,182 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertNotIn("zone guard", self.report_of(self.plan()))
 
 
+class TestJobsRenamed(ExtrasCase):
+    """#275, #276: a workspace still running Garrick's jobs under their old
+    names, from a fake LaunchAgents folder and a fake jobs folder. The update
+    names each plist and gives the commands; it runs none and writes nothing
+    there."""
+
+    def setUp(self):
+        super().setUp()
+        self.install_extra("status", "jobs")
+        self.home = self.base / "home"
+        self.agents = self.home / "Library" / "LaunchAgents"
+        self.agents.mkdir(parents=True)
+        self.logs = self.home / "Library" / "Logs" / "garrick-jobs"
+        for patch in (mock.patch.object(update, "on_mac", lambda: True),
+                      mock.patch.object(update, "launch_agents", lambda: self.agents)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.old_plists()
+
+    def filled(self, value):
+        """A shipped plist's value as the user's copy has it: <you> filled in."""
+        if isinstance(value, str):
+            return value.replace("/Users/<you>/Garrick", str(self.root)).replace("/Users/<you>", str(self.home))
+        if isinstance(value, list):
+            return [self.filled(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self.filled(v) for k, v in value.items()}
+        return value
+
+    def old_plists(self):
+        """The plists Garrick shipped before 0.49.0, loaded: each new one taken
+        back to its old name, as the user copied it in, and the evening build."""
+        import plistlib
+        back = {new: old for old, new in update.job_names()[0].items()}
+        for path in sorted((REPO / "extras" / "jobs" / "launchd").glob("*.plist")):
+            data = self.filled(plistlib.loads(path.read_bytes()))
+            new = data["Label"][len("garrick."):]
+            old = back[new]
+            args = data["ProgramArguments"]
+            args[args.index(new)] = old
+            if new == "gr-nightly":
+                del args[args.index("--timeout"):args.index("--timeout") + 2]
+                args[args.index(str(self.root / "System/jobs/nightly.py"))] = str(self.root / "System/jobs/nurture_sweep.py")
+            data.update(Label="garrick." + old, StandardOutPath=str(self.logs / (old + ".launchd.log")),
+                        StandardErrorPath=str(self.logs / (old + ".launchd.log")))
+            if old == "backup":
+                del data["EnvironmentVariables"]["GARRICK_ABOUT"]          # a copy from before #273
+            with (self.agents / ("garrick.%s.plist" % old)).open("wb") as f:
+                plistlib.dump(data, f)
+        status = {"Label": "garrick.status", "ProgramArguments": [
+            "/usr/bin/python3", str(self.root / "System/jobs/job.py"), "status", "--cwd", str(self.root), "--",
+            "/usr/bin/python3", str(self.root / "System/status/status.py"), "--workspace", str(self.root), "--same-flags"],
+            "StartCalendarInterval": {"Hour": 23, "Minute": 30}}
+        mine = {"Label": "com.acme.backup", "ProgramArguments": [            # yours, under an old name: not Garrick's
+            "/usr/bin/python3", str(self.root / "System/jobs/job.py"), "backup", "--", "/bin/sh", "/opt/acme/sync.sh"]}
+        elsewhere = {"Label": "garrick.todo-sweep.other", "ProgramArguments": [   # another workspace's
+            "/usr/bin/python3", str(self.base / "other/System/jobs/job.py"), "todo-sweep", "--", "/usr/bin/python3",
+            str(self.base / "other/System/jobs/todo_sweep.py")]}
+        for name, data in (("garrick.status", status), ("com.acme.backup", mine), ("other.todo-sweep", elsewhere)):
+            with (self.agents / (name + ".plist")).open("wb") as f:
+                plistlib.dump(data, f)
+        self.before = {p.name: p.read_bytes() for p in self.agents.iterdir()}
+
+    def test_the_update_names_each_old_plist_and_gives_the_commands(self):
+        p = self.plan()
+        names = [(Path(r["plist"]).name, r["job"], r["new"]) for r in p["renames"]]
+        self.assertEqual([("garrick.backup.plist", "backup", "gr-backup"), ("garrick.nurture.plist", "nurture", "gr-nightly"),
+                          ("garrick.reading-sweep.plist", "reading-sweep", "gr-reading-sweep"),
+                          ("garrick.status.plist", "status", "gr-nightly"),
+                          ("garrick.todo-sweep.plist", "todo-sweep", "gr-todo-sweep"),
+                          ("garrick.whats-open.plist", "whats-open", "gr-whats-open")], names)
+        report = update.report(p)
+        self.assertEqual(1, report.count("Garrick's scheduled jobs have new names"))     # one message
+        self.assertIn("6 plists in %s still run them under the old names. Each keeps working as it is until you "
+                      "rename it: this update changes nothing in that folder and runs none of these commands." % self.agents,
+                      report)
+        backup = next(r for r in p["renames"] if r["job"] == "backup")["commands"]
+        self.assertEqual([
+            "launchctl bootout gui/$(id -u)/garrick.backup",
+            "plutil -replace Label -string garrick.gr-backup ~/Library/LaunchAgents/garrick.backup.plist",
+            "plutil -remove ProgramArguments.2 ~/Library/LaunchAgents/garrick.backup.plist",
+            "plutil -insert ProgramArguments.2 -string gr-backup ~/Library/LaunchAgents/garrick.backup.plist",
+            "plutil -replace StandardOutPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log "
+            "~/Library/LaunchAgents/garrick.backup.plist",
+            "plutil -replace StandardErrorPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log "
+            "~/Library/LaunchAgents/garrick.backup.plist",
+            "plutil -replace EnvironmentVariables.GARRICK_ABOUT -string 'Commits and pushes every repository, holding "
+            "back what the wall check refuses.' ~/Library/LaunchAgents/garrick.backup.plist",
+            "mv ~/Library/LaunchAgents/garrick.backup.plist ~/Library/LaunchAgents/garrick.gr-backup.plist",
+            "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-backup.plist"], backup)
+        self.assertIn("    " + backup[-1], report)
+        nurture = next(r for r in p["renames"] if r["job"] == "nurture")["commands"]
+        self.assertIn("plutil -insert ProgramArguments.7 -string %s ~/Library/LaunchAgents/garrick.nurture.plist"
+                      % (self.root / "System/jobs/nightly.py"), nurture)
+        self.assertIn("plutil -insert ProgramArguments.3 -string --timeout ~/Library/LaunchAgents/garrick.nurture.plist",
+                      nurture)
+        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.status", "mv ~/Library/LaunchAgents/garrick.status.plist ~/.Trash"],
+                         next(r for r in p["renames"] if r["job"] == "status")["commands"])
+        self.assertIn("The nightly job now also records effort for the Effort view and rebuilds the status page", report)
+        self.assertNotIn("com.acme", report)
+        self.assertNotIn("other.todo-sweep", report)
+        update.apply(self.root, p)
+        self.assertEqual(self.before, {p.name: p.read_bytes() for p in self.agents.iterdir()})   # nothing written there
+        self.assertIn("garrick.whats-open.plist runs whats-open, which is now gr-whats-open:",
+                      update.say_applied(p, update.apply(self.root, self.plan())))
+
+    def test_none_without_the_jobs_extra_or_off_a_mac(self):
+        with mock.patch.object(update, "on_mac", lambda: False):
+            self.assertEqual([], self.plan()["renames"])
+        shutil.rmtree(self.root / "System" / "jobs")
+        self.commit(self.root, "no jobs")
+        self.assertEqual([], self.plan()["renames"])
+
+    def test_a_new_plist_already_there_leaves_only_the_old_one_to_put_away(self):
+        (self.agents / "garrick.gr-backup.plist").write_bytes((self.agents / "garrick.backup.plist").read_bytes())
+        got = next(r for r in self.plan()["renames"] if r["job"] == "backup")
+        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.backup",
+                          "mv ~/Library/LaunchAgents/garrick.backup.plist ~/.Trash"], got["commands"])
+        self.assertIn("garrick.backup.plist runs backup, and garrick.gr-backup.plist is already there.",
+                      update.report(self.plan()))
+
+    @unittest.skipUnless(shutil.which("plutil") and sys.platform == "darwin", "plutil is macOS's")
+    def test_the_commands_rename_each_job_and_its_history_follows(self):
+        """Run every command but launchctl's against the fake folder, then read
+        it as the status page does: one row per job, with the runs from
+        before the rename."""
+        (self.agents / "other.todo-sweep.plist").unlink()                    # another workspace's runs todo-sweep still
+        jobs = self.base / "jobs"
+        jobs.mkdir()
+        import datetime as dt
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_status_renamed", REPO / "extras/status/status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        now = dt.datetime.now().replace(microsecond=0)
+        ran = now - dt.timedelta(hours=20)
+        for old in ("backup", "nurture", "reading-sweep", "status", "todo-sweep", "whats-open"):
+            (jobs / (old + ".log")).write_text("===== %s  %s  exit 0  (9s) =====\n\n" % (ran.strftime("%Y-%m-%d %H:%M:%S"), old))
+            (jobs / (old + ".heartbeat.json")).write_text(json.dumps(
+                {"job": old, "finished": ran.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True}))
+        before = {j["name"] for j in status.jobs(jobs, now, status.launchd_jobs(self.agents))}
+        self.assertEqual({"backup", "nurture", "reading-sweep", "status", "todo-sweep", "whats-open"}, before)
+        (self.home / ".Trash").mkdir()
+        for r in self.plan()["renames"]:
+            for cmd in r["commands"]:
+                if not cmd.startswith("launchctl "):
+                    done = subprocess.run(["/bin/bash", "-c", cmd], env=dict(os.environ, HOME=str(self.home)),
+                                          capture_output=True, text=True)
+                    self.assertEqual(0, done.returncode, cmd + "\n" + done.stderr)
+        self.assertEqual([], self.plan()["renames"])                             # nothing left to rename
+        self.assertTrue((self.home / ".Trash" / "garrick.status.plist").is_file())
+        sched = status.launchd_jobs(self.agents)
+        self.assertEqual({"backup", "gr-backup", "gr-nightly", "gr-reading-sweep", "gr-todo-sweep", "gr-whats-open"},
+                         set(sched))                                              # backup: the user's own, untouched
+        nightly = sched["gr-nightly"]
+        import plistlib
+        args = plistlib.loads((self.agents / "garrick.gr-nightly.plist").read_bytes())["ProgramArguments"]
+        self.assertEqual(["gr-nightly", "--timeout", "3600", "--cwd"], args[2:6])
+        self.assertEqual(str(self.root / "System/jobs/nightly.py"), args[args.index("--") + 2])
+        self.assertEqual(("garrick.gr-nightly", "daily 05:15"), (nightly["label"], nightly["schedule"]))
+        self.assertTrue(nightly["about"].startswith("Each night: applies the checks"))
+        self.assertEqual("Commits and pushes every repository, holding back what the wall check refuses.",
+                         sched["gr-backup"]["about"])
+        rows = {j["name"]: j for j in status.jobs(jobs, now, sched)}
+        self.assertEqual({"backup", "gr-backup", "gr-nightly", "gr-reading-sweep", "gr-todo-sweep", "gr-whats-open"},
+                         set(rows))                                              # no nurture, no status
+        # A plist of the user's still runs a job called backup, so that name's runs stay its own.
+        self.assertEqual(("none", [ran]), (rows["gr-backup"]["state"], [r[0] for r in rows["backup"]["runs"]]))
+        for name in ("gr-nightly", "gr-reading-sweep", "gr-todo-sweep", "gr-whats-open"):
+            with self.subTest(name):
+                self.assertEqual(([ran], "good", True), ([r[0] for r in rows[name]["runs"]], rows[name]["state"],
+                                                         rows[name]["garrick"]))
+        self.assertEqual(str(self.logs / "gr-nightly.launchd.log"),
+                         plistlib.loads((self.agents / "garrick.gr-nightly.plist").read_bytes())["StandardOutPath"])
+
+
 def has_tag(tag):
     r = subprocess.run(["git", "-C", str(REPO), "rev-parse", "-q", "--verify", "refs/tags/" + tag],
                        capture_output=True, text=True)

@@ -853,15 +853,17 @@ class NightlyTest(Base):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.job.EXIT_USAGE, self.job.main(["--workspace", str(self.root)]))
 
-    def test_the_launchd_example_runs_it_through_job_py_with_no_assistant(self):
-        plist = plistlib.loads((JOBS / "launchd" / "garrick.nurture.plist").read_bytes())
+    def test_the_nightly_job_runs_it_first_with_no_assistant(self):
+        """#276: nurture is the first step of gr-nightly, given its --digest."""
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-nightly.plist").read_bytes())
         args = plist["ProgramArguments"]
-        self.assertEqual("garrick.nurture", plist["Label"])
-        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "nurture"], args[:3])
+        self.assertEqual("garrick.gr-nightly", plist["Label"])
+        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
         self.assertNotIn("--agent", args)
-        self.assertIn("/Users/<you>/Garrick/System/jobs/nurture_sweep.py", args)
+        self.assertIn("/Users/<you>/Garrick/System/jobs/nightly.py", args)
         self.assertIn("--digest", args)
         self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])
+        self.assertIn('NURTURE = HERE / "nurture_sweep.py"', (JOBS / "nightly.py").read_text())
         r = subprocess.run([sys.executable, str(JOBS / "job.py"), "check-scripts", str(JOBS / "nurture_sweep.py")],
                            capture_output=True, text=True)
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
@@ -871,7 +873,7 @@ class DocsTest(unittest.TestCase):
     def test_the_docs_say_the_night_applies_the_mechanical_kind(self):
         jobs = (REPO / "docs" / "extras" / "scheduled-jobs.md").read_text(encoding="utf-8")
         self.assertIn("### Nurturing the context each night", jobs)
-        self.assertIn("`nurture_sweep.py`, `launchd/garrick.nurture.plist`", jobs)
+        self.assertIn("`nightly.py`, `nurture_sweep.py`, `launchd/garrick.gr-nightly.plist`", jobs)
         self.assertIn("never change overnight", jobs)
         commands = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
         self.assertIn("## Nurturing the context", commands)

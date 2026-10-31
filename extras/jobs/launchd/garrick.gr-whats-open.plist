@@ -8,27 +8,27 @@
   because this is XML) with your macOS user name; launchd does not expand ~.
   Load it:
 
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.whats-open.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-whats-open.plist
 
-  Unload with `launchctl bootout gui/$(id -u)/garrick.whats-open`.
+  Unload with `launchctl bootout gui/$(id -u)/garrick.gr-whats-open`.
   PATH must include the folder your assistant's command is installed in.
   Where its notices go (failed, recovered, idle) is the status page's
   Settings › Notifications; GARRICK_NOTIFY or GARRICK_NOTIFY_CMD added to
   EnvironmentVariables override that for this job alone. See
   docs/extras/scheduled-jobs.md for the other variables.
   Whatever job.py cannot write to its own log, such as the error from a path
-  left wrong, goes to whats-open.launchd.log in the jobs' log folder.
+  left wrong, goes to gr-whats-open.launchd.log in the jobs' log folder.
   launchd does not create that folder: run the job once by hand first.
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>garrick.whats-open</string>
+  <string>garrick.gr-whats-open</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
     <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
-    <string>whats-open</string>
+    <string>gr-whats-open</string>
     <string>--agent</string>
     <string>--cwd</string>
     <string>/Users/&lt;you&gt;/Garrick</string>
@@ -50,9 +50,9 @@
     <string>claude</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/whats-open.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-whats-open.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/whats-open.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-whats-open.launchd.log</string>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

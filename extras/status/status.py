@@ -2879,14 +2879,47 @@ def when(p: dict) -> Tuple[str, Optional[dt.timedelta]]:
     return prefix + ", ".join(words), late
 
 
-GARRICK_LABELS = ("garrick.",)     # the label prefixes of the plists Garrick ships
+# The label prefixes of the plists Garrick ships: `garrick.`, which every one
+# has carried, and `gr-`, the prefix of the jobs' own names since #275.
+GARRICK_LABELS = ("garrick.", "gr-")
+GARRICK_PREFIX = "gr-"
+# Garrick's jobs by the names they ran under before #275 and #276, and the
+# names they run under now: agent.py's RENAMED and RETIRED, kept here too so
+# the page reads the jobs folder without the jobs extra; a test holds them
+# equal. A renamed job's old heartbeat and logs are read under its new name;
+# a retired job's are not, and its row only goes once the nightly is there.
+RENAMED_JOBS = {"backup": "gr-backup", "nurture": "gr-nightly", "reading-sweep": "gr-reading-sweep",
+                "todo-sweep": "gr-todo-sweep", "whats-open": "gr-whats-open"}
+RETIRED_JOBS = {"status": "gr-nightly"}
 
 
-def garrick_job(label: Optional[str]) -> bool:
-    """Whether a launchd label is one of the jobs Garrick ships, rather than
-    one the user added: its label starts with one of GARRICK_LABELS. A job
-    with no plist has no label and is the user's."""
-    return bool(label) and str(label).startswith(GARRICK_LABELS)
+def garrick_job(label: Optional[str], name: Optional[str] = None) -> bool:
+    """Whether a job is one of those Garrick ships, rather than one the user
+    added: its launchd label starts with one of GARRICK_LABELS. A job with no
+    plist has no label, and is Garrick's only when its name has Garrick's
+    prefix, as a renamed job's does before its new plist is loaded."""
+    if label:
+        return str(label).startswith(GARRICK_LABELS)
+    return bool(name) and str(name).startswith(GARRICK_PREFIX)
+
+
+def superseded(folder: Path, sched: Dict[str, dict]) -> Tuple[Dict[str, List[str]], set]:
+    """Garrick's jobs that run under a new name now (#275): new name -> the
+    old names whose heartbeats and logs are read under it, and every old name
+    no longer shown as a row of its own. An old name moves only when no plist
+    runs it any more and the new name is there, as a plist or a heartbeat or
+    a log: until the user renames a job, it stays as it is."""
+    def there(name: str) -> bool:
+        return name in sched or any((folder / (name + end)).is_file() for end in (".heartbeat.json", ".log"))
+    earlier: Dict[str, List[str]] = {}
+    hidden = set()
+    for table, read in ((RENAMED_JOBS, True), (RETIRED_JOBS, False)):
+        for old, new in table.items():
+            if old not in sched and there(new):
+                hidden.add(old)
+                if read:
+                    earlier.setdefault(new, []).append(old)
+    return earlier, hidden
 
 
 def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
@@ -2922,11 +2955,12 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
     return out
 
 
-def history(folder: Path, name: str, now: dt.datetime) -> List[Tuple[dt.datetime, int, bool]]:
-    """(when, exit, quiet) for each run the job's logs record in the last DAYS days."""
+def history(folder: Path, name: str, now: dt.datetime, earlier: Tuple[str, ...] = ()) -> List[Tuple[dt.datetime, int, bool]]:
+    """(when, exit, quiet) for each run the job's logs record in the last DAYS
+    days, and the logs of the names it ran under before (superseded())."""
     since = now - dt.timedelta(days=DAYS)
     runs = []
-    for path in (folder / (name + ".log.1"), folder / (name + ".log")):
+    for path in [folder / (n + end) for n in (*earlier, name) for end in (".log.1", ".log")]:
         if not path.is_file():
             continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -3005,9 +3039,12 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     with the schedule its plist gives. A heartbeat with no plist is a job a
     hook or a session starts: "started by a session", and the user's. Each
     row carries its plist's label, GARRICK_ABOUT and --agent, and whether it
-    is Garrick's (garrick_job)."""
+    is Garrick's (garrick_job). A job of Garrick's that ran under an older
+    name is one row under its new name, with the older runs in its strip
+    (superseded())."""
     sched = launchd_jobs() if sched is None else sched
-    out = []
+    earlier, hidden = superseded(folder, sched) if folder.is_dir() else ({}, set())
+    beats: Dict[str, Tuple[dict, Optional[dt.datetime]]] = {}
     for beat in sorted(folder.glob("*.heartbeat.json")) if folder.is_dir() else []:
         try:
             hb = json.loads(beat.read_text(encoding="utf-8"))
@@ -3021,6 +3058,16 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             when = dt.datetime.strptime(str(hb.get("finished"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
+        beats[name] = (hb, when)
+    for new, olds in earlier.items():             # the newest heartbeat of a renamed job, under its new name
+        got = [beats[n] for n in [new] + olds if n in beats]
+        if got:
+            beats[new] = max(got, key=lambda b: b[1] or dt.datetime.min)
+    out = []
+    for name, (hb, when) in sorted(beats.items()):
+        if name in hidden:
+            continue
+        olds = tuple(earlier.get(name, ()))
         code = int(hb.get("exit", -1)) if str(hb.get("exit", "")).lstrip("-").isdigit() else -1
         env = sched[name].get("env", {}) if name in sched else {}
         # job.py says itself whether the exit was fine (`ok`, `quiet`); an older
@@ -3044,27 +3091,69 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "good", "ok, called no assistant"   # fine when there was nothing to do
         else:
             state, status = "good", "ok"
+        running = lock_held(folder / (name + ".lock"), now)
+        steps = hb["steps"] if isinstance(hb.get("steps"), list) else None
+        live = steps_now(folder, name) if running else None
+        if live is not None:                      # the nightly building this page mid-run says what failed so far
+            steps = live
+            if failed_steps(live):
+                state, status = "critical", "%s failed in the run under way" % failed_steps(live)
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
-                    "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log"),
-                    "quiet": tuple(sorted(quiet)), "running": lock_held(folder / (name + ".lock"), now),
-                    "idle": state == "warning" and status.startswith("idle"), **plist_facts(sched.get(name))})
+                    "schedule": words, "runs": history(folder, name, now, olds), "log": job_log(folder, name, olds),
+                    "quiet": tuple(sorted(quiet)), "running": running,
+                    "idle": state == "warning" and status.startswith("idle"), "steps": steps,
+                    **plist_facts(sched.get(name), name)})
     beaten = {j["name"] for j in out}
     for name, plist in sched.items():
         if name not in beaten:
-            out.append({"name": name, "when": None, "seconds": None, "state": "none", "status": "not run yet",
-                        "schedule": plist["schedule"], "runs": history(folder, name, now), "log": folder / (name + ".log"),
-                        "quiet": quiet_exits(plist.get("env", {})), "running": lock_held(folder / (name + ".lock"), now),
-                        "idle": False, **plist_facts(plist)})
+            olds = tuple(earlier.get(name, ()))
+            running = lock_held(folder / (name + ".lock"), now)
+            live = steps_now(folder, name) if running else None
+            state, status = ("critical", "%s failed in the run under way" % failed_steps(live)) if failed_steps(live) \
+                else ("none", "not run yet")
+            out.append({"name": name, "when": None, "seconds": None, "state": state, "status": status,
+                        "schedule": plist["schedule"], "runs": history(folder, name, now, olds),
+                        "log": job_log(folder, name, olds),
+                        "quiet": quiet_exits(plist.get("env", {})), "running": running,
+                        "idle": False, "steps": live, **plist_facts(plist, name)})
     return sorted(out, key=lambda j: j["name"].casefold())
 
 
-def plist_facts(plist: Optional[dict]) -> dict:
+def steps_now(folder: Path, name: str) -> Optional[List[dict]]:
+    """The steps a run still going has reported so far (job.py's
+    `<name>.steps.json`, which the nightly job writes after each step), or
+    None. The nightly rebuilds this page as its last step, before its
+    heartbeat is written, so this is how a step that failed tonight shows."""
+    try:
+        data = json.loads((folder / (name + ".steps.json")).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else None
+
+
+def failed_steps(steps: Optional[List[dict]]) -> str:
+    """The steps that failed, in words, as job.py says them: `effort (exit 1)`."""
+    return ", ".join("%s (exit %s)" % (x.get("step"), x.get("exit")) for x in steps or []
+                     if isinstance(x.get("exit"), int) and x["exit"] != 0)
+
+
+def job_log(folder: Path, name: str, earlier: Tuple[str, ...] = ()) -> Path:
+    """The job's log; before a renamed job's first run under its new name,
+    the log it left under the newest of its old ones."""
+    for n in (name, *reversed(earlier)):
+        if (folder / (n + ".log")).is_file():
+            return folder / (n + ".log")
+    return folder / (name + ".log")
+
+
+def plist_facts(plist: Optional[dict], name: Optional[str] = None) -> dict:
     """What a job's row takes from its plist: the label, the line it gives in
     GARRICK_ABOUT, whether it calls the assistant (None with no plist), and
     whether it is Garrick's."""
     plist = plist or {}
     label = plist.get("label")
-    return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"), "garrick": garrick_job(label)}
+    return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"),
+            "garrick": garrick_job(label, name)}
 
 
 def log_tail(path: Path, lines: int = 30, width: int = 300) -> List[str]:
@@ -3103,10 +3192,15 @@ def job_panel(j: dict, i: int, ok: bool, log_link: str) -> str:
     said = "".join('<li>%s · %s</li>' % (E(w.strftime("%a %d %b %H:%M")), E(
         "ok" if c == 0 else "skipped" if c == 75 else "exit %d, quiet" % c if q or c in j["quiet"] else "exit %d" % c)) for w, c, q in runs)
     tail = log_tail(j["log"])
-    return ('<div class="jpanel" id="jp-%d" data-ok="%d" hidden>%s<dl>%s</dl><h4>Last runs</h4>%s<h4>Log</h4>%s'
+    # A job of several steps (the nightly, #276) says how each went on its last run.
+    steps = "".join('<li>%s · %s</li>' % (E(str(s.get("step"))), E(
+        "skipped: %s" % s["skipped"] if s.get("skipped") else "ok" if s.get("exit") == 0 else "exit %s" % s.get("exit")))
+        for s in j.get("steps") or [] if isinstance(s, dict))
+    return ('<div class="jpanel" id="jp-%d" data-ok="%d" hidden>%s<dl>%s</dl>%s<h4>Last runs</h4>%s<h4>Log</h4>%s'
             '<div class="gacts"><a class="act" href="%s">Open log</a></div></div>'
             % (i, ok, '<p>%s</p>' % E(j["about"]) if j.get("about") else "",
                "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), E(v)) for k, v in facts),
+               '<h4>Steps, last run</h4><ul>%s</ul>' % steps if steps else "",
                '<ul>%s</ul>' % said if said else '<p class="muted">None in %d days.</p>' % DAYS,
                '<pre>%s</pre>' % E("\n".join(tail)) if tail else '<p class="muted">No log yet.</p>', E(log_link)))
 
@@ -3204,9 +3298,11 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
     jobs = [e for e in calls if ask is None or e.get("job") != ask]
     day = [e for e in jobs if now.timestamp() - e["ts"] < 86400]
     hour = [e for e in jobs if now.timestamp() - e["ts"] < 3600]
+    earlier, _ = superseded(folder, sched)
+    was = {old: new for new, olds in earlier.items() for old in olds}    # a renamed job's calls under its new name
     by = {}
     for e in entries:
-        j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
+        j = by.setdefault(was.get(e.get("job", "?"), e.get("job", "?")), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
         if e.get("refused"):
             j["refused"] += 1
             continue

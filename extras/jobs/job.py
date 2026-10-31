@@ -6,9 +6,12 @@
     python3 job.py notify [--event EVENT] <title> <message>  send a line through the notifier
     python3 job.py check-scripts <file>...   find job scripts that call an assistant directly
 
-The name is letters, digits, hyphens and underscores, and not `agent`. The
-scheduler (launchd, cron) runs this, and this runs the job. One place for
-everything a run needs when nobody is watching it:
+The name is letters, digits, hyphens and underscores, and not `agent`. A
+name that starts with `gr-` marks one of Garrick's own jobs
+(agent.GARRICK_JOBS): a job of yours given one still runs, with a line on
+standard error and in its log saying so. The scheduler (launchd, cron) runs
+this, and this runs the job. One place for everything a run needs when
+nobody is watching it:
 
 1. **A log**, `<name>.log` in the jobs folder (~/Library/Logs/garrick-jobs/
    on a Mac, or GARRICK_JOBS_DIR), rotated at 1 MB with one older generation
@@ -86,13 +89,17 @@ of them, GARRICK_JOBS_DIR included. Its values are never written to the log.
 
 The command runs in `--cwd` (or GARRICK_WORKSPACE, or your home folder; never
 `/`, where a scheduler starts) with GARRICK_JOB, GARRICK_ITEMS_FILE,
-GARRICK_JOBS_DIR and GARRICK_HEADLESS=1 set.
+GARRICK_STEPS_FILE, GARRICK_JOBS_DIR and GARRICK_HEADLESS=1 set. A command made
+of several steps, as the nightly job is, writes them to GARRICK_STEPS_FILE
+(agent.report_steps): they go into the heartbeat as `steps`, and the reason a
+failed run gives names the steps that failed.
 
 What the status page reads, all in the jobs folder:
 
     <name>.heartbeat.json  the last run: job, started, finished, finished_ts,
                            exit, seconds, ok, quiet, reason, items, idle_days,
-                           idle, agent, no_call, failing_since
+                           idle, agent, no_call, failing_since, and
+                           steps when the command reported them
     <name>.lock/until      while a run holds it: "<until> <pid> <started>",
                            then " <group> <group started>" once the
                            command runs; times in epoch seconds
@@ -102,10 +109,15 @@ What the status page reads, all in the jobs folder:
                            with `  quiet` before the closing `=====` when
                            the exit was quiet
 
-`job.py status` reads them for you. `job.py check-scripts` reads a job's
-scripts, or the plists that run them, for a line that runs `claude -p` or
-`codex exec` itself instead of going through agent.py, and exits 1 when it
-finds one.
+`job.py status` reads them for you. A job of Garrick's that ran under an
+older name (agent.RENAMED: `nurture` is `gr-nightly` now) is read under its
+new name once a run under the new name has left a heartbeat or a log: the
+newer of the two heartbeats is its last run, and the old name is no longer
+listed of its own. Until then the old name is listed as it is.
+
+`job.py check-scripts` reads a job's scripts, or the plists that run them,
+for a line that runs `claude -p` or `codex exec` itself instead of going
+through agent.py, and exits 1 when it finds one.
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -705,6 +717,24 @@ def read_items(path: Path) -> Optional[int]:
     return int(digits) if digits else None
 
 
+def read_steps(path: Path) -> Optional[List[dict]]:
+    """The steps a command reported (agent.report_steps), each with its
+    `step` and `exit`; None when it reported none or wrote something else."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return [s for s in data if isinstance(s, dict) and isinstance(s.get("step"), str)]
+
+
+def failed_steps(steps: Optional[List[dict]]) -> str:
+    """The steps that failed, in words: `effort (exit 1), nightly.local (exit 2)`."""
+    return ", ".join("%s (exit %s)" % (s["step"], s.get("exit")) for s in steps or []
+                     if isinstance(s.get("exit"), int) and s["exit"] != 0)
+
+
 def idle_days(items: Optional[int], lastwork: Path, now: float) -> Optional[int]:
     """Days since the last run that did anything, for jobs that report. The
     first report starts the clock rather than raising the alarm at once."""
@@ -775,22 +805,35 @@ def status(folder: Optional[Path] = None, names: Optional[List[str]] = None) -> 
                     stem = path.name[:-len(suffix)]
                     if not agent.name_problem(stem):
                         found.add(stem)
+    # A job of Garrick's renamed (#275) is read under its new name once that
+    # name has files of its own, or is asked for; its old name then goes.
+    earlier: Dict[str, List[str]] = {}
+    for old, new in getattr(agent, "RENAMED", {}).items():
+        if old in found and (new in found or new in (names or ())):
+            earlier.setdefault(new, []).append(old)
+            found.discard(old)
+            found.add(new)
     jobs = []
     for name in sorted(names or found):
         state = read_json(folder / ("%s.alert.json" % name))
         idle_at = read_epoch(folder / ("%s.idle-alert" % name))
         held = lock_state(folder / ("%s.lock" % name))
+        beats = [b for b in (read_json(folder / ("%s.heartbeat.json" % n)) for n in [name] + earlier.get(name, [])) if b]
+        log = next((folder / ("%s.log" % n) for n in [name] + earlier.get(name, []) if (folder / ("%s.log" % n)).exists()),
+                   folder / ("%s.log" % name))
         jobs.append({
             "job": name,
             "running": held is not None,
             "lock": held,
-            "heartbeat": read_json(folder / ("%s.heartbeat.json" % name)),
+            "heartbeat": max(beats, key=lambda b: b.get("finished_ts") if isinstance(b.get("finished_ts"), (int, float))
+                             else 0) if beats else None,
             "failing": {"exit": state.get("exit"),
                         "since": stamp(state["since"]) if isinstance(state.get("since"), (int, float)) else None,
                         "notified": stamp(state["alerted"]) if isinstance(state.get("alerted"), (int, float)) else None}
                        if state else None,
             "idle_notified": stamp(idle_at) if idle_at else None,
-            "log": str(folder / ("%s.log" % name)),
+            "log": str(log),
+            **({"renamed_from": earlier[name]} if name in earlier else {}),
         })
     return {"folder": str(folder), "assistant_lock": lock_state(folder / "agent.lock"), "jobs": jobs}
 
@@ -908,6 +951,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if problem:
         print("job.py: %s" % problem, file=sys.stderr)
         return agent.EXIT_USAGE
+    prefixed = agent.prefix_note(args.name) if hasattr(agent, "prefix_note") else None
+    if prefixed and not args.detach:
+        print("job.py: %s" % prefixed, file=sys.stderr)
     if args.timeout is not None and not 0 < args.timeout < float("inf"):
         print("job.py: --timeout is %g; give the seconds a run may take, above zero" % args.timeout,
               file=sys.stderr)
@@ -923,6 +969,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     idle_limit = number("GARRICK_IDLE_DAYS", 7, warnings)
     repeat = number("GARRICK_ALERT_REPEAT", 3600, warnings)
     quiet = quiet_exits(warnings) | {EXIT_LOCKED}   # a command's own "skipped" is never a failure
+    if prefixed:
+        warnings.append("job: %s\n" % prefixed)
 
     jobs = agent.jobs_dir()
     jobs.mkdir(parents=True, exist_ok=True)
@@ -930,6 +978,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     log_path = jobs / ("%s.log" % name)
     beat = jobs / ("%s.heartbeat.json" % name)
     items_file = jobs / ("%s.items" % name)
+    steps_file = jobs / ("%s.steps.json" % name)
     lastwork = jobs / ("%s.lastwork" % name)
     alert_state = jobs / ("%s.alert.json" % name)
     idle_alert = jobs / ("%s.idle-alert" % name)
@@ -956,13 +1005,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         # skipped must not rotate the log of the run it found still going.
         agent.rotate(log_path)
         items_file.unlink(missing_ok=True)
+        steps_file.unlink(missing_ok=True)
         with log_path.open("a", encoding="utf-8") as log:
             start = time.time()
             log.write("===== %s  %s  start =====\n" % (stamp(start), name))
             log.writelines(env_lines + warnings + notes)
             log.flush()
             env = dict(os.environ, GARRICK_JOB=name, GARRICK_ITEMS_FILE=str(items_file),
-                       GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
+                       GARRICK_STEPS_FILE=str(steps_file), GARRICK_JOBS_DIR=str(jobs), GARRICK_HEADLESS="1")
             code, cause = 0, None
             try:
                 if args.agent:
@@ -1007,6 +1057,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             is_quiet = code in quiet
             ok = code == 0 or is_quiet
             reason = None if code == 0 else describe(code, seconds, args.timeout, cause)
+            steps = read_steps(steps_file)
+            failed = failed_steps(steps)
+            if reason and failed:
+                reason += "; %s failed" % failed
             if is_quiet:
                 log.write("job: exit %d is quiet: logged, no notice\n" % code)
             elif reason:
@@ -1037,7 +1091,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                               "finished_ts": round(now, 3), "exit": code, "seconds": round(seconds),
                               "ok": ok, "quiet": is_quiet, "reason": reason, "items": items,
                               "idle_days": idle, "idle": is_idle, "agent": bool(args.agent), "no_call": no_call,
-                              "failing_since": stamp(failing_since) if failing_since else None})
+                              "failing_since": stamp(failing_since) if failing_since else None,
+                              **({"steps": steps} if steps is not None else {})})
             return code
     except Stopped as stop:
         return 128 + stop.signum                      # before the log was open: nothing to write it in

@@ -24,7 +24,7 @@ for none).
 
 Run it through job.py, so it has a log, a lock and a watchdog:
 
-    python3 job.py todo-sweep --agent --cwd /Users/<you>/Garrick -- \\
+    python3 job.py gr-todo-sweep --agent --cwd /Users/<you>/Garrick -- \\
         /usr/bin/python3 /Users/<you>/Garrick/System/jobs/todo_sweep.py \\
         --workspace /Users/<you>/Garrick --zone Work
 

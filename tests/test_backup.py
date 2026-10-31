@@ -132,9 +132,9 @@ class BackupTest(unittest.TestCase):
 
     def test_the_launchd_example_runs_it_through_job_py_twice_a_day(self):
         import plistlib
-        plist = plistlib.loads((JOBS / "launchd" / "garrick.backup.plist").read_bytes())
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-backup.plist").read_bytes())
         args = plist["ProgramArguments"]
-        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "backup"], args[:3])
+        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-backup"], args[:3])
         self.assertNotIn("--agent", args)
         self.assertEqual("/Users/<you>/Garrick/System/jobs/backup.py", args[args.index("--") + 2])
         self.assertEqual("5 6", plist["EnvironmentVariables"]["GARRICK_QUIET_EXITS"])

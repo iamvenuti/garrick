@@ -42,6 +42,7 @@ def _load(name, path):
 agent = _load("agent", JOBS / "agent.py")
 job = _load("garrick_job", JOBS / "job.py")
 whats_open = _load("garrick_whats_open", JOBS / "whats_open.py")
+nightly = _load("garrick_nightly", JOBS / "nightly.py")
 
 # How the status page reads a run from a job's log: a run's last line, or a skip.
 LOGLINE = re.compile(r"^===== (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (?:exit (-?\d+)  \((\d+)s\)|skipped)", re.M)
@@ -109,7 +110,7 @@ class FakeAssistants(unittest.TestCase):
             q.start()
         for key in ("GARRICK_CAP_CALLS_DAY", "GARRICK_CAP_CALLS_HOUR", "GARRICK_CAP_COST_DAY", "GARRICK_JOB",
                     "GARRICK_CAP_ASK_DAY", "GARRICK_CAP_ASK_HOUR", "GARRICK_CAP_ASK_COST_DAY",
-                    "GARRICK_ITEMS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
+                    "GARRICK_ITEMS_FILE", "GARRICK_STEPS_FILE", "FAKE_RESULT", "FAKE_LOGGED_IN", "FAKE_SLEEP", "FAKE_SUBTYPE",
                     "GARRICK_NOTIFY", "GARRICK_NOTIFY_CMD", "GARRICK_QUIET_EXITS", "GARRICK_ALERT_REPEAT",
                     "GARRICK_IDLE_DAYS", "GARRICK_ENV_FILE", "GARRICK_JOB_TIMEOUT", "GARRICK_WORKSPACE"):
             os.environ.pop(key, None)
@@ -334,14 +335,14 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual([], agent.connectors_available(["mail"], table))
 
     def test_launchd_example_is_a_valid_plist(self):
-        plist = plistlib.loads((JOBS / "launchd" / "garrick.whats-open.plist").read_bytes())
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-whats-open.plist").read_bytes())
         args = plist["ProgramArguments"]
         self.assertTrue(args[1].endswith("System/jobs/job.py"))
         self.assertIn("--agent", args)
         self.assertIn("--", args)
         # What job.py cannot log itself lands beside the jobs' logs, never in the log job.py rotates.
         for key in ("StandardOutPath", "StandardErrorPath"):
-            self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/whats-open.launchd.log", plist[key])
+            self.assertEqual("/Users/<you>/Library/Logs/garrick-jobs/gr-whats-open.launchd.log", plist[key])
 
     def test_every_shipped_plist_is_well_formed(self):
         # launchd loads a plist whose comment holds `--`, but a strict XML parser refuses it.
@@ -924,7 +925,7 @@ class JobExtrasTest(FakeAssistants):
         self.assertIn("%s: runs an assistant itself" % bare, r.stdout)
         self.assertIn("missing.sh: could not be read", r.stdout)       # unread is not clean
         self.assertEqual(agent.EXIT_USAGE, self.job("check-scripts").returncode)
-        self.assertEqual(0, self.job("check-scripts", str(JOBS / "launchd" / "garrick.whats-open.plist")).returncode)
+        self.assertEqual(0, self.job("check-scripts", str(JOBS / "launchd" / "garrick.gr-whats-open.plist")).returncode)
 
     def test_status_says_which_jobs_are_running(self):
         self.job("tidy", "--", sys.executable, "-c", "import sys; sys.exit(3)")
@@ -1234,6 +1235,188 @@ class StopAndLockTest(FakeAssistants):
                      env={"GARRICK_ENV_FILE": str(envfile)})
         self.assertEqual(124, r.returncode)
         self.assertLess(time.time() - started, 20)
+
+
+class GarrickPrefixTest(FakeAssistants):
+    """#275: Garrick's own jobs run as gr-…, and a job of the user's under
+    that prefix still runs, with a line saying whose the prefix is."""
+
+    def job(self, *args):
+        return subprocess.run([sys.executable, str(JOBS / "job.py")] + list(args), capture_output=True, text=True)
+
+    def test_every_shipped_job_runs_under_its_label_and_the_prefix(self):
+        plists = sorted((JOBS / "launchd").glob("*.plist"))
+        self.assertEqual(["garrick.gr-backup.plist", "garrick.gr-nightly.plist", "garrick.gr-reading-sweep.plist",
+                          "garrick.gr-todo-sweep.plist", "garrick.gr-whats-open.plist"], [p.name for p in plists])
+        for path in plists:
+            with self.subTest(path.name):
+                plist = plistlib.loads(path.read_bytes())
+                args = plist["ProgramArguments"]
+                name = args[args.index("/Users/<you>/Garrick/System/jobs/job.py") + 1]
+                self.assertEqual("garrick." + name, plist["Label"])          # the label and the name, one from the other
+                self.assertEqual(path.stem, plist["Label"])
+                self.assertIn(name, agent.GARRICK_JOBS)
+                self.assertIsNone(agent.prefix_note(name))
+                for key in ("StandardOutPath", "StandardErrorPath"):
+                    self.assertTrue(plist[key].endswith("/garrick-jobs/%s.launchd.log" % name))
+                self.assertTrue(plist["EnvironmentVariables"]["GARRICK_ABOUT"].strip())
+        self.assertEqual(set(agent.GARRICK_JOBS), set(agent.RENAMED.values()))
+        self.assertEqual({"gr-nightly"}, set(agent.RETIRED.values()))
+
+    def test_a_job_of_yours_with_the_prefix_runs_and_is_told(self):
+        r = self.job("gr-mine", "--", sys.executable, "-c", "pass")
+        self.assertEqual(0, r.returncode)
+        self.assertIn("gr-mine starts with gr-, which marks Garrick's own jobs", r.stderr)
+        self.assertIn("gr-mine starts with gr-", (self.jobs / "gr-mine.log").read_text())
+        r = self.job("gr-backup", "--", sys.executable, "-c", "pass")
+        self.assertEqual(("", 0), (r.stderr, r.returncode))                  # Garrick's own: nothing said
+        self.assertNotIn("starts with gr-", (self.jobs / "gr-backup.log").read_text())
+
+    def test_status_reads_an_old_name_under_the_new_one_once_it_has_run(self):
+        self.jobs.mkdir()
+        old = {"job": "backup", "finished": "2026-10-30 23:30:05", "finished_ts": 1000.0, "exit": 0}
+        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(old))
+        (self.jobs / "backup.log").write_text("===== 2026-10-30 23:30:05  backup  exit 0  (3s) =====\n")
+        self.assertEqual(["backup"], [j["job"] for j in job.status(self.jobs)["jobs"]])   # not renamed yet: as it is
+        got = job.status(self.jobs, ["gr-backup"])["jobs"]                                # asked by its new name
+        self.assertEqual(("gr-backup", "backup", ["backup"]), (got[0]["job"], got[0]["heartbeat"]["job"], got[0]["renamed_from"]))
+        self.assertTrue(got[0]["log"].endswith("/backup.log"))
+        new = dict(old, job="gr-backup", finished_ts=2000.0)
+        (self.jobs / "gr-backup.heartbeat.json").write_text(json.dumps(new))
+        (self.jobs / "gr-backup.log").write_text("")
+        jobs = job.status(self.jobs)["jobs"]
+        self.assertEqual(["gr-backup"], [j["job"] for j in jobs])                          # one row, under the new name
+        self.assertEqual("gr-backup", jobs[0]["heartbeat"]["job"])                         # the newer heartbeat
+        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(dict(old, finished_ts=3000.0)))
+        self.assertEqual("backup", job.status(self.jobs)["jobs"][0]["heartbeat"]["job"])
+
+
+class NightlyTest(FakeAssistants):
+    """#276: one nightly job, four steps, each run whatever the one before
+    did; the exit is the worst, and the heartbeat says which step failed."""
+
+    def setUp(self):
+        super().setUp()
+        self.ws = self.tmp / "ws"
+        (self.ws / "System" / "jobs").mkdir(parents=True)
+        self.status_dir = self.tmp / "status"
+        self.status_dir.mkdir()
+        self.record = self.tmp / "ran.txt"
+        self.nurture = self.fake(self.tmp / "nurture_sweep.py", "nurture")
+        self.fake(self.status_dir / "effort.py", "effort")
+        self.fake(self.status_dir / "status.py", "status")
+        self.steps_file = self.tmp / "steps.json"
+        for patch in (mock.patch.object(nightly, "NURTURE", self.nurture),
+                      mock.patch.object(nightly, "STATUS", self.status_dir),
+                      mock.patch.dict(os.environ, {"GARRICK_STEPS_FILE": str(self.steps_file)})):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fake(self, path, step, code=0):
+        """A step that records it ran, with its arguments, and exits `code`."""
+        path.write_text("import sys\nopen(%r, 'a').write(%r + ' ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+                        "print('%s did its part')\nsys.exit(%d)\n" % (str(self.record), step, step, code))
+        return path
+
+    def local(self, code=0, executable=True):
+        path = self.ws / "System" / "jobs" / "nightly.local"
+        path.write_text("#!/bin/sh\necho 'nightly.local' \"$@\" >> %s\necho 'my check found 2'\nexit %d\n"
+                        % (self.record, code))
+        path.chmod(0o755 if executable else 0o644)
+
+    def ran(self):
+        return [line.split()[0] for line in self.record.read_text().splitlines()] if self.record.exists() else []
+
+    def steps(self):
+        return {s["step"]: s for s in json.loads(self.steps_file.read_text())}
+
+    def run_nightly(self, *extra):
+        return nightly.main(["--workspace", str(self.ws), "--digest", "--scope", "Zones/Work",
+                             "--also", "/old/ws", "--moved", "Zones/Work/A=Zones/Work/B"] + list(extra))
+
+    def test_the_four_steps_run_in_order_with_their_flags(self):
+        self.local()
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "effort", "nightly.local", "status"], self.ran())
+        lines = self.record.read_text().splitlines()
+        self.assertEqual("nurture --workspace %s --scope Zones/Work --digest" % self.ws.resolve(), lines[0])
+        self.assertEqual("effort --workspace %s --record --also /old/ws --moved Zones/Work/A=Zones/Work/B"
+                         % self.ws.resolve(), lines[1])
+        self.assertEqual("status --workspace %s --same-flags" % self.ws.resolve(), lines[3])
+        steps = self.steps()
+        self.assertEqual(["my check found 2"], steps["nightly.local"]["tail"])
+        self.assertEqual({0}, {s["exit"] for s in steps.values()})
+
+    def test_each_step_failing_alone_leaves_the_others_to_run(self):
+        for failing, code in (("nurture", 1), ("effort", 2), ("nightly.local", 3), ("status", 4)):
+            with self.subTest(failing):
+                self.record.unlink(missing_ok=True)
+                self.fake(self.nurture, "nurture", code if failing == "nurture" else 0)
+                self.fake(self.status_dir / "effort.py", "effort", code if failing == "effort" else 0)
+                self.fake(self.status_dir / "status.py", "status", code if failing == "status" else 0)
+                self.local(code if failing == "nightly.local" else 0)
+                self.assertEqual(code, self.run_nightly())
+                self.assertEqual(["nurture", "effort", "nightly.local", "status"], self.ran())
+                self.assertEqual({failing: code}, {k: s["exit"] for k, s in self.steps().items() if s["exit"]})
+
+    def test_the_exit_is_the_worst_step(self):
+        self.fake(self.nurture, "nurture", 1)
+        self.local(5)
+        self.assertEqual(5, self.run_nightly())
+
+    def test_without_nightly_local_the_step_is_skipped_and_no_fault(self):
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "effort", "status"], self.ran())
+        self.assertEqual({"step": "nightly.local", "exit": 0, "skipped": "none"}, self.steps()["nightly.local"])
+        self.local(executable=False)                                    # there, but not executable: skipped, said why
+        self.assertEqual(0, self.run_nightly())
+        self.assertIn("not executable: chmod +x", self.steps()["nightly.local"]["skipped"])
+
+    def test_a_step_that_hangs_is_stopped_and_the_rest_run(self):
+        self.nurture.write_text("import time\ntime.sleep(30)\n")
+        with mock.patch.dict(nightly.LIMITS, {"nurture": 1}):
+            self.assertEqual(nightly.EXIT_TIMEOUT, self.run_nightly())
+        self.assertEqual(["effort", "status"], self.ran())
+
+    def test_no_status_page_extra_skips_its_two_steps(self):
+        with mock.patch.object(nightly, "STATUS", self.tmp / "none"):
+            self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture"], self.ran())
+        self.assertEqual({"effort", "nightly.local", "status"}, {k for k, s in self.steps().items() if s.get("skipped")})
+
+    def test_the_heartbeat_says_which_step_failed(self):
+        script = self.tmp / "fake_nightly.py"
+        script.write_text("import sys\nsys.path.insert(0, %r)\nimport agent\nagent.report_steps(["
+                          "{'step': 'nurture', 'exit': 0}, {'step': 'effort', 'exit': 0},"
+                          "{'step': 'nightly.local', 'exit': 2, 'tail': ['2 links point nowhere']},"
+                          "{'step': 'status', 'exit': 0}])\nsys.exit(2)\n" % str(JOBS))
+        os.environ.pop("GARRICK_STEPS_FILE")
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "gr-nightly", "--", sys.executable, str(script)],
+                           capture_output=True, text=True)
+        self.assertEqual(2, r.returncode, r.stderr)
+        beat = json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text())
+        self.assertEqual("exited 2 after 0s; nightly.local (exit 2) failed", beat["reason"])
+        self.assertEqual(["2 links point nowhere"], beat["steps"][2]["tail"])
+
+    def test_the_shipped_plist_runs_it_at_05_15_with_no_assistant(self):
+        plist = plistlib.loads((JOBS / "launchd" / "garrick.gr-nightly.plist").read_bytes())
+        args = plist["ProgramArguments"]
+        self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
+        self.assertNotIn("--agent", args)
+        self.assertEqual("3600", args[args.index("--timeout") + 1])
+        self.assertGreaterEqual(3600, sum(nightly.LIMITS.values()))
+        self.assertEqual("/Users/<you>/Garrick/System/jobs/nightly.py", args[args.index("--") + 2])
+        self.assertIn("--digest", args)
+        self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])
+        r = subprocess.run([sys.executable, str(JOBS / "job.py"), "check-scripts", str(JOBS / "nightly.py")],
+                           capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stdout)
+
+    def test_it_calls_no_assistant_so_the_caps_are_untouched(self):
+        self.local()
+        self.run_nightly()
+        self.assertEqual([], self.calls())
+        self.assertEqual([], self.ledger())
 
 
 class WhatsOpenTest(FakeAssistants):

@@ -126,6 +126,19 @@ CAP_VARS = {
 }
 DEFAULT_MAX_CALL_USD = 5.0
 JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
+# Garrick's own jobs run under names that start with GARRICK_PREFIX (#275), so
+# a log, a notice or a Run now reads apart from a job of the user's. RENAMED
+# is each name a job of Garrick's ran under before, and the name it runs
+# under now: the jobs folder still holds its heartbeat and its logs, which
+# job.py status and the status page read under the new name. `nurture` became
+# the one nightly job (#276). So did the evening status build, `status`, which
+# RETIRED names: its runs were not the nightly's, so they are not read under
+# its name; its row only goes once the nightly is there.
+GARRICK_PREFIX = "gr-"
+RENAMED = {"backup": "gr-backup", "nurture": "gr-nightly", "reading-sweep": "gr-reading-sweep",
+           "todo-sweep": "gr-todo-sweep", "whats-open": "gr-whats-open"}
+RETIRED = {"status": "gr-nightly"}
+GARRICK_JOBS = tuple(sorted(set(RENAMED.values())))
 ITEMS_LINE = re.compile(r"^ITEMS (\d+)\s*$", re.M)
 MAX_LOG_BYTES = 1024 * 1024
 LEDGER_DAYS = 60  # longer than every cap, a day at most, and the status page's fourteen days
@@ -632,6 +645,25 @@ def report_items(n: int) -> None:
     target = os.environ.get("GARRICK_ITEMS_FILE")
     if target:
         Path(target).write_text("%d\n" % n, encoding="utf-8")
+
+
+def report_steps(steps: List[dict]) -> None:
+    """The steps of a run made of several, as the nightly job's, for job.py to
+    put in the heartbeat: each a dict with `step` and `exit`, and `seconds`
+    and `tail`, the last lines it printed, or `skipped`, the reason it did not
+    run."""
+    target = os.environ.get("GARRICK_STEPS_FILE")
+    if target:
+        Path(target).write_text(json.dumps(steps) + "\n", encoding="utf-8")
+
+
+def prefix_note(name: str) -> Optional[str]:
+    """A line for a job of the user's whose name takes Garrick's prefix, or
+    None. It never stops the job: the prefix only says whose a job is."""
+    if name.lower().startswith(GARRICK_PREFIX) and name not in GARRICK_JOBS:
+        return ("%s starts with %s, which marks Garrick's own jobs. It runs, but name a job of yours without "
+                "it, so that it reads as yours" % (name, GARRICK_PREFIX))
+    return None
 
 
 def items_from(text: str) -> Optional[int]:

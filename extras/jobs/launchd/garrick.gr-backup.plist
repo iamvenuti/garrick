@@ -9,7 +9,7 @@
   &lt;you&gt; (written that way because this is XML) with your macOS user name;
   launchd does not expand ~. Load it:
 
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.backup.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-backup.plist
 
   GARRICK_QUIET_EXITS keeps its two quiet outcomes, 5 (files held back) and
   6 (offline), from raising a failure notice. PATH must reach git. A push
@@ -19,12 +19,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>garrick.backup</string>
+  <string>garrick.gr-backup</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
     <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
-    <string>backup</string>
+    <string>gr-backup</string>
     <string>--cwd</string>
     <string>/Users/&lt;you&gt;/Garrick</string>
     <string>--</string>
@@ -43,9 +43,9 @@
     <string>5 6</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/backup.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-backup.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/backup.launchd.log</string>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-backup.launchd.log</string>
   <key>StartCalendarInterval</key>
   <array>
     <dict>

@@ -2684,7 +2684,8 @@ class TestApp(unittest.TestCase):
         ask = ask[:ask.index("\n	}\n")]
         self.assertIn("askSubmit(askField)", ask)                                     # through the Ask box, to ask.py, as the panel asks
         self.assertIn("self.askGarrick(text)", swift)                                 # the panel's field
-        self.assertIn("askGarrick(text) { [weak self] reply, ranAway in", swift)      # and the Ask box, the same call
+        self.assertIn("askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in",
+                      swift)                                                          # and the Ask box, the same call, line by line
         self.assertIn("launch(app, workspace.path, phrase: text)", ask)               # with the preview off, the assistant opens with the words
 
     def test_the_ask_hotkey_is_a_setting(self):

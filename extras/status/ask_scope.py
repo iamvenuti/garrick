@@ -199,10 +199,14 @@ def _unclear(cands: Iterable[Entry]) -> bool:
 
 
 class Mentions:
-    """The names a request holds: what each stands for, or the question to ask."""
+    """The names a request holds: what each stands for, or the question to
+    ask. `heard` keeps each name as the request wrote it: (start, end, the
+    words, every entry it was settled to), for the command session's
+    `<names>` block (ask.heard_names())."""
 
-    def __init__(self, found: List[Entry], question: Optional[str] = None):
-        self.entries, self.question = found, question
+    def __init__(self, found: List[Entry], question: Optional[str] = None,
+                 heard: Optional[List[Tuple[int, int, str, List[Entry]]]] = None):
+        self.entries, self.question, self.heard = found, question, heard or []
 
     @property
     def parties(self) -> Set[str]:
@@ -237,6 +241,7 @@ def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dic
             kept.append(span)
     kept.sort()
     settled: Dict[Tuple[int, int], Entry] = {}
+    means: Dict[Tuple[int, int], List[Entry]] = {}     # every entry a settled name stands for, all of one party and place
     for _ in range(2):                          # a name settled in the first pass can settle another
         parties = set().union(*(e.parties for e in settled.values())) if settled else set()
         places = {(e.zone, e.project) for e in settled.values() if e.project}
@@ -245,16 +250,16 @@ def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dic
                 continue
             cands = sorted(spans[span], key=_order)
             if not _unclear(cands):
-                settled[span] = cands[0]
+                settled[span], means[span] = cands[0], cands
                 continue
             narrowed = ([e for e in cands if e.project and (e.zone, e.project) in places]
                         or [e for e in cands if e.parties & parties])
             if narrowed and not _unclear(narrowed):
-                settled[span] = narrowed[0]
+                settled[span], means[span] = narrowed[0], narrowed
     for span in kept:
         if span not in settled:
             return Mentions([], which(sorted(spans[span], key=_order), ctx))
-    return Mentions([settled[s] for s in kept])
+    return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept])
 
 
 def which(cands: List[Entry], ctx: dict) -> str:

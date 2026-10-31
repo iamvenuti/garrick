@@ -1272,23 +1272,38 @@ class GarrickPrefixTest(FakeAssistants):
         self.assertEqual(("", 0), (r.stderr, r.returncode))                  # Garrick's own: nothing said
         self.assertNotIn("starts with gr-", (self.jobs / "gr-backup.log").read_text())
 
-    def test_status_reads_an_old_name_under_the_new_one_once_it_has_run(self):
+    def test_a_renamed_plist_records_the_rename_in_the_heartbeat(self):
+        env = dict(os.environ, GARRICK_RENAMED_FROM="backup")
+        run = lambda name: subprocess.run([sys.executable, str(JOBS / "job.py"), name, "--", sys.executable, "-c", "pass"],
+                                          env=env, capture_output=True, text=True)
+        self.assertEqual(0, run("gr-backup").returncode)
+        first = json.loads((self.jobs / "gr-backup.heartbeat.json").read_text())
+        self.assertEqual("backup", first["renamed_from"])
+        self.assertEqual(0, run("gr-backup").returncode)
+        again = json.loads((self.jobs / "gr-backup.heartbeat.json").read_text())
+        self.assertEqual(first["renamed_at"], again["renamed_at"])                    # the first run under the name, kept
+        self.assertEqual(0, run("gr-nightly").returncode)                              # backup is not gr-nightly's old name
+        self.assertNotIn("renamed_from", json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text()))
+
+    def test_status_folds_only_garricks_runs_from_before_the_rename(self):
         self.jobs.mkdir()
         old = {"job": "backup", "finished": "2026-10-30 23:30:05", "finished_ts": 1000.0, "exit": 0}
         (self.jobs / "backup.heartbeat.json").write_text(json.dumps(old))
         (self.jobs / "backup.log").write_text("===== 2026-10-30 23:30:05  backup  exit 0  (3s) =====\n")
-        self.assertEqual(["backup"], [j["job"] for j in job.status(self.jobs)["jobs"]])   # not renamed yet: as it is
-        got = job.status(self.jobs, ["gr-backup"])["jobs"]                                # asked by its new name
-        self.assertEqual(("gr-backup", "backup", ["backup"]), (got[0]["job"], got[0]["heartbeat"]["job"], got[0]["renamed_from"]))
-        self.assertTrue(got[0]["log"].endswith("/backup.log"))
         new = dict(old, job="gr-backup", finished_ts=2000.0)
         (self.jobs / "gr-backup.heartbeat.json").write_text(json.dumps(new))
         (self.jobs / "gr-backup.log").write_text("")
+        # A gr-backup that never recorded a rename: the two stay apart, as a job of yours called backup would.
+        self.assertEqual(["backup", "gr-backup"], [j["job"] for j in job.status(self.jobs)["jobs"]])
+        (self.jobs / "gr-backup.heartbeat.json").write_text(json.dumps(dict(new, renamed_from="backup", renamed_at=1500.0)))
         jobs = job.status(self.jobs)["jobs"]
         self.assertEqual(["gr-backup"], [j["job"] for j in jobs])                          # one row, under the new name
-        self.assertEqual("gr-backup", jobs[0]["heartbeat"]["job"])                         # the newer heartbeat
-        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(dict(old, finished_ts=3000.0)))
-        self.assertEqual("backup", job.status(self.jobs)["jobs"][0]["heartbeat"]["job"])
+        self.assertEqual(("gr-backup", ["backup"]), (jobs[0]["heartbeat"]["job"], jobs[0]["renamed_from"]))
+        # A run under the old name after the rename is not Garrick's: it keeps its own row, failing as it is.
+        (self.jobs / "backup.heartbeat.json").write_text(json.dumps(dict(old, finished_ts=3000.0, exit=1)))
+        jobs = {j["job"]: j for j in job.status(self.jobs)["jobs"]}
+        self.assertEqual(["backup", "gr-backup"], sorted(jobs))
+        self.assertEqual((1, "gr-backup"), (jobs["backup"]["heartbeat"]["exit"], jobs["gr-backup"]["heartbeat"]["job"]))
 
 
 class NightlyTest(FakeAssistants):
@@ -1355,14 +1370,20 @@ class NightlyTest(FakeAssistants):
                 self.fake(self.status_dir / "effort.py", "effort", code if failing == "effort" else 0)
                 self.fake(self.status_dir / "status.py", "status", code if failing == "status" else 0)
                 self.local(code if failing == "nightly.local" else 0)
-                self.assertEqual(code, self.run_nightly())
+                self.assertEqual(1, self.run_nightly())                                  # its own code is in the steps
                 self.assertEqual(["nurture", "effort", "nightly.local", "status"], self.ran())
                 self.assertEqual({failing: code}, {k: s["exit"] for k, s in self.steps().items() if s["exit"]})
 
-    def test_the_exit_is_the_worst_step(self):
-        self.fake(self.nurture, "nurture", 1)
-        self.local(5)
-        self.assertEqual(5, self.run_nightly())
+    def test_any_failed_step_exits_1_whatever_its_code(self):
+        """75 is a skip to job.py and 8 a spending cap: a step's own code never
+        speaks for the job."""
+        for code in (75, 8, 6, 143):
+            with self.subTest(code):
+                self.fake(self.nurture, "nurture", 1)
+                self.local(code)
+                self.assertEqual(1, self.run_nightly())
+                self.assertEqual({"nurture": 1, "nightly.local": code},
+                                 {k: s["exit"] for k, s in self.steps().items() if s["exit"]})
 
     def test_without_nightly_local_the_step_is_skipped_and_no_fault(self):
         self.assertEqual(0, self.run_nightly())
@@ -1370,13 +1391,37 @@ class NightlyTest(FakeAssistants):
         self.assertEqual({"step": "nightly.local", "exit": 0, "skipped": "none"}, self.steps()["nightly.local"])
         self.local(executable=False)                                    # there, but not executable: skipped, said why
         self.assertEqual(0, self.run_nightly())
-        self.assertIn("not executable: chmod +x", self.steps()["nightly.local"]["skipped"])
+        self.assertEqual("not executable (chmod +x %s)" % (self.ws.resolve() / "System" / "jobs" / "nightly.local"),
+                         self.steps()["nightly.local"]["skipped"])
 
-    def test_a_step_that_hangs_is_stopped_and_the_rest_run(self):
-        self.nurture.write_text("import time\ntime.sleep(30)\n")
-        with mock.patch.dict(nightly.LIMITS, {"nurture": 1}):
-            self.assertEqual(nightly.EXIT_TIMEOUT, self.run_nightly())
+    def test_a_step_that_hangs_is_stopped_with_all_it_started_and_the_rest_run(self):
+        """The step's whole group goes at its limit: a child it started, as
+        nurture starts git, does not go on outside the job's lock."""
+        late = self.tmp / "grandchild-wrote"
+        self.nurture.write_text(
+            "import subprocess, sys, time\n"
+            "late = %r\n"
+            "subprocess.Popen([sys.executable, '-c', 'import sys, time; time.sleep(3); open(sys.argv[1], \"w\").write(\"x\")', late])\n"
+            "print('nurture started its child', flush=True)\n"
+            "print('a warning on stderr', file=sys.stderr, flush=True)\n"
+            "time.sleep(30)\n" % str(late))
+        with mock.patch.dict(nightly.LIMITS, {"nurture": 1}), mock.patch.object(nightly, "GRACE", 1):
+            self.assertEqual(1, self.run_nightly())
         self.assertEqual(["effort", "status"], self.ran())
+        step = self.steps()["nurture"]
+        self.assertEqual(nightly.EXIT_TIMEOUT, step["exit"])
+        self.assertEqual(["nurture started its child", "a warning on stderr", "stopped after 1s, with everything it started"],
+                         step["tail"])                                       # stderr kept on a timeout
+        time.sleep(4)
+        self.assertFalse(late.exists())                                      # the child was stopped with it
+
+    def test_output_reaches_the_log_as_it_comes(self):
+        self.nurture.write_text("import sys, time\nprint('first', flush=True)\ntime.sleep(1)\nprint('second', flush=True)\n")
+        seen = []
+        with mock.patch("builtins.print", lambda *a, **k: seen.append((time.time(), " ".join(map(str, a))))):
+            self.run_nightly()
+        times = {line.strip(): t for t, line in seen}
+        self.assertGreater(times["second"] - times["first"], 0.5)          # printed as it came, not at the end
 
     def test_no_status_page_extra_skips_its_two_steps(self):
         with mock.patch.object(nightly, "STATUS", self.tmp / "none"):

@@ -1275,40 +1275,46 @@ class TestJobsRenamed(ExtrasCase):
         self.before = {p.name: p.read_bytes() for p in self.agents.iterdir()}
 
     def test_the_update_names_each_old_plist_and_gives_the_commands(self):
+        import plistlib
         p = self.plan()
-        names = [(Path(r["plist"]).name, r["job"], r["new"]) for r in p["renames"]]
-        self.assertEqual([("garrick.backup.plist", "backup", "gr-backup"), ("garrick.nurture.plist", "nurture", "gr-nightly"),
-                          ("garrick.reading-sweep.plist", "reading-sweep", "gr-reading-sweep"),
-                          ("garrick.status.plist", "status", "gr-nightly"),
-                          ("garrick.todo-sweep.plist", "todo-sweep", "gr-todo-sweep"),
-                          ("garrick.whats-open.plist", "whats-open", "gr-whats-open")], names)
+        names = [(Path(r["plist"]).name, r["job"], r["new"], r["state"]) for r in p["renames"]]
+        self.assertEqual([("garrick.backup.plist", "backup", "gr-backup", "old"),
+                          ("garrick.nurture.plist", "nurture", "gr-nightly", "old"),
+                          ("garrick.reading-sweep.plist", "reading-sweep", "gr-reading-sweep", "old"),
+                          ("garrick.status.plist", "status", "gr-nightly", "retire"),
+                          ("garrick.todo-sweep.plist", "todo-sweep", "gr-todo-sweep", "old"),
+                          ("garrick.whats-open.plist", "whats-open", "gr-whats-open", "old")], names)
         report = update.report(p)
         self.assertEqual(1, report.count("Garrick's scheduled jobs have new names"))     # one message
-        self.assertIn("6 plists in %s still run them under the old names. Each keeps working as it is until you "
-                      "rename it: this update changes nothing in that folder and runs none of these commands." % self.agents,
-                      report)
+        self.assertIn("6 plists in %s still need the change. Each keeps working as it is until you make it: this "
+                      "update changes nothing in that folder and runs none of these commands." % self.agents, report)
+        old = plistlib.loads((self.agents / "garrick.backup.plist").read_bytes())
+        args = [str(self.root / "System/jobs/job.py" if a.endswith("job.py") else a) for a in old["ProgramArguments"]]
+        args[2] = "gr-backup"
+        env = dict(old["EnvironmentVariables"], GARRICK_ABOUT="Commits and pushes every repository, holding back what "
+                   "the wall check refuses.", GARRICK_RENAMED_FROM="backup")
+        target = "~/Library/LaunchAgents/garrick.gr-backup.plist"
         backup = next(r for r in p["renames"] if r["job"] == "backup")["commands"]
         self.assertEqual([
             "launchctl bootout gui/$(id -u)/garrick.backup",
-            "plutil -replace Label -string garrick.gr-backup ~/Library/LaunchAgents/garrick.backup.plist",
-            "plutil -remove ProgramArguments.2 ~/Library/LaunchAgents/garrick.backup.plist",
-            "plutil -insert ProgramArguments.2 -string gr-backup ~/Library/LaunchAgents/garrick.backup.plist",
-            "plutil -replace StandardOutPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log "
-            "~/Library/LaunchAgents/garrick.backup.plist",
-            "plutil -replace StandardErrorPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log "
-            "~/Library/LaunchAgents/garrick.backup.plist",
-            "plutil -replace EnvironmentVariables.GARRICK_ABOUT -string 'Commits and pushes every repository, holding "
-            "back what the wall check refuses.' ~/Library/LaunchAgents/garrick.backup.plist",
-            "mv ~/Library/LaunchAgents/garrick.backup.plist ~/Library/LaunchAgents/garrick.gr-backup.plist",
-            "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-backup.plist"], backup)
+            "mv -n ~/Library/LaunchAgents/garrick.backup.plist %s" % target,
+            "plutil -replace Label -string garrick.gr-backup %s" % target,
+            "plutil -replace ProgramArguments -json %s %s" % (update.shlex.quote(json.dumps(args)), target),
+            "plutil -replace StandardOutPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log %s" % target,
+            "plutil -replace StandardErrorPath -string ~/Library/Logs/garrick-jobs/gr-backup.launchd.log %s" % target,
+            "plutil -replace EnvironmentVariables -json %s %s" % (update.shlex.quote(json.dumps(env)), target),
+            "launchctl bootstrap gui/$(id -u) %s" % target], backup)
         self.assertIn("    " + backup[-1], report)
         nurture = next(r for r in p["renames"] if r["job"] == "nurture")["commands"]
-        self.assertIn("plutil -insert ProgramArguments.7 -string %s ~/Library/LaunchAgents/garrick.nurture.plist"
-                      % (self.root / "System/jobs/nightly.py"), nurture)
-        self.assertIn("plutil -insert ProgramArguments.3 -string --timeout ~/Library/LaunchAgents/garrick.nurture.plist",
-                      nurture)
-        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.status", "mv ~/Library/LaunchAgents/garrick.status.plist ~/.Trash"],
+        program = json.loads(update.shlex.split(next(c for c in nurture if " ProgramArguments " in c))[4])
+        self.assertEqual(["gr-nightly", "--timeout", "3600", "--cwd"], program[2:6])
+        self.assertEqual(str(self.root / "System/jobs/nightly.py"), program[program.index("--") + 2])
+        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.status",
+                          "mv -n ~/Library/LaunchAgents/garrick.status.plist ~/Library/LaunchAgents/garrick.status.plist.retired"],
                          next(r for r in p["renames"] if r["job"] == "status")["commands"])
+        self.assertIn("set it aside as garrick.status.plist.retired, which launchd does not load. You may delete that "
+                      "file afterwards", report)
+        self.assertNotIn(".Trash", report)
         self.assertIn("The nightly job now also records effort for the Effort view and rebuilds the status page", report)
         self.assertNotIn("com.acme", report)
         self.assertNotIn("other.todo-sweep", report)
@@ -1317,20 +1323,86 @@ class TestJobsRenamed(ExtrasCase):
         self.assertIn("garrick.whats-open.plist runs whats-open, which is now gr-whats-open:",
                       update.say_applied(p, update.apply(self.root, self.plan())))
 
+    def test_a_timeout_on_the_old_nurture_plist_becomes_the_hour(self):
+        import plistlib
+        path = self.agents / "garrick.nurture.plist"
+        data = plistlib.loads(path.read_bytes())
+        data["ProgramArguments"][3:3] = ["--timeout", "1500"]
+        path.write_bytes(plistlib.dumps(data))
+        nurture = next(r for r in self.plan()["renames"] if r["job"] == "nurture")["commands"]
+        program = json.loads(update.shlex.split(next(c for c in nurture if " ProgramArguments " in c))[4])
+        self.assertEqual(["gr-nightly", "--timeout", "3600", "--cwd"], program[2:6])
+        self.assertNotIn("1500", program)
+
+    def test_a_plist_part_way_through_its_rename_gets_the_rest(self):
+        """The label and the job's name changed, the script, the move and the
+        load not done: still reported, with what is left."""
+        import plistlib
+        path = self.agents / "garrick.nurture.plist"
+        data = plistlib.loads(path.read_bytes())
+        data["Label"] = "garrick.gr-nightly"
+        data["ProgramArguments"][2] = "gr-nightly"
+        path.write_bytes(plistlib.dumps(data))
+        got = next(r for r in self.plan()["renames"] if r["new"] == "gr-nightly" and not r["retired"])
+        self.assertEqual("part", got["state"])
+        cmds = got["commands"]
+        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.gr-nightly", "launchctl bootout gui/$(id -u)/garrick.nurture",
+                          "mv -n ~/Library/LaunchAgents/garrick.nurture.plist ~/Library/LaunchAgents/garrick.gr-nightly.plist"],
+                         cmds[:3])
+        self.assertFalse([c for c in cmds if c.startswith("plutil -replace Label")])          # done already
+        self.assertTrue([c for c in cmds if "nightly.py" in c])
+        self.assertEqual("launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-nightly.plist", cmds[-1])
+        self.assertIn("garrick.nurture.plist is part way through its rename from nurture to gr-nightly.",
+                      update.report(self.plan()))
+
+    def test_a_new_plist_already_there_leaves_only_the_old_one_to_put_away(self):
+        (self.agents / "garrick.gr-backup.plist").write_bytes((self.agents / "garrick.backup.plist").read_bytes())
+        got = next(r for r in self.plan()["renames"] if r["job"] == "backup" and r["state"] == "duplicate")
+        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.backup",
+                          "mv -n ~/Library/LaunchAgents/garrick.backup.plist ~/Library/LaunchAgents/garrick.backup.plist.retired"],
+                         got["commands"])
+        self.assertIn("garrick.backup.plist runs backup, and garrick.gr-backup.plist is already there.",
+                      update.report(self.plan()))
+
+    def run_blocks(self, times):
+        """Run every printed line but launchctl's, `times` over, as a user
+        pasting each block that often would; never launchctl."""
+        for r in self.plan()["renames"]:
+            for _ in range(times):
+                for cmd in r["commands"]:
+                    if not cmd.startswith("launchctl "):
+                        subprocess.run(["/bin/bash", "-c", cmd], env=dict(os.environ, HOME=str(self.home)),
+                                       capture_output=True, text=True)
+
+    def folder(self):
+        return {p.name: p.read_bytes() for p in sorted(self.agents.iterdir())}
+
+    @unittest.skipUnless(shutil.which("plutil") and sys.platform == "darwin", "plutil is macOS's")
+    def test_each_block_run_twice_gives_what_it_gives_once(self):
+        import plistlib
+        start = self.folder()
+        self.run_blocks(1)
+        once = self.folder()
+        for name in list(once):
+            (self.agents / name).unlink()
+        for name, data in start.items():
+            (self.agents / name).write_bytes(data)
+        self.run_blocks(2)
+        twice = self.folder()
+        self.assertEqual(sorted(once), sorted(twice))
+        for name in once:
+            if name.endswith(".plist") or name.endswith(".retired"):
+                self.assertEqual(plistlib.loads(once[name]), plistlib.loads(twice[name]), name)
+        args = plistlib.loads(twice["garrick.gr-nightly.plist"])["ProgramArguments"]
+        self.assertEqual(1, args.count("--"))                                  # the separator survives a second paste
+        self.assertEqual([], self.plan()["renames"])
+
     def test_none_without_the_jobs_extra_or_off_a_mac(self):
         with mock.patch.object(update, "on_mac", lambda: False):
             self.assertEqual([], self.plan()["renames"])
         shutil.rmtree(self.root / "System" / "jobs")
         self.commit(self.root, "no jobs")
         self.assertEqual([], self.plan()["renames"])
-
-    def test_a_new_plist_already_there_leaves_only_the_old_one_to_put_away(self):
-        (self.agents / "garrick.gr-backup.plist").write_bytes((self.agents / "garrick.backup.plist").read_bytes())
-        got = next(r for r in self.plan()["renames"] if r["job"] == "backup")
-        self.assertEqual(["launchctl bootout gui/$(id -u)/garrick.backup",
-                          "mv ~/Library/LaunchAgents/garrick.backup.plist ~/.Trash"], got["commands"])
-        self.assertIn("garrick.backup.plist runs backup, and garrick.gr-backup.plist is already there.",
-                      update.report(self.plan()))
 
     @unittest.skipUnless(shutil.which("plutil") and sys.platform == "darwin", "plutil is macOS's")
     def test_the_commands_rename_each_job_and_its_history_follows(self):
@@ -1353,7 +1425,6 @@ class TestJobsRenamed(ExtrasCase):
                 {"job": old, "finished": ran.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True}))
         before = {j["name"] for j in status.jobs(jobs, now, status.launchd_jobs(self.agents))}
         self.assertEqual({"backup", "nurture", "reading-sweep", "status", "todo-sweep", "whats-open"}, before)
-        (self.home / ".Trash").mkdir()
         for r in self.plan()["renames"]:
             for cmd in r["commands"]:
                 if not cmd.startswith("launchctl "):
@@ -1361,7 +1432,7 @@ class TestJobsRenamed(ExtrasCase):
                                           capture_output=True, text=True)
                     self.assertEqual(0, done.returncode, cmd + "\n" + done.stderr)
         self.assertEqual([], self.plan()["renames"])                             # nothing left to rename
-        self.assertTrue((self.home / ".Trash" / "garrick.status.plist").is_file())
+        self.assertTrue((self.agents / "garrick.status.plist.retired").is_file())
         sched = status.launchd_jobs(self.agents)
         self.assertEqual({"backup", "gr-backup", "gr-nightly", "gr-reading-sweep", "gr-todo-sweep", "gr-whats-open"},
                          set(sched))                                              # backup: the user's own, untouched

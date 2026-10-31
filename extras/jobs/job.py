@@ -111,9 +111,13 @@ What the status page reads, all in the jobs folder:
 
 `job.py status` reads them for you. A job of Garrick's that ran under an
 older name (agent.RENAMED: `nurture` is `gr-nightly` now) is read under its
-new name once a run under the new name has left a heartbeat or a log: the
-newer of the two heartbeats is its last run, and the old name is no longer
-listed of its own. Until then the old name is listed as it is.
+new name once a run under the new name has recorded the rename: its plist,
+renamed as update.py says, sets GARRICK_RENAMED_FROM to the old name, and
+the heartbeat keeps it as `renamed_from`, with `renamed_at`, the first run
+under the new name. The old heartbeat counts only if it finished before that
+run; the newer of the two is the job's last run, and the old name is no
+longer listed of its own. A run under the old name since then is not
+Garrick's, and the old name stays listed as it is.
 
 `job.py check-scripts` reads a job's scripts, or the plists that run them,
 for a line that runs `claude -p` or `codex exec` itself instead of going
@@ -717,6 +721,19 @@ def read_items(path: Path) -> Optional[int]:
     return int(digits) if digits else None
 
 
+def renamed_fields(name: str, beat: Path, now: float) -> dict:
+    """`renamed_from` and `renamed_at` for the heartbeat of a job of Garrick's
+    whose plist says, in GARRICK_RENAMED_FROM, the name it ran under before
+    (#275): the old name, and when the first run under this one began, kept
+    from run to run. Nothing for any other job."""
+    old = os.environ.get("GARRICK_RENAMED_FROM", "").strip()
+    if not old or getattr(agent, "RENAMED", {}).get(old) != name:
+        return {}
+    before = read_json(beat) or {}
+    at = before.get("renamed_at") if before.get("renamed_from") == old else None
+    return {"renamed_from": old, "renamed_at": at if isinstance(at, (int, float)) else round(now, 3)}
+
+
 def read_steps(path: Path) -> Optional[List[dict]]:
     """The steps a command reported (agent.report_steps), each with its
     `step` and `exit`; None when it reported none or wrote something else."""
@@ -805,14 +822,22 @@ def status(folder: Optional[Path] = None, names: Optional[List[str]] = None) -> 
                     stem = path.name[:-len(suffix)]
                     if not agent.name_problem(stem):
                         found.add(stem)
-    # A job of Garrick's renamed (#275) is read under its new name once that
-    # name has files of its own, or is asked for; its old name then goes.
+    # A job of Garrick's renamed (#275) is read under its new name once a run
+    # under it has recorded the rename (`renamed_from`, from the plist's
+    # GARRICK_RENAMED_FROM): the old heartbeat counts only when it finished
+    # before that first run (`renamed_at`). A run under the old name since
+    # then is not Garrick's, and the old name stays listed on its own.
     earlier: Dict[str, List[str]] = {}
     for old, new in getattr(agent, "RENAMED", {}).items():
-        if old in found and (new in found or new in (names or ())):
-            earlier.setdefault(new, []).append(old)
-            found.discard(old)
-            found.add(new)
+        hb = read_json(folder / ("%s.heartbeat.json" % new)) or {}
+        cutoff = hb.get("renamed_at")
+        if old not in found or hb.get("renamed_from") != old or not isinstance(cutoff, (int, float)):
+            continue
+        last = (read_json(folder / ("%s.heartbeat.json" % old)) or {}).get("finished_ts")
+        if isinstance(last, (int, float)) and last >= cutoff:
+            continue
+        earlier.setdefault(new, []).append(old)
+        found.discard(old)
     jobs = []
     for name in sorted(names or found):
         state = read_json(folder / ("%s.alert.json" % name))
@@ -983,6 +1008,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     alert_state = jobs / ("%s.alert.json" % name)
     idle_alert = jobs / ("%s.idle-alert" % name)
     cwd = Path(args.cwd or os.environ.get("GARRICK_WORKSPACE") or Path.home()).expanduser()
+    renamed = renamed_fields(name, beat, time.time())
     # The job's lock covers the wait for the shared one, the sign-in retry and
     # the run; the shared one covers the retry and the run.
     hold_job = 2 * args.timeout + retry + SLACK
@@ -1050,7 +1076,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if cause == "timeout":
                         log.write("job: stopped by the watchdog after %ds\n" % args.timeout)
             except Stopped as stop:
-                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent))
+                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent), renamed)
             hold_signals()
             now = time.time()
             seconds = now - start
@@ -1092,7 +1118,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                               "ok": ok, "quiet": is_quiet, "reason": reason, "items": items,
                               "idle_days": idle, "idle": is_idle, "agent": bool(args.agent), "no_call": no_call,
                               "failing_since": stamp(failing_since) if failing_since else None,
-                              **({"steps": steps} if steps is not None else {})})
+                              **({"steps": steps} if steps is not None else {}), **renamed})
             return code
     except Stopped as stop:
         return 128 + stop.signum                      # before the log was open: nothing to write it in
@@ -1117,7 +1143,8 @@ def detach(argv: List[str]) -> int:
     return 0
 
 
-def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool) -> int:
+def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool,
+            renamed: Optional[dict] = None) -> int:
     """This process was asked to stop mid-run, and has stopped its command:
     a line in the log and a heartbeat that say so, and exit 128 plus the
     signal's number. No notice: a stop is something you or the Mac did, and
@@ -1133,7 +1160,7 @@ def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: 
                       "finished_ts": round(now, 3), "exit": code, "seconds": round(now - start),
                       "ok": False, "quiet": False, "reason": reason, "items": None,
                       "idle_days": None, "idle": False, "agent": agent_job, "no_call": False,
-                      "failing_since": stamp(since) if since else None})
+                      "failing_since": stamp(since) if since else None, **(renamed or {})})
     return code
 
 if __name__ == "__main__":

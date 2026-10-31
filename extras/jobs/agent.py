@@ -134,6 +134,9 @@ JOB_NAME = re.compile(r"[A-Za-z0-9_-]+")
 # the one nightly job (#276). So did the evening status build, `status`, which
 # RETIRED names: its runs were not the nightly's, so they are not read under
 # its name; its row only goes once the nightly is there.
+# A plist renamed as update.py says carries GARRICK_RENAMED_FROM, the old name:
+# only then are the old name's runs read as the new one's, and only those from
+# before the first run under the new name.
 GARRICK_PREFIX = "gr-"
 RENAMED = {"backup": "gr-backup", "nurture": "gr-nightly", "reading-sweep": "gr-reading-sweep",
            "todo-sweep": "gr-todo-sweep", "whats-open": "gr-whats-open"}

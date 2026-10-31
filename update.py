@@ -830,6 +830,7 @@ JOBS_SOURCE = REPO / "extras" / "jobs"
 # job.py under that name and this script is Garrick's, whatever its label.
 OLD_SCRIPTS = {"backup": "backup.py", "nurture": "nurture_sweep.py", "reading-sweep": "reading_sweep.py",
                "todo-sweep": "todo_sweep.py", "whats-open": "whats_open.py", "status": "status.py"}
+NEW_SCRIPTS = {"gr-nightly": "nightly.py"}      # the job whose script changed with its name
 
 
 def launch_agents():
@@ -857,13 +858,17 @@ def shipped_about(job):
 
 def old_jobs(root):
     """Each plist in ~/Library/LaunchAgents that runs one of Garrick's jobs for
-    this workspace under the name it had before 0.49.0, with the commands
-    that rename it: [{plist, label, job, new, retired, commands}]. Reads the
-    folder and nothing else; never writes there, and runs none of them."""
+    this workspace under the name it had before 0.49.0, or part way through
+    its rename, with the commands that finish it: [{plist, label, job, new,
+    retired, state, commands}]. A plist counts only when it runs this
+    workspace's System/jobs/job.py under an old or new name of Garrick's with
+    Garrick's own script for it. Reads the folder and nothing else; never
+    writes there, and runs none of the commands."""
     folder = launch_agents()
     if not folder.is_dir():
         return []
     renamed, retired = job_names()
+    back = {new: old for old, new in renamed.items()}
     jobs_dir = root / "System" / "jobs"
     found = []
     for plist in sorted(folder.glob("*.plist")):
@@ -881,87 +886,119 @@ def old_jobs(root):
             continue
         name = args[at + 1]
         cmd = args[args.index("--", at) + 1:] if "--" in args[at:] else []
-        if name not in renamed and name not in retired or not any(Path(a).name == OLD_SCRIPTS[name] for a in cmd):
+        old = name if name in renamed or name in retired else back.get(name)
+        if old is None:
             continue
-        found.append(rename_commands(plist, data, args, at, name, renamed.get(name) or retired[name],
-                                     name in retired))
+        new = renamed.get(old) or retired[old]
+        scripts = {OLD_SCRIPTS[old], NEW_SCRIPTS.get(new, OLD_SCRIPTS[old])} if old in renamed else {OLD_SCRIPTS[old]}
+        if not any(Path(a).name in scripts for a in cmd):
+            continue
+        block = rename_commands(plist, data, args, at, old, new, old in retired)
+        if block["commands"]:
+            found.append(block)
     return found
 
 
-def rename_commands(plist, data, args, at, name, new, retired):
-    """The commands, in order, that take one plist from its old name to its
-    new one, kept as the user edited it otherwise: unload it, set its label,
-    its job name, its log paths and its line of description with plutil,
-    rename the file, load it. For the nightly job, its script and a time
-    limit for four steps too. A retired job is unloaded and put in the Trash."""
+def rename_commands(plist, data, args, at, old, new, retired):
+    """The commands that take one plist to its new name, kept as the user
+    edited it otherwise, each safe to run again: unload it, move the file
+    first, then set on the moved file its label, its whole ProgramArguments,
+    its log paths and its environment (the job's line of description, and
+    GARRICK_RENAMED_FROM, the old name, so the jobs card reads the runs from
+    before as this job's), then load it. For the nightly job, its script and
+    `--timeout 3600` too. Only what is still to do: a plist part way through
+    gets the rest, and one already done gets none. A retired job is unloaded
+    and set aside as `.plist.retired`, which launchd does not load."""
     label = str(data.get("Label") or plist.stem)
+    out = {"plist": str(plist), "label": label, "job": old, "new": new, "retired": retired, "state": "old",
+           "commands": []}
+    cmds = out["commands"]
 
     def q(path):                                # a path under the home folder as ~/..., as the docs write it
         try:
             return "~/" + shlex.quote(str(Path(path).relative_to(Path.home())))
         except ValueError:
             return shlex.quote(str(path))
-    out = {"plist": str(plist), "label": label, "job": name, "new": new, "retired": retired, "commands": []}
-    cmds = out["commands"]
-    cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(label))
+
     target = plist.with_name("garrick.%s.plist" % new)
     if retired or (target.exists() and not same_place(target, plist)):
-        cmds.append("mv %s %s" % (q(str(plist)), q(str(Path.home() / ".Trash") + "/")))
+        out["state"] = "retire" if retired else "duplicate"
+        cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(label))
+        cmds.append("mv -n %s %s" % (q(plist), q(str(plist) + ".retired")))
         return out
-    def edit(key, value):                       # a key of a dictionary: replaced, or added
-        cmds.append("plutil -replace %s -string %s %s" % (key, (q if key.endswith("Path") else shlex.quote)(str(value)),
-                                                          q(str(plist))))
 
-    def put(index, value, replace=True):        # an item of ProgramArguments: plutil's -replace inserts there
-        if replace:
-            cmds.append("plutil -remove ProgramArguments.%d %s" % (index, q(str(plist))))
-        cmds.append("plutil -insert ProgramArguments.%d -string %s %s" % (
-            index, (q if "/" in str(value) else shlex.quote)(str(value)), q(str(plist))))
-
-    edit("Label", "garrick." + new)
-    put(at + 1, new)
-    if name == "nurture":
-        flags = args[at + 2:args.index("--", at)] if "--" in args[at:] else []
-        script = next(i for i, a in enumerate(args) if i > at and Path(a).name == OLD_SCRIPTS[name])
-        put(script, str(Path(args[script]).with_name("nightly.py")))
-        if "--timeout" not in flags:            # four steps need more than the 25 minutes nurture had
-            put(at + 2, "3600", replace=False)
-            put(at + 2, "--timeout", replace=False)
+    want = list(args)
+    want[at + 1] = new
+    if new == "gr-nightly":
+        for i, a in enumerate(want):
+            if i > at and Path(a).name == OLD_SCRIPTS[old]:
+                want[i] = str(Path(a).with_name(NEW_SCRIPTS[new]))
+        stop = want.index("--", at) if "--" in want[at:] else len(want)
+        flags = want[at + 2:stop]
+        while "--timeout" in flags:                # four steps need the hour, whatever was set for nurture alone
+            i = flags.index("--timeout")
+            del flags[i:i + 2]
+        want[at + 2:stop] = ["--timeout", "3600"] + flags
+    env = data.get("EnvironmentVariables")
+    env = dict(env) if isinstance(env, dict) else {}
+    want_env = dict(env)
+    about = shipped_about(new)
+    if about:
+        want_env["GARRICK_ABOUT"] = about
+    want_env["GARRICK_RENAMED_FROM"] = old
+    edits = []
+    if label != "garrick." + new:
+        edits.append("plutil -replace Label -string %s %s" % (shlex.quote("garrick." + new), q(target)))
+    if want != args:
+        edits.append("plutil -replace ProgramArguments -json %s %s" % (shlex.quote(json.dumps(want)), q(target)))
     for key in ("StandardOutPath", "StandardErrorPath"):
         value = data.get(key)
-        if isinstance(value, str) and value.endswith("/%s.launchd.log" % name):
-            edit(key, value[:-len("%s.launchd.log" % name)] + "%s.launchd.log" % new)
-    about = shipped_about(new)
-    env = data.get("EnvironmentVariables")
-    if about and not (isinstance(env, dict) and env.get("GARRICK_ABOUT") == about):
-        if not isinstance(env, dict):
-            cmds.append("plutil -insert EnvironmentVariables -dictionary %s" % q(str(plist)))
-        edit("EnvironmentVariables.GARRICK_ABOUT", about)
-    cmds.append("mv %s %s" % (q(str(plist)), q(str(target))))
-    cmds.append("launchctl bootstrap gui/$(id -u) %s" % q(str(target)))
+        if isinstance(value, str) and value.endswith("/%s.launchd.log" % old):
+            edits.append("plutil -replace %s -string %s %s" % (
+                key, q(value[:-len("%s.launchd.log" % old)] + "%s.launchd.log" % new), q(target)))
+    if want_env != env:
+        edits.append("plutil -replace EnvironmentVariables -json %s %s" % (
+            shlex.quote(json.dumps(want_env, ensure_ascii=False)), q(target)))
+    moved = same_place(target, plist)
+    if moved and not edits:
+        return out                                 # done
+    out["state"] = "part" if moved or args[at + 1] == new or label == "garrick." + new else "old"
+    for name in dict.fromkeys([label] + (["garrick." + old, "garrick." + new] if out["state"] == "part" else [])):
+        cmds.append("launchctl bootout gui/$(id -u)/%s" % shlex.quote(name))
+    if not moved:
+        cmds.append("mv -n %s %s" % (q(plist), q(target)))
+    cmds += edits
+    cmds.append("launchctl bootstrap gui/$(id -u) %s" % q(target))
     return out
 
 
 def say_renames(renames):
     """The report's lines for the plists still running Garrick's jobs under
-    their old names: one message, then each plist and its commands."""
+    their old names, or part way through a rename: one message, then each
+    plist and its commands."""
     if not renames:
         return []
     folder = str(Path(renames[0]["plist"]).parent)
     n = len(renames)
     lines = ["", "Garrick's scheduled jobs have new names, which start with gr-, so they read apart from yours "
-             "(#275). %d plist%s in %s still run%s them under the old names. Each keeps working as it is until you "
-             "rename it: this update changes nothing in that folder and runs none of these commands. To rename "
-             "one, run its lines in Terminal, in order; leave out the last line of one you keep unloaded." % (
+             "(#275). %d plist%s in %s still need%s the change. Each keeps working as it is until you make it: this "
+             "update changes nothing in that folder and runs none of these commands. To make it, run a plist's lines "
+             "in Terminal, in order. Each line is safe to run again; launchctl may say a job is not loaded, and mv "
+             "that a file is already moved, which is fine. Leave out the last line of a job you keep unloaded." % (
                  n, "" if n == 1 else "s", folder, "s" if n == 1 else "")]
     for r in renames:
         name = Path(r["plist"]).name
-        if r["retired"]:
+        if r["state"] == "retire":
             lines.append("  %s runs %s, which the nightly job gr-nightly now does. Once garrick.gr-nightly is loaded, "
-                         "unload this one and put it in the Trash:" % (name, r["job"]))
-        elif r["commands"][1].startswith("mv "):
-            lines.append("  %s runs %s, and garrick.%s.plist is already there. Unload the old one and put it in "
-                         "the Trash:" % (name, r["job"], r["new"]))
+                         "unload this one and set it aside as %s.retired, which launchd does not load. You may delete "
+                         "that file afterwards:" % (name, r["job"], name))
+        elif r["state"] == "duplicate":
+            lines.append("  %s runs %s, and garrick.%s.plist is already there. Unload the old one and set it aside as "
+                         "%s.retired, which launchd does not load. You may delete that file afterwards:" % (
+                             name, r["job"], r["new"], name))
+        elif r["state"] == "part":
+            lines.append("  %s is part way through its rename from %s to %s. The lines still to run:" % (
+                name, r["job"], r["new"]))
         else:
             lines.append("  %s runs %s, which is now %s:" % (name, r["job"], r["new"]))
         lines += ["    " + c for c in r["commands"]]

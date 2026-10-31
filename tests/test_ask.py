@@ -601,6 +601,20 @@ class TestWarmSession(StandInCase):
         finally:
             asker.session.stop()
 
+    def test_the_correction_turn_is_not_refused_by_the_cap(self):
+        """#282: the request was counted before the correction, so at Ask's
+        cap the correction still runs and the open is not dropped."""
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
+        self.answers.write_text(json.dumps(['{"say": "Pricing is already open.", "do": []}',
+                                            '{"say": "Opening Pricing.", "do": [{"verb": "open", "zone": "Work", '
+                                            '"project": "Acme Review", "thread": "Pricing"}]}']))
+        asker = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        try:
+            out = asker.ask("open Pricing")
+        finally:
+            asker.session.stop()
+        self.assertEqual("open Pricing", out["launch"][0]["phrase"])
+
     def test_the_cap_says_when_it_clears(self):
         import time
         today = dt.date.today()
@@ -613,6 +627,9 @@ class TestWarmSession(StandInCase):
         said = ask.capped({"cap": "cost_day", "limit": 20.0, "clears": at(18, 5)}, now=at(17, 0))
         self.assertEqual("Ask has reached its spending limit of $20 a day. It can answer again at 18:05.", said)
         self.assertNotIn("GARRICK", said)
+        said = ask.capped({"cap": "calls_hour", "limit": -1, "clears": None}, now=at(17, 0))
+        self.assertEqual("Ask's limit on requests an hour is set below zero, so it answers nothing until that limit "
+                         "is changed.", said)
 
 
     def test_a_spent_budget_starts_a_fresh_session(self):

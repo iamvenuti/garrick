@@ -85,7 +85,7 @@ The Garrick App's [Ask box](status-page.md#ask) has limits of its own. Its reque
 | `GARRICK_CAP_ASK_DAY` | 300 | requests in the last 24 hours |
 | `GARRICK_CAP_ASK_COST_DAY` | 20 | dollars in the last 24 hours |
 
-From a script, `agent.caps("jobs")` and `agent.caps("ask")` read each set, and `agent.cap_reached(entries, now, limits, budget)` says which limit stops the next call and when it clears. A call counts against the budget of its job (`agent.budget_of(job)`): `ask` for the Ask box, `jobs` for any other.
+From a script, `agent.caps("jobs")` and `agent.caps("ask")` read each set, and `agent.cap_reached(entries, now, limits, budget)` says which limit stops the next call and when it clears. A call counts against the budget of its job (`agent.budget_of(job)`): `ask` for the Ask box, `jobs` for any other. So `ask`, like `agent`, is not a name a scheduled job can take: `job.py` refuses it.
 
 The ledger line also names the model the call used, which the tier alone does not say. The cost is Claude Code's own estimate at list prices, so on a subscription it measures how much you use rather than what you pay. Codex reports neither turns nor cost; its lines leave them empty, and only the call limits hold it.
 

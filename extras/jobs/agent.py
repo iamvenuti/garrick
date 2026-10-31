@@ -163,11 +163,15 @@ def name_problem(name: str) -> Optional[str]:
     """Why `name` cannot name a job, or None. The name becomes the name of the
     job's files, so a `/` would put them outside the jobs folder, and the
     status page reads it from the log as one word. `agent` is the shared
-    lock's."""
+    lock's, and `ask` (ASK) the Ask box's, whose calls count against Ask's
+    own caps: a scheduled job of that name would spend Ask's budget. Only
+    ask.py, calling run() with job=ASK, may use it."""
     if not JOB_NAME.fullmatch(name):
         return "%r is not a job name: use letters, digits, hyphens and underscores" % name
     if name.lower() == "agent":
         return "agent names the lock that every assistant job shares: choose another name"
+    if name.lower() == ASK:
+        return "ask names the Ask box's calls, which count against Ask's own caps: choose another name"
     return None
 
 
@@ -240,8 +244,14 @@ def cap_reached(entries: Iterable[dict], now: float, limits: Dict[str, float],
     `used` (the calls or the dollars in its window), `reason`, one line that
     says so, and `clears`, the time the call may run again, when every cap
     reached has let go. With more than one reached, the one that clears last
-    is named. Only the lines of `budget` count, and refused calls cost
+    is named. A cap set below zero refuses every call, with `clears` None:
+    it is never read as no cap. Only the lines of `budget` count, and refused calls cost
     nothing and are not counted, so a refusal never extends its own window."""
+    for key in ("calls_day", "calls_hour", "cost_day"):
+        if (limits.get(key) or 0) < 0:         # fail closed: never read as no cap, never a time it clears
+            return {"cap": key, "limit": limits[key], "used": None, "budget": budget, "clears": None,
+                    "reason": "the cap %s is set below zero (%g); set it to 0 to remove it"
+                              % (CAP_VARS.get(budget, CAP_VARS["jobs"])[key], limits[key])}
     calls = sorted((e for e in counted(entries, budget) if not e.get("refused")), key=lambda e: e["ts"])
     day = [e for e in calls if now - e["ts"] < 86400]
     hour = [e for e in calls if now - e["ts"] < 3600]
@@ -478,8 +488,11 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
               "from Garrick's extras/jobs/ beside agent.py, or put those entries back." % (profile, problem),
               file=sys.stderr)
         return EXIT_USAGE, ""
+    # ASK only as run()'s own argument, from ask.py: never from GARRICK_JOB,
+    # which job.py sets to a scheduled job's name, so no job reaches Ask's budget.
+    asked = job == ASK
     job = job or os.environ.get("GARRICK_JOB") or "manual"
-    problem = name_problem(job)
+    problem = None if asked else name_problem(job)
     if problem:
         print("agent: %s" % problem, file=sys.stderr)
         return EXIT_USAGE, ""

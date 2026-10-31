@@ -248,6 +248,14 @@ class LedgerTest(unittest.TestCase):
         reached = agent.cap_reached(cost, self.now, {"calls_day": 0, "calls_hour": 0, "cost_day": 1.0})
         self.assertEqual(("cost_day", self.now - 80000 + 86400), (reached["cap"], reached["clears"]))   # $0.80 left, under $1
 
+    def test_a_cap_below_zero_refuses_every_call(self):
+        for key in ("calls_day", "calls_hour", "cost_day"):
+            limits = dict(self.limits, **{key: -1})
+            reached = agent.cap_reached([], self.now, limits)                 # nothing called yet, and still refused
+            self.assertEqual((key, None), (reached["cap"], reached["clears"]), key)
+            self.assertIn("below zero", reached["reason"])
+            self.assertIn("below zero", agent.cap_reason([self.entry(60)], self.now, limits, agent.ASK))
+
     def test_the_cap_that_clears_last_is_named(self):
         entries = [self.entry(80000, cost=0)] + [self.entry(4000 * i, cost=0) for i in range(1, 4)] + [self.entry(60, cost=0)]
         reached = agent.cap_reached(entries, self.now, {"calls_day": 5, "calls_hour": 1, "cost_day": 0})
@@ -430,6 +438,22 @@ class RunTest(FakeAssistants):
         self.assertEqual([], self.calls())
         self.assertEqual(0, agent.run("sonnet", "Sweep.", job="whats-open_2")[0])
 
+    def test_ask_is_reserved_for_the_ask_box(self):
+        """#282: a scheduled job named `ask` would spend Ask's budget. job.py
+        sets GARRICK_JOB to the job's name, so that one is refused; Ask's own
+        call, which names the job to run(), still runs, under Codex too."""
+        self.assertIn("Ask's own caps", agent.name_problem("ask"))
+        self.assertIsNotNone(agent.name_problem("Ask"))
+        os.environ["GARRICK_JOB"] = "ask"
+        self.assertEqual(agent.EXIT_USAGE, agent.run("sonnet", "Sweep.")[0])
+        self.assertEqual([], self.calls())
+        del os.environ["GARRICK_JOB"]
+        os.environ["GARRICK_HARNESS"] = "codex"
+        code, text = agent.run("haiku", "Asked.", job=agent.ASK)
+        self.assertEqual((0, "Codex answer\nSWEEP_COMPLETE\n"), (code, text))
+        self.assertEqual(1, len(self.calls()))
+        self.assertEqual("ask", self.ledger()[-1]["job"])
+
     def test_the_codex_transcript_is_rotated_like_the_log(self):
         os.environ["GARRICK_HARNESS"] = "codex"
         self.jobs.mkdir(parents=True)
@@ -548,7 +572,7 @@ class JobTest(FakeAssistants):
         self.assertFalse(lock.exists())
 
     def test_a_name_that_is_not_one_plain_word_is_refused(self):
-        for name in ("../escape", "two words", "Agent"):
+        for name in ("../escape", "two words", "Agent", "ask"):         # ask is the Ask box's (#282)
             r = self.job(name, "--", sys.executable, "-c", "print('ran')")
             self.assertEqual(agent.EXIT_USAGE, r.returncode, name)
             self.assertIn("job.py:", r.stderr)

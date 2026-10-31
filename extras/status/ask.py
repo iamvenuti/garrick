@@ -534,6 +534,9 @@ def capped(reached: dict, now: Optional[float] = None) -> str:
     time tomorrow says so. No variable is named: the app has no place to set
     one, and the docs say which they are."""
     now = time.time() if now is None else now
+    if reached.get("clears") is None:           # a cap set below zero: it clears only when it is changed
+        what = {"calls_hour": "requests an hour", "calls_day": "requests a day"}.get(reached["cap"], "spending a day")
+        return "Ask's limit on %s is set below zero, so it answers nothing until that limit is changed." % what
     at = math.ceil(reached["clears"] / 60) * 60
     when = time.strftime("%H:%M", time.localtime(at))
     if time.localtime(at)[:3] != time.localtime(now)[:3]:
@@ -902,8 +905,10 @@ class Asker:
                 say, do = parse(text)
                 if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
                     # It cannot know what is open; the brief says so, and this holds it to that once more.
+                    # Part of a request already counted: never refused by the cap mid-request (#282).
                     text, usage = self.session.turn("<correction>You cannot know what is open. Send the open action "
-                                                    "for the request above; never answer \"already open\".</correction>")
+                                                    "for the request above; never answer \"already open\".</correction>",
+                                                    cap=False)
                     say, do = parse(text)
                 out = self.carry_out(say, do, names, usage)
         finally:

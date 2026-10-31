@@ -1056,7 +1056,8 @@ class TestCheckpointChip(StatusCase):
         self.put()
         html = self.page()
         self.assertIn(">unwrapped since 14:32</span>", html)
-        self.assertIn("Work this session recorded at 14:32 on 14 March 2026 and no wrap has folded in yet", html)
+        self.assertIn("Work recorded at 14:32 on 14 March 2026 that no wrap has folded in yet", html)
+        self.assertNotIn("this session", html)          # any session may have written it, often one now gone (#280)
         self.assertNotIn("checkpoint out of date", html)
 
     def test_a_block_a_wrap_left_behind_says_it_is_out_of_date(self):
@@ -3124,6 +3125,130 @@ class TestReviewContext(StatusCase):
     def test_left_out_without_nurture(self):
         (self.root / "System" / "tools" / "nurture.py").unlink()
         self.assertNotIn('id="review"', self.page())
+
+    def test_it_says_what_it_does_and_what_the_latest_review_decided(self):
+        b = self.block(self.page())
+        self.assertIn("A short session through what is left, across the workspace, up to a limit you choose", b)
+        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
+                           "fixed: 6\nanswered: 3\ndeferred: 2\n---\n")
+        self.assertIn("Last review Sat 14 Mar 2026: 6 fixed, 3 answered, 2 deferred.", self.block(self.page()))
+        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
+                           "fixed: 4\nanswered: 0\ndeferred: 1\n---\n")
+        self.assertIn("one unfinished, started Sat 14 Mar 2026: 4 fixed, 0 answered, 1 deferred so far.", self.block(self.page()))
+        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
+                           "fixed: the Cedar floor\n---\n")
+        b = self.block(self.page())
+        self.assertIn("Last review Sat 14 Mar 2026.", b)                   # a count that is not a number is not shown
+        self.assertNotIn("Cedar", b)
+
+
+class TestChecksCardActs(StatusCase):
+    """#278: the Checks card sorts its findings by Nurture's kinds, opens the
+    largest group, and gives each finding its way to act; the debt says what
+    Nurture will do and what it last did, and that the list is another run."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        status._NURTURE.clear()
+        self.addCleanup(status._NURTURE.clear)
+
+    def fake_check(self, *findings):
+        errors = sum(1 for f in findings if f["severity"] == "error")
+        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
+            "errors": errors, "warnings": len(findings) - errors, "findings": list(findings)})
+
+    def card(self, html):
+        start = html.index('<details class="card" id="checks"')
+        return html[start:html.find('<details class="card" id="', start + 1)]
+
+    def groups(self, card):
+        return re.findall(r'<details class="group" data-ok="0"( open)?><summary>.*?<b>([^<]+)</b>', card, re.S)
+
+    def test_findings_are_sorted_by_kind_and_each_has_its_action(self):
+        thread = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
+        self.fake_check(
+            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md:4", "message": "something odd"},
+            {"check": "threads", "severity": "warning", "path": thread, "message": "`status` is 'ongoing', should be active, parked or done"},
+            {"check": "projects", "severity": "warning", "path": "Zones/Work/Acme Review/Acme Review.md", "message": "no `party`"},
+            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Other.md", "message": "another"},
+            {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
+        card = self.card(self.page())
+        self.assertEqual([(" open", "Walls"), ("", "Mechanical"), ("", "Attribution"), (" open", "Judgment")],
+                         self.groups(card))                              # an error opens its group, and so does the largest
+        uri = (self.root / thread).as_uri()
+        self.assertIn('<a href="%s">%s</a>: status ongoing becomes active</span>' % (htmllib.escape(uri), thread), card)
+        fix = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', card)
+        self.assertEqual({"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+                         json.loads(htmllib.unescape(fix.group(1))))
+        self.assertIn(">Zones/Work/Acme Review/Acme Review.md</a>: Which party is the project Acme Review for?</span>", card)
+        self.assertIn('data-request="nurture Work" data-folder="%s" title="Hand “nurture Work” to your assistant">Answer</button>' % self.root, card)
+        self.assertIn(">Take it out</button>", card)
+        self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
+        self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open
+
+    def test_a_finding_without_fix_reads_no_history(self):
+        """A rename's date comes from git, a call a file: the page makes it
+        only for a note in a zone, which Fix can apply, so a rebuild with
+        many undated deliverables does not make one call each."""
+        env = mock.patch.dict(os.environ, {k: v for k, v in fixtures.GIT_ENV.items() if k.startswith("GIT_")})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("GIT_DIR", None)
+        work = self.root / "Zones" / "Work"
+        shelf = work / "Acme Review" / "Deliverables"
+
+        def calls(n):
+            shutil.rmtree(shelf, ignore_errors=True)
+            for i in range(n):
+                write(shelf / ("Deck %d.pptx" % i), "x")
+            write(shelf / "Memo.md", "x")
+            shutil.rmtree(work / ".git", ignore_errors=True)
+            fixtures.git(work, "init", "-q")
+            fixtures.git(work, "add", "-A")
+            fixtures.git(work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+            self.fake_check(*[{"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/" + p.name,
+                               "message": "name does not start with its creation date, `YYMMDD - <name>`"}
+                              for p in sorted(shelf.iterdir())])
+            seen, real = [], subprocess.run
+
+            def spy(cmd, *a, **k):
+                if cmd and cmd[0] == "git":
+                    seen.append(cmd)
+                return real(cmd, *a, **k)
+            with mock.patch.object(subprocess, "run", spy):
+                card = self.card(self.page())
+            return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
+
+        few, _ = calls(1)
+        many, card = calls(12)
+        self.assertEqual(few, many)                                        # the same calls, however many decks
+        self.assertEqual(12, card.count("pptx</a>: put its creation date in front of its name</span>"))     # still mechanical
+        self.assertIn('>Nurture</button>', card)                           # no Fix for a file that is not a note
+        self.assertIn("Memo.md</a>: rename it %s - Memo.md</span>" % self.now.strftime("%y%m%d"), card)
+        self.assertIn(">Fix</button>", card)                               # a note in a zone is worked out in full
+
+    def test_without_nurture_the_findings_are_listed_by_check(self):
+        self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
+        (self.root / "System" / "tools" / "nurture.py").unlink()
+        card = self.card(self.page())
+        self.assertEqual([(" open", "links")], self.groups(card))          # the check, by its title where check.py has one
+        self.assertNotIn("data-request", card)
+
+    def test_the_debt_says_what_nurture_does_and_what_it_last_did(self):
+        self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
+        day = self.now.date()
+        write(self.root / "System" / "generated" / "nurture" / ("%s.json" % day.isoformat()), json.dumps({
+            "date": day.isoformat(), "fixed": [{"line": "a"}] * 12, "answered": [{"line": "b"}] * 3,
+            "standing": [{"kind": "mechanical", "path": "Zones/Work/a.md"}] * 4 + [{"kind": "attribution", "path": "Zones/Work/b.md"}]
+                        + [{"kind": "judgment", "path": "Wikis/Meetings/c.md"}] + [{"kind": "behind", "path": "Zones/Work/d.md"}],
+            "debt": {"total": 10, "kinds": {}, "scopes": {"Zones/Work": {"mechanical": 4, "attribution": 5},
+                                                          "Wikis/Meetings": {"judgment": 1}}, "whole": True, "threshold": 40}}))
+        card = self.card(self.page())
+        self.assertIn(">Nurture Work</button></p><p class=\"hint\">One pass over Work: 4 fixes on one yes, 1 question one at a time.</p>", card)
+        self.assertIn("Last nurture %s: 12 fixed, 3 answered, 6 left. The figure is that run&#x27;s; the list below is this "
+                      "build&#x27;s quick check." % day.strftime("%a %d %b"), card)
 
 if __name__ == "__main__":
     unittest.main()

@@ -870,7 +870,7 @@ class TestCheckReuse(StatusCase):
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertEqual(1, self.ran())                                # not run again
         self.assertIn("As the check found it 4 min ago", page)
-        self.assertIn("a.md: x", page)                                 # the findings it kept
+        self.assertIn(">a.md</a>: x</span>", page)                     # the findings it kept, each path a link
 
     def test_an_old_or_missing_result_runs_the_check(self):
         self.build()

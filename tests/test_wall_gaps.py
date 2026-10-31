@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, thread_note, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, project_hub, thread_note, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
@@ -786,6 +786,266 @@ class TestSharedSurname(GapCase):
         found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
         self.assertEqual(1, len(found), found)
 
+
+class TestProjectLinks(GapCase):
+    """A link or a path into a note of a project walled from this one is
+    refused, by the commit hook and the full check alike, whether or not the
+    path holds a name of the far party. Northwind is for Acme, Harbour for
+    Birch, Lantern for Cobalt, which no wall keeps from either."""
+
+    TAIL = ", a note of birch; a wall stands between acme and birch"
+    WALLED = ("[[Harbour/Threads/Tender/Tender]]",                 # a wikilink by its path
+              "[[Tender|the tender]]",                             # a bare name, a thread only Harbour has
+              "[[Harbour]]",                                       # the hub
+              "`Harbour/Threads/Tender/Tender.md`",                # a path written as code
+              "``Harbour/Threads/Tender/Tender.md``",              # in a longer run of backticks
+              "[the tender](../../../Harbour/Threads/Tender/Tender.md)",
+              "[the model](<../../../Harbour/Threads/Tender/Bid model.md>)",
+              "[the tender][1]\n\n[1]: ../../../Harbour/Threads/Tender/Tender.md\n",
+              '<a href="../../../Harbour/Threads/Tender/Tender.md">the tender</a>',
+              "\n~~~\nHarbour/Threads/Tender/Tender.md\n~~~\n",     # a fence of tildes
+              "\n```\nHarbour/Threads/Tender/Tender.md\n```\n",
+              "`/elsewhere/Zones/Work/Harbour/Threads/Tender/Tender.md`",
+              "obsidian://open?vault=Workspace&file=Zones%2FWork%2FHarbour%2FThreads%2FTender%2FTender",
+              "[Bid brief (1).md](Zones/Work/Harbour/Sources/Bid%20brief%20(1).md)",   # as Obsidian writes one
+              "[Bid brief (1).md](../../../Harbour/Sources/Bid%20brief%20(1).md)")
+    OPEN = ("[[Lantern/Threads/Survey/Survey]]", "[[Survey]]", "`Lantern/Threads/Survey/Survey.md`",
+            "[[Freight]]", "`Threads/Freight/Freight.md`", "[[Northwind/Threads/Freight/Freight]]")
+
+    def setUp(self):
+        super().setUp()
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace(
+            "mail.birchco.example |\n",
+            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | cobalt.example |\n", 1))
+        for name, party, thread in (("Northwind", "acme", "Freight"), ("Harbour", "birch", "Tender"),
+                                    ("Lantern", "cobalt", "Survey")):
+            self.project(name, party, thread)
+        write(self.work / "Harbour" / "Threads" / "Tender" / "Bid model.md", "# Bid model\n")
+        write(self.work / "Harbour" / "Sources" / "Bid brief (1).md", "# Bid brief, as sent\n")
+        self.note = self.work / "Northwind" / "Threads" / "Freight" / "Notes.md"
+        self.where = "Zones/Work/Northwind/Threads/Freight/Notes.md"
+
+    def project(self, name, party, *threads):
+        folder = self.work / name
+        write(folder / (name + ".md"), project_hub("Work", name, party, list(threads)))
+        for thread in threads:
+            write(folder / "Threads" / thread / (thread + ".md"), thread_note(name, thread, party))
+        return folder
+
+    def walls(self, where=None):
+        return [f for f in self.findings("walls") if f.path == (where or self.where)]
+
+    def says(self, written):
+        write(self.note, "# Notes\n\nSee %s now.\n" % written)
+        return [(f.severity, f.message) for f in self.walls()]
+
+    def test_each_way_in_is_refused_by_the_full_check(self):
+        self.assertEqual([], self.walls())
+        for written in self.WALLED:
+            with self.subTest(written):
+                write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                found = self.walls()
+                self.assertEqual(["error"], [f.severity for f in found], found)
+                self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
+                self.assertEqual("A note in Northwind's Freight thread uses a note of Birch & Co", found[0].ear)
+
+    def test_a_path_from_outside_the_workspace(self):
+        home = Path(os.path.expanduser("~"))
+        for written in ("`%s/Zones/Work/Harbour/Threads/Tender/Tender.md`" % self.root.name,
+                        "`~/%s/Zones/Work/Harbour/Threads/Tender/Tender.md`" % self.root.name,
+                        "`%s/Zones/Work/Harbour/Threads/Tender/Tender.md`" % home):
+            with self.subTest(written):
+                self.assertEqual([("error", "writes the path %s%s" % (written, self.TAIL))], self.says(written))
+
+    def test_the_finding_names_the_link_and_the_party_only(self):
+        self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)],
+                         self.says("`Harbour/Threads/Tender/Tender.md`"))
+
+    def test_an_unwalled_project_and_the_project_itself_pass(self):
+        write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s." % w for w in self.OPEN))
+        self.assertEqual([], self.walls())
+
+    def test_a_name_both_projects_hold_is_read_as_obsidian_reads_it(self):
+        self.project("Northwind", "acme", "Freight", "Rates")
+        self.project("Harbour", "birch", "Tender", "Rates")
+        # From the Freight thread neither is under the note's folder, and Harbour's path is the shorter.
+        self.assertEqual([("error", "links [[Rates]]" + self.TAIL)], self.says("[[Rates]]"))
+        # Under the note's own folder, a subfolder's included, Obsidian takes this project's.
+        for beside in ("Threads/Rates/Notes.md", "Notes.md"):
+            with self.subTest(beside):
+                note = self.work / "Northwind" / beside
+                write(note, "# Notes\n\nSee [[Rates]].\n")
+                self.assertEqual([], self.walls("Zones/Work/Northwind/" + beside))
+        # A path written as code that lands in this project means it, wherever it is.
+        self.assertEqual([], self.says("`Rates/Rates.md`"))
+
+    def test_a_short_name_a_wiki_page_holds_too(self):
+        write(self.work / "Harbour" / "Sources" / "Okta.md", "# Okta, as sent\n")
+        write(self.knowledge / "wiki" / "entities" / "Okta.md", "# Okta\n")
+        # Harbour's path is shorter than the Knowledge page's: Obsidian opens Harbour's.
+        self.assertEqual([("error", "links [[Okta]]" + self.TAIL)], self.says("[[Okta]]"))
+        sources = self.work / "Harbour" / "Sources"
+        (sources / "Vendors").mkdir()
+        (sources / "Okta.md").rename(sources / "Vendors" / "Okta.md")       # now the longer path
+        self.assertEqual([], self.says("[[Okta]]"))
+        (self.root / ".obsidian").mkdir()
+        self.assertEqual([], self.says("[[Okta]]"))
+        # A vault over the zone as well: there the Knowledge page is not there to open, and every vault counts.
+        (self.work / ".obsidian").mkdir()
+        self.assertEqual([("error", "links [[Okta]]" + self.TAIL)], self.says("[[Okta]]"))
+
+    def test_a_short_path_every_project_may_hold(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        self.assertEqual([("error", "writes the path `Deliverables/published.md`" + self.TAIL)],
+                         self.says("`Deliverables/published.md`"))
+        self.assertEqual([("error", "links [[Deliverables/published]]" + self.TAIL)],
+                         self.says("[[Deliverables/published]]"))
+        self.project("Kite", "cobalt", "Survey")
+        write(self.work / "Kite" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        # Held by a project with no wall too: as code, a warning; as a link, Kite's path is the shorter.
+        self.assertEqual([("warning", "writes the path `Deliverables/published.md`" + self.TAIL)],
+                         self.says("`Deliverables/published.md`"))
+        self.assertEqual([], self.says("[[Deliverables/published]]"))
+        self.assertEqual([("error", "links [[Harbour/Deliverables/published]]" + self.TAIL)],
+                         self.says("[[Harbour/Deliverables/published]]"))
+        self.assertEqual([("error", "writes the path `Harbour/Deliverables/published.md`" + self.TAIL)],
+                         self.says("`Harbour/Deliverables/published.md`"))
+
+    def test_the_note_folder_is_a_plain_prefix(self):
+        # As Obsidian compares it: Harbour's path starts with "Zones/Work/Har".
+        self.project("Har", "acme")
+        self.project("Lim", "cobalt")
+        write(self.work / "Harbour" / "Threads" / "Rates" / "Rates.md", thread_note("Harbour", "Rates", "birch"))
+        write(self.work / "Lim" / "Rates.md", "# Rates\n")
+        hub = self.work / "Har" / "Har.md"
+        hub.write_text(hub.read_text() + "\nSee [[Rates]].\n")
+        self.assertEqual([("error", "links [[Rates]]" + self.TAIL)],
+                         [(f.severity, f.message) for f in self.walls("Zones/Work/Har/Har.md")])
+        # And a sibling folder that starts with the note's folder's name comes first too.
+        write(self.work / "Northwind" / "Threads" / "Freight 2" / "Plan.md", "# Plan\n")
+        write(self.work / "Harbour" / "Plan.md", "# Plan\n")
+        self.assertEqual([], self.says("[[Plan]]"))
+
+    def test_the_end_of_a_path_is_plain_text(self):
+        self.assertEqual([("error", "links [[bour/Threads/Tender/Tender]]" + self.TAIL)],
+                         self.says("[[bour/Threads/Tender/Tender]]"))
+
+    def test_what_obsidian_indexes_counts(self):
+        harbour = self.work / "Harbour"
+        (harbour / "Code" / ".git").mkdir(parents=True)                     # a repository of its own
+        write(harbour / "Code" / "docs" / "Spec.md", "# Spec\n")
+        write(harbour / "node_modules" / "kit" / "Kit notes.md", "# Kit\n")
+        write(harbour / ".hidden" / "Hidden plan.md", "# Hidden\n")        # Obsidian leaves dot-folders out
+        self.assertEqual([("error", "links [[Spec]]" + self.TAIL)], self.says("[[Spec]]"))
+        self.assertEqual([("error", "links [[Kit notes]]" + self.TAIL)], self.says("[[Kit notes]]"))
+        self.assertEqual([], self.says("[[Hidden plan]]"))
+
+    def test_a_long_tag_or_code_span_does_not_hide_a_path(self):
+        attrs = " ".join('data-x%d="1"' % i for i in range(60))
+        self.assertEqual("error", self.says('<a %s href="../../../Harbour/Threads/Tender/Tender.md">t</a>' % attrs)[0][0])
+        for n in (999, 1001, 5000):
+            with self.subTest(n):
+                found = self.says("`%s` then `Harbour/Threads/Tender/Tender.md`" % ("x" * n))
+                self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)], found)
+
+    def test_a_backslash_escapes_nothing_inside_code(self):
+        for written in ("`C:\\` then `Harbour/Threads/Tender/Tender.md` end", "type `\\` then `Harbour/Threads/Tender/Tender.md`",
+                        "``a\\`` then `Harbour/Threads/Tender/Tender.md`"):
+            with self.subTest(written):
+                self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)],
+                                 self.says(written))
+
+    def test_a_name_with_a_dot_is_a_note_too(self):
+        tender = self.work / "Harbour" / "Threads" / "Tender"
+        write(tender / "Sizing v1.2.md", "# Sizing\n")
+        write(tender / "St. Louis plan.md", "# Plan\n")
+        for written in ("[[Sizing v1.2]]", "[[St. Louis plan]]", "[[Tender/Sizing v1.2]]"):
+            with self.subTest(written):
+                self.assertEqual([("error", "links %s%s" % (written, self.TAIL))], self.says(written))
+
+    def test_an_anchor_with_angle_brackets_in_a_quoted_value(self):
+        self.assertEqual("error", self.says('<a title="a<b" href="../../../Harbour/Threads/Tender/Tender.md">t</a>')[0][0])
+
+    def test_paths_from_the_top_cost_a_few_lookups(self):
+        import time
+        for i in range(3000):
+            write(self.work / "Harbour" / "node_modules" / ("pkg%d" % (i // 100)) / ("f%d.js" % i), "x")
+        links = ["[x](/elsewhere/n%d/Zones/Work/Harbour/Threads/Tender/Tender.md)" % i for i in range(25)]
+        links += ["[x](%s/Zones/Work/Harbour/Threads/Tender/Tender.md#n%d)" % (self.root, i) for i in range(25)]
+        write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s now." % link for link in links))
+        started = time.monotonic()
+        found = self.walls()
+        self.assertLess(time.monotonic() - started, 20.0)
+        self.assertEqual(50, len(found))   # one finding for each link as written
+
+    def test_a_code_path_on_one_file_is_refused(self):
+        write(self.work / "Harbour" / "Threads" / "Tender" / "Rate card.md", "# Rate card\n")
+        self.project("Lantern", "cobalt", "Survey", "Tender")      # a Tender thread, but no rate card
+        write(self.work / "Harbour" / "Sources" / "Bid brief.md", "# Bid brief\n")
+        for written in ("`Threads/Tender/Rate card.md`", "`Sources/Bid brief.md`"):
+            with self.subTest(written):
+                self.assertEqual([("error", "writes the path %s%s" % (written, self.TAIL))], self.says(written))
+
+    def test_a_hub_name_names_its_project(self):
+        write(self.work / "Lantern" / "Notes" / "Harbour.md", "# Harbour, the port\n")
+        self.assertEqual([("error", "links [[Harbour]]" + self.TAIL)], self.says("[[Harbour]]"))
+
+    def test_threads_of_one_project_written_for_walled_parties(self):
+        lantern = self.project("Lantern", "cobalt", "Survey", "Audit", "Secret")
+        write(lantern / "Threads" / "Audit" / "Audit.md", thread_note("Lantern", "Audit", "acme"))
+        write(lantern / "Threads" / "Secret" / "Secret.md", thread_note("Lantern", "Secret", "birch"))
+        audit = lantern / "Threads" / "Audit" / "Notes.md"
+        write(audit, "# Notes\n\nSee [[Secret]] and [[Survey]].\n")
+        found = self.walls("Zones/Work/Lantern/Threads/Audit/Notes.md")
+        self.assertEqual([("error", "links [[Secret]]" + self.TAIL)], [(f.severity, f.message) for f in found])
+        self.assertEqual("A note in Lantern's Audit thread uses a note of Birch & Co", found[0].ear)
+
+    def test_the_link_parsers_stay_fast(self):
+        import time
+        for text in ("<a " * 30000, "<a " + "x=1 " * 20000 + 'href="a/b">', "](" + "a" * 80000, "](a" * 30000,
+                     "](a (" * 20000, "".join("`" * k + "a" for k in range(1, 400)), "`a " * 30000,
+                     "`" + "x" * 80000 + "`"):
+            started = time.monotonic()
+            check.extract_links(text)
+            check.code_paths(text)
+            self.assertLess(time.monotonic() - started, 2.0, text[:20])
+
+    def test_sources_follow_the_link_check(self):
+        # Sources/ is exempt from the name check, never from the link check.
+        sent = self.work / "Northwind" / "Sources" / "Brief.md"
+        write(sent, "# Brief\n\nSee [[Harbour/Threads/Tender/Tender]].\n")
+        self.assertEqual(["error"], [f.severity for f in self.findings("walls")
+                                     if f.path == "Zones/Work/Northwind/Sources/Brief.md"])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_each_way_in(self):
+        real_repo(self.work)
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            for written in self.WALLED:
+                with self.subTest(written):
+                    write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                    git(self.work, "add", "-A")
+                    found = check.run_checks(self.root, staged=self.work)
+                    self.assertEqual([("error", "walls", self.where)], [(f.severity, f.check, f.path) for f in found])
+                    self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
+            write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s." % w for w in self.OPEN))
+            git(self.work, "add", "-A")
+            self.assertEqual([], check.run_checks(self.root, staged=self.work))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_the_far_party_from_git_too(self):
+        real_repo(self.work)
+        hub = self.work / "Harbour" / "Harbour.md"
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            hub.write_text(hub.read_text().replace("party: birch\n", ""))   # on disk only, never staged
+            write(self.note, "# Notes\n\nSee [[Harbour]] now.\n")
+            git(self.work, "add", "--", str(self.note.relative_to(self.work)))
+            found = check.run_checks(self.root, staged=self.work)
+        self.assertIn(("error", self.where, "links [[Harbour]]" + self.TAIL),
+                      [(f.severity, f.path, f.message) for f in found])
 
 if __name__ == "__main__":
     unittest.main()

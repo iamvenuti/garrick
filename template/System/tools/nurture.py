@@ -38,7 +38,9 @@ holds only the key, so it names no file, check or material.
   `parked`); a note path written as code that, as a wikilink, leads to
   exactly one live note in the same zone; a note inside a thread's folder
   with no `parent:`, given its thread's, when that thread note is there and
-  its name leads nowhere else. `fix --yes` applies them all, one commit per
+  its name leads nowhere else. No fix writes a link to a note across a wall
+  from the note it is in: that one stays for a person. `fix --yes` applies
+  them all, one commit per
   repository, of the files it changed and nothing else. A fix whose files
   have changes not committed, or that no repository holds, is held and left
   in the report.
@@ -677,8 +679,23 @@ def relink_fix(ctx: Ctx, item: Item, path: Path, target: str) -> Optional[dict]:
         to = "/".join(f.split("/")[-depth:]) if f.count("/") + 1 >= depth else f
     if to == t:
         return None
+    if across_wall(ctx, item.path, ctx.rel(repo / final)):
+        return None                # it moved across a wall from this note: a person decides, never this tool
     item.touches = [item.path]
     return {"op": "relink", "target": target, "to": to}
+
+
+def across_wall(ctx: Ctx, source: str, target: str) -> bool:
+    """Does a wall stand between the parties the note at `source`, in a
+    project, is written for and those of the note at `target`, both from the
+    workspace's top? A fix never writes a link that the wall check would
+    refuse. A wiki page is not a project's, and the walls stand where
+    material is used, so a link between two of them is not asked about."""
+    parts = source.split("/")
+    if len(parts) < 4 or parts[0] != "Zones":
+        return False
+    ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
+    return any(walled(ctx.context, a, b) for a in ours for b in theirs)
 
 
 def landing(ctx: Ctx, target: str) -> List[str]:
@@ -698,14 +715,17 @@ def landing(ctx: Ctx, target: str) -> List[str]:
 def codelink_fix(ctx: Ctx, item: Item, ref: str) -> Optional[dict]:
     """A note path written as code, which the graph does not see: it becomes
     `[[ref]]` when that link would land on exactly one live note, in the
-    note's own zone. None, several, a relative path or one into another zone
-    is a question, so judgment."""
+    note's own zone, not across a wall from it. None, several, a relative
+    path, one into another zone or one across a wall is a question, so
+    judgment."""
     parts = ref.split("/")
     if ref.startswith("/") or any(p in ("", ".", "..") for p in parts) or re.search(r"[\[\]|#^]", ref):
         return None                # no wikilink reads it as written
     hits = landing(ctx, ref)
     if len(hits) != 1 or hits[0].split("/")[:2] != item.path.split("/")[:2]:
         return None
+    if across_wall(ctx, item.path, hits[0]):
+        return None                # a note of a project walled from this one: never linked by a machine
     item.touches = [item.path]
     return {"op": "codelink", "ref": ref, "note": hits[0]}
 

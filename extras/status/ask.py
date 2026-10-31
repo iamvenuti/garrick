@@ -100,6 +100,38 @@ JSON (ask-brief.md). Each action is checked against that list, then:
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
 is carried into the next request as `<last-results>`.
 
+**A question is answered from the records, which this file reads (#261,
+slice C).** Before a request reaches any session, ask_scope.mentions()
+settles the names in it to parties and places, from the list and from
+System/context.md; a name that fits two entries is asked about (`kind:
+"clarify"`) and nothing is read. For a question about what is *in* the
+records the session proposes a `find` instead of actions: a route
+(meetings, knowledge, a thread, Garrick's docs) and the words to look for.
+ask_scope.scope() checks it against the list, ask_scope.search() reads files
+inside that scope only, Sources/ documents through extract.py among them,
+and a second session answers from the passages, on GARRICK_ASK_ANSWER_TIER
+(`sonnet` unless set). It has no tools and proposes nothing: its reply is
+said, never carried out, so text inside a record can never become an
+action. It holds nothing but its brief, the list and the records admitted:
+no settings but the deny profile (`--setting-sources ""`), no memory
+(CLAUDE_CODE_DISABLE_AUTO_MEMORY), and an empty folder outside the
+workspace as its working folder, made when it starts, removed when it stops. The find and its answer are one call against the caps and one line
+in the ledger. With Codex a question gets a plain reply that answers need
+Claude.
+
+**The wall reset.** Asker.admit() is the only way a record reaches a
+prompt, and it adds the parties of what it admits to Asker.seen: a meeting
+its `parties:`, a project or a thread its hub's `party:`, Knowledge and the
+docs none. Before a request is sent, and again before anything is read, a
+party walled from one in `seen` (any party at all, for a question across
+every zone) stops both sessions and clears everything they were told: the
+results, the questions waiting for a yes, `seen`, the records admitted, and
+which process was given the list. The new processes get the new request
+only, and the reply carries `"reset": "wall"`. A question across every zone
+reads within one group of parties no wall divides; when a wall held records
+back, the answer ends with the rules' sentence for it, word for word, and
+says nothing of what it held.
+
 **A request sent again is asked about, not done twice.** The record
 recognises one that repeats an action it holds (operations.py): past a double
 click's window, the action comes back as a question, which goes into
@@ -108,7 +140,10 @@ the same action again with `"again": true`, and this file adds the `confirm`
 that names the action asked about. Only a question from the turn before can
 be answered that way; anything else asks again. One line per request
 goes in ask.log in the jobs folder, and each action page_action.py runs in
-page-actions.log, as from the page.
+page-actions.log, as from the page. The line holds the time, the op, the
+kind of reply, the milliseconds and the tokens, and no request or answer
+text: an answer carries what the records say. GARRICK_ASK_LOG_TEXT=1 adds
+the first 200 characters of the request, the reply and what was done.
 
 Standard library only, Python 3.9 or later.
 """
@@ -124,10 +159,12 @@ import json
 import os
 import re
 import select
+import shutil
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -137,9 +174,12 @@ sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 BRIEF = HERE / "ask-brief.md"
+ANSWER_BRIEF = HERE / "ask-answer-brief.md"
 JOB = "ask"
 FLAG = "ask"
 DEFAULT_TIER = "haiku"
+DEFAULT_ANSWER_TIER = "sonnet"
+LOG_TEXT = "GARRICK_ASK_LOG_TEXT"   # =1: ask.log keeps the request's and the reply's text too
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
@@ -163,6 +203,9 @@ EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 GAVE_UP = ("The ask server did not answer in %s. The change may still be on its way: an action that commits waits "
            "for the zone's wall check. Look at the Todo list, or the thread, before you ask again. If it went "
            "through, asking again says so, and asks before doing it a second time.")
+NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does commands: open, park, wake, "
+               "and add a line to a Todo list.")
+NOTHING_FOUND = "Nothing in the records answers that."
 
 
 class Bad(Exception):
@@ -224,6 +267,17 @@ def page_action():
     return _PA
 
 
+_SCOPE = None
+
+
+def scope_lib():
+    """ask_scope.py, beside this file: the names in a request, the scope of an answer and the records inside it."""
+    global _SCOPE
+    if _SCOPE is None:
+        _SCOPE = _load("garrick_ask_scope", HERE / "ask_scope.py")
+    return _SCOPE
+
+
 # Seconds a turn may take, and a client waits for the server's answer: both
 # from operations.py's clock, through page_action.py, which derives the wait
 # from the slowest request the server can be given, two turns and an action
@@ -273,11 +327,16 @@ def launcher_on(ws: Path, app: str) -> bool:
     return True
 
 
-def tier() -> str:
-    chosen = os.environ.get("GARRICK_ASK_TIER", DEFAULT_TIER).strip().lower() or DEFAULT_TIER
+def tier(name: str = "GARRICK_ASK_TIER", default: str = DEFAULT_TIER) -> str:
+    chosen = os.environ.get(name, default).strip().lower() or default
     if chosen not in agent().TIERS:
-        raise Bad("GARRICK_ASK_TIER is %r; use %s" % (chosen, ", ".join(agent().TIERS)))
+        raise Bad("%s is %r; use %s" % (name, chosen, ", ".join(agent().TIERS)))
     return chosen
+
+
+def answer_tier() -> str:
+    """The answers' tier: a second session, since one `claude -p` runs one model."""
+    return tier("GARRICK_ASK_ANSWER_TIER", DEFAULT_ANSWER_TIER)
 
 
 # ---------------------------------------------------------------- the workspace list
@@ -360,6 +419,26 @@ def parse(text: str) -> Tuple[str, list]:
     return say.strip(), do
 
 
+def wanted(text: str) -> Optional[dict]:
+    """The `find` the answer proposes, when it is a question for the records,
+    or None. Whatever it holds is checked by ask_scope.scope() before anything is read."""
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        obj = json.loads(m.group(0)) if m else None
+    except ValueError:
+        return None
+    return obj["find"] if isinstance(obj, dict) and "find" in obj else None
+
+
+def said(text: str) -> str:
+    """An answer's sentence: its JSON's `say`, or the text itself when the
+    session answered in plain words. Anything else it holds is dropped."""
+    try:
+        return parse(text)[0]
+    except Bad:
+        return (text or "").strip()
+
+
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
     """One proposed action, checked against the workspace list: ("act", a
     page_action request) or ("launch", what the app opens). Raises Bad."""
@@ -410,13 +489,39 @@ def cost_of(event: dict) -> Optional[float]:
     return float(v) if isinstance(v, (int, float)) else None
 
 
+def bill(entries) -> None:
+    """One ledger line for one request, however many turns it took: a find
+    and its answer are one call against the caps (#261). Each entry is a
+    turn's (start, tier, outcome, seconds, exit code), as ClaudeSession.last
+    holds it; the line takes the last turn's tier."""
+    entries = [e for e in entries if e]
+    if not entries:
+        return
+    a = agent()
+    costs = [e[2]["cost_usd"] for e in entries if isinstance(e[2].get("cost_usd"), (int, float))]
+    turns = [e[2]["turns"] for e in entries if isinstance(e[2].get("turns"), int)]
+    outcome = {"turns": sum(turns) if turns else None, "cost_usd": sum(costs) if costs else None,
+               "denied": sorted({d for e in entries for d in e[2].get("denied") or []}),
+               "subtype": entries[-1][2].get("subtype")}
+    a.append_ledger(a.ledger_path(), a.ledger_entry(entries[0][0], JOB, entries[-1][1], outcome,
+                                                    sum(e[3] for e in entries), max(e[4] for e in entries)))
+
+
 class ClaudeSession:
     """One `claude -p` kept open in stream-json mode, every turn counted against agent.py's caps."""
 
     remembers = True
 
-    def __init__(self, ws: Path, tier_: str):
-        self.ws, self.tier = ws, tier_
+    def __init__(self, ws: Path, tier_: str, brief: Path = BRIEF, sealed: bool = False):
+        self.ws, self.tier, self.brief = ws, tier_, brief
+        # The answer session's: it holds its brief, the list and the records
+        # admitted, and nothing else. No settings but the deny profile, so no
+        # CLAUDE.md, rules or context of the user's; no memory; and a folder
+        # of its own, empty and outside the workspace, made when it starts and
+        # removed when it stops, so nothing is keyed to the workspace either.
+        self.sealed = sealed
+        self.home = None
+        self.last = None            # the last turn's ledger entry, when its caller writes the line
         self.proc = None
         self.pending = b""          # what was read past the last whole line
         self.started = 0.0
@@ -445,6 +550,9 @@ class ClaudeSession:
                     pipe.close()
                 except OSError:
                     pass
+        if self.home is not None:
+            shutil.rmtree(self.home, ignore_errors=True)
+            self.home = None
         self.proc, self.turns, self.spent, self.pending = None, 0, 0.0, b""
 
     def command(self) -> List[str]:
@@ -454,8 +562,9 @@ class ClaudeSession:
             raise Bad("the deny profile %s %s, so nothing was asked" % (a.PROFILE.name, problem))
         cmd = [claude_binary(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--model", self.tier, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-               "--permission-mode", "default", "--settings", str(a.PROFILE), "--setting-sources", "user,project",
-               "--system-prompt", BRIEF.read_text(encoding="utf-8")]
+               "--permission-mode", "default", "--settings", str(a.PROFILE),
+               "--setting-sources", "" if self.sealed else "user,project",
+               "--system-prompt", self.brief.read_text(encoding="utf-8")]
         budget = a._number("GARRICK_MAX_CALL_USD", a.DEFAULT_MAX_CALL_USD)
         if budget > 0:
             cmd += ["--max-budget-usd", "%g" % budget]
@@ -464,10 +573,18 @@ class ClaudeSession:
     def start(self) -> None:
         self.stop()
         cmd = self.command()
+        cwd, env = str(self.ws), None
+        if self.sealed:
+            self.home = Path(tempfile.mkdtemp(prefix="garrick-ask-")).resolve()
+            if self.home == Path(self.ws).resolve() or Path(self.ws).resolve() in self.home.parents:
+                self.stop()
+                raise Bad("the temporary folder is inside the workspace, so the answer session was not started")
+            cwd, env = str(self.home), dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         try:
-            self.proc = subprocess.Popen(cmd, cwd=str(self.ws), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL)
         except OSError:
+            self.stop()
             raise Bad("claude is not installed, or not on PATH")
         self.started = time.time()
 
@@ -507,11 +624,15 @@ class ClaudeSession:
         line, self.pending = self.pending.split(b"\n", 1)
         return line.decode("utf-8", "replace")
 
-    def turn(self, text: str) -> Tuple[str, dict]:
-        """One message and its result: (text, usage). Refused, calling nothing, past a cap."""
+    def turn(self, text: str, cap: bool = True, record: bool = True) -> Tuple[str, dict]:
+        """One message and its result: (text, usage). Refused, calling nothing,
+        past a cap, unless `cap` is off for the second turn of one request.
+        With `record` off the turn's ledger entry is left in `last`, for the
+        caller to write as part of the request's one line, error or not."""
         a = agent()
+        self.last = None
         ledger, now = a.ledger_path(), time.time()
-        reason = a.cap_reason(a.read_ledger(ledger, now), now, a.caps())
+        reason = a.cap_reason(a.read_ledger(ledger, now), now, a.caps()) if cap else None
         if reason:
             a.append_ledger(ledger, a.ledger_entry(now, JOB, self.tier, {}, 0, a.EXIT_CAP, refused=reason))
             raise Bad("not asked: %s. Raise GARRICK_CAP_* or wait" % reason)
@@ -530,7 +651,9 @@ class ClaudeSession:
                     break
         except Stopped:
             # A call all the same, against the caps: what it cost so far is not reported.
-            a.append_ledger(ledger, a.ledger_entry(start, JOB, self.tier, {"subtype": "stopped"}, time.time() - start, 1))
+            self.last = (start, self.tier, {"subtype": "stopped"}, time.time() - start, 1)
+            if record:
+                bill([self.last])
             raise
         self.turns += 1
         # The cost Claude reports runs for the whole session; the ledger wants this request's.
@@ -540,9 +663,10 @@ class ClaudeSession:
             self.spent = total
         denied = sorted({d.get("tool_name") for d in event.get("permission_denials") or [] if isinstance(d, dict)} - {None})
         code = 1 if event.get("is_error") else 0
-        a.append_ledger(ledger, a.ledger_entry(start, JOB, self.tier, {"turns": event.get("num_turns"), "cost_usd": cost,
-                                                                       "denied": denied, "subtype": event.get("subtype")},
-                                               time.time() - start, code))
+        self.last = (start, self.tier, {"turns": event.get("num_turns"), "cost_usd": cost, "denied": denied,
+                                        "subtype": event.get("subtype")}, time.time() - start, code)
+        if record:
+            bill([self.last])
         if code:
             self.stop()             # a spent budget would refuse every turn after it; the next request starts afresh
             raise Bad("the assistant reported an error: %s; the next request starts a new session"
@@ -555,6 +679,7 @@ class OnceSession:
     read-only, with the last few exchanges given again."""
 
     remembers = False
+    last = None                     # agent.run() writes its own ledger line
 
     def __init__(self, ws: Path, tier_: str):
         self.ws, self.tier = ws, tier_
@@ -579,7 +704,7 @@ class OnceSession:
         if time.time() - self.started > CLEAR_AFTER:
             self.start()
 
-    def turn(self, text: str) -> Tuple[str, dict]:
+    def turn(self, text: str, cap: bool = True, record: bool = True) -> Tuple[str, dict]:
         self.ready()
         before = "".join("<earlier-request>\n%s\n</earlier-request>\n<earlier-answer>\n%s\n</earlier-answer>\n" % h
                          for h in self.history[-HISTORY:])
@@ -610,6 +735,14 @@ class Asker:
         self.told = None            # the `started` of the process last given the whole list
         self.results = ""           # what the last actions did, for the next turn
         self.asked = {}             # each request the last turn was asked about: the action to confirm
+        self.answers = None         # the second session, which answers from records: started on the first question
+        self.answer_sent = None     # its `sent` and `told`, as above
+        self.answer_told = None
+        self.seen = set()           # the parties whose records the answer process holds (admit())
+        self.seen_for = None        # the `started` of the process `seen` describes
+        self.passages = []          # each record admitted to that process, its id and path
+        self.unclear = None         # a request the box asked about, waiting for the answer that settles it
+        self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
@@ -617,7 +750,26 @@ class Asker:
             return off()
         if self.session is None:
             self.session = session_for(self.ws)
+        sc = scope_lib()
+        lib = sc.lib(self.ws)
+        if lib is None:
+            raise Bad("ask needs garrick_lib.py in System/tools/")
+        self.ctx = lib.load_context(self.ws)
         names = scan(self.ws)
+        # The names first, before any session hears the request: one that
+        # fits two entries is asked about, and nothing is read or sent.
+        earlier = self.unclear
+        heard = request if earlier is None else earlier + "\n" + request
+        named = sc.mentions(self.ws, heard, names, self.ctx, lib)
+        if named.question:
+            self.unclear = heard[-MAX_REQUEST:]
+            return clarify(named.question)
+        self.unclear = None
+        reset = self.crosses(named.parties)
+        if reset:
+            self.progress("Starting a fresh session")
+            self.reset()
+            earlier, heard = None, request      # the new processes get the new request alone
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -628,16 +780,158 @@ class Asker:
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
+        if earlier is not None:                     # the request the box asked about, which this one answers
+            parts.append("<earlier-request>\n%s\n</earlier-request>" % earlier[:MAX_REQUEST])
         parts.append("<request>\n%s\n</request>" % request[:MAX_REQUEST])
-        text, usage = self.session.turn("\n".join(parts))
-        self.sent, self.told = sent, self.session.started
-        say, do = parse(text)
-        if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
-            # It cannot know what is open; the brief says so, and this holds it to that once more.
-            text, usage = self.session.turn("<correction>You cannot know what is open. Send the open action for "
-                                            "the request above; never answer \"already open\".</correction>")
-            say, do = parse(text)
-        return self.carry_out(say, do, names, usage)
+        turns = []
+        try:
+            try:
+                text, usage = self.session.turn("\n".join(parts), record=False)
+            finally:
+                turns.append(getattr(self.session, "last", None))
+            self.sent, self.told = sent, self.session.started
+            find = wanted(text)
+            if find is not None:
+                out, again = self.answer(heard, find, named, names, today, turns, usage)
+                reset = reset or again
+            else:
+                bill(turns)
+                turns = []
+                say, do = parse(text)
+                if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
+                    # It cannot know what is open; the brief says so, and this holds it to that once more.
+                    text, usage = self.session.turn("<correction>You cannot know what is open. Send the open action "
+                                                    "for the request above; never answer \"already open\".</correction>")
+                    say, do = parse(text)
+                out = self.carry_out(say, do, names, usage)
+        finally:
+            bill(turns)
+        if reset:
+            out["reset"] = "wall"
+        return out
+
+    def answer(self, request: str, find: dict, named, names, today: Optional[dt.date], turns: list,
+               usage: dict) -> Tuple[dict, bool]:
+        """A question, answered from the records inside its scope by the second
+        session: (the reply, whether a wall reset ran). Its turn goes in
+        `turns`, so the request is one line in the ledger. What it says is
+        said; it never carries out an action, whatever a record holds."""
+        sc = scope_lib()
+        lib = sc.lib(self.ws)
+        self.results, self.asked = "", {}
+        if not self.session.remembers:
+            return reply(NEED_CLAUDE), False
+        self.progress("Finding the records")
+        try:
+            where = sc.scope(self.ws, find, named, names, self.ctx, lib)
+        except sc.Unclear as e:
+            self.unclear = request[-MAX_REQUEST:]
+            return clarify(str(e)), False
+        except sc.Refused as e:
+            raise Bad(str(e))
+        reset = self.crosses(where.parties, where.every)
+        if reset:                                   # before anything is read
+            self.progress("Starting a fresh session")
+            self.reset()
+        records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
+        if not records and not self.passages:       # nothing to read, and nothing read before it
+            return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
+        if self.answers is None:
+            self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF, sealed=True)
+        self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
+        self.answers.ready()
+        if self.answers.started != self.seen_for:   # a new process: what the last one held went with it
+            self.seen, self.passages, self.seen_for = set(), [], self.answers.started
+        listing = render(names)
+        sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
+        whole = sent != self.answer_sent or self.answers.started != self.answer_told
+        parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
+                 "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>",
+                 "<request>\n%s\n</request>" % request[-MAX_REQUEST:],
+                 self.admit(records, {p for r in records for p in r["parties"]})]
+        self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
+        try:
+            text, more = self.answers.turn("\n".join(parts), cap=False, record=False)
+        finally:
+            self.answers.watch = None
+            turns.append(self.answers.last)
+        self.answer_sent, self.answer_told = sent, self.answers.started
+        say = said(text)
+        if back:
+            say = (say + " " + self.wall()).strip()
+        out = reply(say, "answer")
+        out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
+                        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
+        return out, reset
+
+    def admit(self, passages: List[dict], parties) -> str:
+        """The only way a record reaches a prompt (#261, section 3): the
+        passages as `<records>`, each with an id, and their parties added to
+        `seen`, the parties whose material the answer process holds. A
+        passage of no party, Knowledge or the docs, adds none. Refuses what a
+        wall divides from what the process holds: the reset runs before
+        anything is read, so this never happens unless that order breaks."""
+        lib = scope_lib().lib(self.ws)
+        held = self.holding()
+        adding = set(parties) | {p for r in passages for p in r["parties"]}
+        if scope_lib().any_wall(self.ctx, adding, adding | held, lib):
+            raise Bad("a wall stands between these records and what the session holds, so none was read")
+        self.seen |= adding
+        rows = ["<records>"]
+        for r in passages:
+            rid = "r%d" % (len(self.passages) + 1)
+            self.passages.append({"id": rid, "path": r["path"]})
+            rows.append('<record id="%s" path="%s"%s>' % (rid, attr(r["path"]),
+                                                          ' date="%s"' % attr(r["date"]) if r.get("date") else ""))
+            rows += [inert(r["text"]), "</record>"]
+        rows.append("</records>")
+        return "\n".join(rows)
+
+    def holding(self) -> set:
+        """The parties whose records the answer process holds: none once that
+        process has ended or another has taken its place."""
+        s = self.answers
+        if s is None or not s.alive() or s.started != self.seen_for:
+            self.seen, self.passages = set(), []
+        return self.seen
+
+    def crosses(self, parties, every: bool = False) -> bool:
+        """Whether reading for these parties needs a fresh process first: a
+        wall between one of them and a party the answer process holds, or,
+        for a question across every zone, any party held at all."""
+        held = self.holding()
+        if every:
+            return bool(held)
+        return scope_lib().any_wall(self.ctx, parties, held, scope_lib().lib(self.ws))
+
+    def reset(self) -> None:
+        """Both sessions stopped, and everything they were told cleared: what
+        the last actions did, the questions waiting for a yes, the parties and
+        records held, a request asked about, and which process was given the
+        list, so the next is given all of it. New conversation, and the wall
+        reset. The command session starts again at once, as `reset` always
+        did; the answer session on the next question."""
+        for s in (self.answers, self.session):
+            if s is not None:
+                s.stop()
+        self.results, self.asked, self.unclear = "", {}, None
+        self.seen, self.seen_for, self.passages = set(), None, []
+        self.sent = self.told = self.answer_sent = self.answer_told = None
+        if self.session is not None:
+            self.session.start()
+
+    def stop(self) -> None:
+        for s in (self.answers, self.session):
+            if s is not None:
+                s.stop()
+
+    def wall(self) -> str:
+        """System/rules.md's sentence for a wall that held something back, as
+        operations.py holds it (#172): this file keeps no copy of its own."""
+        said = page_action().wall_refusal(self.ws)
+        if not said:
+            raise Bad("a wall held records back, and this workspace's operations.py has no sentence to say so")
+        return said
 
     def revive(self) -> bool:
         """Start a warm session that is not running: never replace a live one.
@@ -689,7 +983,7 @@ class Asker:
         self.results = "\n".join(done)
         if questions and len(questions) == len(do):
             say = questions[0]                      # what the session said it did did not happen: the question did
-        return {"say": say, "done": done, "launch": launch, "ok": ok,
+        return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok,
                 "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
 
 
@@ -700,8 +994,30 @@ def canon(item: dict) -> str:
 
 
 def off() -> dict:
-    return {"say": "Ask is a preview feature, and it is off. Switch it on in System/garrick-flags.json.",
+    return {"kind": "command", "say": "Ask is a preview feature, and it is off. Switch it on in System/garrick-flags.json.",
             "done": [], "launch": [], "ok": False}
+
+
+def reply(say: str, kind: str = "command") -> dict:
+    """A reply that did nothing: the line protocol's final line (#261), `kind` always set."""
+    return {"kind": kind, "say": say, "done": [], "launch": [], "ok": True}
+
+
+def clarify(question: str) -> dict:
+    """One question about a name or a scope, asked before anything is read or done."""
+    return reply(question, "clarify")
+
+
+# The tags a message is built from: a record's own text never opens or closes one.
+_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|today|last-results|correction)\b)", re.I)
+
+
+def inert(text: str) -> str:
+    return _TAGS.sub("&lt;", text)
+
+
+def attr(value: str) -> str:
+    return str(value).replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
 
 
 # ---------------------------------------------------------------- the server
@@ -753,6 +1069,20 @@ def request_line(conn) -> bytes:
             break
         got += b
     return bytes(got)
+
+
+def log_line(request: str, out: dict) -> str:
+    """ask.log's line for one request: the op, the kind of reply, whether a
+    wall reset ran, the milliseconds and the tokens. No request or answer
+    text, since an answer carries what the records say, unless LOG_TEXT is 1."""
+    line = "ask %s%s%s %d ms %s" % (out.get("kind", "-"), " reset" if out.get("reset") else "",
+                                    "" if out.get("ok", True) else " not ok", out.get("ms", 0),
+                                    json.dumps(out.get("usage", {})))
+    if os.environ.get(LOG_TEXT) == "1":
+        line += "  %s  ->  %s %s" % (json.dumps(request[:200], ensure_ascii=False),
+                                     json.dumps(out.get("say", ""), ensure_ascii=False),
+                                     json.dumps(out.get("done", []), ensure_ascii=False))
+    return line
 
 
 def send(conn, out: dict) -> None:
@@ -863,9 +1193,7 @@ def serve_locked(ws: Path, path: Path) -> None:
                             log("session restarted")
                         out = {"say": "Kept.", "leased": True}
                     elif op == "reset":
-                        if asker.session is not None:
-                            asker.session.start()
-                        asker.results = ""
+                        asker.reset()
                         out = {"say": "A fresh conversation."}
                     elif op == "status":
                         s = asker.session
@@ -890,14 +1218,10 @@ def serve_locked(ws: Path, path: Path) -> None:
                     out["kind"] = "command"
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
-                    log("%s  ->  %s %s %d ms %s" % (json.dumps(str(msg.get("text", ""))[:200], ensure_ascii=False),
-                                                  json.dumps(out.get("say", ""), ensure_ascii=False),
-                                                  json.dumps(out.get("done", []), ensure_ascii=False), out["ms"],
-                                                  json.dumps(out.get("usage", {}))))
+                    log(log_line(str(msg.get("text", "")), out))
                 send(conn, out)
     finally:
-        if asker.session is not None:
-            asker.session.stop()
+        asker.stop()
         srv.close()
         try:
             if path.stat().st_ino == mine:      # never the socket of a server started since

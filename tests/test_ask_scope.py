@@ -38,8 +38,9 @@ ACME, BIRCH, KNOWN, SOURCE = "ACMEMARK31", "BIRCHMARK47", "KNOWMARK59", "SOURCEM
 # A stand-in for `claude -p --input-format stream-json`. FAKE_ANSWERS holds,
 # for each model, [needle, answer] pairs: a message gets the answer of the
 # first pair whose needle it holds, else a plain one. Each process adds a
-# line to FAKE_ARGS.procs, its pid and model, and each message to
-# FAKE_ARGS.msgs, with its pid and model.
+# line to FAKE_ARGS.procs, its pid, model, argv, the folder it runs in and
+# what that folder holds, and the two variables the answer session's
+# isolation turns on; and each message to FAKE_ARGS.msgs, with its pid and model.
 FAKE_CLAUDE = textwrap.dedent("""\
     #!%s
     import json, os, sys, time
@@ -47,7 +48,10 @@ FAKE_CLAUDE = textwrap.dedent("""\
     model = argv[argv.index("--model") + 1]
     base = os.environ["FAKE_ARGS"]
     with open(base + ".procs", "a") as f:
-        f.write(json.dumps({"pid": os.getpid(), "model": model, "argv": argv}) + "\\n")
+        f.write(json.dumps({"pid": os.getpid(), "model": model, "argv": argv, "cwd": os.getcwd(),
+                            "files": sorted(os.listdir(".")),
+                            "env": {k: os.environ.get(k) for k in ("CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+                                                                   "GARRICK_BACKGROUND")}}) + "\\n")
     rules = json.load(open(os.environ["FAKE_ANSWERS"])).get(model, [])
     plain = '{"say": "ok", "do": []}' if model == "haiku" else '{"say": "Answered."}'
     n = 0
@@ -460,6 +464,151 @@ class TestScopeFirst(AnswerCase):
         self.assertNotIn("UNFILEDMARK", "\n".join(self.msgs()))
 
 
+class TestFailsClosed(AnswerCase):
+    """The review of slice C: wherever ask_scope cannot state all of a
+    record's parties, it reads nothing, even where check.py only warns."""
+
+    SOURCES = property(lambda self: self.root / "Wikis" / "Meetings" / "wiki" / "sources")
+
+    def commit(self):
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "--allow-empty", "-m", "more records")
+
+    def rules(self, extra):
+        self.answers.write_text(json.dumps({"haiku": extra + HAIKU}))
+
+    def together(self, *marks):
+        """The processes that were sent every one of these."""
+        return [p["pid"] for p in self.procs() if all(m in "\n".join(self.msgs(p["pid"])) for m in marks)]
+
+    def test_parties_that_are_not_a_list_of_known_tags_are_never_read(self):
+        for name, parties, mark in (("260313-acme-link.md", '"[[acme]]"', "ACMELINK1"),
+                                    ("260314-both-string.md", "acme, birch", "BOTHSTR2"),
+                                    ("260315-name.md", "[Acme Corp]", "ACMENAME3")):
+            write(self.SOURCES / name, meeting_page("Work", parties, name) + "\nNotes. %s\n" % mark)
+        self.commit()
+        self.asker().ask("What did I discuss this week?")
+        said = "\n".join(self.msgs())
+        for mark in ("ACMELINK1", "BOTHSTR2", "ACMENAME3"):
+            self.assertNotIn(mark, said)
+        self.assertTrue(BIRCH in said)                                     # the finished pages still are
+
+    def test_a_page_on_both_sides_of_a_wall_is_never_read(self):
+        write(self.SOURCES / "260316-both.md", meeting_page("Work", "[acme, birch]", "both") + "\nBOTHLIST4\n")
+        self.commit()
+        self.asker().ask("What did I discuss this week?")
+        self.assertEqual([], self.together("BOTHLIST4"))
+
+    def test_a_meeting_with_party_alone_is_unfinished(self):
+        write(self.SOURCES / "260317-unfinished.md",
+              "---\ntitle: Unfinished\ntype: meeting\ndate: 2026-03-17\nparty: acme\n---\n\nUNFINISHED5 pallet.\n")
+        self.commit()
+        self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual([], self.together("UNFINISHED5"))
+        self.assertTrue(self.together(ACME))                               # a finished one is read
+
+    def test_a_person_page_stands_on_its_party_alone(self):
+        lib = ask.scope_lib().lib(self.root)
+        ctx = lib.load_context(self.root)
+        page = lambda fm: ask.scope_lib().page_parties(lib.parse_frontmatter_text("---\n%s\n---\n" % fm), ctx, lib)  # noqa: E731
+        self.assertEqual(["acme"], page("type: person\nparty: acme"))
+        self.assertEqual(["acme"], page("type: meeting\nzone: Work\nparties: [acme]"))
+        for fm in ("type: meeting\nparty: acme", "type: person\nparty: \"[[acme]]\"", "zone: Work\nparties: acme",
+                   "type: meeting\nparties: [acme]", "zone: Work\nparties: [acme, nobody]"):
+            self.assertEqual([], page(fm), fm)
+
+    def test_a_knowledge_page_that_carries_a_party_is_not_published(self):
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "sources" / "misfiled.md",
+              "---\ntitle: Misfiled\nparties: [birch]\nzone: Work\n---\n\nPallet note from Theo. KNOWBIRCH6\n")
+        self.commit()
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        a.ask("What does the supply chain report say about pallets?")
+        self.assertEqual([], self.together("KNOWBIRCH6"))
+        self.assertTrue(self.together(KNOWN))
+
+    def test_a_thread_of_another_party_than_its_hub_is_read_as_both(self):
+        write(self.work / "Acme Review" / "Threads" / "Side Deal" / "Side Deal.md",
+              thread_note("Acme Review", "Side Deal", "birch", "Birch side terms. BIRCHSIDE88"))
+        self.commit()
+        self.rules([["<request>\nWhere does Side Deal", find("thread", [], project="Acme Review", thread="Side Deal")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        out = a.ask("Where does Side Deal stand?")
+        self.assertEqual("wall", out.get("reset"))                         # the thread's party, walled from Acme's
+        self.assertEqual([], self.together(ACME, "BIRCHSIDE88"))
+        self.assertEqual([], self.together("BIRCHSIDE88"))                 # on both sides of the wall: never read
+        lib = ask.scope_lib().lib(self.root)
+        self.assertEqual({"acme", "birch"}, set(ask.scope_lib().place_parties(self.root, "Work", "Acme Review", "Side Deal", lib)))
+
+    def test_a_project_with_no_party_is_refused_and_nothing_read(self):
+        from fixtures import project_hub
+        root = self.work / "Loose Ends"
+        write(root / "Loose Ends.md", project_hub("Work", "Loose Ends", party="", threads=["Notes"]))
+        write(root / "Threads" / "Notes" / "Notes.md", thread_note("Loose Ends", "Notes", "", "Notes."))
+        write(root / "Sources" / "memo.md", "Theo's memo for Birch. BIRCHLOOSE99\n")
+        self.commit()
+        self.rules([["<request>\nWhat memo is in Loose", find("thread", ["memo"], project="Loose Ends")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        with self.assertRaisesRegex(ask.Bad, "Loose Ends names no party in its hub, so nothing in it is read"):
+            a.ask("What memo is in Loose Ends?")
+        self.assertEqual([], self.together("BIRCHLOOSE99"))
+        self.assertEqual({"acme"}, a.seen)
+
+    def test_the_answer_session_holds_only_its_brief_the_list_and_the_records(self):
+        os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        (cmd,) = [p for p in self.procs() if p["model"] == "haiku"]
+        (ans,) = [p for p in self.procs() if p["model"] == "sonnet"]
+        flag = lambda p, f: p["argv"][p["argv"].index(f) + 1]  # noqa: E731
+        self.assertEqual("", flag(ans, "--setting-sources"))               # no CLAUDE.md, rules or context of the user's
+        self.assertEqual("user,project", flag(cmd, "--setting-sources"))   # the command session as it was
+        self.assertEqual(str(ask.agent().PROFILE), flag(ans, "--settings"))
+        self.assertEqual("", flag(ans, "--tools"))
+        for f in ("--strict-mcp-config", "--no-session-persistence"):
+            self.assertIn(f, ans["argv"])
+        self.assertNotIn("--bare", ans["argv"])
+        self.assertEqual({"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "GARRICK_BACKGROUND": "ask"}, ans["env"])
+        self.assertIsNone(cmd["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"])
+        self.assertEqual(str(self.root), cmd["cwd"])
+        home = Path(ans["cwd"])
+        self.assertEqual([], ans["files"])                                 # an empty folder
+        self.assertNotIn(self.root.resolve(), [home, *home.parents])       # outside the workspace
+        self.assertEqual(home, a.answers.home)
+        a.ask("What does the supply chain report say about pallets?")
+        self.assertEqual(1, len([p for p in self.procs() if p["model"] == "sonnet"]))
+        a.stop()
+        self.assertFalse(home.exists())                                    # removed when it stops
+
+    def test_the_command_session_never_hears_a_record(self):
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        a = self.asker()
+        for q in ("What did Dana say about the pallet quote?", "What are the pallet terms in Acme Review?",
+                  "What does the supply chain report say about pallets?", "What did I discuss this week?",
+                  "What did Theo say about the pallet launch?", "Where does Pricing stand?", "The Acme one."):
+            a.ask(q)
+        said = [m for p in self.procs() if p["model"] == "haiku" for m in self.msgs(p["pid"])]
+        self.assertTrue(said)
+        for m in said:
+            for mark in (ACME, BIRCH, KNOWN, SOURCE, "Drafting.", "<records>"):
+                self.assertNotIn(mark, m)
+
+    def test_an_earlier_request_does_not_survive_a_wall_reset(self):
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        before = {p["pid"] for p in self.procs()}
+        self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+        self.assertEqual("wall", a.ask("The Birch one.")["reset"])
+        new = [m for p in self.procs() if p["pid"] not in before for m in self.msgs(p["pid"])]
+        self.assertTrue(new)
+        for m in new:
+            self.assertNotIn("<earlier-request>", m)
+            self.assertNotIn("Where does Pricing stand?", m)
+
+
 class TestCodex(base.AskCase):
     """Question 13: with Codex, commands as before, and a question gets a plain reply."""
 
@@ -506,12 +655,13 @@ class TestProtocol(unittest.TestCase):
     def test_pick_reads_within_one_group(self):
         sc = ask.scope_lib()
         lib = sc.lib(REPO)
-        ctx = {"walls": {frozenset(("acme", "birch"))}}
+        ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
         rec = lambda *p: {"parties": list(p)}  # noqa: E731
         self.assertEqual(([rec("birch"), rec()], True), sc.pick([rec("birch"), rec("acme"), rec()], set(), ctx, lib))
         self.assertEqual(([rec("acme")], True), sc.pick([rec("birch"), rec("acme")], {"acme"}, ctx, lib))
         self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib))     # a page on both sides
         self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1))
+        self.assertEqual(([rec("birch")], False), sc.pick([rec("[[acme]]"), rec("acme corp"), rec("birch")], set(), ctx, lib))
 
 
 if __name__ == "__main__":

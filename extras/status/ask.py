@@ -112,7 +112,10 @@ inside that scope only, Sources/ documents through extract.py among them,
 and a second session answers from the passages, on GARRICK_ASK_ANSWER_TIER
 (`sonnet` unless set). It has no tools and proposes nothing: its reply is
 said, never carried out, so text inside a record can never become an
-action. The find and its answer are one call against the caps and one line
+action. It holds nothing but its brief, the list and the records admitted:
+no settings but the deny profile (`--setting-sources ""`), no memory
+(CLAUDE_CODE_DISABLE_AUTO_MEMORY), and an empty folder outside the
+workspace as its working folder, made when it starts, removed when it stops. The find and its answer are one call against the caps and one line
 in the ledger. With Codex a question gets a plain reply that answers need
 Claude.
 
@@ -156,10 +159,12 @@ import json
 import os
 import re
 import select
+import shutil
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -507,8 +512,15 @@ class ClaudeSession:
 
     remembers = True
 
-    def __init__(self, ws: Path, tier_: str, brief: Path = BRIEF):
+    def __init__(self, ws: Path, tier_: str, brief: Path = BRIEF, sealed: bool = False):
         self.ws, self.tier, self.brief = ws, tier_, brief
+        # The answer session's: it holds its brief, the list and the records
+        # admitted, and nothing else. No settings but the deny profile, so no
+        # CLAUDE.md, rules or context of the user's; no memory; and a folder
+        # of its own, empty and outside the workspace, made when it starts and
+        # removed when it stops, so nothing is keyed to the workspace either.
+        self.sealed = sealed
+        self.home = None
         self.last = None            # the last turn's ledger entry, when its caller writes the line
         self.proc = None
         self.pending = b""          # what was read past the last whole line
@@ -538,6 +550,9 @@ class ClaudeSession:
                     pipe.close()
                 except OSError:
                     pass
+        if self.home is not None:
+            shutil.rmtree(self.home, ignore_errors=True)
+            self.home = None
         self.proc, self.turns, self.spent, self.pending = None, 0, 0.0, b""
 
     def command(self) -> List[str]:
@@ -547,7 +562,8 @@ class ClaudeSession:
             raise Bad("the deny profile %s %s, so nothing was asked" % (a.PROFILE.name, problem))
         cmd = [claude_binary(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--model", self.tier, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-               "--permission-mode", "default", "--settings", str(a.PROFILE), "--setting-sources", "user,project",
+               "--permission-mode", "default", "--settings", str(a.PROFILE),
+               "--setting-sources", "" if self.sealed else "user,project",
                "--system-prompt", self.brief.read_text(encoding="utf-8")]
         budget = a._number("GARRICK_MAX_CALL_USD", a.DEFAULT_MAX_CALL_USD)
         if budget > 0:
@@ -557,10 +573,18 @@ class ClaudeSession:
     def start(self) -> None:
         self.stop()
         cmd = self.command()
+        cwd, env = str(self.ws), None
+        if self.sealed:
+            self.home = Path(tempfile.mkdtemp(prefix="garrick-ask-")).resolve()
+            if self.home == Path(self.ws).resolve() or Path(self.ws).resolve() in self.home.parents:
+                self.stop()
+                raise Bad("the temporary folder is inside the workspace, so the answer session was not started")
+            cwd, env = str(self.home), dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         try:
-            self.proc = subprocess.Popen(cmd, cwd=str(self.ws), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL)
         except OSError:
+            self.stop()
             raise Bad("claude is not installed, or not on PATH")
         self.started = time.time()
 
@@ -745,6 +769,7 @@ class Asker:
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
+            earlier, heard = None, request      # the new processes get the new request alone
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -812,7 +837,7 @@ class Asker:
         if not records and not self.passages:       # nothing to read, and nothing read before it
             return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
         if self.answers is None:
-            self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
+            self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF, sealed=True)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
         self.answers.ready()
         if self.answers.started != self.seen_for:   # a new process: what the last one held went with it

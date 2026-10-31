@@ -16,14 +16,22 @@ list as ask.py checks an action, and works out the parties it covers.
 
 **The records.** search() reads files inside the scope and nowhere else:
 
-    meetings   Wikis/Meetings/wiki/, each page with its parties; a page with
-               no parties, or a meeting page with no zone, is unfinished and
-               never read
-    knowledge  Wikis/Knowledge/wiki/: published material, of no party
+    meetings   Wikis/Meetings/wiki/, each page with its parties: a list of
+               tags, and a zone, as check.py's finished() asks; a person or
+               entity page with its `party:` alone. Anything else is
+               unfinished and never read
+    knowledge  Wikis/Knowledge/wiki/: published material, of no party; a page
+               that carries a party or a zone is not published, and is skipped
     thread     the project's folder, or the thread's with its hub: notes, and
                the documents in a Sources/ folder, Word, PowerPoint and Excel
-               through extract.py; all of the hub's party
+               through extract.py. Each file is of its hub's party and, inside
+               a thread, its thread's too, as check.py reads them; a project
+               whose hub names no party is refused, and nothing in it is read
     docs       System/garrick-docs/: Garrick's own pages, of no party
+
+**It fails closed.** A record whose parties cannot all be stated, a tag the
+Parties table does not hold, a `parties:` that is not a list, is never read,
+even where check.py only warns about it.
 
 It returns passages, each with the parties it carries, and never writes a
 prompt: Asker.admit() in ask.py is the only way a passage reaches one.
@@ -117,12 +125,25 @@ def _norm(text: str) -> str:
     return " ".join(str(text).replace("’", "'").split()).lower()
 
 
+def note_tags(note: Path, lib_) -> frozenset:
+    """The `party:` tags a hub or thread note declares, read as check.py's party_tags() reads them."""
+    return frozenset(_tags(lib_.parse_frontmatter(note).get("party"), lib_))
+
+
 def hub_parties(ws: Path, zone: str, project: str, lib_) -> frozenset:
     """The `party:` of a project's hub, the tag the walls are checked against."""
-    fm = lib_.parse_frontmatter(Path(ws) / "Zones" / zone / project / (project + ".md"))
-    value = fm.get("party")
-    values = value if isinstance(value, list) else [value] if value else []
-    return frozenset(t for t in (lib_.strip_tag(str(v)) for v in values) if t)
+    return note_tags(Path(ws) / "Zones" / zone / project / (project + ".md"), lib_)
+
+
+def place_parties(ws: Path, zone: str, project: str, thread: Optional[str], lib_) -> frozenset:
+    """The parties a place is written for: its hub's, and a thread's own as
+    well; for a whole project, every thread's in it, live or not."""
+    folder = Path(ws) / "Zones" / zone / project
+    tags = set(hub_parties(ws, zone, project, lib_))
+    threads = [thread] if thread is not None else sorted(p.name for p in (folder / "Threads").glob("*/"))
+    for t in threads:
+        tags |= note_tags(folder / "Threads" / t / (t + ".md"), lib_)
+    return frozenset(tags)
 
 
 def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[Tuple[str, bool, Entry]]:
@@ -147,7 +168,8 @@ def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> Lis
             e = Entry("project", project, parties, zone, project, None)
             out += [(project, False, e), (_spoken(lib_, folder), False, e)]
             for thread in r["threads"]:
-                t = Entry("thread", "%s, %s" % (project, thread), parties, zone, project, thread)
+                t = Entry("thread", "%s, %s" % (project, thread), place_parties(ws, zone, project, thread, lib_),
+                          zone, project, thread)
                 out += [(thread, False, t), (_spoken(lib_, folder / "Threads" / thread), False, t)]
     by_form: Dict[str, List[Entry]] = {}
     for form, _, e in out:
@@ -304,7 +326,12 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
     if route in ("knowledge", "docs"):
         return Scope(route, None, None, None, words, set())
     if project is not None:
-        return Scope(route, zone, project, thread, words, set(hub_parties(ws, zone, project, lib_)))
+        hub = hub_parties(ws, zone, project, lib_)
+        if not hub or not hub <= set(ctx.get("parties", {})):
+            # Nothing can say which side of a wall its files are on.
+            raise Refused("%s names no party %s, so nothing in it is read"
+                          % (project, "the Parties table holds" if hub else "in its hub"))
+        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)))
     if said.parties:
         return Scope(route, zone, None, None, words, said.parties)
     if zone is not None:                        # every party of one zone
@@ -415,8 +442,12 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         root = ws / ("Wikis/Knowledge/wiki" if sc.route == "knowledge" else "System/garrick-docs")
         for path in _files(lib_, root):
             text = _text(ws, path, False)
-            if text is not None:
-                consider(path, root, [], text)
+            if text is None:
+                continue
+            fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
+            if any(fm.get(k) for k in ("parties", "party", "zone")):
+                continue                        # a page of someone's, not published: never read as published
+            consider(path, root, [], text)
     elif sc.route == "meetings":
         root = ws / "Wikis" / "Meetings" / "wiki"
         for path in _files(lib_, root):
@@ -424,9 +455,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             if text is None:
                 continue
             fm = lib_.parse_frontmatter_text(text)
-            parties = _tags(fm.get("parties"), lib_) or _tags(fm.get("party"), lib_)
-            if not parties or (fm.get("parties") is not None and not fm.get("zone")):
-                continue                        # unfinished: nothing on it may be used
+            parties = page_parties(fm, ctx, lib_)
+            if not parties:
+                continue                        # unfinished, or its parties cannot all be stated: never used
             if sc.zone and fm.get("zone") and fm.get("zone") != sc.zone:
                 continue
             if not sc.every and not set(parties) & sc.parties:
@@ -441,11 +472,17 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             only = [folder, hub, root / "Sources"]
         else:
             note, only = hub, None
-        parties = sorted(sc.parties)
+        hub_tags, thread_tags = note_tags(hub, lib_), {}
         for path in _files(lib_, root, only):
-            text = _text(ws, path, "Sources" in path.relative_to(root).parts)
+            parts = path.relative_to(root).parts
+            tags = set(hub_tags)
+            if len(parts) > 2 and parts[0] == "Threads":     # a thread's file: its party too, as check.py has it
+                if parts[1] not in thread_tags:
+                    thread_tags[parts[1]] = note_tags(root / "Threads" / parts[1] / (parts[1] + ".md"), lib_)
+                tags |= thread_tags[parts[1]]
+            text = _text(ws, path, "Sources" in parts)
             if text is not None:
-                consider(path, root, parties, text, first=path == note)
+                consider(path, root, sorted(tags), text, first=path == note)
     found.sort(key=lambda r: (r[0], r[1]["path"]), reverse=True)
     return [r for _, r in found]
 
@@ -455,6 +492,23 @@ def _tags(value, lib_) -> List[str]:
     return sorted({t for t in (lib_.strip_tag(str(v)) for v in values) if t})
 
 
+PARTY_ALONE = ("person", "entity")       # the pages one `party:` may stand for: read on every side of a wall
+
+
+def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
+    """A Meetings page's parties, or none when they cannot all be stated: a
+    finished page has a zone and a list of tags (check.py's finished()); a
+    person or entity page may have its `party:` alone. Every tag must be in
+    the Parties table, since walled() never matches one it does not hold."""
+    if str(fm.get("type") or "").strip().lower() in PARTY_ALONE and fm.get("parties") is None:
+        tags = _tags(fm.get("party"), lib_)
+    elif fm.get("zone") and isinstance(fm.get("parties"), list):
+        tags = _tags(fm.get("parties"), lib_)
+    else:
+        return []
+    return tags if tags and set(tags) <= set(ctx.get("parties", {})) else []
+
+
 def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool]:
     """The records a process that holds `held` may be given, best first, at
     most `most`, and whether a wall held any back: one whose parties are
@@ -462,8 +516,11 @@ def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_R
     before it. So a question across every zone reads within one group of
     parties no wall divides, the one its best record starts."""
     group, chosen, back = set(held), [], False
+    known = set(ctx.get("parties", {}))
     for r in records:
         parties = set(r["parties"])
+        if not parties <= known:
+            continue                            # a tag no wall can be checked against: never read
         if any_wall(ctx, parties, parties | group, lib_):
             back = True
             continue

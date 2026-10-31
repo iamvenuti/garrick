@@ -48,6 +48,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Sweeps open actions into each zone's Todo.md and tidies it, with the assistant; sends a morning digest.</string>
     <key>PATH</key>
     <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GARRICK_HARNESS</key>

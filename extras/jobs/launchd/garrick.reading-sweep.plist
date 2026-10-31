@@ -43,6 +43,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Files mail kept for reading into Knowledge, with the assistant.</string>
     <key>PATH</key>
     <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GARRICK_HARNESS</key>

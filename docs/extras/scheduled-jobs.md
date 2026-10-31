@@ -125,6 +125,18 @@ python3 "$jobs/agent.py" items-from "$out"    # the prompt asked for a line ITEM
 - **Call the assistant only through `agent.py`.** A job run with `--agent` that exits 0 without adding a line for itself to the ledger gets a line in its log saying so, and `no_call` in its heartbeat. That is fine when it had nothing to ask, as the example does for a zone with nothing open. Every run, though, means it reaches the assistant some other way, where no cap or deny profile holds it: `job.py check-scripts` finds the line.
 - **One zone per call** when the job reads zone material. The [walls](../principles.md) still apply to anything it writes.
 - **Write outside the zones**, or into an inbox for `intake` to sort. A job decides nothing a session would have asked you about.
+- **Say what it does, and give it a label of your own.** In the plist, add one line to `EnvironmentVariables`, and keep `garrick.` out of the `Label`, which marks the jobs Garrick ships:
+
+  ```xml
+  <key>Label</key>
+  <string>com.acme.digest</string>
+  ...
+  <key>GARRICK_ABOUT</key>
+  <string>Sends the Acme digest each morning, with the assistant.</string>
+  ```
+
+  The Garrick App shows the line under the job's name, and lists the job under *Yours*. A job without the line shows none. Install and update never touch `~/Library/LaunchAgents`, so a copy loaded before this release shows no description until you copy the plist in again.
+- **Log counts and paths, never content.** The Garrick App shows a job's last 30 log lines in its panel, so never log an assistant's answer or a note's text.
 
 ### Exit codes
 
@@ -180,6 +192,7 @@ Every setting is an environment variable, set in the job's plist under `Environm
 
 | Variable | Default | What it sets |
 |---|---|---|
+| `GARRICK_ABOUT` | none | one line saying what the job does, shown under its name in the Garrick App |
 | `GARRICK_HARNESS` | `claude` | `claude` or `codex` |
 | `GARRICK_JOB_TIMEOUT` | 1500 | seconds before the watchdog stops a run, above zero; `--timeout` sets it for one job, and a `--timeout` of zero or less is refused with exit 64 |
 | `GARRICK_LOGIN_RETRY_AFTER` | 300 | seconds between the two sign-in checks |

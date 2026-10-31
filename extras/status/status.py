@@ -3005,10 +3005,21 @@ def when(p: dict) -> Tuple[str, Optional[dt.timedelta]]:
     return prefix + ", ".join(words), late
 
 
+GARRICK_LABELS = ("garrick.",)     # the label prefixes of the plists Garrick ships
+
+
+def garrick_job(label: Optional[str]) -> bool:
+    """Whether a launchd label is one of the jobs Garrick ships, rather than
+    one the user added: its label starts with one of GARRICK_LABELS. A job
+    with no plist has no label and is the user's."""
+    return bool(label) and str(label).startswith(GARRICK_LABELS)
+
+
 def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
     """Job name -> what its launchd plist says: the schedule in words, how
     long before a missing run is late, whether it calls the assistant
-    (--agent) and the environment it runs with. Only plists that run job.py;
+    (--agent), the environment it runs with, its label, and the line its
+    GARRICK_ABOUT gives, empty when it gives none. Only plists that run job.py;
     anything else in the folder, or a plist that does not read, is passed
     over. Elsewhere than macOS there are none, and schedules are unknown."""
     out: Dict[str, dict] = {}
@@ -3031,8 +3042,9 @@ def launchd_jobs(folder: Optional[Path] = None) -> Dict[str, dict]:
         flags = flags[:flags.index("--")] if "--" in flags else flags
         env = p.get("EnvironmentVariables")
         words, late = when(p)
-        out[args[at + 1]] = {"schedule": words, "late": late, "agent": "--agent" in flags,
-                             "env": env if isinstance(env, dict) else {}, "plist": plist}
+        env = env if isinstance(env, dict) else {}
+        out[args[at + 1]] = {"schedule": words, "late": late, "agent": "--agent" in flags, "env": env, "plist": plist,
+                             "label": str(p.get("Label") or plist.stem), "about": env["GARRICK_ABOUT"].strip() if isinstance(env.get("GARRICK_ABOUT"), str) else ""}
     return out
 
 
@@ -3116,7 +3128,10 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
     GARRICK_IDLE_DAYS, 7) is a warning. A job whose lock is held is running now.
     A job whose plist runs job.py but which has no heartbeat yet, never run or
     not since its plist was added, gets a row too: neutral, "not run yet",
-    with the schedule its plist gives."""
+    with the schedule its plist gives. A heartbeat with no plist is a job a
+    hook or a session starts: "started by a session", and the user's. Each
+    row carries its plist's label, GARRICK_ABOUT and --agent, and whether it
+    is Garrick's (garrick_job)."""
     sched = launchd_jobs() if sched is None else sched
     out = []
     for beat in sorted(folder.glob("*.heartbeat.json")) if folder.is_dir() else []:
@@ -3137,7 +3152,7 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
         # job.py says itself whether the exit was fine (`ok`, `quiet`); an older
         # heartbeat leaves it to the codes and the plist's GARRICK_QUIET_EXITS.
         quiet = set(quiet_exits(env)) | ({code} if hb.get("quiet") is True or (hb.get("ok") is True and code not in OK_EXITS) else set())
-        words, limit = (sched[name]["schedule"], sched[name]["late"]) if name in sched else ("schedule not found", None)
+        words, limit = (sched[name]["schedule"], sched[name]["late"]) if name in sched else ("started by a session", None)
         try:
             idle = int(hb.get("idle_days") or 0)
         except (TypeError, ValueError):
@@ -3158,15 +3173,68 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
                     "schedule": words, "runs": history(folder, name, now), "log": folder / (name + ".log"),
                     "quiet": tuple(sorted(quiet)), "running": lock_held(folder / (name + ".lock"), now),
-                    "idle": state == "warning" and status.startswith("idle")})
+                    "idle": state == "warning" and status.startswith("idle"), **plist_facts(sched.get(name))})
     beaten = {j["name"] for j in out}
     for name, plist in sched.items():
         if name not in beaten:
             out.append({"name": name, "when": None, "seconds": None, "state": "none", "status": "not run yet",
                         "schedule": plist["schedule"], "runs": history(folder, name, now), "log": folder / (name + ".log"),
                         "quiet": quiet_exits(plist.get("env", {})), "running": lock_held(folder / (name + ".lock"), now),
-                        "idle": False})
+                        "idle": False, **plist_facts(plist)})
     return sorted(out, key=lambda j: j["name"].casefold())
+
+
+def plist_facts(plist: Optional[dict]) -> dict:
+    """What a job's row takes from its plist: the label, the line it gives in
+    GARRICK_ABOUT, whether it calls the assistant (None with no plist), and
+    whether it is Garrick's."""
+    plist = plist or {}
+    label = plist.get("label")
+    return {"label": label, "about": plist.get("about", ""), "agent": plist.get("agent"), "garrick": garrick_job(label)}
+
+
+def log_tail(path: Path, lines: int = 30, width: int = 300) -> List[str]:
+    """The last lines of a job's log, read from its end, each cut to `width`
+    characters; none when there is no log. A read that starts mid-file drops
+    its first line, which is likely a part of one."""
+    try:
+        with path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            start = max(0, f.tell() - 64 * 1024)
+            f.seek(start)
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    got = text.splitlines()[1 if start else 0:]
+    return [line[:width] for line in got[-lines:]]
+
+
+# A job's name opens its panel below its row, and closes it again (#273).
+JOBS_JS = r"""
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.jname'),p=b&&document.getElementById(b.getAttribute('aria-controls'));
+if(!p)return;p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden))});
+"""
+
+
+def job_panel(j: dict, i: int, ok: bool, log_link: str) -> str:
+    """What a job's name opens below its row: what it does, its schedule, its
+    plist's label, whether it calls the assistant, its last runs and the end
+    of its log, with Open log for the whole file."""
+    facts = [("Schedule", j["schedule"])]
+    if j.get("label"):
+        facts.append(("Label", j["label"]))
+    if j.get("agent") is not None:
+        facts.append(("Assistant", "calls it" if j["agent"] else "not called"))
+    runs = sorted(j["runs"], key=lambda r: r[0], reverse=True)[:5]
+    said = "".join('<li>%s · %s</li>' % (E(w.strftime("%a %d %b %H:%M")), E(
+        "ok" if c == 0 else "skipped" if c == 75 else "exit %d, quiet" % c if q or c in j["quiet"] else "exit %d" % c)) for w, c, q in runs)
+    tail = log_tail(j["log"])
+    return ('<div class="jpanel" id="jp-%d" data-ok="%d" hidden>%s<dl>%s</dl><h4>Last runs</h4>%s<h4>Log</h4>%s'
+            '<div class="gacts"><a class="act" href="%s">Open log</a></div></div>'
+            % (i, ok, '<p>%s</p>' % E(j["about"]) if j.get("about") else "",
+               "".join("<dt>%s</dt><dd>%s</dd>" % (E(k), E(v)) for k, v in facts),
+               '<ul>%s</ul>' % said if said else '<p class="muted">None in %d days.</p>' % DAYS,
+               '<pre>%s</pre>' % E("\n".join(tail)) if tail else '<p class="muted">No log yet.</p>', E(log_link)))
 
 
 CAP_VARS = (("calls_day", "GARRICK_CAP_CALLS_DAY"), ("calls_hour", "GARRICK_CAP_CALLS_HOUR"), ("cost_day", "GARRICK_CAP_COST_DAY"))
@@ -5964,6 +6032,13 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
 .row{display:grid;align-items:center;gap:12px;padding:8px 2px;border-top:1px solid var(--grid)}.rows>.row:first-child{border-top:0}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px 140px}.jobs .row .status{overflow:hidden;text-overflow:ellipsis}
+.jgroup h3{margin:12px 0 2px;font-size:12px;font-weight:600;color:var(--muted)}.jgroup:first-child h3{margin-top:0}.jgroup>h3+.row{border-top:0}
+.jname{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}.jname:hover{color:var(--accent)}
+.jobs .name small{overflow:hidden;text-overflow:ellipsis}.jobs .name small.about{color:var(--ink2)}
+.jpanel{margin:0 0 8px 30px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--raise);font-size:12.5px}
+.jpanel p{margin:0 0 6px}.jpanel dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}.jpanel dt{color:var(--muted)}.jpanel dd{margin:0}
+.jpanel h4{margin:8px 0 2px;font-size:12px;font-weight:600;color:var(--muted)}.jpanel ul{margin:0;padding-left:18px}
+.jpanel pre{margin:0;max-height:240px;overflow:auto;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .row>svg,.item>svg{width:16px;height:16px}
 .name{font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.name small{display:block;font-weight:400;color:var(--muted);font-size:12px}
 .strip{display:flex;gap:2px}.strip i{width:11px;height:18px;border-radius:3px;background:var(--none);flex:none}
@@ -7931,24 +8006,32 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # ---- jobs and calls, only when the jobs extra is in use
     jobs_card = calls_card = ""
     if J:
-        rows = []
-        for j in J:
+        groups = {True: [], False: []}         # Garrick's jobs and the user's, by the plist's label (garrick_job)
+        for i, j in enumerate(J):
             strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now, j["quiet"]))
             last = age(j["when"], now) if j["when"] else "never"
             said = "running now" if j["running"] else j["status"]      # its lock is held: a run is under way
+            ok = j["state"] in ("good", "none")
+            about = '<small class="about" data-tip="%s">%s</small>' % (E(j["about"]), E(j["about"])) if j["about"] else ""
             # a job not run yet is neither fine nor wrong: a hollow mark, and out of "Only what needs attention"
-            rows.append('<div class="row" data-ok="%d">%s<div class="name"><a href="%s">%s</a><small>%s</small></div><div class="strip">%s</div>'
-                        '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>'
-                        % (j["state"] in ("good", "none"), ICON[j["state"]], E(link(j["log"])), E(j["name"]), E(j["schedule"]), strip,
-                           ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
-                           E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
-                               ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
-                               % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
-                               if acting and j["name"] in sched and not j["running"] else "")))
+            # the name opens the job's panel below its row (#273), never its log through file://
+            groups[j["garrick"]].append((ok,
+                '<div class="row" data-ok="%d">%s<div class="name"><button type="button" class="jname" aria-expanded="false" '
+                'aria-controls="jp-%d">%s</button>%s<small>%s</small></div><div class="strip">%s</div>'
+                '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>%s'
+                % (ok, ICON[j["state"]], i, E(j["name"]), about, E(j["schedule"]), strip,
+                   ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
+                   E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
+                       ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
+                       % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
+                       if acting and j["name"] in sched and not j["running"] else ""),
+                   job_panel(j, i, ok, link(j["log"])))))
         behind = sum(1 for j in J if j["state"] == "critical" and j["status"].startswith("late"))   # not run on time
         failed = sum(1 for j in J if j["state"] == "critical") - behind
         jobs_card = card("jobs", "Scheduled jobs", " · ".join("%d %s" % (n, w) for n, w in ((failed, "failed"), (behind, "late")) if n),
-                         '<div class="rows jobs">%s</div>' % "".join(rows))     # each cell's tooltip says its day (#232)
+                         '<div class="rows jobs">%s</div>' % "".join(     # each cell's tooltip says its day (#232)
+                             '<div class="jgroup" data-ok="%d"><h3>%s</h3>%s</div>' % (all(ok for ok, _ in rows), head, "".join(r for _, r in rows))
+                             for head, rows in (("Garrick's", groups[True]), ("Yours", groups[False])) if rows))
     if L:
         c = L["caps"]
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
@@ -8126,7 +8209,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # and WORK_JS after all three. NOTE_JS, Explore's Preview, in an element of its
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
                MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'

@@ -192,17 +192,20 @@ CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 WIKILINK_RE = re.compile(r"!?\[\[([^\[\]\n]+?)\]\]")
 URI_RE = re.compile(r"obsidian://[^\s)\]>\"'`]+")
 # A Markdown link's destination, in angle brackets (where it may hold spaces)
-# or bare, then an optional title.
-MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|([^)\s<>]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+# or bare, where it may hold balanced parentheses, as Obsidian writes a file
+# called `Brief (1).pdf`, then an optional title. Each pattern below stays
+# linear on any input: no two of its branches can match the same character,
+# and a run that cannot close is bounded.
+MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 # A reference-style link's definition, `[1]: <path>` or `[1]: path`, and an
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
-HREF_RE = re.compile(r"(?i)<a\b[^>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+HREF_RE = re.compile(r"(?i)<a\b[^>]{0,300}?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
 # character at least as long.
-CODE_SPAN_RE = re.compile(r"(?<![`\\])(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+CODE_SPAN_RE = re.compile(r"(?<![`\\])(`+)(?!`)(.{1,1000}?)(?<!`)\1(?!`)", re.S)  # a path is never longer
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 DELIVERABLE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2}) - \S")
 MEETING_NAME_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -233,6 +236,7 @@ class Workspace:
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
     wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
+    vault_links: Dict[Path, "PathIndex"] = field(default_factory=dict)  # each vault's files, indexed on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
     git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
@@ -3633,6 +3637,61 @@ def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
     return False
 
 
+def vault_of(ws: Workspace, path: Path) -> Path:
+    """The Obsidian vault a note is read in: the nearest folder at or above
+    it, up to the workspace's top, that holds a `.obsidian` folder. Garrick
+    makes none; the user opens the workspace, `Wikis/` or a zone as a vault.
+    With none opened yet, the workspace's top, the widest a vault can be."""
+    for folder in path.parents:
+        if (folder / ".obsidian").is_dir():
+            return folder
+        if folder == ws.root or ws.root not in folder.parents:
+            break
+    return ws.root
+
+
+def vault_index(ws: Workspace, vault: Path) -> "PathIndex":
+    """The files of one vault a link may land on: every project's, every
+    file in a zone outside its projects, every wiki's, System's and the
+    top's own. A Garrick checkout or a repository kept inside a project is
+    left out, as for the walls' other indexes: a match left out can only
+    make the first pick one across a wall, never hide one."""
+    if vault not in ws.vault_links:
+        project_index(ws)
+        files = set(ws.project_files or {})
+        skip = set(checkouts(ws)) | {project for project, _ in ws.projects}
+        for zone in ws.zones:
+            files.update(walk_files(zone, skip))
+        for top in (ws.root / "Wikis", ws.root / "System"):
+            if top.is_dir():
+                files.update(walk_files(top, skip))
+        if ws.root.is_dir():
+            files.update(p for p in ws.root.iterdir() if p.is_file())
+        ws.vault_links[vault] = PathIndex(ws, sorted(f for f in files if vault in f.parents))
+    return ws.vault_links[vault]
+
+
+def obsidian_picks(ws: Workspace, source: Path, hits: List[Path]) -> List[Path]:
+    """Which of the files a link matches Obsidian opens, as its own
+    resolution does: the matches under the note's own folder first, its
+    subfolders included, then the rest, each by the length of its path in the
+    vault, shortest first. All the files tied for first are returned: which
+    of them Obsidian takes is not known, so each counts."""
+    vault = vault_of(ws, source)
+
+    def key(hit: Path) -> Tuple[bool, int]:
+        try:
+            length = len(hit.relative_to(vault).as_posix())
+        except ValueError:
+            length = len(hit.as_posix())
+        return source.parent not in hit.parents, length
+
+    if not hits:
+        return []
+    best = min(key(h) for h in hits)
+    return [h for h in hits if key(h) == best]
+
+
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -3687,26 +3746,28 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # parties are walled from this file's: a thread of this project may be
     # written for a party walled from this thread's.
     #
-    # A link that lands on more than one file is read as Obsidian reads it: one
-    # in this note's own folder is the one it means. Otherwise, when one of
-    # them is across a wall, it is refused if it names that project (its
-    # folder, its hub, a thread only it has) or if it lands on nothing but
-    # this project and files across the wall. A short one that does not
-    # (`[[Okta]]`, held by a Knowledge page too) is taken to mean the other.
-    # A path written as code is followed by a reader, not by Obsidian: one
-    # that lands in this project means it, and one that names no project and
-    # lands only across a wall is a warning, since nothing follows it there.
+    # A link is read as Obsidian reads it, in the vault the note is in
+    # (obsidian_picks): when the file it opens is across a wall, it is
+    # refused. A path written as code is followed by a reader, not by
+    # Obsidian: one that lands in this project means it; one that lands on a
+    # single file, or only on files across a wall, or that names the far
+    # project, is refused; one that lands across a wall and also on a wiki
+    # page or a project with no wall, a path every project may hold such as
+    # `Deliverables/published.md`, is a warning.
     if tags and targets:
         index = project_index(ws)
         named = set()
         for verb, written, target in targets:
-            hits = resolve(ws, path, target, index)
-            if not hits:
-                continue
             code = verb != "links"
+            if code:
+                hits = resolve(ws, path, target, index)
+            else:
+                hits = obsidian_picks(ws, path, resolve(ws, path, target, vault_index(ws, vault_of(ws, path))))
             far_hits, near = [], []
             for hit in hits:
-                other = ws.project_files[hit]
+                other = (ws.project_files or {}).get(hit)
+                if other is None:
+                    continue  # not a project's: a wiki page or System's, which the meeting check reads
                 pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, hit) if walled(ws.context, a, b))
                 if pair:
                     far_hits.append((hit, other, pair[0]))
@@ -3714,18 +3775,16 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     near.append((hit, other))
             if not far_hits:
                 continue
-            own = [h for h, o in near if o == project]
-            if any(h.parent == path.parent for h in own) or (code and own):
-                continue  # it means a file of this project
-            naming = [f for f in far_hits if names_project(ws, target, f[0], f[1])]
             severity = ERROR
-            if not naming:
+            if code:
+                if any(o == project for _, o in near):
+                    continue  # it means a file of this project
                 if ws.wiki_links is None:
                     ws.wiki_links = PathIndex(ws, ws.wiki_files)
-                if any(o != project for _, o in near) or resolve(ws, path, target, ws.wiki_links):
-                    continue  # a short name that lands on a wiki page or a project with no wall too
-                severity = WARNING if code else ERROR
-            hit, other, (a, b) = (naming or far_hits)[0]
+                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links))
+                if elsewhere and not any(names_project(ws, target, h, o) for h, o, _ in far_hits):
+                    severity = WARNING
+            hit, other, (a, b) = far_hits[0]
             if (written, other) in named:
                 continue
             named.add((written, other))

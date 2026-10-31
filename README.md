@@ -16,7 +16,7 @@ Behind the home, Garrick holds three things in one place: what you're working on
 
 ![Context is all you need. Articles and reports are ingested into Knowledge, a graph of what you read, linked by topic. Recordings and mail are ingested into Meetings, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Your assistant draws on all three and starts already set up. Two graphs and a tree, so you never set up the same context twice.](docs/assets/two-graphs-and-a-tree.png)
 
-When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and a check runs before every commit.
+When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and every commit of your work is checked against them.
 
 Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
 

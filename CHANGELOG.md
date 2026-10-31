@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
+
 ## [0.49.0] - 2026-10-31
 
 Ask answers questions from your records, inside one scope and sealed from everything else; Garrick's scheduled jobs take `gr-` names and one nightly job does what four did; the Checks card acts on each finding; Settings chooses the graph's colours and the cmux tab's assistant; and the wall check reads links and paths into another project.

@@ -187,7 +187,7 @@ class FakeSession:
     def ready(self):
         pass
 
-    def turn(self, text):
+    def turn(self, text, **kw):
         self.seen.append(text)
         return self.answers.pop(0), {"input_tokens": 1}
 
@@ -634,8 +634,19 @@ class TestWarmSession(StandInCase):
         out = json.loads(buf.getvalue())
         self.assertEqual("Opening Pricing.", out["say"])
         self.assertEqual("open Pricing", out["launch"][0]["phrase"])
-        self.assertIn('"open Pricing"  ->  "Opening Pricing."', (self.jobs / "ask.log").read_text())
+        self.assertEqual("command", out["kind"])
+        log = (self.jobs / "ask.log").read_text()
+        self.assertRegex(log, r"  ask command \d+ ms \{\"input_tokens\": 100, ")      # the time, the op, the ms, the tokens
+        self.assertNotIn("Pricing", log)                                             # and no request or answer text (#261)
         self.assertEqual([], list(self.jobs.glob("*.sock")))                         # stopped, and gone
+
+    def test_the_log_keeps_text_only_when_asked(self):
+        line = ask.log_line("open Pricing", {"kind": "command", "say": "Opening Pricing.", "done": ["Opening Pricing"],
+                                             "ok": True, "ms": 12, "usage": {"input_tokens": 3}})
+        self.assertEqual('ask command 12 ms {"input_tokens": 3}', line)
+        os.environ[ask.LOG_TEXT] = "1"
+        line = ask.log_line("open Pricing", {"kind": "answer", "reset": "wall", "say": "Opening Pricing.", "ms": 12})
+        self.assertEqual('ask answer reset 12 ms {}  "open Pricing"  ->  "Opening Pricing." []', line)
 
 
 class ServerCase(StandInCase):

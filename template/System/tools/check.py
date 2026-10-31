@@ -200,7 +200,7 @@ MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))
 # A reference-style link's definition, `[1]: <path>` or `[1]: path`, and an
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
-HREF_RE = re.compile(r"(?i)<a\b[^<>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+HREF_RE = re.compile(r"(?i)<a\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
@@ -544,13 +544,10 @@ def code_texts(text: str) -> List[Tuple[str, str]]:
         # whatever the paragraph holds.
         block = "\n".join(para)
         para.clear()
-        runs = []
-        for m in BACKTICKS_RE.finditer(block):
-            start, end = m.start(), m.end()
-            if start and block[start - 1] == "\\":
-                start += 1  # an escaped backtick is text; the rest of the run may still open
-            if start < end:
-                runs.append((start, end))
+        # Every run closes at its full length: a backslash escapes nothing
+        # inside a code span, so `C:\` is whole. Only a run taken as an
+        # opener loses a backtick to a backslash before it.
+        runs = [(m.start(), m.end()) for m in BACKTICKS_RE.finditer(block)]
         by_length: Dict[int, List[int]] = {}
         for i, (start, end) in enumerate(runs):
             by_length.setdefault(end - start, []).append(i)
@@ -558,11 +555,13 @@ def code_texts(text: str) -> List[Tuple[str, str]]:
         i = 0
         while i < len(runs):
             start, end = runs[i]
+            if start and block[start - 1] == "\\":
+                start += 1  # an escaped backtick is text; the rest of the run may still open
             n = end - start
-            same = by_length[n]
-            while pointer[n] < len(same) and same[pointer[n]] <= i:
+            same = by_length.get(n, [])
+            while n and pointer[n] < len(same) and same[pointer[n]] <= i:
                 pointer[n] += 1
-            if pointer[n] == len(same):
+            if not n or pointer[n] == len(same):
                 i += 1
                 continue  # nothing closes it: plain text
             j = same[pointer[n]]
@@ -3724,9 +3723,15 @@ def obsidian_dest(ws: Workspace, vault: Path, source: Path, linkpath: str) -> Li
         base = Path(os.path.normpath(str(source.parent / linkpath)))
         return [f for f in (base, Path(str(base) + ".md")) if f.is_file() or f in ws.git_view][:1]
     name = linkpath.rsplit("/", 1)[-1].lower()
-    want = linkpath.lower() if "." in name else linkpath.lower() + ".md"
-    if "." not in name:
-        name += ".md"
+    if "." in name:
+        # As written first, then as a note: `[[Sizing v1.2]]` is `Sizing v1.2.md`.
+        return _dest(ws, vault, source, name, linkpath.lower()) or \
+            _dest(ws, vault, source, name + ".md", linkpath.lower() + ".md")
+    return _dest(ws, vault, source, name + ".md", linkpath.lower() + ".md")
+
+
+def _dest(ws: Workspace, vault: Path, source: Path, name: str, want: str) -> List[Path]:
+    """obsidian_dest's lookup, for one form of the link's name."""
     found = vault_files(ws, vault).get(name, [])
     if len(found) == 1:
         return [vault / found[0]]
@@ -3745,6 +3750,36 @@ def obsidian_dest(ws: Workspace, vault: Path, source: Path, linkpath: str) -> Li
     return [vault / f for f in found if (not f.lower().startswith(folder), len(f)) == best]
 
 
+def path_dests(ws: Workspace, target: str) -> List[Path]:
+    """The files a path from the top of the disk, or from the home folder,
+    names in the workspace: the path itself when it is inside the workspace,
+    else read from where it reaches the workspace's folder, `Zones/` or
+    `Wikis/` (_anchored_hits). A few lookups, no index: an export full of
+    site-relative links must not hold a commit."""
+    path = Path(os.path.normpath(os.path.expanduser(target)))
+    forms = [path, Path(str(path) + ".md")]
+    root = ws.root.resolve()
+    found = []
+    for form in forms:
+        try:
+            inside = form == ws.root or ws.root in form.parents or root in form.resolve().parents
+        except (OSError, RuntimeError):
+            inside = False
+        if inside and (form.is_file() or form in ws.git_view):
+            found.append(form)
+    if found:
+        return found[:1]
+    parts = [p for p in path.as_posix().split("/") if p]
+    starts = [i + 1 for i, p in enumerate(parts) if p == ws.root.name]
+    starts += [i for i, p in enumerate(parts) if p in ("Zones", "Wikis") and i > 0]
+    for start in starts:
+        base = ws.root.joinpath(*parts[start:]) if start < len(parts) else None
+        for form in ([base, Path(str(base) + ".md")] if base else []):
+            if form.is_file() or form in ws.git_view:
+                found.append(form)
+    return found
+
+
 def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
     """Every file a link may open: Obsidian's pick in each vault the note is
     in (obsidian_dest), and, for a path from the top or from outside the
@@ -3753,8 +3788,7 @@ def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
     if target.startswith("obsidian:"):
         _, _, target = target.split(":", 2)
     if target.startswith(("/", "~")):
-        files = [folder / f for folder in vaults_of(ws, source) for paths in vault_files(ws, folder).values() for f in paths]
-        out += resolve(ws, source, target, files)
+        out += path_dests(ws, target)
         target = target.lstrip("/")
     for vault in vaults_of(ws, source):
         out += [d for d in obsidian_dest(ws, vault, source, target) if d not in out]

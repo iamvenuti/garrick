@@ -949,6 +949,36 @@ class TestProjectLinks(GapCase):
                 found = self.says("`%s` then `Harbour/Threads/Tender/Tender.md`" % ("x" * n))
                 self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)], found)
 
+    def test_a_backslash_escapes_nothing_inside_code(self):
+        for written in ("`C:\\` then `Harbour/Threads/Tender/Tender.md` end", "type `\\` then `Harbour/Threads/Tender/Tender.md`",
+                        "``a\\`` then `Harbour/Threads/Tender/Tender.md`"):
+            with self.subTest(written):
+                self.assertEqual([("error", "writes the path `Harbour/Threads/Tender/Tender.md`" + self.TAIL)],
+                                 self.says(written))
+
+    def test_a_name_with_a_dot_is_a_note_too(self):
+        tender = self.work / "Harbour" / "Threads" / "Tender"
+        write(tender / "Sizing v1.2.md", "# Sizing\n")
+        write(tender / "St. Louis plan.md", "# Plan\n")
+        for written in ("[[Sizing v1.2]]", "[[St. Louis plan]]", "[[Tender/Sizing v1.2]]"):
+            with self.subTest(written):
+                self.assertEqual([("error", "links %s%s" % (written, self.TAIL))], self.says(written))
+
+    def test_an_anchor_with_angle_brackets_in_a_quoted_value(self):
+        self.assertEqual("error", self.says('<a title="a<b" href="../../../Harbour/Threads/Tender/Tender.md">t</a>')[0][0])
+
+    def test_paths_from_the_top_cost_a_few_lookups(self):
+        import time
+        for i in range(3000):
+            write(self.work / "Harbour" / "node_modules" / ("pkg%d" % (i // 100)) / ("f%d.js" % i), "x")
+        links = ["[x](/elsewhere/n%d/Zones/Work/Harbour/Threads/Tender/Tender.md)" % i for i in range(25)]
+        links += ["[x](%s/Zones/Work/Harbour/Threads/Tender/Tender.md#n%d)" % (self.root, i) for i in range(25)]
+        write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s now." % link for link in links))
+        started = time.monotonic()
+        found = self.walls()
+        self.assertLess(time.monotonic() - started, 20.0)
+        self.assertEqual(50, len(found))   # one finding for each link as written
+
     def test_a_code_path_on_one_file_is_refused(self):
         write(self.work / "Harbour" / "Threads" / "Tender" / "Rate card.md", "# Rate card\n")
         self.project("Lantern", "cobalt", "Survey", "Tender")      # a Tender thread, but no rate card

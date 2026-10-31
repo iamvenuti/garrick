@@ -191,7 +191,19 @@ COMMIT_RE = re.compile(r"[0-9a-fA-F]{7,40}")
 CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 WIKILINK_RE = re.compile(r"!?\[\[([^\[\]\n]+?)\]\]")
 URI_RE = re.compile(r"obsidian://[^\s)\]>\"'`]+")
-MDLINK_RE = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+# A Markdown link's destination, in angle brackets (where it may hold spaces)
+# or bare, then an optional title.
+MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|([^)\s<>]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+# A reference-style link's definition, `[1]: <path>` or `[1]: path`, and an
+# HTML anchor's href.
+REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
+HREF_RE = re.compile(r"(?i)<a\b[^>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+# Where a code span or a fenced block opens, as CommonMark reads them: a span
+# closes on a run of backticks as long as the one that opened it, and a
+# fence is three or more backticks or tildes, closed by a run of the same
+# character at least as long.
+CODE_SPAN_RE = re.compile(r"(?<![`\\])(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 DELIVERABLE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2}) - \S")
 MEETING_NAME_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
 MAX_SCAN_BYTES = 2_000_000
@@ -219,6 +231,8 @@ class Workspace:
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
     project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
+    thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
+    wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
     git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
@@ -483,9 +497,10 @@ def say(n: int) -> str:
 # ---------------------------------------------------------------------------
 
 def extract_links(text: str) -> List[Tuple[str, str]]:
-    """(as written, target) for every wikilink, obsidian:// URI and relative
-    Markdown link in `text`. Targets are vault-relative or file-relative
-    paths without the alias or heading."""
+    """(as written, target) for every wikilink, obsidian:// URI, relative
+    Markdown link (inline, in angle brackets or by reference) and HTML
+    anchor in `text`. Targets are vault-relative or file-relative paths
+    without the alias or heading."""
     links = []
     for m in WIKILINK_RE.finditer(text):
         target = m.group(1).split("|", 1)[0].rstrip("\\").split("#", 1)[0].strip()
@@ -499,12 +514,49 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             for value in query.get(key, []):
                 target = unquote(value).split("#", 1)[0]
                 links.append((uri, "obsidian:%s:%s" % (vault, target) if key == "file" else target))
-    for m in MDLINK_RE.finditer(text):
-        target = unquote(m.group(1)).split("#", 1)[0]
-        if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
-            continue  # web or obsidian URI, handled above or not ours
-        links.append((m.group(0), target))
+    for regex in (MDLINK_RE, REFDEF_RE, HREF_RE):
+        for m in regex.finditer(text):
+            found = next((g for g in m.groups() if g is not None), "")
+            target = unquote(found.strip()).split("#", 1)[0]
+            if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                continue  # web or obsidian URI, handled above or not ours
+            links.append((m.group(0).strip(), target))
     return links
+
+
+def code_texts(text: str) -> List[Tuple[str, str]]:
+    """(as written, what it holds) for every code span in `text`, whatever the
+    length of its backtick run, and every line of every fenced block, opened
+    with backticks or tildes, as CommonMark reads them."""
+    out: List[Tuple[str, str]] = []
+    para: List[str] = []
+
+    def spans() -> None:
+        for m in CODE_SPAN_RE.finditer("\n".join(para)):
+            body = m.group(2).replace("\n", " ")
+            if body.startswith(" ") and body.endswith(" ") and body.strip():
+                body = body[1:-1]
+            out.append((" ".join(m.group(0).split()), body))
+        para.clear()
+
+    fence = ""
+    for line in text.split("\n"):
+        if fence:
+            if re.match(r"^ {0,3}%s{%d,}\s*$" % (re.escape(fence[0]), len(fence)), line):
+                fence = ""
+            elif line.strip():
+                out.append(("`%s`" % line.strip(), line))
+            continue
+        m = FENCE_RE.match(line)
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            spans()
+            fence = m.group(1)
+        elif not line.strip():
+            spans()
+        else:
+            para.append(line)
+    spans()
+    return out
 
 
 def _strip_md(parts: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -551,22 +603,12 @@ def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
     vault = None
     if target.startswith("obsidian:"):
         _, vault, target = target.split(":", 2)
+    if target.startswith("~"):
+        target = os.path.expanduser(target)
     if target.startswith("/") or target.startswith("./") or target.startswith("../"):
         base = Path(target) if target.startswith("/") else source.parent / target
-        try:
-            exact = base.resolve()
-        except (OSError, RuntimeError):
-            return []
-        forms = [exact, Path(str(exact) + ".md")]
-        try:
-            forms.append(exact.with_suffix(".md"))
-        except ValueError:
-            pass
-        found: Dict[int, Path] = {}
-        for form in forms:
-            for i, c in index.exact().get(form, []):
-                found[i] = c
-        return [found[i] for i in sorted(found)]
+        hits = _exact_hits(index, base)
+        return hits or _anchored_hits(ws, index, target)
     parts = _strip_md(tuple(p for p in target.replace("\\", "/").split("/") if p and p != "."))
     if not parts:
         return []
@@ -578,7 +620,39 @@ def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
                 if len(have) >= len(want) and have[-len(want):] == want]
         if hits:
             return hits
-    return []
+    return _anchored_hits(ws, index, target)
+
+
+def _exact_hits(index: "PathIndex", base: Path) -> List[Path]:
+    """The files of `index` at `base`, with or without `.md`."""
+    try:
+        exact = base.resolve()
+    except (OSError, RuntimeError):
+        return []
+    forms = [exact, Path(str(exact) + ".md")]
+    try:
+        forms.append(exact.with_suffix(".md"))
+    except ValueError:
+        pass
+    found: Dict[int, Path] = {}
+    for form in forms:
+        for i, c in index.exact().get(form, []):
+            found[i] = c
+    return [found[i] for i in sorted(found)]
+
+
+def _anchored_hits(ws: Workspace, index: "PathIndex", target: str) -> List[Path]:
+    """A path written from outside the workspace, such as one from the home
+    folder or another machine's: read from wherever it names the workspace's
+    own folder, or from `Zones/` or `Wikis/` on, as a path from the top."""
+    parts = [p for p in target.replace("\\", "/").split("/") if p and p != "."]
+    starts = [i + 1 for i, p in enumerate(parts) if p == ws.root.name]
+    starts += [i for i, p in enumerate(parts) if p in ("Zones", "Wikis") and i > 0]
+    found: List[Path] = []
+    for start in starts:
+        if start < len(parts):
+            found += [h for h in _exact_hits(index, ws.root.joinpath(*parts[start:])) if h not in found]
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -3490,18 +3564,15 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
 
 
 def code_paths(text: str) -> List[Tuple[str, str]]:
-    """(as written, target) for every path written as code in `text`: an
-    inline code span, or a line of a fenced block, that holds a slash. Nothing
-    resolves these as a link does, but a person or an assistant follows one
-    just the same, and Nurture may turn one into a link."""
+    """(as written, target) for every path written as code in `text`: a code
+    span, or a line of a fenced block, that holds a slash (code_texts).
+    Nothing resolves these as a link does, but a person or an assistant
+    follows one just the same, and Nurture may turn one into a link."""
     out = []
-    for m in CODE_RE.finditer(text):
-        span = m.group(0)
-        lines = span[3:-3].split("\n")[1:] if span.startswith("```") else [span[1:-1]]
-        for line in lines:
-            target = line.strip().strip("\"'").split("#", 1)[0].strip()
-            if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
-                out.append(("`%s`" % line.strip(), target))
+    for written, body in code_texts(text):
+        target = body.strip().strip("\"'").split("#", 1)[0].strip()
+        if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+            out.append((written, target))
     return out
 
 
@@ -3525,12 +3596,41 @@ def project_index(ws: Workspace) -> "PathIndex":
     return ws.project_links
 
 
-def project_party(ws: Workspace, project: Path) -> set:
-    """The party tags a project's hub declares."""
-    for folder, pfm in ws.projects:
-        if folder == project:
-            return {strip_tag(t) for t in as_list(pfm.get("party"))}
-    return set()
+def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
+    """The party tags a file of `project` is written for: its hub's, and its
+    thread's when it is in one. Read with party_tags, so in staged mode a
+    party changed on disk but not in git still counts, as the quote index
+    reads it."""
+    pfm = next((fm for folder, fm in ws.projects if folder == project), None)
+    tags = party_tags(ws, project / (project.name + ".md"), pfm or {})
+    parts = path.relative_to(project).parts
+    if len(parts) > 2 and parts[0] == "Threads":
+        tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
+    return tags
+
+
+def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
+    """Does `target`, a link or a path that lands on `hit`, a file of
+    `project`, say which project it means? It does when it is a path from the
+    top or from the note, when it reaches the project's folder, when it is
+    the project's hub, or when it reaches a thread no other project has a
+    thread of the same name for."""
+    if target.startswith(("/", "./", "../", "~")):
+        return True
+    written = target.split(":", 2)[2] if target.startswith("obsidian:") else target
+    depth = len([x for x in written.replace("\\", "/").split("/") if x and x != "."])
+    rel_parts = hit.relative_to(project).parts
+    if depth > len(rel_parts) or (len(rel_parts) == 1 and rel_parts[0].lower() == project.name.lower() + ".md"):
+        return True
+    if len(rel_parts) >= 3 and rel_parts[0] == "Threads" and (
+            depth >= len(rel_parts) - 1 or Path(rel_parts[-1]).stem.lower() == rel_parts[1].lower()):
+        if ws.thread_owners is None:
+            ws.thread_owners = {}
+            for folder, _ in ws.projects:
+                for thread in visible_dirs(folder / "Threads"):
+                    ws.thread_owners.setdefault(thread.name.lower(), set()).add(folder)
+        return ws.thread_owners.get(rel_parts[1].lower()) == {project}
+    return False
 
 
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
@@ -3583,42 +3683,57 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                                    % (meeting_noun(ws, page), page.stem, mfm.get("zone")),
                                    "A note in %s uses a %s from the %s zone" % (where, meeting_noun(ws, page), mfm.get("zone"))))
 
-    # Links and paths into another project's files. A link that also lands in
-    # this project's own files is taken to mean them, as the writer does. One
-    # that lands in a project walled from this file's parties carries that
-    # project into this one when it names that project's folder, or when it
-    # lands nowhere else: a short path every project may hold, such as
-    # `Deliverables/published.md`, is not about the one across the wall while
-    # it lands on a file of a project with no wall too.
+    # Links and paths into a project's files, this one's included, whose
+    # parties are walled from this file's: a thread of this project may be
+    # written for a party walled from this thread's.
+    #
+    # A link that lands on more than one file is read as Obsidian reads it: one
+    # in this note's own folder is the one it means. Otherwise, when one of
+    # them is across a wall, it is refused if it names that project (its
+    # folder, its hub, a thread only it has) or if it lands on nothing but
+    # this project and files across the wall. A short one that does not
+    # (`[[Okta]]`, held by a Knowledge page too) is taken to mean the other.
+    # A path written as code is followed by a reader, not by Obsidian: one
+    # that lands in this project means it, and one that names no project and
+    # lands only across a wall is a warning, since nothing follows it there.
     if tags and targets:
         index = project_index(ws)
         named = set()
         for verb, written, target in targets:
             hits = resolve(ws, path, target, index)
-            if not hits or any(ws.project_files[h] == project for h in hits):
+            if not hits:
                 continue
-            exact = target.startswith(("/", "./", "../"))
-            written_path = target.split(":", 2)[2] if target.startswith("obsidian:") else target
-            depth = len([x for x in written_path.replace("\\", "/").split("/") if x and x != "."])
-            found = []  # (whether it names the project, the file, (our party, theirs))
+            code = verb != "links"
+            far_hits, near = [], []
             for hit in hits:
                 other = ws.project_files[hit]
-                theirs, _ = file_tags(ws, other, project_party(ws, other), hit)
-                pair = sorted((a, b) for a in tags for b in theirs if walled(ws.context, a, b))
+                pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, hit) if walled(ws.context, a, b))
                 if pair:
-                    found.append((exact or depth > len(hit.relative_to(other).parts), hit, pair[0]))
-            if not found or (len(found) < len(hits) and not any(f[0] for f in found)):
-                continue  # nothing walled, or a short path that lands on a project with no wall too
-            _, hit, (a, b) = max(found, key=lambda f: f[0])
-            other = ws.project_files[hit]
+                    far_hits.append((hit, other, pair[0]))
+                else:
+                    near.append((hit, other))
+            if not far_hits:
+                continue
+            own = [h for h, o in near if o == project]
+            if any(h.parent == path.parent for h in own) or (code and own):
+                continue  # it means a file of this project
+            naming = [f for f in far_hits if names_project(ws, target, f[0], f[1])]
+            severity = ERROR
+            if not naming:
+                if ws.wiki_links is None:
+                    ws.wiki_links = PathIndex(ws, ws.wiki_files)
+                if any(o != project for _, o in near) or resolve(ws, path, target, ws.wiki_links):
+                    continue  # a short name that lands on a wiki page or a project with no wall too
+                severity = WARNING if code else ERROR
+            hit, other, (a, b) = (naming or far_hits)[0]
             if (written, other) in named:
                 continue
             named.add((written, other))
-            reported.add(b)
+            if severity == ERROR:
+                reported.add(b)  # a warning must not stand in for the name check's refusal
             noun = "note" if hit.suffix.lower() == ".md" else "file"
-            out.append(Finding(ERROR, "walls", r,
-                               "%s %s, a %s of project %s for %s; a wall stands between %s and %s"
-                               % (verb, written, noun, other.name, b, a, b),
+            out.append(Finding(severity, "walls", r,
+                               "%s %s, a %s of %s; a wall stands between %s and %s" % (verb, written, noun, b, a, b),
                                "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b))))
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
 

@@ -35,6 +35,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Commits and pushes every repository, holding back what the wall check refuses.</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GARRICK_QUIET_EXITS</key>

@@ -48,6 +48,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Applies the checks' mechanical fixes and commits them; sends a one-line digest.</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>

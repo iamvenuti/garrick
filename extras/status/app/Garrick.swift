@@ -2394,6 +2394,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		decisionHandler(.cancel)
 		if checking { return heard.append("link:" + (url.scheme ?? "")) }
+		// a file, such as a job's log from its panel's Open log, comes up in front of
+		// this window, not behind it (#273)
+		if url.isFileURL {
+			let cfg = NSWorkspace.OpenConfiguration()
+			cfg.activates = true
+			return NSWorkspace.shared.open(url, configuration: cfg)
+		}
 		NSWorkspace.shared.open(url)
 	}
 

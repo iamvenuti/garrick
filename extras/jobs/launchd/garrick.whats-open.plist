@@ -42,6 +42,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Writes a brief of the open threads, with the assistant, outside the workspace.</string>
     <key>PATH</key>
     <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>GARRICK_HARNESS</key>

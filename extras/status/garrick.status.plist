@@ -34,6 +34,8 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Rebuilds the Garrick App's page each evening.</string>
     <key>PATH</key>
     <string>/usr/bin:/bin</string>
   </dict>

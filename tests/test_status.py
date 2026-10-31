@@ -2116,7 +2116,7 @@ class TestJobs(StatusCase):
         sweep = next(j for j in J if j["name"] == "sweep")
         self.assertEqual(("none", "not run yet", "daily 06:30", None), (sweep["state"], sweep["status"], sweep["schedule"], sweep["when"]))
         self.assertEqual(["brief", "sweep"], [j["name"] for j in J])                     # beside the jobs that ran, by name
-        row = next(r for r in html[html.index('id="jobs"'):].split('<div class="row" ')[1:] if ">sweep</a>" in r)
+        row = next(r for r in html[html.index('id="jobs"'):].split('<div class="row" ')[1:] if ">sweep</button>" in r)
         self.assertTrue(row.startswith('data-ok="1">' + status.ICON["none"]))         # hollow, and not something that needs attention
         self.assertIn("<small>daily 06:30</small>", row)
         self.assertIn("not run yet", row)
@@ -2176,6 +2176,73 @@ class TestJobs(StatusCase):
         self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
         self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
+
+    def card(self, html):
+        start = html.index('id="jobs"')
+        return html[start:html.index("</details>", start)]
+
+    def test_the_line_a_plist_gives_shows_under_the_name(self):
+        self.heartbeat(0)
+        with self.plists(brief={"StartCalendarInterval": {"Hour": 7}, "EnvironmentVariables": {"GARRICK_ABOUT": "Writes the Acme brief."}},
+                         sweep={"StartCalendarInterval": {"Hour": 6}}):
+            card = self.card(self.page())
+        self.assertIn('aria-controls="jp-0">brief</button><small class="about" data-tip="Writes the Acme brief.">Writes the Acme brief.</small>'
+                      '<small>daily 07:00</small>', card)
+        self.assertIn('aria-controls="jp-1">sweep</button><small>daily 06:00</small>', card)    # none given: nothing guessed
+
+    def test_garricks_jobs_and_the_users_are_two_groups(self):
+        self.assertEqual((True, False, False, False), tuple(status.garrick_job(l) for l in ("garrick.todo-sweep", "com.acme.digest", "", None)))
+        with self.plists(brief={"StartCalendarInterval": {"Hour": 7}},
+                         digest={"Label": "com.acme.digest", "StartCalendarInterval": {"Hour": 8}}):
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+            card = self.card(self.page())
+        self.assertEqual(("garrick.brief", True, "com.acme.digest", False),
+                         (J["brief"]["label"], J["brief"]["garrick"], J["digest"]["label"], J["digest"]["garrick"]))
+        ours, yours = card.index("<h3>Garrick's</h3>"), card.index("<h3>Yours</h3>")
+        self.assertTrue(ours < card.index(">brief</button>") < yours < card.index(">digest</button>"))
+
+    def test_a_heartbeat_without_a_plist_was_started_by_a_session(self):
+        self.heartbeat(0)
+        with self.plists(sweep={"StartCalendarInterval": {"Hour": 6}}):
+            J = {j["name"]: j for j in status.jobs(self.jobs, self.now)}
+            card = self.card(self.page())
+        self.assertEqual(("started by a session", None, False, "good"),
+                         (J["brief"]["schedule"], J["brief"]["label"], J["brief"]["garrick"], J["brief"]["state"]))
+        self.assertNotIn("schedule not found", card)
+        self.assertTrue(card.index("<h3>Yours</h3>") < card.index(">brief</button>"))
+        panel = card[card.index('id="jp-0"'):card.index('id="jp-1"')]
+        self.assertNotIn("<dt>Label</dt>", panel)                  # no plist: no label, and no word on the assistant
+        self.assertNotIn("<dt>Assistant</dt>", panel)
+
+    def test_the_name_opens_a_panel_not_the_log(self):
+        t = self.now - dt.timedelta(hours=2)
+        (self.jobs / "brief.heartbeat.json").write_text(json.dumps({"job": "brief", "finished": stamp(t.timestamp()), "exit": 0}))
+        (self.jobs / "brief.log").write_text("".join("line %d\n" % n for n in range(40))
+                                            + "===== %s  brief  exit 0  (30s) =====\n" % stamp(t.timestamp()))
+        args = ["/usr/bin/python3", "/w/System/jobs/job.py", "brief", "--agent", "--", "true"]
+        with self.plists(brief={"ProgramArguments": args, "StartCalendarInterval": {"Hour": 7},
+                                "EnvironmentVariables": {"GARRICK_ABOUT": "Writes the Acme brief."}}):
+            card = self.card(self.page())
+        log = (self.jobs / "brief.log").as_uri()
+        self.assertIn('<button type="button" class="jname" aria-expanded="false" aria-controls="jp-0">brief</button>', card)
+        self.assertNotIn('<a href="%s">brief</a>' % log, card)                    # never the log through file://
+        panel = card[card.index('<div class="jpanel" id="jp-0" data-ok="1" hidden>'):]
+        self.assertIn("<p>Writes the Acme brief.</p>", panel)
+        self.assertIn("<dt>Schedule</dt><dd>daily 07:00</dd><dt>Label</dt><dd>garrick.brief</dd><dt>Assistant</dt><dd>calls it</dd>", panel)
+        self.assertIn("<li>%s · ok</li>" % t.strftime("%a %d %b %H:%M"), panel)
+        self.assertIn("<pre>line 11\n", panel)                                       # the last 30 lines of the log
+        self.assertNotIn("line 10\n", panel)
+        self.assertIn('<a class="act" href="%s">Open log</a>' % log, panel)
+        self.assertIn("button.jname", status.JOBS_JS)
+
+    def test_every_shipped_plist_says_what_its_job_does(self):
+        shipped = sorted((REPO / "extras" / "jobs" / "launchd").glob("*.plist")) + [REPO / "extras" / "status" / "garrick.status.plist"]
+        self.assertGreater(len(shipped), 1)
+        for plist in shipped:
+            with self.subTest(plist.name):
+                p = plistlib.loads(plist.read_bytes())
+                self.assertTrue(status.garrick_job(p["Label"]))
+                self.assertTrue(p["EnvironmentVariables"].get("GARRICK_ABOUT", "").strip())
 
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"

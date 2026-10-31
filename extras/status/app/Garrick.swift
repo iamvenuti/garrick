@@ -1803,7 +1803,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil) { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
-			done(([say] + lines.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok, out)
+			// A line of what was done that says what the sentence says, case and a final full stop
+			// aside, is not shown a second time under it (#283).
+			let same = { (s: String) -> String in
+				var t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+				if t.hasSuffix(".") { t.removeLast() }
+				return t
+			}
+			let shown = lines.filter { same($0) != same(say) }
+			done(([say] + shown.map { "  " + $0 }).filter { !$0.isEmpty }.joined(separator: "\n"), opened && ok, out)
 		}
 	}
 

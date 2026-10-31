@@ -80,7 +80,9 @@ zone's repository, as the skills would:
                 {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
-                System/tools/fade.py keeps; saving moves no page
+                System/tools/fade.py keeps; saving moves no page.
+                {"desk-agent": "codex"}, which assistant a cmux tab starts,
+                written by the cmux extra's desk.py into System/desk.json
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -245,6 +247,7 @@ SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
 LAUNCHERS = ("note", "preview", "finder", "cmux", "codex", "claude")
+DESK_AGENTS = ("claude", "codex")      # which assistant a cmux tab starts: cmuxlib's AGENTS
 # What Settings › Zones offers: cmux's named colours and status.py's ZONE_ICONS.
 ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "Aqua", "Blue", "Navy", "Indigo",
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
@@ -1568,9 +1571,14 @@ def save_settings(ws: Path, req: dict) -> str:
     or both, and what it leaves out stays as saved. Every known way is
     written, on or off; status.py reads the same choices when it builds the
     page. A way it does not list is on, as on the page. Settings › Home:
-    {"home": "simple"} or "full", which the page opens on (#175)."""
-    if not {"launchers", "zones", "notifications", "while-you-wait", "home", "memory"} & set(req):
+    {"home": "simple"} or "full", which the page opens on (#175).
+    {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
+    is the cmux extra's own setting: the desk writes it in System/desk.json
+    (#279), and it is refused without the extra and cmux."""
+    if not {"launchers", "zones", "notifications", "while-you-wait", "home", "memory", "desk-agent"} & set(req):
         raise Refused("nothing to save")
+    if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
+        raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
     new = {}
     if "home" in req:
         if req["home"] not in HOMES:
@@ -1616,12 +1624,14 @@ def save_settings(ws: Path, req: dict) -> str:
     keep.migrate(ws)             # a choice an older Garrick left in System/generated/ comes first
     was = keep.read(ws).get("zones")
     before = was if isinstance(was, dict) else {}
+    if "desk-agent" in req:             # first: a desk that refuses leaves every other choice unsaved
+        run_desk(ws, "agent", req["desk-agent"], timeout=20)
     if new:
         try:
             keep.save(ws, new)
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
-    if "home" in new and set(new) == {"home"}:
+    if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
         return "Garrick now opens on %s" % ("the simple home" if new["home"] == "simple" else "the full page")
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None

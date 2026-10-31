@@ -3255,8 +3255,13 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
     sched = launchd_jobs() if sched is None else sched
     caps, caps_from = caps_in_use(agent, sched)
     calls = [e for e in entries if not e.get("refused")]
-    day = [e for e in calls if now.timestamp() - e["ts"] < 86400]
-    hour = [e for e in calls if now.timestamp() - e["ts"] < 3600]
+    # Ask's calls count against Ask's own caps (#282), so the jobs' meters
+    # count the jobs' calls alone. An agent.py from before that has one
+    # budget for every call, and the meters count them all, as it does.
+    ask = getattr(agent, "ASK", None) if hasattr(agent, "cap_reached") else None
+    jobs = [e for e in calls if ask is None or e.get("job") != ask]
+    day = [e for e in jobs if now.timestamp() - e["ts"] < 86400]
+    hour = [e for e in jobs if now.timestamp() - e["ts"] < 3600]
     by = {}
     for e in entries:
         j = by.setdefault(e.get("job", "?"), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
@@ -3281,8 +3286,24 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             "by": by, "refused_today": [e for e in entries if e.get("refused") and now.timestamp() - e["ts"] < 86400],
             "per_day": [(d,) + tuple(per_day.get(d, (0, 0.0))) for d in days],
             "began": dt.datetime.fromtimestamp(entries[0]["ts"]) if entries else None,
-            "over_budget": [e for e in day if e.get("subtype") == "error_max_budget_usd"],
-            "budget": call_budget(agent, sched), "deny": deny_list(agent)}
+            "over_budget": [e for e in calls if now.timestamp() - e["ts"] < 86400 and e.get("subtype") == "error_max_budget_usd"],
+            "budget": call_budget(agent, sched), "deny": deny_list(agent),
+            "ask": ask_calls(agent, calls, now) if ask and any(e.get("job") == ask for e in entries) else None}
+
+
+def ask_calls(agent, calls: List[dict], now: dt.datetime) -> dict:
+    """The ask box's calls against its own caps (#282), shown once the
+    ledger holds a line of Ask's. Ask runs in the Garrick App's environment,
+    not a launchd plist's, so its caps are the GARRICK_CAP_ASK_* this page
+    was built with, or agent.py's defaults."""
+    mine = [e for e in calls if e.get("job") == agent.ASK]
+    day = [e for e in mine if now.timestamp() - e["ts"] < 86400]
+    hour = [e for e in mine if now.timestamp() - e["ts"] < 3600]
+    named = any(var in os.environ for var in agent.CAP_VARS[agent.ASK].values())
+    return {"caps": agent.caps(agent.ASK), "day": len(day), "hour": len(hour),
+            "cost_day": sum(float(e.get("cost_usd") or 0) for e in day),
+            "caps_from": "Ask's own caps, from the GARRICK_CAP_ASK_* settings the page was built with; the app may run under others."
+                         if named else "Ask's own caps, agent.py's defaults; GARRICK_CAP_ASK_* in the app's environment changes them."}
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -3815,8 +3836,27 @@ GLASS = ('<svg class="lico lglass" viewBox="0 0 16 16" aria-hidden="true"><circl
          'stroke-linecap="round"/></svg>')
 
 
+# Which assistant a cmux tab starts (#279): the cmux extra's `agent` setting,
+# in System/desk.json, which the desk reads for every tab it opens. Settings
+# shows it under Open in cmux while that is switched on, and saves it through
+# the desk itself (page_action.py), so the two never disagree.
+DESK_AGENTS = (("claude", "Claude Code"), ("codex", "Codex"))
+
+
+def desk_agent(ws: Path) -> str:
+    """The assistant a new cmux tab starts, as the desk reads it: `agent` in
+    System/desk.json, or the file GARRICK_DESK_CONFIG names; claude when it
+    is not set or the file does not read."""
+    f = Path(os.environ.get("GARRICK_DESK_CONFIG") or ws / "System" / "desk.json").expanduser()
+    try:
+        agent = json.loads(f.read_text(encoding="utf-8")).get("agent")
+    except (OSError, ValueError, AttributeError):
+        agent = None
+    return agent if agent in dict(DESK_AGENTS) else "claude"
+
+
 def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
-                     why: Optional[Dict[str, Optional[str]]] = None) -> str:
+                     why: Optional[Dict[str, Optional[str]]] = None, agent: Optional[str] = None) -> str:
     """Settings › Opening a thread: the note's own link, then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
     (what clicking a thread's name does), each with its card icon. Explore's
@@ -3825,7 +3865,9 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     rather than after: not installed, or installed without the launcher it
     opens a folder through. How each app takes the resume phrase is in the
     docs, not here (#227). Kept in this viewer's own storage, so the page
-    still writes nothing."""
+    still writes nothing. `agent`, given where the desk can open cmux tabs,
+    adds which assistant a tab starts under Open in cmux (#279); the app
+    saves that one in System/desk.json when Settings closes."""
     why = launcher_state() if why is None else why
     rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "",
              LAUNCH_ICON % ("var(--icon-obsidian,var(--icon-note))" if obsidian else "var(--icon-note)"))]
@@ -3840,6 +3882,13 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     # nothing, and only where the host reads a note for the page, as the card offers it
     html.insert(1, '<div class="launcher-row apponly"><label class="launcher-choice"><input type="checkbox" data-launcher="preview"> '
                    '%s<span>Preview</span></label></div>' % GLASS)
+    if agent is not None:
+        at = next(i for i, h in enumerate(html) if 'data-launcher="cmux"' in h) + 1
+        html.insert(at, '<div class="launcher-row apponly" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
+                        '<span>A cmux tab starts<small>Saved in System/desk.json</small></span></label>'
+                        '<select id="desk-agent" class="menu-style">%s</select></div>'
+                        % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
+                                  for k, label in DESK_AGENTS))
     html = "".join(html)
     return ('<section class="setsec" id="launcher-settings">%s%s%s</section>'
             % (set_head("Opening a thread", "launchers", "Which apps a project or thread can open in, and what clicking a "
@@ -3929,7 +3978,8 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     Reset view at the foot. Each section shows its choices and one line at
     most saying what they are for; how a feature works is behind its "?"
     and in docs/extras/status-page.md (#227)."""
-    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian"))),
+    agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
+    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}), menu_settings(),
                       wait_settings(ws)],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
@@ -6339,7 +6389,7 @@ StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.clo
    (⌘,) calls StatusSettings.open(). */
 var sd=document.getElementById('settings');
 function sdShut(){sd.close()}
-var sdChanged=false,lpChanged=false;sd.addEventListener('change',function(){sdChanged=true});
+var sdChanged=false,lpChanged=false,daChanged=false;sd.addEventListener('change',function(){sdChanged=true});
 /* leaving Settings after a change rebuilds the page in the app, so what was chosen shows at once; a change
    to the apps or the zones is saved for every viewer first, through page_action.py, which rebuilds the page after it */
 sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdChanged||!host)return;
@@ -6349,8 +6399,9 @@ sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessa
 /* What Settings has to save, as one request: the apps, the zones, the notifications, While you wait, Memory, each only when it changed.
    null when there is nothing. */
 function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
-if(!(lpChanged||zChanged||n||w||m))return null;
+if(!(lpChanged||zChanged||daChanged||n||w||m))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(n)q.notifications=N.request();
+if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
 lpChanged=zChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
@@ -6384,7 +6435,10 @@ sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.oncha
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
 c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
-say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.')}});radios();
+say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.');daRow()}});radios();
+/* which assistant a cmux tab starts (#279): shown while Open in cmux is on, saved through the desk when Settings closes */
+var daSel=document.getElementById('desk-agent');function daRow(){var r=document.getElementById('desk-agent-row'),c=sd.querySelector('input[data-launcher="cmux"]');
+if(r)r.style.display=!c||c.disabled||!c.checked?'none':''}daRow();if(daSel)daSel.onchange=function(){daChanged=true;say('A cmux tab now starts '+daSel.options[daSel.selectedIndex].text+'.')};
 /* Settings › Zones: each row draws its zone as chosen; every zone's choice goes with the request when Settings closes */
 var zChanged=false,zIcons={};try{zIcons=JSON.parse(document.getElementById('zone-icons').textContent)}catch(e){}
 function zpick(r,k){return r.querySelector(k).value}
@@ -7900,10 +7954,19 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
         def against(text, cap, unit=""):     # "3 / 48", or "3, no cap" when the cap is 0
             return "%s / %s%g" % (text, unit, cap) if cap else "%s, no cap" % text
         # where the caps were read, in the meters' tooltip; the per-call budget a figure beside them (#232)
-        m = (meter(L["day"], c["calls_day"], "Calls, last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
-             + meter(L["hour"], c["calls_hour"], "Calls, last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
-             + meter(L["cost_day"], c["cost_day"], "Cost, last 24 h", against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"])
-             + '<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
+        jobs_word = "Job calls" if L.get("ask") else "Calls"     # with Ask on caps of its own, these are the jobs'
+        m = (meter(L["day"], c["calls_day"], jobs_word + ", last 24 h", against("%d" % L["day"], c["calls_day"]), L["caps_from"])
+             + meter(L["hour"], c["calls_hour"], jobs_word + ", last hour", against("%d" % L["hour"], c["calls_hour"]), L["caps_from"])
+             + meter(L["cost_day"], c["cost_day"], ("Job cost" if L.get("ask") else "Cost") + ", last 24 h",
+                     against("$%.2f" % L["cost_day"], c["cost_day"], "$"), L["caps_from"]))
+        A = L.get("ask")
+        if A:                                   # Ask's own caps, beside the jobs' (#282)
+            k = A["caps"]
+            m += (meter(A["hour"], k["calls_hour"], "Ask, last hour", against("%d" % A["hour"], k["calls_hour"]), A["caps_from"])
+                  + meter(A["day"], k["calls_day"], "Ask, last 24 h", against("%d" % A["day"], k["calls_day"]), A["caps_from"])
+                  + meter(A["cost_day"], k["cost_day"], "Ask cost, last 24 h", against("$%.2f" % A["cost_day"], k["cost_day"], "$"),
+                          A["caps_from"]))
+        m += ('<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
                '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
         def refused(tools):

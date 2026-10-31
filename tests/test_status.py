@@ -1765,6 +1765,25 @@ class TestLaunchers(StatusCase):
         self.assertNotIn(">Done<", dialog)
         self.assertIn("e.target.closest('.thread .t>a,.sres .t>a')", status.PANEL_JS)   # a click on a thread, or a match for one, follows the default
 
+    def test_which_assistant_a_cmux_tab_starts(self):
+        # #279: under Open in cmux, read from and saved to the desk's own setting, only where cmux can open
+        def dialog(**kw):
+            html = self.page(**kw)
+            return html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GARRICK_DESK_CONFIG", None)
+            self.assertNotIn('id="desk-agent"', dialog(launchers=("finder", "claude")))     # no cmux, no choice
+            shown = dialog(launchers=("cmux",))
+            self.assertIn('<option value="claude" selected>Claude Code</option><option value="codex">Codex</option>', shown)
+            self.assertLess(shown.index('data-launcher="cmux"'), shown.index('id="desk-agent-row"'))
+            self.assertLess(shown.index('id="desk-agent-row"'), shown.index('data-launcher="codex"'))
+            write(self.root / "System" / "desk.json", json.dumps({"agent": "codex", "skip": ["archive"]}))
+            self.assertIn('<option value="codex" selected>Codex</option>', dialog(launchers=("cmux",)))
+            write(self.root / "System" / "desk.json", "{")
+            self.assertEqual("claude", status.desk_agent(self.root))                      # as the desk reads a default
+        self.assertIn("q['desk-agent']=document.getElementById('desk-agent').value", status.JS)   # saved when Settings closes
+        self.assertIn("r.style.display=!c||c.disabled||!c.checked?'none':''", status.JS)    # shown while Open in cmux is on
+
     def test_settings_open_from_the_cog(self):
         html = self.page()
         brand = html[html.index('<header class="bar">'):html.index("</header>")]
@@ -2177,6 +2196,28 @@ class TestJobs(StatusCase):
         self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
         self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
+
+    def test_ask_has_meters_of_its_own_beside_the_jobs(self):
+        """#282: Ask's calls count against Ask's caps, so the jobs' meters
+        leave them out and Ask's own sit beside them."""
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0},
+                    *[{"job": "ask", "cost_usd": 0.01, "exit": 0} for _ in range(13)])
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GARRICK_CAP_")}
+        with self.plists(), mock.patch.dict(os.environ, clean, clear=True):
+            html = self.page()
+        card = html[html.index('id="calls"'):html.index("</details>", html.index('id="calls"'))]
+        self.assertIn("Job calls, last hour</span><span class=\"num\">1 / 12<", card)   # Ask's 13 are not the jobs'
+        self.assertIn("Ask, last hour</span><span class=\"num\">13 / 60<", card)
+        self.assertIn("Ask, last 24 h</span><span class=\"num\">13 / 300<", card)
+        self.assertIn("Ask cost, last 24 h</span><span class=\"num\">$0.13 / $20<", card)
+        self.assertIn("Ask&#x27;s own caps, agent.py&#x27;s defaults", card)
+
+    def test_no_ask_lines_no_ask_meters(self):
+        self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
+        with self.plists():
+            html = self.page()
+        self.assertNotIn("Ask, last hour", html)
+        self.assertIn("Calls, last hour", html)
 
     def test_odd_plists_are_passed_over(self):
         folder = self.jobs.parent / "LaunchAgents"

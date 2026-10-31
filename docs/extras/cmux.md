@@ -47,13 +47,15 @@ You need cmux and `python3`. desk lives in your workspace, like the Garrick App,
    | `workspaces` | The cmux workspace each zone's tabs go to; `neutral` is for System and the wikis | each zone's own name, and *System* |
    | `skip` | Folder names desk passes over | `archive`, `Archive`, `Inbox` |
    | `aliases` | Heard names, on top of the Aliases table in `System/context.md` | none |
-   | `agent` | The assistant a new tab starts: `claude` or `codex` | `claude` |
+   | `agent` | The assistant a new tab starts: `claude` or `codex`. The Garrick App's Settings › *Opening a thread* sets it too, as *A cmux tab starts*, and so does `desk agent codex` | `claude` |
    | `before_quit` | Commands "close for the day" runs, in order, from the workspace root, after the wraps and before cmux quits | none |
    | `socket_password_file` | Where the cmux socket password is kept (below) | `cmux-socket.password` in the jobs folder |
 
 desk finds the workspace the way the other tools do: `--workspace`, or `GARRICK_WORKSPACE`, or the folder you are in, or `~/Garrick`. It keeps its record of which session sat in which tab, `desk-snapshot.json`, and its shutdown log, `desk-shutdown.log`, in the jobs folder: `~/Library/Logs/garrick-jobs/`, or `GARRICK_JOBS_DIR`.
 
 Run `desk status` to check it can see cmux.
+
+A new tab starts the assistant `agent` names only when its command is installed: on the PATH desk was started with, in the folders the two assistants install to, or as your own shell finds it. When it is not there, desk says so and opens nothing, rather than a tab whose command fails. A wrap sent to a tab is worded for the assistant running in it: `/threads wrap it` for Claude Code, the same request in words for Codex.
 
 ## From the Garrick App
 

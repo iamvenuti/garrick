@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, thread_note, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, project_hub, thread_note, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 from garrick_lib import WALL_HOOK, install_wall_hook  # noqa: E402
@@ -785,6 +785,97 @@ class TestSharedSurname(GapCase):
         write(note, thread_note("Acme Review", "Pricing", "acme", "Birch is pricing below us."))
         found = [f for f in self.findings("walls") if "Pricing.md" in f.path]
         self.assertEqual(1, len(found), found)
+
+
+class TestProjectLinks(GapCase):
+    """A link or a path into a note of a project walled from this one is
+    refused, by the commit hook and the full check alike, whether or not the
+    path holds a name of the far party. Northwind is for Acme, Harbour for
+    Birch, Lantern for Cobalt, which no wall keeps from either."""
+
+    WALLED = ("[[Harbour/Threads/Tender/Tender]]",                 # a wikilink by its path
+              "[[Tender|the tender]]",                             # a bare name that lands only across the wall
+              "`Harbour/Threads/Tender/Tender.md`",                # a path written as code
+              "[the tender](../../../Harbour/Threads/Tender/Tender.md)",
+              "obsidian://open?vault=Workspace&file=Zones%2FWork%2FHarbour%2FThreads%2FTender%2FTender")
+    OPEN = ("[[Lantern/Threads/Survey/Survey]]", "[[Survey]]", "`Lantern/Threads/Survey/Survey.md`",
+            "[[Freight]]", "`Threads/Freight/Freight.md`", "[[Northwind/Threads/Freight/Freight]]")
+
+    def setUp(self):
+        super().setUp()
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace(
+            "mail.birchco.example |\n",
+            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | cobalt.example |\n", 1))
+        for name, party, thread in (("Northwind", "acme", "Freight"), ("Harbour", "birch", "Tender"),
+                                    ("Lantern", "cobalt", "Survey")):
+            folder = self.work / name
+            write(folder / (name + ".md"), project_hub("Work", name, party, [thread]))
+            write(folder / "Threads" / thread / (thread + ".md"), thread_note(name, thread, party))
+        self.note = self.work / "Northwind" / "Threads" / "Freight" / "Notes.md"
+        self.where = "Zones/Work/Northwind/Threads/Freight/Notes.md"
+
+    def walls(self):
+        return [f for f in self.findings("walls") if f.path == self.where]
+
+    def test_each_way_in_is_refused_by_the_full_check(self):
+        self.assertEqual([], self.walls())
+        for written in self.WALLED:
+            with self.subTest(written):
+                write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                found = self.walls()
+                self.assertEqual(["error"], [f.severity for f in found], found)
+                self.assertTrue(found[0].message.endswith(
+                    ", a note of project Harbour for birch; a wall stands between acme and birch"), found[0].message)
+                self.assertEqual("A note in Northwind's Freight thread uses a note of Birch & Co", found[0].ear)
+
+    def test_a_path_as_code_says_so(self):
+        write(self.note, "# Notes\n\nSee `Harbour/Threads/Tender/Tender.md`.\n")
+        self.assertEqual(["writes the path `Harbour/Threads/Tender/Tender.md`, a note of project Harbour for birch; "
+                          "a wall stands between acme and birch"], [f.message for f in self.walls()])
+
+    def test_an_unwalled_project_and_the_project_itself_pass(self):
+        write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s." % w for w in self.OPEN))
+        self.assertEqual([], self.walls())
+
+    def test_a_name_that_also_lands_in_the_project_itself_means_its_own(self):
+        write(self.work / "Northwind" / "Threads" / "Freight" / "Tender.md", "# Tender\n")
+        write(self.note, "# Notes\n\nSee [[Tender]].\n")
+        self.assertEqual([], self.walls())
+
+    def test_a_short_path_every_project_may_hold(self):
+        # It is about the far project only when it names it, or lands nowhere else.
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        write(self.note, "# Notes\n\nRecord it in `Deliverables/published.md`.\n")
+        self.assertEqual(1, len(self.walls()))
+        write(self.work / "Lantern" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        self.assertEqual([], self.walls())
+        write(self.note, "# Notes\n\nSee [[Harbour/Deliverables/published]].\n")
+        self.assertEqual(["links [[Harbour/Deliverables/published]], a note of project Harbour for birch; "
+                          "a wall stands between acme and birch"], [f.message for f in self.walls()])
+
+    def test_sources_follow_the_link_check(self):
+        # Sources/ is exempt from the name check, never from the link check.
+        sent = self.work / "Northwind" / "Sources" / "Brief.md"
+        write(sent, "# Brief\n\nSee [[Harbour/Threads/Tender/Tender]].\n")
+        self.assertEqual(["error"], [f.severity for f in self.findings("walls")
+                                     if f.path == "Zones/Work/Northwind/Sources/Brief.md"])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_each_way_in(self):
+        real_repo(self.work)
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            for written in self.WALLED[:3]:
+                with self.subTest(written):
+                    write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                    git(self.work, "add", "-A")
+                    found = check.run_checks(self.root, staged=self.work)
+                    self.assertEqual([("error", "walls", self.where)], [(f.severity, f.check, f.path) for f in found])
+                    self.assertIn("a note of project Harbour for birch", found[0].message)
+            write(self.note, "# Notes\n\n%s\n" % "\n".join("See %s." % w for w in self.OPEN))
+            git(self.work, "add", "-A")
+            self.assertEqual([], check.run_checks(self.root, staged=self.work))
 
 
 if __name__ == "__main__":

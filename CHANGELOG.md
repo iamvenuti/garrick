@@ -17,6 +17,7 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ### Fixed
 
+- **The wall check reads links and paths into another project.** It now refuses a link, or a path written as code, into a note of a project walled from the note's own, and Nurture no longer turns such a path into a link or points a link after a note moved across a wall.
 - **The checkpoint chip describes recorded work, not the current session's** ([#280](https://github.com/iamvenuti/garrick/issues/280)). Its tooltip said "Work this session recorded at …", but any session may have written the checkpoint, often one gone since, and a session open on the thread holds none of that conversation. It now reads "Work recorded at 20:05 on 30 October 2026 that no wrap has folded in yet".
 
 ## [0.48.0] - 2026-10-31

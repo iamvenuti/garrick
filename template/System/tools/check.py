@@ -217,6 +217,8 @@ class Workspace:
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
+    project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
+    project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
     git_view: Dict[Path, str] = field(default_factory=dict)  # staged mode: what git holds, where the disk differs
@@ -3487,6 +3489,50 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     return tags, where
 
 
+def code_paths(text: str) -> List[Tuple[str, str]]:
+    """(as written, target) for every path written as code in `text`: an
+    inline code span, or a line of a fenced block, that holds a slash. Nothing
+    resolves these as a link does, but a person or an assistant follows one
+    just the same, and Nurture may turn one into a link."""
+    out = []
+    for m in CODE_RE.finditer(text):
+        span = m.group(0)
+        lines = span[3:-3].split("\n")[1:] if span.startswith("```") else [span[1:-1]]
+        for line in lines:
+            target = line.strip().strip("\"'").split("#", 1)[0].strip()
+            if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                out.append(("`%s`" % line.strip(), target))
+    return out
+
+
+def project_index(ws: Workspace) -> "PathIndex":
+    """Every file of every project, indexed for links once a run, with the
+    project each belongs to. What git ignores counts: a link into a walled
+    project lands there whether or not git keeps the file. A Garrick checkout
+    kept in a project does not: it is Garrick's shipped files, not the
+    project's notes (set_apart). In staged mode, a file deleted from disk but
+    still in git counts too."""
+    if ws.project_links is None:
+        owner: Dict[Path, Path] = {}
+        skip = set(checkouts(ws))
+        for project, _ in ws.projects:
+            for path in walk_files(project, skip):
+                owner.setdefault(path, project)
+            for path in sorted(p for p in ws.git_view if project in p.parents and not p.exists()):
+                owner.setdefault(path, project)
+        ws.project_files = owner
+        ws.project_links = PathIndex(ws, owner)
+    return ws.project_links
+
+
+def project_party(ws: Workspace, project: Path) -> set:
+    """The party tags a project's hub declares."""
+    for folder, pfm in ws.projects:
+        if folder == project:
+            return {strip_tag(t) for t in as_list(pfm.get("party"))}
+    return set()
+
+
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -3498,9 +3544,11 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     zone = project.parent.name
     reported: set = set()  # walled parties and meetings already named for this file
 
-    # Links.
+    # Links, and paths written as code (code_paths), which whoever reads the
+    # note follows just the same.
+    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text)]
     seen = set()
-    for written, target in extract_links(text) if meetings.items else []:
+    for verb, written, target in targets if meetings.items else []:
         for page in resolve(ws, path, target, meetings):
             key = (written, page)
             if key in seen:
@@ -3526,14 +3574,52 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 a, b = hits[0]
                 reported |= {b, page}
                 out.append(Finding(ERROR, "walls", r,
-                                   "links %s, a %s with %s; a wall stands between %s and %s"
-                                   % (written, meeting_noun(ws, page), b, a, b),
+                                   "%s %s, a %s with %s; a wall stands between %s and %s"
+                                   % (verb, written, meeting_noun(ws, page), b, a, b),
                                    "A note in %s uses a %s with %s" % (where, meeting_noun(ws, page), party_name(ws, b))))
             elif mfm.get("zone") != zone:
                 out.append(Finding(WARNING, "walls", r,
                                    "uses %s %s from zone %s; cross-zone work happens only when asked"
                                    % (meeting_noun(ws, page), page.stem, mfm.get("zone")),
                                    "A note in %s uses a %s from the %s zone" % (where, meeting_noun(ws, page), mfm.get("zone"))))
+
+    # Links and paths into another project's files. A link that also lands in
+    # this project's own files is taken to mean them, as the writer does. One
+    # that lands in a project walled from this file's parties carries that
+    # project into this one when it names that project's folder, or when it
+    # lands nowhere else: a short path every project may hold, such as
+    # `Deliverables/published.md`, is not about the one across the wall while
+    # it lands on a file of a project with no wall too.
+    if tags and targets:
+        index = project_index(ws)
+        named = set()
+        for verb, written, target in targets:
+            hits = resolve(ws, path, target, index)
+            if not hits or any(ws.project_files[h] == project for h in hits):
+                continue
+            exact = target.startswith(("/", "./", "../"))
+            written_path = target.split(":", 2)[2] if target.startswith("obsidian:") else target
+            depth = len([x for x in written_path.replace("\\", "/").split("/") if x and x != "."])
+            found = []  # (whether it names the project, the file, (our party, theirs))
+            for hit in hits:
+                other = ws.project_files[hit]
+                theirs, _ = file_tags(ws, other, project_party(ws, other), hit)
+                pair = sorted((a, b) for a in tags for b in theirs if walled(ws.context, a, b))
+                if pair:
+                    found.append((exact or depth > len(hit.relative_to(other).parts), hit, pair[0]))
+            if not found or (len(found) < len(hits) and not any(f[0] for f in found)):
+                continue  # nothing walled, or a short path that lands on a project with no wall too
+            _, hit, (a, b) = max(found, key=lambda f: f[0])
+            other = ws.project_files[hit]
+            if (written, other) in named:
+                continue
+            named.add((written, other))
+            reported.add(b)
+            noun = "note" if hit.suffix.lower() == ".md" else "file"
+            out.append(Finding(ERROR, "walls", r,
+                               "%s %s, a %s of project %s for %s; a wall stands between %s and %s"
+                               % (verb, written, noun, other.name, b, a, b),
+                               "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b))))
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.

@@ -843,6 +843,23 @@ class TestGraphColourSettings(ActionCase):
         self.assertEqual(tuple(k for k, _, _ in status.KINDS), pa.GRAPH_KINDS)
         self.assertEqual(status.GRAPH_COLOURS, tuple(k for k in pa.ZONE_COLOURS if k not in pa.GRAPH_OFF))
 
+    def test_every_kind_the_page_can_find_is_one_it_can_save(self):
+        # A kind found from a wiki's pages is offered in Settings › Graph colours, so a request naming it must never be
+        # refused: one refused kind would lose every other choice made in the same close, the zones' among them.
+        spec = importlib.util.spec_from_file_location("garrick_status_for_found", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        odd = ["_draft", "-draft", "__", "--x--", " spaced out ", "x" * 80, "a" + "_" * 59 + "b", "a" + " " * 70 + "b",
+               "réunion", "Étude de cas".lower(), "case study", "2026 plan", "q&a", "draft_", "ünïcödé-" * 12, "x-_ -y"]
+        for typed in odd:
+            kind = status.found_kind(typed)
+            if not kind:
+                continue
+            self.assertLessEqual(len(kind), status.FOUND_KIND_MAX, typed)
+            self.assertEqual({kind: "Teal"}, pa.graph_styles({kind: "Teal"}), typed)
+        self.assertEqual("draft", status.found_kind("_draft"))
+        self.assertEqual("", status.found_kind("__"))
+
 
 class TestDeskAgentSettings(ActionCase):
     """Settings › Opening a thread: which assistant a cmux tab starts (#279), the desk's own setting."""

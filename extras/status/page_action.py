@@ -255,8 +255,9 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
                 "Purple", "Magenta", "Rose", "Brown", "Charcoal")
 # What Settings › Graph colours offers (#291): the same, less the three a ring on the graph uses; status.py's
 # GRAPH_OFF. A kind is one of status.py's KINDS, or one found from a wiki's pages, which is named by its type
-# as status.py names it: lower case, of letters, digits, spaces, hyphens and underscores. This request cannot
-# see the pages, so it holds a found kind to that shape; a kind no page has is never drawn.
+# as status.py's found_kind() names it: lower case, of letters, digits, spaces, hyphens and underscores, neither
+# starting with an underscore nor longer than its FOUND_KIND_MAX. This request cannot see the pages, so it holds
+# a found kind to that shape; a kind no page has is never drawn.
 GRAPH_OFF = ("Red", "Crimson", "Amber")
 GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")

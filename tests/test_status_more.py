@@ -1032,7 +1032,7 @@ class TestZoneColours(StatusCase):
 
     def test_a_palette_pick_counts_as_a_change(self):
         # a cell sets the hidden select and runs its onchange, which fires no change event: the pick says so itself
-        self.assertIn("s.value=c.dataset.v;s.onchange();sdChanged=true;zface(b,s);", status.JS)
+        self.assertIn("if(s.value!==c.dataset.v){s.value=c.dataset.v;s.onchange();sdChanged=true}zface(b,s);", status.JS)   # the one chosen: no change
 
 
 class TestGraphColours(StatusCase):
@@ -1094,6 +1094,17 @@ class TestGraphColours(StatusCase):
         shipped = next(c for k, _, c in status.page_kinds({"Meetings": {"domain": 3}}) if k == "domain")
         self.assertIn('<div class="gkrow" data-kind="domain" data-def="%s"><span class="zprev"><i class="zsw" style="background:var(--zc-olive)">'
                       '</i>Domains</span>' % shipped, self.section(html))
+
+    def test_an_odd_type_makes_a_kind_settings_can_save(self):
+        m = self.root / "Wikis" / "Meetings" / "wiki" / "drafts"
+        for i in range(3):
+            write(m / ("d%d.md" % i), "---\ntitle: Draft %d\ntype: _Draft\n---\n" % i)
+        html = self.page()
+        self.assertIn("draft", graph_data(html)["keys"])
+        self.assertIn('<div class="gkrow" data-kind="draft"', self.section(html))
+
+    def test_a_cards_links_follow_the_theme(self):
+        self.assertIn("<i style=\"background:'+esc(G.colors[m.k]||'var(--muted)')+'\"></i>", status.GRAPH_JS)
 
     def test_the_legend_and_the_graph_take_the_choice(self):
         self.save({"project": "Teal", "meeting": "Indigo"})

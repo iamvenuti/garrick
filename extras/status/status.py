@@ -2602,6 +2602,20 @@ KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", 
 WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
 
 
+# The longest name a kind found from pages takes: page_action.py's GRAPH_FOUND
+# holds a kind Settings › Graph colours saves to the same shape (#291).
+FOUND_KIND_MAX = 60
+
+
+def found_kind(typed: str) -> str:
+    """A page's `type:`, lower case, as the kind it would found (#250): its
+    letters, digits, spaces, hyphens and underscores, with no space, hyphen or
+    underscore at either end, cut to FOUND_KIND_MAX. Every name this gives is
+    one Settings › Graph colours can save (#291). "" for none."""
+    word = re.sub(r"[^\w -]+", "", typed).strip(" _-")
+    return word[:FOUND_KIND_MAX].rstrip(" _-")
+
+
 def wiki_kind(wiki: str, kind: str, parts: tuple, source_type: str = "source") -> str:
     if wiki == "Meetings":
         return kind if kind in WIKI_KINDS else "note"
@@ -2761,7 +2775,7 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
         index[path] = len(nodes)
         title = as_text(fm.get("title")).strip() or path.stem
         hub = kind in HUBS.get(wiki, HUBS["*"]) if wiki else kind in HUBS[""]
-        typed = re.sub(r"[^\w -]+", "", typed).strip() if wiki and kind == "note" else ""
+        typed = found_kind(typed) if wiki and kind == "note" else ""
         if typed and typed not in kinds:
             seen = found.setdefault(wiki, {})
             seen[typed] = seen.get(typed, 0) + 1
@@ -6479,7 +6493,7 @@ function zshut(except){sd.querySelectorAll('.zpop').forEach(function(p){if(p!==e
 sd.querySelectorAll('.zpick').forEach(function(k){var s=k.querySelector('select'),b=k.querySelector('.zbtn'),p=k.querySelector('.zpop');
 function mark(){p.querySelectorAll('.zcell').forEach(function(c){c.classList.toggle('on',c.dataset.v===s.value)})}mark();
 b.onclick=function(e){e.stopPropagation();zshut(p);p.hidden=!p.hidden;b.setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden){mark();var on=p.querySelector('.zcell.on')||p.querySelector('.zcell');on.focus()}};
-p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();s.value=c.dataset.v;s.onchange();sdChanged=true;zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
+p.onclick=function(e){var c=e.target.closest('.zcell');if(!c)return;e.stopPropagation();if(s.value!==c.dataset.v){s.value=c.dataset.v;s.onchange();sdChanged=true}zface(b,s);mark();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()};
 p.onkeydown=function(e){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();p.hidden=true;b.setAttribute('aria-expanded','false');b.focus()}}});
 sd.addEventListener('click',function(e){if(!e.target.closest('.zpick'))zshut(null)});
 /* each "?" shows or hides its section's explanation where it stands */
@@ -7511,7 +7525,8 @@ function kindName(n){var k=G.kinds.filter(function(x){return x[0]===n.k})[0];ret
 function select(n,centre){sel=n;hover=null;delete cv.dataset.tip;
 var o={n:n.n,kl:kindName(n),z:n.z,p:n.p,t:n.t,d:n.d,s:n.s,w:n.w,h:n.h,u:n.u,f:n.f,lw:n.lw,dk:n.dk,live:n.live,pa:n.pa,pp:n.pp,hp:n.hp,held:n.held};
 var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(b.c-a.c)||a.n.localeCompare(b.n)});
-var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+fill(m)+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
+/* each linked note's dot in its kind's colour as the page holds it, so a chosen colour follows the theme (#291) */
+var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+esc(G.colors[m.k]||'var(--muted)')+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
 +(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}

@@ -17,6 +17,12 @@ Each message carries:
 - `<earlier-request>`: a request Garrick asked about ("Which do you mean:
   ..."), when this request is the answer to that question. Take the two as
   one.
+- `<names>`: the names Garrick recognised in the request, before you saw
+  it, each as it was heard and what it stands for: a party, a person and
+  their party, a project or a thread, with its zone. It covers the
+  aliases and the people of the user's context, which you are not given
+  otherwise. Use it to read a mangled name or a person's name; an action
+  still names the place exactly as `<workspace>` writes it.
 - `<request>`: what the user typed or said.
 
 Reply with one JSON object and nothing else, no code fence:
@@ -47,8 +53,8 @@ The actions, each an object:
 Rules:
 
 - Names arrive mangled, often dictated. Match them against the workspace
-  list. Use names exactly as the list writes them. Never invent a project
-  or a thread.
+  list, and `<names>` when the message has one. Use names exactly as the
+  list writes them. Never invent a project or a thread.
 - App names arrive mangled too, and "in <app>" names the app, never part of
   a project's name. "cloud", "Claud", "clod" mean "claude"; "see mux",
   "C mux", "the terminal" mean "cmux"; "codecs" means "codex"; "Finder",

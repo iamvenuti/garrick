@@ -20,10 +20,13 @@ assistant session open, reached through a socket in the jobs folder that
 only you can read. With Claude (GARRICK_HARNESS unset or `claude`) it is one
 `claude -p` process in stream-json mode, with no tools, no MCP servers and no
 transcript on disk, so a request answers in a second or two and a follow-up
-("no, the other one") works. A session older than three hours is replaced
-before the next request, and the server exits after three hours with nothing
-asked of it. Codex has no such mode: each request is one `codex exec`
-through agent.py, read-only, given the last few exchanges again.
+("no, the other one") works. It is sealed, as the answer session below is:
+it holds its brief and what each request sends it, and nothing else. A
+session older than three hours is replaced before the next request, and the
+server exits after three hours with nothing asked of it. Codex has no such
+mode: each request is one `codex exec` through agent.py, read-only, given
+the last few exchanges again, run in an empty folder outside the workspace
+that is removed when it returns, so no AGENTS.md of the workspace's is found.
 
 **The session starts with the app, belongs to it, and is marked.** With Ask
 on, Garrick.app sends `keep` a second after its window shows and every two
@@ -85,8 +88,12 @@ System/jobs/ beside System/status/.
 
 **The model proposes, this file disposes.** The session sees only names and
 states: each request carries the live projects and threads of every zone,
-from their frontmatter, sent again only when it has changed. It answers with
-JSON (ask-brief.md). Each action is checked against that list, then:
+from their frontmatter, sent again only when it has changed, and `<names>`,
+each name the request holds as it was heard and what ask_scope.mentions()
+settled it to: a party, a person and their party, a project or a thread.
+The session loads no System/context.md, so an alias or a person reaches it
+that way, and only the ones the request names. It answers with JSON
+(ask-brief.md). Each action is checked against that list, then:
 
     open       comes back to the app as a folder to open, in an app the
                request named or the user's default; an app switched off in
@@ -112,12 +119,14 @@ inside that scope only, Sources/ documents through extract.py among them,
 and a second session answers from the passages, on GARRICK_ASK_ANSWER_TIER
 (`sonnet` unless set). It has no tools and proposes nothing: its reply is
 said, never carried out, so text inside a record can never become an
-action. It holds nothing but its brief, the list and the records admitted:
-no settings but the deny profile (`--setting-sources ""`), no memory
-(CLAUDE_CODE_DISABLE_AUTO_MEMORY), and an empty folder outside the
-workspace as its working folder, made when it starts, removed when it stops. The find and its answer are one call against the caps and one line
-in the ledger. With Codex a question gets a plain reply that answers need
-Claude.
+action. It holds nothing but its brief, the list and the records admitted.
+Both sessions are sealed alike: no settings but the deny profile
+(`--setting-sources ""`), so no CLAUDE.md, rules or context of the user's;
+no memory (CLAUDE_CODE_DISABLE_AUTO_MEMORY); and an empty folder outside
+the workspace as the working folder, made when the session starts, removed
+when it stops (sealed_folder()). The find and its answer are one call
+against the caps and one line in the ledger. With Codex a question gets a
+plain reply that answers need Claude.
 
 **The wall reset.** Asker.admit() is the only way a record reaches a
 prompt, and it adds the parties of what it admits to Asker.seen: a meeting
@@ -184,6 +193,7 @@ CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a 
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
+MOST_HEARD = 12             # names a request's <names> block holds
 MARKER = "GARRICK_BACKGROUND"   # notifications.BACKGROUND: every process this server starts carries it
 LEASE = 10 * 60             # seconds: the server stays up this long after the app's last `keep`
 TICK = 15                   # seconds: how often a held lease looks for a dead session, the accept timeout then
@@ -507,19 +517,31 @@ def bill(entries) -> None:
                                                     sum(e[3] for e in entries), max(e[4] for e in entries)))
 
 
+def sealed_folder(ws: Path) -> Path:
+    """An empty folder of a session's own, outside the workspace, for it to
+    run in: from there no instruction file, project setting or memory keyed
+    to a folder of the workspace is found. The caller removes it."""
+    home = Path(tempfile.mkdtemp(prefix="garrick-ask-")).resolve()
+    root = Path(ws).resolve()
+    if home == root or root in home.parents:
+        shutil.rmtree(str(home), ignore_errors=True)
+        raise Bad("the temporary folder is inside the workspace, so no session was started")
+    return home
+
+
 class ClaudeSession:
     """One `claude -p` kept open in stream-json mode, every turn counted against agent.py's caps."""
 
     remembers = True
 
-    def __init__(self, ws: Path, tier_: str, brief: Path = BRIEF, sealed: bool = False):
+    def __init__(self, ws: Path, tier_: str, brief: Path = BRIEF):
         self.ws, self.tier, self.brief = ws, tier_, brief
-        # The answer session's: it holds its brief, the list and the records
-        # admitted, and nothing else. No settings but the deny profile, so no
-        # CLAUDE.md, rules or context of the user's; no memory; and a folder
-        # of its own, empty and outside the workspace, made when it starts and
-        # removed when it stops, so nothing is keyed to the workspace either.
-        self.sealed = sealed
+        # Sealed, the command session and the answer session alike: each
+        # holds its brief and what it is sent, and nothing else. No settings
+        # but the deny profile, so no CLAUDE.md, rules or context of the
+        # user's; no memory; and a folder of its own, empty and outside the
+        # workspace, made when it starts and removed when it stops, so nothing
+        # is keyed to the workspace either.
         self.home = None
         self.last = None            # the last turn's ledger entry, when its caller writes the line
         self.proc = None
@@ -563,7 +585,7 @@ class ClaudeSession:
         cmd = [claude_binary(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--model", self.tier, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
                "--permission-mode", "default", "--settings", str(a.PROFILE),
-               "--setting-sources", "" if self.sealed else "user,project",
+               "--setting-sources", "",
                "--system-prompt", self.brief.read_text(encoding="utf-8")]
         budget = a._number("GARRICK_MAX_CALL_USD", a.DEFAULT_MAX_CALL_USD)
         if budget > 0:
@@ -573,16 +595,11 @@ class ClaudeSession:
     def start(self) -> None:
         self.stop()
         cmd = self.command()
-        cwd, env = str(self.ws), None
-        if self.sealed:
-            self.home = Path(tempfile.mkdtemp(prefix="garrick-ask-")).resolve()
-            if self.home == Path(self.ws).resolve() or Path(self.ws).resolve() in self.home.parents:
-                self.stop()
-                raise Bad("the temporary folder is inside the workspace, so the answer session was not started")
-            cwd, env = str(self.home), dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
+        self.home = sealed_folder(self.ws)
+        env = dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         try:
-            self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=subprocess.DEVNULL)
+            self.proc = subprocess.Popen(cmd, cwd=str(self.home), env=env, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError:
             self.stop()
             raise Bad("claude is not installed, or not on PATH")
@@ -676,7 +693,9 @@ class ClaudeSession:
 
 class OnceSession:
     """A harness with no warm session: one agent.py call per request,
-    read-only, with the last few exchanges given again."""
+    read-only, with the last few exchanges given again. Each call runs in an
+    empty folder of its own outside the workspace, removed when it returns,
+    so Codex finds no AGENTS.md or project setting of the workspace's."""
 
     remembers = False
     last = None                     # agent.run() writes its own ledger line
@@ -709,7 +728,11 @@ class OnceSession:
         before = "".join("<earlier-request>\n%s\n</earlier-request>\n<earlier-answer>\n%s\n</earlier-answer>\n" % h
                          for h in self.history[-HISTORY:])
         prompt = BRIEF.read_text(encoding="utf-8") + "\n\n" + before + text
-        code, out = agent().run(self.tier, prompt, allow=(), cwd=self.ws, job=JOB)
+        home = sealed_folder(self.ws)
+        try:
+            code, out = agent().run(self.tier, prompt, allow=(), cwd=home, job=JOB)
+        finally:
+            shutil.rmtree(str(home), ignore_errors=True)
         if code == agent().EXIT_CAP:
             raise Bad("not asked: a cap on assistant calls was reached. Raise GARRICK_CAP_* or wait")
         if code:
@@ -725,6 +748,38 @@ def session_for(ws: Path):
     if h not in agent().HARNESSES:
         raise Bad("GARRICK_HARNESS is %r; use claude or codex" % h)
     return (ClaudeSession if h == "claude" else OnceSession)(ws, tier())
+
+
+def heard_names(named, ctx: dict, since: int = 0) -> str:
+    """The command session's `<names>` block: each name the request holds,
+    as it was heard, and what ask_scope.mentions() settled it to, from the
+    list and System/context.md's Parties, People and Aliases. The session
+    is sealed and loads no context, so this is how a mangled name, an alias
+    or a person reaches it. Names, kinds and zones only: never a role, a
+    domain or anything from a note. A name heard before `since` is left out:
+    the request a wall reset dropped."""
+    parties = ctx.get("parties", {})
+    lines = []
+    for start, _, words, means in getattr(named, "heard", None) or []:
+        if start < since:
+            continue
+        said = []
+        for e in means:
+            if e.kind == "party":
+                d = "the party %s" % e.label + (" in %s" % e.zone if e.zone else "")
+            elif e.kind == "person":
+                of = ", ".join(sorted(parties.get(p, {}).get("party") or p for p in e.parties))
+                d = "the person %s" % e.label + (", of %s" % of if of else "")
+            elif e.kind == "project":
+                d = "the project %s in %s" % (e.project, e.zone)
+            else:
+                d = "the thread %s of %s in %s" % (e.thread, e.project, e.zone)
+            if d not in said:
+                said.append(d)
+        line = "- %s: %s" % (json.dumps(" ".join(words.split()), ensure_ascii=False), "; ".join(said))
+        if said and line not in lines:
+            lines.append(line)
+    return "<names>\n%s\n</names>" % "\n".join(lines[:MOST_HEARD]) if lines else ""
 
 
 class Asker:
@@ -766,9 +821,11 @@ class Asker:
             return clarify(named.question)
         self.unclear = None
         reset = self.crosses(named.parties)
+        since = 0                                   # where in `heard` the names sent begin
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
+            since = 0 if earlier is None else len(earlier) + 1
             earlier, heard = None, request      # the new processes get the new request alone
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
@@ -782,6 +839,9 @@ class Asker:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         if earlier is not None:                     # the request the box asked about, which this one answers
             parts.append("<earlier-request>\n%s\n</earlier-request>" % earlier[:MAX_REQUEST])
+        known = heard_names(named, self.ctx, since)
+        if known:                                   # the names it heard, settled: the session loads no context
+            parts.append(known)
         parts.append("<request>\n%s\n</request>" % request[:MAX_REQUEST])
         turns = []
         try:
@@ -837,7 +897,7 @@ class Asker:
         if not records and not self.passages:       # nothing to read, and nothing read before it
             return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
         if self.answers is None:
-            self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF, sealed=True)
+            self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
         self.answers.ready()
         if self.answers.started != self.seen_for:   # a new process: what the last one held went with it
@@ -1009,7 +1069,7 @@ def clarify(question: str) -> dict:
 
 
 # The tags a message is built from: a record's own text never opens or closes one.
-_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|today|last-results|correction)\b)", re.I)
+_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|names|today|last-results|correction)\b)", re.I)
 
 
 def inert(text: str) -> str:

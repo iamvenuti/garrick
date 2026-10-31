@@ -439,7 +439,7 @@ class TestHarness(AskCase):
         cmd = ask.ClaudeSession(self.root, "haiku").command()
         self.assertEqual([str(cli), "-p"], cmd[:2])
         for flag, value in (("--model", "haiku"), ("--tools", ""), ("--permission-mode", "default"),
-                            ("--settings", str(ask.agent().PROFILE)), ("--setting-sources", "user,project")):
+                            ("--settings", str(ask.agent().PROFILE)), ("--setting-sources", "")):
             self.assertEqual(value, cmd[cmd.index(flag) + 1], flag)
         self.assertIn("--no-session-persistence", cmd)
         self.assertIn("--strict-mcp-config", cmd)
@@ -471,6 +471,41 @@ class TestHarness(AskCase):
         self.assertEqual(("haiku", [], "ask"), (calls[0][0], calls[0][2], calls[0][3]))       # nothing allowed: Codex runs read-only
         self.assertIn("<earlier-request>\nfirst\n</earlier-request>", calls[1][1])
         self.assertTrue(calls[1][1].startswith(ask.BRIEF.read_text()))
+
+    def test_codex_runs_in_an_empty_folder_outside_the_workspace(self):
+        """Sealed as the Claude sessions are: from there Codex finds no AGENTS.md of the workspace's."""
+        seen = []
+
+        def run(tier, prompt, allow=(), cwd=None, job=None):
+            seen.append((Path(cwd), sorted(p.name for p in Path(cwd).iterdir())))
+            return 0, '{"say": "ok", "do": []}'
+        real = ask.agent().run
+        ask.agent().run = run
+        try:
+            s = ask.OnceSession(self.root, "haiku")
+            s.turn("<request>\nfirst\n</request>")
+            s.turn("<request>\nsecond\n</request>")
+        finally:
+            ask.agent().run = real
+        (one, files), (two, _) = seen
+        self.assertEqual([], files)                                                  # empty
+        self.assertNotEqual(one, two)                                                # a folder per call
+        for home in (one, two):
+            self.assertNotIn(self.root.resolve(), [home, *home.parents])             # outside the workspace
+            self.assertFalse(home.exists())                                          # removed when it returned
+
+    def test_a_folder_inside_the_workspace_starts_nothing(self):
+        inside = self.root / "tmp"
+        inside.mkdir()
+
+        def mkdtemp(prefix=""):                                                      # a TMPDIR inside the workspace
+            made = inside / (prefix + "x")
+            made.mkdir()
+            return str(made)
+        with mock.patch.object(ask.tempfile, "mkdtemp", mkdtemp):
+            with self.assertRaisesRegex(ask.Bad, "inside the workspace"):
+                ask.sealed_folder(self.root)
+        self.assertEqual([], list(inside.iterdir()))                                 # and it was removed
 
 
 class StandInCase(AskCase):

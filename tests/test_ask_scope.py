@@ -562,25 +562,16 @@ class TestFailsClosed(AnswerCase):
         a.ask("What did Dana say about the pallet quote?")
         (cmd,) = [p for p in self.procs() if p["model"] == "haiku"]
         (ans,) = [p for p in self.procs() if p["model"] == "sonnet"]
-        flag = lambda p, f: p["argv"][p["argv"].index(f) + 1]  # noqa: E731
-        self.assertEqual("", flag(ans, "--setting-sources"))               # no CLAUDE.md, rules or context of the user's
-        self.assertEqual("user,project", flag(cmd, "--setting-sources"))   # the command session as it was
-        self.assertEqual(str(ask.agent().PROFILE), flag(ans, "--settings"))
-        self.assertEqual("", flag(ans, "--tools"))
-        for f in ("--strict-mcp-config", "--no-session-persistence"):
-            self.assertIn(f, ans["argv"])
-        self.assertNotIn("--bare", ans["argv"])
-        self.assertEqual({"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "GARRICK_BACKGROUND": "ask"}, ans["env"])
-        self.assertIsNone(cmd["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"])
-        self.assertEqual(str(self.root), cmd["cwd"])
-        home = Path(ans["cwd"])
-        self.assertEqual([], ans["files"])                                 # an empty folder
-        self.assertNotIn(self.root.resolve(), [home, *home.parents])       # outside the workspace
-        self.assertEqual(home, a.answers.home)
+        for p in (ans, cmd):                                               # both sessions sealed alike
+            assert_sealed(self, p, self.root)
+        homes = {Path(ans["cwd"]), Path(cmd["cwd"])}
+        self.assertEqual(2, len(homes))                                    # a folder each
+        self.assertEqual({a.answers.home, a.session.home}, homes)
         a.ask("What does the supply chain report say about pallets?")
         self.assertEqual(1, len([p for p in self.procs() if p["model"] == "sonnet"]))
         a.stop()
-        self.assertFalse(home.exists())                                    # removed when it stops
+        for home in homes:
+            self.assertFalse(home.exists())                                # removed when it stops
 
     def test_the_command_session_never_hears_a_record(self):
         write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
@@ -607,6 +598,110 @@ class TestFailsClosed(AnswerCase):
         for m in new:
             self.assertNotIn("<earlier-request>", m)
             self.assertNotIn("Where does Pricing stand?", m)
+            self.assertNotIn('"Pricing"', m)                               # nor a name heard in it
+
+
+def assert_sealed(case, proc, root):
+    """A session process, as the stand-in wrote it down: no settings but the
+    deny profile, no tools, no MCP servers, no transcript, no memory, marked,
+    and run in an empty folder outside the workspace."""
+    flag = lambda f: proc["argv"][proc["argv"].index(f) + 1]  # noqa: E731
+    case.assertEqual("", flag("--setting-sources"))                       # no CLAUDE.md, rules or context of the user's
+    case.assertEqual(str(ask.agent().PROFILE), flag("--settings"))
+    case.assertEqual("", flag("--tools"))
+    for f in ("--strict-mcp-config", "--no-session-persistence"):
+        case.assertIn(f, proc["argv"])
+    case.assertNotIn("--bare", proc["argv"])
+    case.assertEqual({"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "GARRICK_BACKGROUND": "ask"}, proc["env"])
+    home = Path(proc["cwd"])
+    case.assertEqual([], proc["files"])                                   # an empty folder
+    case.assertNotIn(Path(root).resolve(), [home, *home.parents])         # outside the workspace
+    case.assertTrue(home.name.startswith("garrick-ask-"), home)
+
+
+class TestSealed(AnswerCase):
+    """The command session is sealed as the answer session is, however it
+    starts, and the names it no longer reads from System/context.md come
+    with the request instead."""
+
+    def commands(self, at_least):
+        for _ in range(200):                        # the stand-in writes itself down once it runs
+            got = [p for p in self.procs() if p["model"] == "haiku"]
+            if len(got) >= at_least:
+                return got
+            time.sleep(0.05)
+        self.fail("no command process %d" % at_least)
+
+    def op(self, op):
+        for _ in range(200):                        # the socket refuses until the server listens
+            out = ask.call(self.root, op, start=False)
+            if out is not None:
+                return out
+            time.sleep(0.05)
+        self.fail("the server never listened")
+
+    def test_the_command_session_is_sealed_however_it_starts(self):
+        t = self.serve_in_thread()
+        try:
+            self.op("warm")
+            first = self.commands(1)[0]
+            self.op("reset")                                              # New conversation
+            second = self.commands(2)[1]
+            self.assertFalse(Path(first["cwd"]).exists())                 # the old folder went with its process
+            os.kill(second["pid"], signal.SIGKILL)                        # it died
+            for _ in range(200):                                          # the app's next keep starts it again
+                self.op("keep")
+                if len([p for p in self.procs() if p["model"] == "haiku"]) > 2:
+                    break
+                time.sleep(0.05)
+            third = self.commands(3)[2]
+            self.assertFalse(Path(second["cwd"]).exists())
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
+        self.assertFalse(Path(third["cwd"]).exists())                     # removed when the server stops
+        t = self.serve_in_thread()                                        # a new server: the app started again
+        try:
+            self.op("keep")
+            fourth = self.commands(4)[3]
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
+        procs = [first, second, third, fourth]
+        self.assertEqual(4, len({p["cwd"] for p in procs}))               # a folder each
+        for p in procs:
+            assert_sealed(self, p, self.root)
+            self.assertFalse(Path(p["cwd"]).exists())
+
+    def test_an_alias_or_a_person_reaches_the_command_session_as_names(self):
+        os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
+        self.answers.write_text(json.dumps({"haiku": [['"birchen co": the party Birch & Co in Work',
+                     json.dumps({"say": "Opening Birch Entry.", "do": [{"verb": "open", "zone": "Work",
+                                                                        "project": "Birch Entry"}]})],
+                    ['"dana whitlaw": the person Dana Whitlock, of Acme Corp',
+                     json.dumps({"say": "Added it.", "do": [dict(LINE, text="Call Dana Whitlock")]})]] + HAIKU}))
+        a = self.asker()
+        out = a.ask("open birchen co")
+        self.assertEqual(("command", "Opening Birch Entry."), (out["kind"], out["say"]))
+        self.assertEqual(str(self.root / "Zones" / "Work" / "Birch Entry"), out["launch"][0]["folder"])
+        out = a.ask("add call dana whitlaw to the list")
+        self.assertEqual(["Added to Inbox: Call Dana Whitlock"], out["done"])
+        (cmd,) = [p for p in self.procs() if p["model"] == "haiku"]
+        assert_sealed(self, cmd, self.root)                               # so the prompt is all it knew
+        said = self.msgs(cmd["pid"])
+        self.assertIn('<names>\n- "birchen co": the party Birch & Co in Work\n</names>\n<request>', said[0])
+        self.assertIn('- "dana whitlaw": the person Dana Whitlock, of Acme Corp\n', said[1])
+        for m in said:                                                    # names only: no role, no domain
+            for word in ("Head of procurement", "birchco.example", "Competitors"):
+                self.assertNotIn(word, m)
+
+    def test_a_place_heard_says_where_it_is(self):
+        a = self.asker()
+        a.ask("park Pricing")
+        (cmd,) = [p for p in self.procs() if p["model"] == "haiku"]
+        self.assertIn('- "Pricing": the thread Pricing of Acme Review in Work\n', self.msgs(cmd["pid"])[0])
+        a.ask("open the list")                                            # no name heard: no block
+        self.assertNotIn("<names>", self.msgs(cmd["pid"])[1])
 
 
 class TestCodex(base.AskCase):

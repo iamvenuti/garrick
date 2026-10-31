@@ -4466,7 +4466,7 @@ def check_review(ws: Workspace) -> List[Finding]:
         return out
     fm = parse_frontmatter_text(text)
     for key in REVIEW_COUNTS:
-        if key in fm and fm[key] not in (None, "") and not str(fm[key]).strip().isdigit():
+        if key in fm and fm[key] not in (None, "") and not re.fullmatch(r"\d+", str(fm[key]).strip(), re.ASCII):
             out.append(Finding(WARNING, "review", REVIEW_RECORD,
                                "`%s` in the frontmatter is not a whole number; it counts decisions and holds "
                                "nothing else" % key, "A count in the review record is not a number"))

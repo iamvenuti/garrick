@@ -207,6 +207,8 @@ class Ctx:
         self._renames: Dict[Path, List[Tuple[str, str]]] = {}
         self._tracked: Dict[Path, set] = {}
         self._notes: Optional[List[str]] = None
+        self._texts: Dict[Path, List[Tuple[Path, str]]] = {}
+        self.light = False                    # sort_item(light=True): a kind without the costly part of a fix
 
     def rel(self, path: Path) -> str:
         try:
@@ -234,6 +236,21 @@ class Ctx:
             r = self.git(repo, "ls-files", "-z")
             self._tracked[repo] = set(r.stdout.split("\0")) - {""} if r.returncode == 0 else set()
         return self._tracked[repo]
+
+    def texts(self, repo: Path) -> List[Tuple[Path, str]]:
+        """Each tracked note in a repository outside `raw/`, with its text,
+        read once a run."""
+        if repo not in self._texts:
+            out = []
+            for f in sorted(self.tracked(repo)):
+                if not f.endswith(".md") or "/raw/" in "/" + f:
+                    continue
+                try:
+                    out.append((repo / f, (repo / f).read_text(encoding="utf-8")))
+                except (OSError, UnicodeDecodeError):
+                    continue
+            self._texts[repo] = out
+        return self._texts[repo]
 
     def notes(self) -> List[str]:
         """Every live note a wikilink may land on, from the workspace's top:
@@ -411,13 +428,20 @@ def gather(ctx: Ctx, scopes: List[str]) -> List[Item]:
     return [i for i in items if in_scope(i, scopes)]
 
 
-def sort_item(ctx: Ctx, item: Item) -> Item:
-    """The item with its kind: the first kind, by rank, to claim it."""
+def sort_item(ctx: Ctx, item: Item, light: bool = False) -> Item:
+    """The item with its kind: the first kind, by rank, to claim it.
+    `light` leaves out the part of a fix that reads history, which only
+    applying it needs: the status page sorts a finding it offers no Fix for
+    so, and a rename then carries no new name."""
     if not item.kind:
-        for kind in ranked():
-            if kind.claim(ctx, item):
-                item.kind = kind.name
-                break
+        ctx.light = light
+        try:
+            for kind in ranked():
+                if kind.claim(ctx, item):
+                    item.kind = kind.name
+                    break
+        finally:
+            ctx.light = False
     return item
 
 
@@ -570,6 +594,9 @@ def date_fix(ctx: Ctx, item: Item, path: Path) -> dict:
     repo = ctx.repo_of(path)
     if repo is None:
         raise Held("no repository holds it, so a rename could not be undone")
+    if ctx.light:
+        item.touches = [item.path]
+        return {"op": "date", "to": "", "refs": []}
     rel = path.relative_to(repo).as_posix()
     args = ["log", "--format=%ad", "--date=format:%y%m%d"] + (["--follow"] if path.is_file() else []) + ["--", rel]
     dates = ctx.git(repo, *args).stdout.split()
@@ -588,18 +615,7 @@ def date_fix(ctx: Ctx, item: Item, path: Path) -> dict:
 def referring(ctx: Ctx, repo: Path, name: str) -> List[Path]:
     """The notes in a repository that link a file by its name, or name it in
     backticks."""
-    out = []
-    for f in sorted(ctx.tracked(repo)):
-        if not f.endswith(".md") or "/raw/" in "/" + f:
-            continue
-        p = repo / f
-        try:
-            text = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if name in text and rename_refs(text, name, "\0") != text:
-            out.append(p)
-    return out
+    return [p for p, text in ctx.texts(repo) if name in text and rename_refs(text, name, "\0") != text]
 
 
 def rename_refs(text: str, old: str, new: str) -> str:
@@ -852,7 +868,7 @@ def say_mechanical(item: Item) -> str:
     f = item.fix or {}
     what = {"status": lambda: "status %s becomes %s" % (f.get("from"), f.get("to")),
             "list-thread": lambda: "add the thread %s under ## %s" % (f.get("thread"), f.get("section")),
-            "date": lambda: "rename it %s" % f.get("to"),
+            "date": lambda: "rename it %s" % f["to"] if f.get("to") else "put its creation date in front of its name",
             "relink": lambda: "[[%s]] becomes [[%s]]" % (f.get("target"), f.get("to")),
             "codelink": lambda: "`%s` becomes [[%s]]" % (f.get("ref"), f.get("ref")),
             "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread")}.get(f.get("op"))

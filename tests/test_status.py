@@ -3147,6 +3147,47 @@ class TestChecksCardActs(StatusCase):
         self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
         self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open
 
+    def test_a_finding_without_fix_reads_no_history(self):
+        """A rename's date comes from git, a call a file: the page makes it
+        only for a note in a zone, which Fix can apply, so a rebuild with
+        many undated deliverables does not make one call each."""
+        env = mock.patch.dict(os.environ, {k: v for k, v in fixtures.GIT_ENV.items() if k.startswith("GIT_")})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("GIT_DIR", None)
+        work = self.root / "Zones" / "Work"
+        shelf = work / "Acme Review" / "Deliverables"
+
+        def calls(n):
+            shutil.rmtree(shelf, ignore_errors=True)
+            for i in range(n):
+                write(shelf / ("Deck %d.pptx" % i), "x")
+            write(shelf / "Memo.md", "x")
+            shutil.rmtree(work / ".git", ignore_errors=True)
+            fixtures.git(work, "init", "-q")
+            fixtures.git(work, "add", "-A")
+            fixtures.git(work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+            self.fake_check(*[{"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/" + p.name,
+                               "message": "name does not start with its creation date, `YYMMDD - <name>`"}
+                              for p in sorted(shelf.iterdir())])
+            seen, real = [], subprocess.run
+
+            def spy(cmd, *a, **k):
+                if cmd and cmd[0] == "git":
+                    seen.append(cmd)
+                return real(cmd, *a, **k)
+            with mock.patch.object(subprocess, "run", spy):
+                card = self.card(self.page())
+            return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
+
+        few, _ = calls(1)
+        many, card = calls(12)
+        self.assertEqual(few, many)                                        # the same calls, however many decks
+        self.assertEqual(12, card.count("pptx</a>: put its creation date in front of its name</span>"))     # still mechanical
+        self.assertIn('>Nurture</button>', card)                           # no Fix for a file that is not a note
+        self.assertIn("Memo.md</a>: rename it %s - Memo.md</span>" % self.now.strftime("%y%m%d"), card)
+        self.assertIn(">Fix</button>", card)                               # a note in a zone is worked out in full
+
     def test_without_nurture_the_findings_are_listed_by_check(self):
         self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
         (self.root / "System" / "tools" / "nurture.py").unlink()

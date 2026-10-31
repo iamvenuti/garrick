@@ -1157,7 +1157,8 @@ def nurture_said(kinds: Dict[str, int]) -> str:
     said = [(kinds.get("wall", 0), counted(kinds.get("wall", 0), "wall") + " named"),
             (kinds.get("mechanical", 0), counted(kinds.get("mechanical", 0), "fix", "fixes") + " on one yes"),
             (kinds.get("attribution", 0), counted(kinds.get("attribution", 0), "question") + " one at a time")]
-    rest = sum(n for k, n in kinds.items() if k not in ("wall", "mechanical", "attribution"))
+    said.append((kinds.get("correction", 0), counted(kinds.get("correction", 0), "correction") + " to confirm"))
+    rest = sum(n for k, n in kinds.items() if k not in ("wall", "mechanical", "attribution", "correction"))
     said.append((rest, "%d for your judgment" % rest))
     return ", ".join(words for n, words in said if n)
 
@@ -1211,7 +1212,10 @@ def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], s
         return [(str(f.get("check") or "?"), (path, message), "")]
     N, ctx = lib
     try:
-        items = [N.sort_item(ctx, i) for i in N.check_items(f)]
+        # Only a note in a zone can get Fix, so only there is the fix worked out in full: the rest are sorted
+        # without the history a rename reads, which costs a git call a file (#278).
+        light = not re.match(r"Zones/[^/]+/.+\.md$", path)
+        items = [N.sort_item(ctx, i, light=light) for i in N.check_items(f)]
         ask = N.scope_said(N.debt_scope(path))[1]
     except Exception:
         return [("judgment", (path, message), "")]
@@ -1230,7 +1234,7 @@ def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], s
                       E("Fixing %s…" % Path(item.path).name), E(said[:1].upper() + said[1:]),
                       request_button(ask[:1].upper() + ask[1:], ask, ws)))
         elif label:
-            act = request_button(label, ask, ws)
+            act = request_button("Nurture" if kind == "mechanical" else label, ask, ws)
         else:
             act = ""
         out.append((kind, (item.path, said), act))
@@ -1262,7 +1266,8 @@ def review_block(ws: Path) -> str:
             return None
     done, started = day("last_completed"), day("started")
     # The decisions the latest review has made so far (#278), as the skill counts them in its frontmatter.
-    made = ", ".join("%s %s" % (str(fm[k]).strip(), k) for k in REVIEW_COUNTS if str(fm.get(k) or "").strip().isdigit())
+    made = ", ".join("%s %s" % (str(fm[k]).strip(), k) for k in REVIEW_COUNTS
+                     if re.fullmatch(r"\d+", str(fm.get(k) or "").strip(), re.ASCII))
     unfinished = str(fm.get("status") or "").strip().lower() == "open"
     said = ["Last review %s" % done.strftime("%a %d %b %Y") if done else "No review done yet"]
     if unfinished:
@@ -7535,6 +7540,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     of each transcript, so one unchanged is not read again (#260). Without it
     nothing is kept, the check always runs and every transcript is read."""
     now = now or dt.datetime.now()
+    _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
     cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)

@@ -872,6 +872,35 @@ class TestFadedPages(CheckCase):
         self.assertClean("knowledge")
         self.assertClean("links")
 
+    def test_a_path_written_where_the_page_stood_in_another_grade_is_refused(self):
+        """Fade leaves a link in code as it was written (#256), and a link it
+        does not rewrite, such as a Markdown one, too: whichever grade's
+        place it names, the page still stands behind it (#297)."""
+        for before, after in (("", "dormant"), ("", "archive"), ("dormant", "archive"), ("dormant", ""),
+                              ("archive", "")):
+            with self.subTest(before=before, after=after):
+                place = "/".join(p for p in (before, "wiki/sources/260312-birch-kickoff") if p)
+                moved = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+                if after:
+                    moved = self.fade(after)
+                try:
+                    for link in ("`[[Meetings/%s]]`" % place, "`Wikis/Meetings/%s.md`" % place,
+                                 "\n```\n[[Meetings/%s]]\n```\n" % place,
+                                 "[the call](../../../../../Wikis/Meetings/%s.md)" % place,
+                                 "[the call](Meetings/%s.md)" % place):
+                        write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "Their pricing: %s\n" % link)
+                        self.assertFinds("walls", "error", "a meeting with birch",
+                                         "Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md")
+                finally:
+                    moved.rename(self.meetings / "wiki" / "sources" / moved.name)
+
+    def test_a_knowledge_link_to_where_a_meeting_stood_is_refused(self):
+        self.fade("dormant", page="wiki/sources/260310-acme-kickoff.md")
+        for link in ("[the call](../../../Meetings/wiki/sources/260310-acme-kickoff.md)",
+                     "[the call](Meetings/wiki/sources/260310-acme-kickoff.md)"):
+            write(self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "pricing.md", "As in %s.\n" % link)
+            self.assertFinds("knowledge", "error", "Meetings page")
+
     def test_a_link_into_a_faded_page_still_lands(self):
         self.fade("dormant", page="wiki/sources/260310-acme-kickoff.md")
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"

@@ -103,6 +103,12 @@ HERE = Path(__file__).resolve().parent
 PROFILE = HERE / "headless-settings.json"
 HARNESSES = ("claude", "codex")
 TIERS = ("haiku", "sonnet", "opus")
+# The input each tier's model takes, in tokens: the Ask box renews its warm
+# Claude session at a share of it (#261). Nothing in this repository says
+# what a tier's model takes, and a tier follows each new release, so every
+# value is a conservative one, 200,000, the standard window of Claude's
+# models: a tier whose model takes more is renewed early, never late.
+INPUT_SIZE = {"haiku": 200_000, "sonnet": 200_000, "opus": 200_000}
 
 EXIT_LOGIN = 4
 EXIT_CONNECTOR = 6

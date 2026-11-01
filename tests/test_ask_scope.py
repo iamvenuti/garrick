@@ -21,6 +21,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -1092,6 +1093,113 @@ class TestSealed(AnswerCase):
         self.assertIn('- "Pricing": the thread Pricing of Acme Review in Work\n', self.msgs(cmd["pid"])[0])
         a.ask("open the list")                                            # no name heard: no block
         self.assertNotIn("<names>", self.msgs(cmd["pid"])[1])
+
+
+class TestRenewal(AnswerCase):
+    """#261, slice E: a renewal by size is no way to carry anything over, a
+    wall above all, and it waits for the answer to a question."""
+
+    def small(self):
+        """The stand-in measures 100 tokens a turn: of 150 that is past RENEW_AT."""
+        return mock.patch.dict(ask.agent().INPUT_SIZE, {"haiku": 150, "sonnet": 150})
+
+    def started(self, pids, n):
+        for _ in range(200):                        # the stand-in writes itself down once it runs
+            got = [p for p in self.procs() if p["pid"] not in pids]
+            if len(got) >= n:
+                return got
+            time.sleep(0.05)
+        self.fail("%d new processes, not %d" % (len(got), n))
+
+    def test_a_renewal_after_a_wall_reset_holds_nothing_from_before_it(self):
+        os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?")["reset"])
+        before = {p["pid"] for p in self.procs()}
+        with self.small():
+            self.assertTrue(a.due())
+        a.renew()
+        renewed = self.started(before, 2)
+        self.assertEqual(["haiku", "sonnet"], sorted(p["model"] for p in renewed))   # both, warmed at once
+        for pid in before:
+            self.assertTrue(self.gone(pid), pid)
+        for p in renewed:
+            assert_sealed(self, p, self.root)                               # sealed as every session is
+        self.assertEqual((set(), set(), [], {}, ""), (a.seen, a.heard, a.passages, a.asked, a.results))
+        a.ask("what's open")
+        a.ask("What does the supply chain report say about pallets?")        # read by the renewed answer session
+        self.assertEqual(2, len(self.procs()) - len(before))                 # no other process started
+        said = [m for p in renewed for m in self.msgs(p["pid"])]
+        self.assertTrue(any(KNOWN in m for m in said))
+        for p in renewed:
+            self.assertIn("<refreshed/>", self.msgs(p["pid"])[0])
+        for m in said:                                                    # nothing from before the wall, or after it
+            for mark in (ACME, BIRCH, "Dana", "Theo", "<last-results>", "<earlier-request>"):
+                self.assertNotIn(mark, m)
+
+    def test_a_reply_that_says_a_wall_reset_ran_is_never_renewed(self):
+        """A wall reset is a fresh start of its own: the reply that carries
+        `"reset": "wall"` is never also "refreshed", and the new processes
+        are never told <refreshed/>."""
+        t = self.serve_in_thread()
+        try:
+            for _ in range(200):                    # the socket refuses until the server listens
+                if ask.call(self.root, "status", start=False) is not None:
+                    break
+                time.sleep(0.05)
+            first = ask.call(self.root, "ask", "What did Dana say about the pallet quote?", start=False)
+            self.assertNotIn("refreshed", first)
+            before = {p["pid"] for p in self.procs()}
+            with self.small():                                              # the new processes measure full
+                out = ask.call(self.root, "ask", "What did Theo say about the pallet launch?", start=False)
+            self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+            self.assertNotIn("refreshed", out)
+            after = [p["pid"] for p in self.procs() if p["pid"] not in before]
+            self.assertEqual(2, len(after))                                 # the reset's two, and no renewal's
+            for pid in after:
+                for m in self.msgs(pid):
+                    self.assertNotIn("<refreshed/>", m)
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
+
+    def test_a_question_waiting_for_its_answer_holds_the_renewal(self):
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        a = self.asker()
+        with self.small():
+            a.ask("What did Dana say about the pallet quote?")
+            self.assertTrue(a.due())
+            self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+            self.assertFalse(a.due())                                       # full, and waiting for the answer
+            self.assertEqual("answer", a.ask("The Acme one.")["kind"])
+            self.assertTrue(a.due())
+            a.asked = {"an action": "asked to be done again"}
+            self.assertFalse(a.due())
+
+    def test_a_session_asking_back_holds_the_renewal(self):
+        """A question back from either session, said with `"asks": true` or,
+        failing that, a reply that does nothing and ends in a question mark:
+        the answer goes to the process that asked."""
+        asks = lambda **o: json.dumps(o)                                    # noqa: E731
+        self.answers.write_text(json.dumps({
+            "haiku": [["the launch one", asks(say="Which do you mean, Acme Review or Birch Entry?", do=[])],
+                      ["the market one", asks(say="Say which project you mean.", do=[], asks=True)],
+                      ["Which Dana meeting", find("meetings", ["pallet"])],
+                      ["Dana, the pallet meeting", find("meetings", ["pallet"])]] + HAIKU,
+            "sonnet": [["Which Dana meeting", asks(claims=[{"text": "Do you mean the kick-off or a later call?",
+                                                            "cite": []}])],
+                       ["Dana, the pallet meeting", asks(claims=[{"text": "Dana spoke at more than one meeting.",
+                                                                  "cite": []}], asks=True)]]}))
+        a = self.asker()
+        with self.small():
+            for question, kind in (("open the launch one", "command"), ("open the market one", "command"),
+                                   ("Which Dana meeting was the pallet quote in?", "answer"),
+                                   ("Dana, the pallet meeting?", "answer")):
+                self.assertEqual(kind, a.ask(question)["kind"], question)
+                self.assertFalse(a.due(), question)                         # full, and asked back
+                a.ask("what's open")
+                self.assertTrue(a.due(), question)                          # answered: due again
 
 
 class TestCodex(base.AskCase):

@@ -515,6 +515,32 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual("Which do you mean: Birch Entry, Budget or Home, Budget?",       # Pricing settled, Budget asked
                          settled("Compare Pricing with Budget", "In Work"))
 
+    def test_a_zone_named_like_a_party_of_its_own_settles(self):
+        """#294, from the wall review: with a party tagged `personal` in the
+        Personal zone, or a party named like its zone, the zone's word was
+        taken for the party's name and "The one in Personal." asked again.
+        It settles when every party the name stands for lives in that zone."""
+        from fixtures import project_hub
+        for zone, project in (("Personal", "Home"), ("Fernwood", "Ledger")):
+            folder = self.root / "Zones" / zone / project
+            write(folder / (project + ".md"), project_hub(zone, project, party="", threads=["Pricing"]))
+            write(folder / "Threads" / "Pricing" / "Pricing.md", thread_note(project, "Pricing", ""))
+        lib = ask.scope_lib().lib(self.root)
+        names = ask.scan(self.root)
+        asked = "Where does Pricing stand?"
+
+        def settled(rows, answer):
+            write(self.root / "System" / "context.md", CONTEXT.replace("| Birch & Co |", rows + "\n| Birch & Co |"))
+            ctx = lib.load_context(self.root)
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.places
+        own = "| Jo Example | Own affairs | Personal | `personal` | |"
+        self.assertEqual([("Personal", "Home", "Pricing")], settled(own, "The one in Personal."))
+        firm = "| Fernwood | Own company | Fernwood | `fernwood` | |"
+        self.assertEqual([("Fernwood", "Ledger", "Pricing")], settled(firm, "In Fernwood"))
+        elsewhere = "| Personal | A shop | Work | `shop` | |"                  # named like the zone, of another one
+        self.assertTrue(str(settled(elsewhere, "The one in Personal.")).startswith("Which do you mean"))
+
     def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
         """#294: one company under two tags, one in each zone. "What did Dana
         say?" could be settled only by typing the bare tag."""

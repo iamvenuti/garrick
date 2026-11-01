@@ -297,8 +297,10 @@ def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dic
     zone = _zone_said(said, names) if plain else None
     if zone is not None:
         at = (answer + zone[1], answer + zone[2])
-        if any(at[0] < k[1] and k[0] < at[1] for k in kept):
-            zone = None                         # a zone's word that is also a name is that name's
+        for k in kept:                          # a zone's word that is also a name: only when that name is all of the zone
+            if at[0] < k[1] and k[0] < at[1] and not _all_of(spans[k], zone[0], ctx):
+                zone = None
+                break
 
     def settle(within, asked=None, answered=False):
         settled: Dict[Tuple[int, int], Entry] = {}
@@ -336,6 +338,13 @@ def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dic
         if span not in settled:
             return Mentions([], which(sorted(spans[span], key=_order), ctx))
     return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept])
+
+
+def _all_of(cands: Iterable[Entry], zone: str, ctx: dict) -> bool:
+    """Whether every entry a name stands for is of this zone, and so is every
+    party it stands for: a party tagged like its zone, or named like it."""
+    rows = ctx.get("parties", {})
+    return all(e.zone == zone and all(rows.get(p, {}).get("zone") == zone for p in e.parties) for e in cands)
 
 
 def offered(cands: List[Entry], ctx: dict, text: str, answer: int) -> List[Entry]:

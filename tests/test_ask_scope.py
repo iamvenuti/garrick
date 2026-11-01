@@ -1342,6 +1342,10 @@ class TestTheWindowCites(unittest.TestCase):
     def test_a_source_opens_as_the_app_opens_anything_else(self):
         opened = self.body("askOpenSource")
         self.assertIn('file.path.hasPrefix(root + "/")', opened)          # inside this workspace, or nothing
+        self.assertIn("let file = named.resolvingSymlinksInPath()", opened)            # with every link resolved,
+        self.assertIn("workspace.standardizedFileURL.resolvingSymlinksInPath().path", opened)   # on both sides
+        self.assertIn("attributesOfItem(atPath: named.path)[.type]", opened)          # and never a link itself
+        self.assertIn("guard !link, file.path.hasPrefix", opened)
         self.assertIn("FileManager.default.fileExists", opened)
         self.assertIn("acts(place)", opened)                               # a thread as its row opens it
         self.assertIn('run(["k": "note", "u": file.absoluteString])', opened)   # else the default app

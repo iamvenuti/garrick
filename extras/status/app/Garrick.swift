@@ -2195,12 +2195,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// A cited record, opened as the app opens it anywhere else: a thread's note as its row
 	// opens it, through run() and the default Settings picks; any other record in the app
-	// macOS opens it in. Only a file inside this workspace that is still there.
+	// macOS opens it in. Only a file inside this workspace that is still there, checked on
+	// the paths with every link resolved, and never a record that is itself a link.
 	func askOpenSource(_ source: [String: Any]) {
 		guard let rel = source["path"] as? String, !rel.isEmpty, !rel.hasPrefix("/") else { return }
-		let file = workspace.appendingPathComponent(rel).standardizedFileURL
-		let root = workspace.standardizedFileURL.path
-		guard file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
+		let named = workspace.appendingPathComponent(rel).standardizedFileURL
+		let file = named.resolvingSymlinksInPath()
+		let root = workspace.standardizedFileURL.resolvingSymlinksInPath().path
+		let link = (try? FileManager.default.attributesOfItem(atPath: named.path)[.type] as? FileAttributeType) == .typeSymbolicLink
+		guard !link, file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
 			return toast("That record is not in this workspace any more.")
 		}
 		if var place = source["place"] as? [String: Any] {

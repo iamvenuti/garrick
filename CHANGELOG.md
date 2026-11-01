@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
 
+### Fixed
+
+- **A rebuild that shows the check's kept result says how old it is beside every count** ([#298](https://github.com/iamvenuti/garrick/issues/298)). The rebuilds `scaffold.py` and `correct.py` ask for pass `--reuse-check`, so for up to ten minutes they show the check's last result instead of running it again. The Checks card said so, but *Needs attention* and the Checks tile showed the same error and warning counts with no age, so a wall error just fixed, or one just made, could read as current. Both now say it in the Checks card's words: "The check found 1 error (as the check found it 4 min ago)" on *Needs attention*, and "As the check found it 4 min ago" under the tile's counts. A build that ran the check shows neither. And the [Garrick App](docs/extras/status-page.md#what-it-shows-and-what-it-leaves-out) page and `status.py --help` now say what `--out` takes with it: `status.check.json` and `status.effort.json` are written beside the page, named after it, and `status.effort.json` holds every session's working folder and the paths of the files it wrote, in every zone, so `--out` inside a zone puts them where a commit can carry them into that zone's history.
+
 ## [0.49.0] - 2026-10-31
 
 Ask answers questions from your records, inside one scope and sealed from everything else; Garrick's scheduled jobs take `gr-` names and one nightly job does what four did; the Checks card acts on each finding; Settings chooses the graph's colours and the cmux tab's assistant; and the wall check reads links and paths into another project.

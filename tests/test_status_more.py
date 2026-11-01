@@ -855,6 +855,37 @@ class TestCheckReuse(StatusCase):
         self.assertIn("As the check found it 4 min ago", page)
         self.assertIn(">a.md</a>: x</span>", page)                     # the findings it kept, each path a link
 
+    def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
+        """#298: the counts a kept result gives say how old they are wherever
+        they show, Needs attention and the Checks tile as the Checks card,
+        in its words; a build that ran the check says nothing of the kind."""
+        found = {"errors": 1, "warnings": 2, "findings": [
+            {"check": "walls", "severity": "error", "path": "a.md", "message": "x"},
+            {"check": "threads", "severity": "warning", "path": "b.md", "message": "y"},
+            {"check": "threads", "severity": "warning", "path": "c.md", "message": "z"}]}
+        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % found, encoding="utf-8")
+
+        def attention(page):
+            m = re.search(r'id="attention".*?<div class="attn">(.*?)</div>', page, re.S)
+            self.assertIsNotNone(m, "no Needs attention card")
+            return re.findall(r"<span>([^<]*)</span>", m.group(1))
+
+        def tile(page):
+            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Checks</div><div class="val">(.*?)</div>'
+                          r'<div class="sub">(.*?)</div></a>', page)
+            self.assertIsNotNone(m, "no Checks tile")
+            return m.groups()
+
+        ran = self.build()
+        self.assertIn("The check found 1 error", attention(ran))
+        self.assertIn("The check found 2 warnings", attention(ran))
+        self.assertEqual(("1<small>errors</small>2<small>warnings</small>", ""), tile(ran))
+        page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
+        self.assertIn("As the check found it 4 min ago;", page)                          # the Checks card's words
+        self.assertIn("The check found 1 error (as the check found it 4 min ago)", attention(page))
+        self.assertIn("The check found 2 warnings (as the check found it 4 min ago)", attention(page))
+        self.assertEqual(("1<small>errors</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
+
     def test_an_old_or_missing_result_runs_the_check(self):
         self.build()
         self.build(reuse=600, now=self.now + dt.timedelta(minutes=11))

@@ -366,10 +366,14 @@ def classify(lines: List[str], today: datetime.date) -> dict:
     (days late, line) pairs; "due", due today; "chase", waiting lines whose
     chase day has come; and the counts "undated" and "no_chase". The example
     line, `<action>`, counts as none. System/tools/next_up.py ranks from the
-    same reading."""
+    same reading. For a reader that lists every open line, the Ask box's
+    actions (#316), the rest are here too: "later", (date, line) pairs due
+    after today; "open", the lines with no date of either kind; and
+    "waiting", (chase date or "", line) pairs waiting with no chase come due.
+    A line that has only a chase date and is not waiting counts as none."""
     where = sections(lines)
     waiting = set(range(*where.get("Waiting on", (0, 0))))
-    out = {"overdue": [], "due": [], "chase": [], "undated": 0, "no_chase": 0}
+    out = {"overdue": [], "due": [], "chase": [], "undated": 0, "no_chase": 0, "later": [], "open": [], "waiting": []}
     for i, line in enumerate(lines):
         if not line.startswith("- [ ] ") or "<action>" in line:
             continue
@@ -378,14 +382,19 @@ def classify(lines: List[str], today: datetime.date) -> dict:
         if theirs:
             if c and c.group(1) <= today.isoformat():
                 out["chase"].append(line)
-            elif not c:
-                out["no_chase"] += 1
+            else:
+                out["waiting"].append((c.group(1) if c else "", line))
+                if not c:
+                    out["no_chase"] += 1
         elif d and d.group(1) < today.isoformat():
             out["overdue"].append(((today - datetime.date.fromisoformat(d.group(1))).days, line))
         elif d and d.group(1) == today.isoformat():
             out["due"].append(line)
-        elif not d and not c:
+        elif d:
+            out["later"].append((d.group(1), line))
+        elif not c:
             out["undated"] += 1
+            out["open"].append(line)
     return out
 
 

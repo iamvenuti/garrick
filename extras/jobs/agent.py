@@ -78,7 +78,8 @@ Exit codes: the assistant's own, or 6 (no connector), 8 (a cap was reached and
 nothing was called, or the call passed GARRICK_MAX_CALL_USD and was stopped),
 64 (usage, or Claude's deny profile is missing, not JSON, or no longer denies
 everything in CORE_DENY, and nothing was called), 124 (the call passed its
---timeout), 127 (the assistant is not installed).
+--timeout), 127 (the assistant is not installed), 130 (run()'s caller stopped
+the call, the Ask box's Stop, as an interrupt reads; never from the command line).
 
 Standard library only, Python 3.9 or later. Not installed by install.py.
 """
@@ -95,7 +96,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 sys.dont_write_bytecode = True
 
@@ -115,6 +116,7 @@ EXIT_CONNECTOR = 6
 EXIT_CAP = 8
 EXIT_USAGE = 64
 EXIT_TIMEOUT = 124
+EXIT_STOPPED = 130          # stopped by its caller mid-call: the Ask box's Stop (run()'s `stop`)
 EXIT_MISSING = 127
 
 # The two budgets a ledger line counts against: the scheduled jobs', and the
@@ -469,17 +471,39 @@ def codex_command(tier: str, prompt: str, last_message: Path, allow: Iterable[st
     return cmd
 
 
-def call(cmd: List[str], cwd: Optional[Path], timeout: Optional[float], stdout=subprocess.PIPE) -> Tuple[int, str, str]:
+STOP_EVERY = 0.25           # seconds between two looks at a caller's `stop`
+
+
+def call(cmd: List[str], cwd: Optional[Path], timeout: Optional[float], stdout=subprocess.PIPE,
+         stop: Optional[Callable[[], bool]] = None) -> Tuple[int, str, str]:
     """Run the assistant's command: its exit code, stdout and stderr. Past
     `timeout` seconds it is asked to stop, then made to, and the code is 124.
-    The assistant stays in the job's process group, so job.py's watchdog
-    still reaches it."""
+    With `stop`, asked every STOP_EVERY seconds while it runs: once it says
+    so, the call is ended the same way and the code is EXIT_STOPPED. The
+    assistant stays in the job's process group, so job.py's watchdog still
+    reaches it."""
     proc = subprocess.Popen(cmd, cwd=cwd, stdout=stdout,
                             stderr=subprocess.PIPE if stdout is subprocess.PIPE else subprocess.STDOUT,
                             stdin=subprocess.DEVNULL, text=True)
+    until = time.time() + timeout if timeout and timeout > 0 else None
     try:
-        out, err = proc.communicate(timeout=timeout if timeout and timeout > 0 else None)
-        return proc.returncode, out or "", err or ""
+        while True:
+            left = None if until is None else max(0.0, until - time.time())
+            wait = left if stop is None else STOP_EVERY if left is None else min(left, STOP_EVERY)
+            try:
+                out, err = proc.communicate(timeout=wait)
+                return proc.returncode, out or "", err or ""
+            except subprocess.TimeoutExpired:
+                if until is not None and time.time() >= until:
+                    raise
+                if stop is not None and stop():
+                    proc.terminate()
+                    try:
+                        out, err = proc.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        out, err = proc.communicate()
+                    return EXIT_STOPPED, out or "", err or ""
     except subprocess.TimeoutExpired:
         proc.terminate()
         try:
@@ -492,13 +516,15 @@ def call(cmd: List[str], cwd: Optional[Path], timeout: Optional[float], stdout=s
 
 def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] = None,
         job: Optional[str] = None, timeout: Optional[float] = None,
-        transcript: bool = True) -> Tuple[int, str]:
+        transcript: bool = True, stop: Optional[Callable[[], bool]] = None) -> Tuple[int, str]:
     """One headless turn. Returns the exit code and the assistant's final answer.
     With `timeout`, a call still going after that many seconds is stopped and
     returns 124 with whatever answer it had. With `transcript` false, a Codex
     run's output, prompt included, is thrown away instead of kept in the
     job's transcript: ask.py's choice, since Ask keeps no request text unless
-    asked to."""
+    asked to. With `stop`, a callable asked while the call runs, a call it
+    says to stop is ended and returns EXIT_STOPPED with no answer: the Ask
+    box's Stop with Codex (#261, slice F). The ledger counts it all the same."""
     allow = list(allow)
     h = harness()
     if h not in HARNESSES:
@@ -537,7 +563,7 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
         cmd = claude_command(tier, prompt, list(allow), _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD),
                              profile)
         try:
-            code, out, err = call(cmd, cwd, timeout)
+            code, out, err = call(cmd, cwd, timeout, stop=stop)
         except FileNotFoundError:
             print("agent: claude is not installed, or not on PATH", file=sys.stderr)
             return EXIT_MISSING, ""
@@ -566,7 +592,7 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
             last = Path(tmp) / "last.txt"
             try:
                 with (log_path.open("a", encoding="utf-8") if transcript else open(os.devnull, "w")) as log:
-                    code, _, _ = call(codex_command(tier, prompt, last, allow), cwd, timeout, stdout=log)
+                    code, _, _ = call(codex_command(tier, prompt, last, allow), cwd, timeout, stdout=log, stop=stop)
             except FileNotFoundError:
                 print("agent: codex is not installed, or not on PATH", file=sys.stderr)
                 return EXIT_MISSING, ""

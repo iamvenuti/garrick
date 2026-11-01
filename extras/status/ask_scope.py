@@ -56,7 +56,12 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 HERE = Path(__file__).resolve().parent
-ROUTES = ("meetings", "knowledge", "thread", "docs")
+ROUTES = ("meetings", "knowledge", "thread", "docs", "actions")
+ORDERS = ("recent",)        # a find's `order`: the newest first, for a question about the last or since (#315)
+# A question about time, in the user's own words: the last, the latest, the
+# most recent or newest, or what happened since. Read when the session's find
+# leaves `order` out, so such a question is ranked by date all the same.
+RECENT = re.compile(r"\b(?:last|latest|most\s+recent(?:ly)?|newest|since)\b", re.I)
 MAX_WORDS = 8               # words a find may look for
 MAX_RECORDS = 8             # records one answer is given
 PASSAGE = 1500              # characters of one record an answer is given
@@ -217,6 +222,12 @@ class Mentions:
     @property
     def parties(self) -> Set[str]:
         return set().union(*(e.parties for e in self.entries)) if self.entries else set()
+
+    @property
+    def zones(self) -> Set[str]:
+        """The zones the names live in (#317): a place's, a party's as the
+        Parties table gives it, a person's party's. A name of no zone adds none."""
+        return {e.zone for e in self.entries if e.zone}
 
     @property
     def places(self) -> List[Tuple[str, str, Optional[str]]]:
@@ -422,12 +433,80 @@ def which(cands: List[Entry], ctx: dict) -> str:
 class Scope:
     """Where an answer reads. `parties` are the tags it may read for; `every`
     is a question across every zone, which reads within one group of
-    parties no wall divides."""
+    parties no wall divides. `order` is "recent" for a question about the
+    last or since (#315), else None; `groups` are the words in groups, two
+    spellings of one name in one group (groups())."""
 
     def __init__(self, route: str, zone: Optional[str], project: Optional[str], thread: Optional[str],
-                 words: List[str], parties: Set[str], every: bool = False):
+                 words: List[str], parties: Set[str], every: bool = False, order: Optional[str] = None,
+                 groups: Optional[List[List[str]]] = None, until: Optional[str] = None, waiting: bool = False):
         self.route, self.zone, self.project, self.thread = route, zone, project, thread
         self.words, self.parties, self.every = words, parties, every
+        self.order = order
+        self.groups = groups if groups is not None else [[w] for w in words]
+        self.until, self.waiting = until, waiting           # an actions find's period and kind (#316)
+
+
+def wants_recent(text: str) -> bool:
+    """Whether a request asks about the last, the latest or since (#315)."""
+    return bool(RECENT.search(str(text or "")))
+
+
+def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[List[str]]:
+    """The words of a find in groups, each group one thing (#315): words that
+    settle to the same party, place or person are one group, whichever
+    spelling each is ("acme", "acme corp", "acmecorp"), and any other word a
+    group of its own. A page is ranked by the groups it holds, not by how
+    many spellings of one name it uses."""
+    known: Dict[str, Set[Entry]] = {}
+    for form, _, e in entries(ws, names, ctx, lib_):
+        n = _norm(form)
+        for k in (n, n.replace(" ", "")):
+            known.setdefault(k, set()).add(e)
+    out: List[List[str]] = []
+    keys: List[object] = []
+    for w in words:
+        found = known.get(w, set()) | known.get(w.replace(" ", ""), set())
+        key = frozenset(found) if found else ("word", w)
+        if key in keys:
+            out[keys.index(key)].append(w)
+        else:
+            keys.append(key)
+            out.append([w])
+    return out
+
+
+ZONED = ("meetings", "thread")       # the routes answered inside one zone (#317)
+
+
+def zone_answer(text: str, names: Dict[str, Dict[str, dict]]) -> Optional[str]:
+    """The zone a reply to "Which zone?" names, in one of the clear forms
+    _zone_said() takes ("Work", "in Work", "the Work one"), or None: an
+    answer that rules anything out names none."""
+    if RULED_OUT.search(str(text or "")):
+        return None
+    said = _zone_said(str(text or ""), names)
+    return said[0] if said else None
+
+
+def zone_named(text: str, zone: str) -> bool:
+    """Whether a request names a zone as a zone (#317): its name written as
+    the zone writes it, capitals and all ("Work"), or said as one, "in work",
+    "from work", "the work zone". "The work on the pallet" names none."""
+    words = r"\s+".join(re.escape(w) for w in zone.split())
+    text = str(text or "")
+    if re.search(r"(?<!\w)%s(?!\w)" % words, text) and zone[:1].isupper():
+        return True
+    return bool(re.search(r"\b(?:in|from)\s+(?:the\s+)?%s(?!\w)|(?<!\w)%s\s+zone\b" % (words, words), text, re.I))
+
+
+def which_zone(zones: Iterable[str], named: bool) -> str:
+    """The question back for a zone (#317), one line for the ear: "Which do
+    you mean: Work or Personal?" for a question whose names live in two
+    zones, "Which zone: Work or Personal?" for one with nothing to go on."""
+    zones = list(zones)
+    listed = ", ".join(zones[:-1]) + " or " + zones[-1] if len(zones) > 1 else (zones[0] if zones else "")
+    return ("Which do you mean: %s?" if named else "Which zone: %s?") % listed
 
 
 def no_zone(zone, names: Dict[str, Dict[str, dict]]) -> str:
@@ -463,10 +542,30 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
             raise Refused("no project %r" % (project,))
     if thread is not None and (project is None or not isinstance(thread, str) or thread not in names[zone][project]["threads"]):
         raise Refused("no thread %r in %s" % (thread, project or zone))
-    if project is None and route in ("thread", "meetings") and len(said.places) == 1:
-        zone, project, thread = said.places[0]          # the place the request named, when the find left it out
+    if project is None and route in ("thread", "meetings", "actions") and len(said.places) == 1 \
+            and (zone is None or said.places[0][0] == zone):
+        zone, project, thread = said.places[0]          # the place the request named, in its zone, when the find left it out
     if route == "thread" and project is None:
         raise Unclear("Which project or thread do you mean?")
+    if route in ZONED and zone is None:
+        # Every question about meetings or a thread is answered inside one
+        # zone (#317): ask.py settles it from the question or the window first.
+        raise Refused("a question about meetings or a thread is answered inside one zone, and it names none")
+    order = find.get("order")
+    if order is not None and order not in ORDERS:
+        raise Refused("not an order: %r" % (order,))
+    if route == "actions":
+        until = find.get("until")
+        if until is not None and not (isinstance(until, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", until)):
+            raise Refused("not a date: %r" % (until,))
+        waiting = find.get("waiting")
+        if waiting is not None and not isinstance(waiting, bool):
+            raise Refused("not a yes or no: %r" % (waiting,))
+        # Garrick lists these itself and no session is told them (#316): the
+        # parties a request names narrow the list, and a wall does not, since
+        # nothing crosses one into a session.
+        return Scope(route, zone, project, thread, [], set() if project is not None else set(said.parties),
+                     every=zone is None and project is None and not said.parties, until=until, waiting=bool(waiting))
     raw = find.get("words") if isinstance(find.get("words"), list) else []
     words = []
     for w in raw:
@@ -474,21 +573,24 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         if len(w) >= SHORTEST and w not in words:
             words.append(w)
     words = words[:MAX_WORDS]
+    kept = dict(order=order, groups=groups(ws, words, names, ctx, lib_))
     if route in ("knowledge", "docs"):
-        return Scope(route, None, None, None, words, set())
+        return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
         hub = hub_parties(ws, zone, project, lib_)
         if not hub or not hub <= set(ctx.get("parties", {})):
             # Nothing can say which side of a wall its files are on.
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if hub else "in its hub"))
-        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)))
-    if said.parties:
-        return Scope(route, zone, None, None, words, said.parties)
+        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)), **kept)
+    rows = ctx.get("parties", {})
+    inside = {p for p in said.parties if zone is None or (rows.get(p, {}).get("zone") or zone) == zone}
+    if inside:                                  # the parties named, those of the zone it answers in (#317)
+        return Scope(route, zone, None, None, words, inside, **kept)
     if zone is not None:                        # every party of one zone
         return Scope(route, zone, None, None, words,
-                     {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone})
-    return Scope(route, None, None, None, words, set(), every=True)
+                     {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone}, **kept)
+    return Scope(route, None, None, None, words, set(), every=True, **kept)
 
 
 # ---------------------------------------------------------------- the records
@@ -591,6 +693,13 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     {"path", "date", "imported", "title", "parties", "text"}: the whole of it
     a prompt or a citation may hold. `date` is when it happened, `imported`
     when it was filed.
+
+    Best first is by the groups of words a record holds (groups()), each
+    counted once however it is spelled, then how often, then the date. With
+    `order` "recent" (#315) it is the newest first: by `date`, then
+    `imported`, and the words only break ties, so a question about the last
+    meeting with a party reads the newest pages that name it, not the ones
+    that name it most. A thread's own note comes first either way.
     Nothing outside the scope is opened."""
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
@@ -599,13 +708,15 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
-        hits = [low.count(w) for w in sc.words]
+        hits = [max(low.count(w) for w in group) for group in sc.groups]
         if sc.words and not any(hits) and not first:
             return
-        date = _date(fm, path)
-        rank = (1 if first else 0, sum(1 for h in hits if h), sum(hits), date)
+        date, imported = _date(fm, path), _imported(fm, path)
+        words = (sum(1 for h in hits if h), sum(hits))
+        lead = 1 if first else 0
+        rank = (lead, date, imported) + words if sc.order == "recent" else (lead,) + words + (date,)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
-        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": _imported(fm, path),
+        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
                              "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
 
     if sc.route in ("knowledge", "docs"):
@@ -681,11 +792,21 @@ def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
 
 def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool]:
     """The records a process that holds `held` may be given, best first, at
-    most `most`, and whether a wall held any back: one whose parties are
-    walled from each other, from a party held already, or from one picked
-    before it. So a question across every zone reads within one group of
-    parties no wall divides, the one its best record starts."""
-    group, chosen, back = set(held), [], False
+    most `most`, and whether a wall held any back: choose() without its count."""
+    chosen, back, _ = choose(records, held, ctx, lib_, most)
+    return chosen, back
+
+
+def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool, int]:
+    """The records a process that holds `held` may be given, best first, at
+    most `most`; whether a wall held any back: one whose parties are walled
+    from each other, from a party held already, or from one picked before
+    it; and how many it could have been given with no `most` (#315), the
+    `matched` the answer session is told beside how many it was given. A
+    record a wall held back is never counted, so the count says nothing of
+    what is on the far side. A question across every zone reads within one
+    group of parties no wall divides, the one its best record starts."""
+    group, chosen, back, matched = set(held), [], False, 0
     known = set(ctx.get("parties", {}))
     for r in records:
         parties = set(r["parties"])
@@ -694,7 +815,313 @@ def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_R
         if any_wall(ctx, parties, parties | group, lib_):
             back = True
             continue
+        matched += 1
         if len(chosen) < most:
             chosen.append(r)
             group |= parties
-    return chosen, back
+    return chosen, back, matched
+
+
+# ---------------------------------------------------------------- the actions (#316)
+
+
+MOST_ACTIONS = 5            # items one actions reply lists
+NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+_RESUME = re.compile(r"^#{1,6}\s+Resume here\b", re.I)
+_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$")
+_ISO = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_SPOKEN = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})\b")
+_LINK = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]")
+_TODO: Dict[Path, object] = {}
+
+
+def todo_lib(ws: Path):
+    """The todo skill's todo.py, whose reading of a Todo.md is the only one:
+    the digest's and next_up.py's. The workspace's own copy first, then the
+    one an installed extra sits beside, then a Garrick clone's template/."""
+    ws = Path(ws)
+    if ws not in _TODO:
+        found = None
+        for src in (ws / "System" / "skills" / "todo" / "todo.py", HERE.parent / "skills" / "todo" / "todo.py",
+                    HERE.parent.parent / "template" / "System" / "skills" / "todo" / "todo.py"):
+            if not src.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_ask_todo", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception:
+                continue
+            if all(callable(getattr(mod, f, None)) for f in ("read", "classify", "plain", "link_of")):
+                found = mod
+                break
+        _TODO[ws] = found
+    return _TODO[ws]
+
+
+def _day(text: str):
+    """The first date in a cell, ISO or spoken ("14 November 2026"), or None."""
+    import datetime as _dt
+    m = _ISO.search(text or "")
+    try:
+        if m:
+            return _dt.date.fromisoformat(m.group(1))
+    except ValueError:
+        pass
+    for day, month, year in _SPOKEN.findall(text or ""):
+        n = next((i + 1 for i, name in enumerate(MONTHS) if name[:3].lower() == month[:3].lower()), None)
+        try:
+            if n:
+                return _dt.date(int(year), n, int(day))
+        except ValueError:
+            continue
+    return None
+
+
+def resume_rows(note: Path) -> Dict[str, str]:
+    """A note's Resume here table, by row name, each as written and "" where
+    it is still the template's `<placeholder>`. Nothing else of the note."""
+    try:
+        lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    out: Dict[str, str] = {}
+    start = next((i for i, l in enumerate(lines) if _RESUME.match(l)), None)
+    if start is None:
+        return out
+    for line in lines[start + 1:]:
+        if line.startswith("#") or line.strip() == "---":
+            break
+        m = _ROW.match(line)
+        if m and m.group(1) and not set(m.group(1)) <= set("-: "):
+            value = m.group(2).replace("\\|", "|").strip()
+            out[m.group(1)] = "" if re.fullmatch(r"<[^>]*>", value) else value
+    return out
+
+
+def said_day(day, today) -> str:
+    """A date for the ear: today, tomorrow, 14 November, 14 November 2027."""
+    n = (day - today).days
+    if n == 0:
+        return "today"
+    if n == 1:
+        return "tomorrow"
+    if n == -1:
+        return "yesterday"
+    return "%d %s%s" % (day.day, MONTHS[day.month - 1], "" if day.year == today.year else " %d" % day.year)
+
+
+def _place_of(link: str, zone: str, names: Dict[str, Dict[str, dict]]) -> Optional[Tuple[str, Optional[str]]]:
+    """The project and thread a Todo line's link names inside its zone, or None
+    when it names none, or two."""
+    parts = [p for p in link.strip().split("/") if p]
+    projects = names.get(zone, {})
+    if "Threads" in parts:
+        at = parts.index("Threads")
+        project = parts[at - 1] if at >= 1 else None
+        thread = parts[at + 1] if at + 1 < len(parts) else None
+        if project in projects and thread in projects[project]["threads"]:
+            return project, thread
+        return None
+    name = parts[-1] if parts else ""
+    hits = [(p, name) for p, r in projects.items() if name in r["threads"]]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits and name in projects:
+        return name, None
+    return None
+
+
+def _named(text: str, forms: List[Tuple[str, bool, Entry]]) -> Set[str]:
+    """Every party a line's own words name: a party, its tag, a person, an alias."""
+    out: Set[str] = set()
+    for form, capital, e in forms:
+        if e.kind not in ("party", "person"):
+            continue
+        for m in re.finditer(_pattern(form), text, re.I):
+            if capital and not text[m.start()].isupper():
+                continue
+            out |= set(e.parties)
+            break
+    return out
+
+
+def actions(ws: Path, sc: Scope, names: Dict[str, Dict[str, dict]], ctx: dict, lib_, today) -> List[dict]:
+    """What the user owes, or waits on, inside an actions scope (#316), in
+    the digest's order: the open Todo lines, read through todo.py's own
+    reading, and each live thread's Next action, Waiting on and Deadline
+    rows. Garrick says these itself and no session is told them, so the list
+    may hold both sides of a wall, each item labelled with its zone.
+
+    Owed, in this order: lines overdue, the most late first; lines due in
+    the period (today to `until`, every later line when there is no
+    period), by date; chases that have come due, or come due in the period;
+    Next actions whose Deadline falls in the period, by date. With no period,
+    then the lines with no date, and the Next actions with no deadline.
+    Waited on (`waiting`): chases that have come due, the waiting lines by
+    chase date, then each thread's Waiting on row.
+
+    Each item: {"zone", "project", "thread", "text", "date", "kind", "note",
+    "parties"}, `note` the thread's note, the project's hub or the zone's
+    Todo.md, from the workspace. Meeting pages are never read."""
+    import datetime as _dt
+    ws = Path(ws)
+    todo = todo_lib(ws)
+    until = _dt.date.fromisoformat(sc.until) if sc.until else None
+    forms = entries(ws, names, ctx, lib_)
+    zones = [sc.zone] if sc.zone else list(names)
+    first: List[Tuple[tuple, dict]] = []
+
+    def inside(zone: str, project: Optional[str], thread: Optional[str], parties: Set[str]) -> bool:
+        if sc.zone and zone != sc.zone:
+            return False
+        if sc.project is not None:
+            return project == sc.project and (sc.thread is None or thread == sc.thread)
+        return not sc.parties or bool(parties & sc.parties)
+
+    def note_of(zone: str, project: Optional[str], thread: Optional[str]) -> str:
+        if project is None:
+            return "Zones/%s/Todo.md" % zone
+        if thread is None:
+            return "Zones/%s/%s/%s.md" % (zone, project, project)
+        return "Zones/%s/%s/Threads/%s/%s.md" % (zone, project, thread, thread)
+
+    def item(rank, zone, project, thread, text, date, kind, parties):
+        first.append((rank, {"zone": zone, "project": project, "thread": thread, "text": text,
+                             "date": date.isoformat() if date else "", "kind": kind,
+                             "note": note_of(zone, project, thread), "parties": sorted(parties)}))
+
+    in_period = (lambda d: until is None or d <= until)
+    for zone in zones:
+        folder = ws / "Zones" / zone
+        if todo is None or not (folder / "Todo.md").is_file():
+            continue
+        try:
+            found = todo.classify(todo.read(folder), today)
+        except (OSError, ValueError):
+            continue
+
+        def place(line):
+            link = todo.link_of(line)
+            where = _place_of(link, zone, names) if link else None
+            project, thread = where if where else (None, None)
+            parties = set(_named(line, forms))
+            if project is not None:
+                parties |= set(place_parties(ws, zone, project, thread, lib_))
+            words = todo.plain(line)
+            if link and ": " in words:
+                words = words.split(": ", 1)[1]
+            return project, thread, parties, words
+
+        def add(rank, line, date, kind):
+            project, thread, parties, words = place(line)
+            if inside(zone, project, thread, parties):
+                item(rank, zone, project, thread, words, date, kind, parties)
+
+        def on(line, rx):
+            m = getattr(todo, rx).search(line)
+            try:
+                return _dt.date.fromisoformat(m.group(1)) if m else None
+            except ValueError:
+                return None
+        if sc.waiting:
+            for line in found["chase"]:
+                d = on(line, "CHASE_ON")
+                add((0, d.isoformat() if d else ""), line, d, "chase")
+            for when, line in found.get("waiting", []):
+                d = _dt.date.fromisoformat(when) if when else None
+                add((1, when or "9999"), line, d, "waiting")
+            continue
+        for late, line in found["overdue"]:
+            add((0, -late), line, on(line, "DUE"), "overdue")
+        for line in found["due"]:
+            add((1, today.isoformat()), line, today, "due")
+        for when, line in found.get("later", []):
+            d = _dt.date.fromisoformat(when)
+            if in_period(d):
+                add((1, when), line, d, "due")
+        for line in found["chase"]:
+            d = on(line, "CHASE_ON")
+            add((2, d.isoformat() if d else ""), line, d, "chase")
+        for when, line in found.get("waiting", []):
+            d = _dt.date.fromisoformat(when) if when else None
+            if d is not None and until is not None and d <= until:
+                add((2, when), line, d, "chase")
+        if until is None:
+            for line in found.get("open", []):
+                add((4, ""), line, None, "open")
+
+    # Each live thread's own rows: a project with no thread is its own one.
+    for zone in zones:
+        for project, r in names.get(zone, {}).items():
+            if r["status"] != "active":
+                continue
+            threads = [t for t, st in r["threads"].items() if st == "active"] or ([None] if not r["threads"] else [])
+            for thread in threads:
+                parties = set(place_parties(ws, zone, project, thread, lib_))
+                if not inside(zone, project, thread, parties):
+                    continue
+                rows = resume_rows(ws / note_of(zone, project, thread))
+                if sc.waiting:
+                    who = _LINK.sub(r"\1", rows.get("Waiting on", "")).strip().rstrip(".")
+                    if who.casefold() not in NOBODY and not re.match(r"(?i)^(nobody|no one|none)\b", who):
+                        item((3, ""), zone, project, thread, who, None, "waits", parties)
+                    continue
+                step = _LINK.sub(r"\1", rows.get("Next action", "")).strip()
+                if not step:
+                    continue
+                deadline = _day(rows.get("Deadline", ""))
+                if deadline is not None and in_period(deadline):
+                    item((3, deadline.isoformat()), zone, project, thread, step, deadline, "next", parties)
+                elif deadline is None and until is None:
+                    item((5, ""), zone, project, thread, step, None, "next", parties)
+    first.sort(key=lambda t: (t[0], t[1]["zone"], t[1]["note"], t[1]["text"]))
+    return [i for _, i in first]
+
+
+def action_said(it: dict, names: Dict[str, Dict[str, dict]], today) -> str:
+    """One item of an actions list, for the ear: when, what, and where, with
+    its zone: "3 days late: Send the revised terms (Pricing, in Work)."."""
+    import datetime as _dt
+    d = _dt.date.fromisoformat(it["date"]) if it["date"] else None
+    kind = it["kind"]
+    if kind == "overdue" and d is not None:
+        n = (today - d).days
+        when = "%d day%s late" % (n, "" if n == 1 else "s")
+    elif kind == "due" and d is not None:
+        when = "Due " + said_day(d, today) if (d - today).days in (0, 1) else "Due on " + said_day(d, today)
+    elif kind == "chase":
+        when = "Chase" + ("" if d is None else " " + said_day(d, today) if (d - today).days in (-1, 0, 1)
+                          else " since " + said_day(d, today) if d < today else " on " + said_day(d, today))
+    elif kind == "waiting":
+        when = "Waiting" + ("" if d is None else ", chase on " + said_day(d, today))
+    elif kind == "waits":
+        when = "Waiting on"
+    elif kind == "next":
+        when = "Next" + ("" if d is None else ", deadline " + ("" if (d - today).days in (-1, 0, 1) else "on ")
+                         + said_day(d, today))
+    else:
+        when = "Open"
+    where = it["thread"] or it["project"]
+    place = "%s, in %s" % (where, it["zone"]) if where else "in %s" % it["zone"]
+    text = it["text"].rstrip(" .")
+    return "%s: %s (%s)." % (when, text, place)
+
+
+def user_name(ws: Path) -> str:
+    """The user's own name, as System/context.md's *Me* section opens: "Jo
+    Example. Independent advisor." gives "Jo Example". Two to four words
+    with capitals, before the first full stop or comma; "" otherwise. The
+    answer session is told it, so a record that names the user is "you"."""
+    try:
+        text = (Path(ws) / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(r"(?m)^##\s+Me\s*$\n+\s*(\S[^\n]*)", text)
+    if not m:
+        return ""
+    name = re.match(r"([A-Z][\w'’-]+(?:\s+[A-Z][\w'’-]+){1,3})\s*[.,]", m.group(1).replace("**", ""))
+    return name.group(1) if name else ""
+

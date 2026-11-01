@@ -184,6 +184,40 @@ let askAfresh = "———  The assistant started afresh here. What is above is 
 // Under the turn after which ask.py renewed the session by its size (#261, slice E, "refreshed": true):
 // the answer stays on screen, and the assistant no longer holds what came before.
 let askRefreshed = "Conversation refreshed"
+// The zone the Ask window answers in (#317), its selector's, kept in the app's own defaults and never in the
+// workspace: a question about meetings or a thread is answered inside one zone, the one its names live in or
+// this one. Changing it starts a new conversation, with the divider a wall reset draws.
+let kAskZone = "askZone"
+// Each zone's colour from Settings › Zones, cmux's sixteen names, as status.py's ZONE_COLOURS inks them: on a
+// light ground, then on a dark one. A zone's button in "Which zone?" takes its colour (#317). A test holds the two
+// tables together.
+let askZoneInks: [String: (String, String)] = [
+	"Red": ("#C0392B", "#E9A39B"), "Crimson": ("#922B21", "#E1857C"), "Orange": ("#A04000", "#ED9960"),
+	"Amber": ("#7D6608", "#D6B018"), "Olive": ("#4A5C18", "#8EB12E"), "Green": ("#196F3D", "#2DC86E"),
+	"Teal": ("#006B6B", "#15C1C1"), "Aqua": ("#0E6B8C", "#3FBDEA"), "Blue": ("#1565C0", "#82B6F1"),
+	"Navy": ("#1A5276", "#50A3D9"), "Indigo": ("#283593", "#7380D9"), "Purple": ("#6A1B9A", "#BB74E7"),
+	"Magenta": ("#AD1457", "#F187B6"), "Rose": ("#880E4F", "#ED5CA9"), "Brown": ("#7B3F00", "#E6851F"),
+	"Charcoal": ("#3E4B5E", "#8798B0"),
+]
+func askHex(_ hex: String) -> NSColor {
+	let v = UInt32(hex.dropFirst(), radix: 16) ?? 0
+	return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255,
+	               blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+}
+// A zone's colour by its cmux name, following the light or dark appearance; the label colour for none.
+func askZoneColour(_ name: String) -> NSColor {
+	guard let (light, dark) = askZoneInks[name] else { return .labelColor }
+	return NSColor(name: nil) { a in a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? askHex(dark) : askHex(light) }
+}
+// The zones the selector offers: the workspace's zone folders, as ask.py's scan() lists them.
+func askZoneNames() -> [String] {
+	let dir = workspace.appendingPathComponent("Zones")
+	let found = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+	return found.filter { u in
+		let n = u.lastPathComponent
+		return !n.hasPrefix(".") && !n.hasPrefix("_") && (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+	}.map { $0.lastPathComponent }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+}
 // The link a cited record carries in the exchange: the turn and the source, never a path (#261, slice D).
 let askSourceLink = "garrick-ask-source:"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
@@ -301,6 +335,8 @@ struct AskTurn {
 	var claims: [[String: Any]] = []    // an answer's claims, each with the ids of the records it rests on
 	var after: [String] = []            // the sentences Garrick says after them: the records incomplete, a wall
 	var sources: [[String: Any]] = []   // each record cited this turn, as ask.py checked it: path, title, dates
+	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
+	var retry = ""                      // the question to send again in the zone a button picks
 }
 
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
@@ -641,6 +677,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askNewAfterStop = false       // Stop and start new: the new conversation starts once the request has stopped
 	var askResetting = false          // a new conversation asked for and not yet started: nothing is sent until it is
 	var askNextAfresh = false         // the next request starts under a divider: a new conversation began after a reply kept on screen
+	var askZonePicker: NSPopUpButton! // the zone the window answers in, beside the field (#317)
+	var askChoices: NSStackView!      // "Which zone?": a button for each zone, in its colour
+	var askAfterReset: (() -> Void)?  // what waits for a new conversation to have started: a zone's question sent again
+	var askZoneAfterStop = false      // a zone picked during a request: it is stopped, then a new conversation starts under a divider
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -1875,9 +1915,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// and the reply itself, with its kind. Progress comes before it, line by line.
 	// An app the request named must be switched on in Settings, as on the page.
 	@discardableResult
-	func askGarrick(_ text: String, progress: @escaping (String) -> Void = { _ in },
+	func askGarrick(_ text: String, picked: Bool = false, progress: @escaping (String) -> Void = { _ in },
 	                done: @escaping (String, Bool, [String: Any]) -> Void) -> AskRequest? {
-		askStream(["ask", "--", text], progress: progress) { [weak self] out in
+		// The zone the window answers in goes with every request (#317); `picked` when a zone's button chose it.
+		let zone = askZone()
+		let args = zone.isEmpty ? ["ask", "--", text] : ["ask", "--zone", zone] + (picked ? ["--picked"] : []) + ["--", text]
+		return askStream(args, progress: progress) { [weak self] out in
 			guard let self else { return }
 			let say = out["say"] as? String ?? ""
 			var lines = out["done"] as? [String] ?? []
@@ -1969,6 +2012,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			input.borderType = .noBorder
 			input.hasVerticalScroller = false
 			askInputHeight = input.heightAnchor.constraint(equalToConstant: 28)
+			// The zone the window answers in, beside the field (#317): hidden with one zone or none.
+			askZonePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+			askZonePicker.controlSize = .small
+			askZonePicker.target = self
+			askZonePicker.action = #selector(askPickZone(_:))
+			askZonePicker.setContentHuggingPriority(.required, for: .horizontal)
+			let entry = NSStackView(views: [input, askZonePicker])
+			entry.orientation = .horizontal
+			entry.alignment = .top
+			entry.spacing = 8
+			askChoices = NSStackView()
+			askChoices.orientation = .horizontal
+			askChoices.spacing = 8
 
 			askSpinner = NSProgressIndicator()
 			askSpinner.style = .spinning
@@ -1994,14 +2050,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askFoot = NSStackView(views: [NSView(), askNewButton])
 			askFoot.orientation = .horizontal
 
-			let stack = NSStackView(views: [askLogBox, input, askWorking, askReply, askFoot])
+			let stack = NSStackView(views: [askLogBox, entry, askChoices, askWorking, askReply, askFoot])
 			stack.orientation = .vertical
 			stack.alignment = .leading
 			// The exchange takes whatever height the window has (#309); everything else keeps its own.
 			stack.distribution = .fill
 			askLogBox.setContentHuggingPriority(.init(1), for: .vertical)
 			askLogBox.setContentCompressionResistancePriority(.init(1), for: .vertical)
-			for v in [askWorking, askReply, askFoot] as [NSView] {
+			for v in [askWorking, askReply, askFoot, askChoices] as [NSView] {
 				v.setContentHuggingPriority(.defaultHigh, for: .vertical)
 				v.setContentCompressionResistancePriority(.required, for: .vertical)
 			}
@@ -2028,7 +2084,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				askLogLeast,
 				askInputHeight,
 			])
-			for v in [askLogBox, input, askWorking, askReply, askFoot] as [NSView] {
+			for v in [askLogBox, entry, askChoices, askWorking, askReply, askFoot] as [NSView] {
 				v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
 			}
 			askPanel = p
@@ -2117,16 +2173,24 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let text = askField.string.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !text.isEmpty, askRunning == nil, !askResetting else { return }
 		askField.string = ""
+		askSend(text)
+	}
+
+	// One request on its way, as a turn of the exchange; `picked` when a zone's button sent it again (#317).
+	func askSend(_ text: String, picked: Bool = false) {
 		var asked = AskTurn(request: text)
+		let sentZone = askZone()          // the zone this request goes in: a reply moves the selector only from it
 		asked.afresh = askNextAfresh
 		askNextAfresh = false
 		askTurns.append(asked)
 		let at = askTurns.count - 1
-		askRunning = askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in
+		askRunning = askGarrick(text, picked: picked, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in
 			guard let self else { return }
 			self.askRunning = nil
 			let startNew = self.askNewAfterStop
 			self.askNewAfterStop = false
+			let zoneNew = self.askZoneAfterStop
+			self.askZoneAfterStop = false
 			if startNew && out["stopped"] as? Bool == true {    // Stop and start new, stopped: nothing was done to keep
 				return self.askNew(nil)
 			}
@@ -2137,8 +2201,17 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.kind = out["kind"] as? String ?? "command"
 			turn.stopped = out["stopped"] as? Bool == true
 			turn.failed = out["failed"] as? Bool == true
-			turn.afresh = turn.afresh || out["reset"] as? String == "wall"
+			// A wall reset, or a zone the sessions had not answered in (#317): the divider either way.
+			turn.afresh = turn.afresh || out["reset"] is String
 			turn.refreshed = out["refreshed"] as? Bool == true
+			turn.zones = out["zones"] as? [[String: Any]] ?? []
+			turn.retry = out["retry"] as? String ?? ""
+			// The zone the answer was read in: the selector follows it, with no new conversation, since
+			// ask.py started one itself when the zone changed (#317).
+			// Never over a zone you picked after sending: that one stands, and starts its own conversation.
+			if let z = out["zone"] as? String, askZoneNames().contains(z), !zoneNew, self.askZone() == sentZone {
+				self.askSetZone(z)
+			}
 			if turn.kind == "answer" {
 				turn.claims = out["claims"] as? [[String: Any]] ?? []
 				turn.after = out["after"] as? [String] ?? []
@@ -2158,7 +2231,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 			// Stop and start new, but the request had finished, or was past where Stop is heard: what it
 			// did stays on screen, and the new conversation starts under it.
-			if startNew {
+			if startNew || zoneNew {
 				self.askNextAfresh = true
 				self.askReset()
 			}
@@ -2203,16 +2276,107 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func askReset() {
 		askResetting = true
 		askCall(["reset"]) { [weak self] _ in
-			self?.askResetting = false
-			self?.askRender()
+			guard let self else { return }
+			self.askResetting = false
+			let next = self.askAfterReset
+			self.askAfterReset = nil
+			self.askRender()
+			next?()
 		}
 		askRender()
+	}
+
+	// The zone the window answers in: the one kept in the app's defaults, if it is still a zone (#317).
+	func askZone() -> String {
+		let zones = askZoneNames()
+		if zones.count == 1 { return zones[0] }
+		let saved = defaults.string(forKey: kAskZone) ?? ""
+		return zones.contains(saved) ? saved : ""
+	}
+
+	// The selector set to a zone and kept in the app's defaults, never in the workspace: nothing else.
+	func askSetZone(_ zone: String) {
+		defaults.set(zone, forKey: kAskZone)
+		askZoneShow()
+	}
+
+	// The selector's items: the zones, and while none is chosen a first item that says so. Hidden with one zone.
+	func askZoneShow() {
+		guard let picker = askZonePicker else { return }
+		let zones = askZoneNames()
+		let zone = askZone()
+		let items = (zone.isEmpty ? ["Zone"] : []) + zones
+		if picker.itemTitles != items {           // rebuilt only when the zones change, never under an open menu
+			picker.removeAllItems()
+			picker.addItems(withTitles: items)
+		}
+		picker.selectItem(withTitle: zone.isEmpty ? "Zone" : zone)
+		picker.isHidden = zones.count <= 1
+	}
+
+	// One click on the selector: another zone starts a new conversation, under the divider a wall reset
+	// draws, since the sessions were told the other zone's material (#317).
+	@objc func askPickZone(_ sender: NSPopUpButton) {
+		let zone = sender.titleOfSelectedItem ?? ""
+		guard askZoneNames().contains(zone), zone != askZone() else { return askZoneShow() }
+		let had = !askZone().isEmpty
+		askSetZone(zone)
+		if had && askRunning != nil {
+			// A request on its way in the old zone: it is stopped, and the new conversation starts once it
+			// has, as Stop and start new does, the exchange kept above the divider.
+			askZoneAfterStop = true
+			askStop(nil)
+		} else if had && !askTurns.isEmpty {
+			askNextAfresh = true
+			askReset()
+		}
+		askPanel?.makeFirstResponder(askField)
+	}
+
+	// A zone's button under "Which zone?": the selector takes that zone, starting a new conversation when it
+	// was set to another, and the question goes again, in that zone, once any new conversation has started.
+	@objc func askChooseZone(_ sender: NSButton) {
+		guard let turn = askTurns.last, askRunning == nil, !askResetting else { return }
+		let zone = sender.identifier?.rawValue ?? sender.title
+		guard askZoneNames().contains(zone), !turn.retry.isEmpty else { return }
+		let moved = !askZone().isEmpty && zone != askZone()
+		askSetZone(zone)
+		askTurns[askTurns.count - 1].zones = []
+		let retry = turn.retry
+		if moved {
+			askNextAfresh = true
+			askAfterReset = { [weak self] in self?.askSend(retry, picked: true) }
+			askReset()
+		} else {
+			askSend(retry, picked: true)
+		}
+	}
+
+	// The buttons of the last turn's "Which zone?", each in its zone's colour; none once a request is on its way.
+	func askChoicesShow() {
+		guard let row = askChoices else { return }
+		row.arrangedSubviews.forEach { $0.removeFromSuperview() }
+		let offered = askRunning == nil ? askTurns.last?.zones ?? [] : []
+		for z in offered {
+			guard let name = z["zone"] as? String else { continue }
+			let b = NSButton(title: name, target: self, action: #selector(askChooseZone(_:)))
+			b.identifier = NSUserInterfaceItemIdentifier(name)
+			b.bezelStyle = .rounded
+			b.attributedTitle = NSAttributedString(string: name, attributes: [
+				.foregroundColor: askZoneColour(z["color"] as? String ?? ""),
+				.font: NSFont.boldSystemFont(ofSize: askText())])
+			row.addArrangedSubview(b)
+		}
+		row.addArrangedSubview(NSView())
+		row.isHidden = offered.isEmpty
 	}
 
 	// Each state the window can be in, from the exchange and the request on its way: Ready,
 	// Preparing, Command, Finding an answer, Answer, Clarification, Stopped or failed.
 	func askRender() {
 		guard askPanel != nil else { return }
+		askZoneShow()
+		askChoicesShow()
 		let last = askTurns.last
 		let running = askRunning != nil
 		askLogBox.isHidden = !askExpanded

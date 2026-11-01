@@ -188,7 +188,7 @@ class TestGraph(StatusCase):
         self.assertEqual("project", by_name["Acme Review"])
         self.assertEqual("thread", by_name["Pricing"])
         self.assertEqual("meeting", by_name["Acme kick-off"])
-        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "m", "hp", "pa", "pp", "oc"}, set().union(*(n.keys() for n in data["nodes"])))
+        self.assertEqual({"n", "k", "z", "p", "t", "d", "s", "c", "h", "w", "u", "m", "hp", "pa", "pp", "oc", "pl"}, set().union(*(n.keys() for n in data["nodes"])))
         self.assertEqual(["Work", "Acme Review/Threads/Pricing/Pricing.md"], data["nodes"][self.node(data, "Pricing")]["oc"])   # what Open in Claude continues (#180)
         self.assertNotIn("Decisions.", html)
 
@@ -3243,10 +3243,14 @@ class TestLinksOpenAsChosen(StatusCase):
         handler = self.handler()
         self.assertIn("if(!host||e.defaultPrevented||e.button!==0)return;", handler)    # a browser follows the link; a handler before it keeps it
         self.assertIn("closest('a[href]')", handler)
-        self.assertIn("/^file:/i.test(a.href)", handler)
-        self.assertIn("var m={open:a.href};if(a.dataset.place)m.place=a.dataset.place;host.postMessage(m)", handler)
+        self.assertIn("/^file:/i.test(a.getAttribute('href')||'')", handler)              # as written: "#checks" stays on the page
+        self.assertIn("host.postMessage({open:a.href,place:a.dataset.place||undefined})", handler)
         self.assertTrue(handler.endswith("},true);"))                                   # capture: heard wherever the link sits
-        self.assertIn("if(hb&&/^file:/i.test(h.n.u))hb.postMessage({open:h.n.u});else location.href=h.n.u", status.GRAPH_JS)
+        self.assertIn("hb.postMessage({open:h.n.u,place:h.n.pl||undefined})", status.GRAPH_JS)      # with its place
+        nodes = {n["n"]: n for n in graph_data(self.page())["nodes"]}
+        self.assertEqual(str(self.root / "Zones/Work/Acme Review/Threads/Pricing"), nodes["Pricing"]["pl"])
+        self.assertEqual(str(self.root / "Zones/Work/Acme Review"), nodes["Acme Review"]["pl"])
+        self.assertNotIn("pl", nodes["dana-whitlock"] if "dana-whitlock" in nodes else nodes["Dana Whitlock"])
         plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('if (typeof body.open === "string") return this.follow(body.open);', plugin)   # Obsidian's tab opens it there
 
@@ -3308,15 +3312,18 @@ class TestLinksOpenAsChosen(StatusCase):
                              "try! URL.writeBookmarkData(mark, to: d.appendingPathComponent(\"alias.md\"))\n"
                              "for n in CommandLine.arguments.dropFirst(2) { print(n + \" \" + (runsSomething(d.appendingPathComponent(n)) ? \"shown\" : \"opens\")) }\n")
         d = Path(self._tmp.name).resolve() / "kinds"
-        for n in ("run.command", "x.fileloc", "y.webloc", "w.inetloc", "z.terminal", "s.sh", "b.jar", "c.scpt", "tool.py",
-                  "Proj.md", "data.json", "deck.pptx", "rates.csv"):
+        flat = ("run.command", "x.fileloc", "y.webloc", "w.inetloc", "z.terminal", "s.sh", "b.jar", "c.scpt", "tool.py",
+                "setup.pkg", "disk.dmg", "wifi.mobileconfig", "do.shortcut", "page.html", "page.htm", "page.xhtml",
+                "saved.webarchive", "flat.workflow")
+        for n in flat + ("Proj.md", "data.json", "deck.pptx", "rates.csv"):
             write(d / n, "x\n")
         (d / "Evil.app" / "Contents" / "MacOS").mkdir(parents=True)
         (d / "a.workflow" / "Contents").mkdir(parents=True)
+        (d / "Many.mpkg" / "Contents").mkdir(parents=True)
         (d / "Folder").mkdir()
-        shown = ["run.command", "x.fileloc", "y.webloc", "w.inetloc", "z.terminal", "s.sh", "b.jar", "c.scpt", "tool.py",
-                 "Evil.app", "a.workflow", "alias.md"]
-        opens = ["Proj.md", "data.json", "deck.pptx", "rates.csv", "Folder"]
+        write(d / "Notes.rtfd" / "TXT.rtf", "{\\rtf1 x}\n")                      # a document package opens as a document
+        shown = list(flat) + ["Evil.app", "a.workflow", "Many.mpkg", "alias.md"]
+        opens = ["Proj.md", "data.json", "deck.pptx", "rates.csv", "Folder", "Notes.rtfd"]
         done = subprocess.run([str(check), str(d)] + shown + opens, capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
         self.assertEqual(["%s shown" % n for n in shown] + ["%s opens" % n for n in opens], done.stdout.splitlines())
@@ -3349,7 +3356,7 @@ class D: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageH
   }
   func webView(_ w: WKWebView, didFinish n: WKNavigation!) {
     print("loaded")
-    for (i, y) in [75.0, 225.0].enumerated() {
+    for (i, y) in [50.0, 150.0, 250.0].enumerated() {
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + Double(i)) {
         for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
           let ev = NSEvent.mouseEvent(with: t, location: NSPoint(x: 200, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -3358,7 +3365,7 @@ class D: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageH
         }
       }
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { exit(0) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { exit(0) }
   }
   func webView(_ w: WKWebView, decidePolicyFor nav: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     if nav.request.url?.lastPathComponent == "page.html" { return decisionHandler(.allow) }
@@ -3378,7 +3385,8 @@ app.run()
         todo = self.root / "Zones/Work/Todo.md"
         link = status.Links(self.root)
         write(page, '<!DOCTYPE html><html><body style="margin:0">'
-              '<a style="display:block;height:150px" %s>Pricing</a><a style="display:block;height:150px" %s>Todo</a>'
+              '<a style="display:block;height:100px" %s>Pricing</a><a style="display:block;height:100px" %s>Todo</a>'
+              '<a style="display:block;height:100px" href="#t" id="t">On the page</a>'
               '<script>var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;\n%s</script>'
               '</body></html>' % (link.attrs(note), link.attrs(todo), self.handler()))
         done = subprocess.run([str(check), str(page)], capture_output=True, text=True, timeout=60)
@@ -3386,8 +3394,11 @@ app.run()
             self.skipTest("no window server to load the page in (%s)" % done.returncode)
         said = done.stdout.splitlines()
         self.assertEqual("loaded", said[0])
-        self.assertEqual(sorted(["open %s %s" % (note.as_uri(), note.parent), "open %s -" % todo.as_uri()]), sorted(said[1:]),
-                         done.stderr)                       # both clicks over the bridge, the note with its place; no navigation
+        opened = sorted(l for l in said[1:] if l.startswith("open "))
+        self.assertEqual(sorted(["open %s %s" % (note.as_uri(), note.parent), "open %s -" % todo.as_uri()]), opened,
+                         done.stdout + done.stderr)         # both file links over the bridge, the note with its place
+        self.assertFalse([l for l in said if "#t" in l and l.startswith("open")])   # a link on the page stays on it
+        self.assertFalse([l for l in said if l.startswith("navigation file:") and "#t" not in l])   # no file navigation
 
     def test_nothing_garrick_ships_writes_an_obsidian_link(self):
         """#318's grep: in the page, the app, the plugin and what a workspace

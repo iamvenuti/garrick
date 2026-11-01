@@ -117,19 +117,34 @@ def write(zone: Path, lines: List[str]) -> None:
 
 
 # A Markdown link by a path relative to the note it is in, such as a line's
-# meeting source, `[title](../../Wikis/Meetings/wiki/sources/<slug>.md)` (#318).
-RELATIVE_LINK = re.compile(r"(\]\()(?![A-Za-z][\w+.-]*:|#|/)([^)\s#]+)((?:#[^)\s]*)?\))")
+# meeting source, `[title](../../Wikis/Meetings/wiki/sources/<slug>.md)` (#318):
+# its target, which may hold a pair of parentheses, as `a(1).md`.
+RELATIVE_LINK = re.compile(r"(\]\()((?:[^()\s]|\([^()\s]*\))+)(\))")
+INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
 def relinked(line: str, here: Path, there: Path) -> str:
     """`line`, moved from a note in folder `here` to one in folder `there`,
-    with each relative link written again from `there`, so it still leads
-    where it led. A wikilink or a web link is left as it is."""
+    with the path of each relative link written again from `there`, so it
+    still leads where it led; its query or anchor stays as written. A
+    wikilink, a web link, an anchor, a path from the top and anything in
+    inline code are left as they are."""
     def one(m):
-        target = os.path.normpath(os.path.join(str(here), urllib.parse.unquote(m.group(2))))
-        again = os.path.relpath(target, str(there)).replace(os.sep, "/")
-        return m.group(1) + urllib.parse.quote(again) + m.group(3)
-    return RELATIVE_LINK.sub(one, line) if "](" in line else line
+        target = m.group(2)
+        if re.match(r"^[A-Za-z][\w+.-]*:|^[#/]", target):
+            return m.group(0)
+        cut = min([i for i in (target.find("?"), target.find("#")) if i >= 0] or [len(target)])
+        path, rest = target[:cut], target[cut:]
+        if not path:
+            return m.group(0)
+        full = os.path.normpath(os.path.join(str(here), urllib.parse.unquote(path)))
+        again = os.path.relpath(full, str(there)).replace(os.sep, "/")
+        return m.group(1) + urllib.parse.quote(again, safe="/()") + rest + m.group(3)
+
+    if "](" not in line:
+        return line
+    parts, codes = INLINE_CODE.split(line), INLINE_CODE.findall(line) + [""]
+    return "".join(RELATIVE_LINK.sub(one, part) + code for part, code in zip(parts, codes))
 
 
 def keep_out(zone: Path, name: str, title: str, moved: List[str]) -> Path:

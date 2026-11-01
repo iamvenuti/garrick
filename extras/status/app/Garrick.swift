@@ -2371,16 +2371,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return file
 	}
 
-	// What opening a file could run or follow rather than show (#318): an app or any other
-	// package, an alias, a link to the web or elsewhere (.webloc, .inetloc, .fileloc), and
-	// anything executable or a script, a Terminal setting among them. Such a file is shown in
-	// Finder instead, so what the page links can never start a program.
+	// What opening a file could run, install or follow rather than show (#318): an app, a bundle
+	// or any other package that is not a document (.rtfd, a .pages package), an alias, a link to
+	// the web or elsewhere (.webloc, .inetloc, .fileloc), anything executable or a script, an
+	// installer, a disk image, a configuration profile, a shortcut, an Automator workflow, a
+	// Terminal setting, and a web page, which a browser would run. Shown in Finder instead, so
+	// what the page links can never start a program.
 	func runsSomething(_ file: URL) -> Bool {
-		let v = try? file.resourceValues(forKeys: [.contentTypeKey, .isApplicationKey, .isAliasFileKey, .isPackageKey])
-		if v == nil || v?.isApplication == true || v?.isAliasFile == true || v?.isPackage == true { return true }
-		guard let type = v?.contentType else { return false }
-		return type.identifier == "com.apple.terminal.settings"
-			|| [UTType.application, .executable, .script, .aliasFile, .internetLocation].contains { type.conforms(to: $0) }
+		// by name too, for a file whose type this Mac does not know as its kind, such as a flat .workflow
+		let names: Set<String> = ["app", "command", "tool", "terminal", "webloc", "inetloc", "fileloc", "workflow", "action", "pkg", "mpkg",
+		                          "dmg", "iso", "sparseimage", "sparsebundle", "mobileconfig", "shortcut", "html", "htm", "xhtml", "webarchive"]
+		if names.contains(file.pathExtension.lowercased()) { return true }
+		guard let v = try? file.resourceValues(forKeys: [.contentTypeKey, .isApplicationKey, .isAliasFileKey, .isPackageKey]) else { return true }
+		if v.isApplication == true || v.isAliasFile == true { return true }
+		let type = v.contentType
+		let runs: [UTType] = [.application, .executable, .script, .aliasFile, .internetLocation, .diskImage, .html, .webArchive]
+		let named = ["com.apple.terminal.settings", "com.apple.installer-package-archive", "com.apple.installer-meta-package",
+		             "com.apple.mobileconfig", "com.apple.shortcut", "com.apple.automator-workflow", "public.xhtml", "public.iso-image"]
+		if let type, runs.contains(where: { type.conforms(to: $0) })
+			|| named.contains(where: { id in type.identifier == id || UTType(id).map { type.conforms(to: $0) } == true }) { return true }
+		if v.isPackage == true { return !(type.map { $0.conforms(to: .content) || $0.conforms(to: .compositeContent) } ?? false) }
+		return false
 	}
 
 	// A checked file opened as macOS opens it, or, where that could run something, shown in Finder.

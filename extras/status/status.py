@@ -2949,6 +2949,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path), "m": path.relative_to(root).as_posix()[:-3]})
+        if link.place(path):
+            nodes[-1]["pl"] = link.place(path)       # a hub or a thread's note: a double-click opens it as its row (#318)
         if moving and urgent and (place, project, folder_thread) in urgent:
             nodes[-1]["lt"] = 1                  # its next action is late
         if wiki and nodes[-1]["n"] != title:
@@ -6719,10 +6721,11 @@ if(!host)document.body.classList.add('nohost');      /* a browser cannot act: it
    folder only, so WebKit drops a navigation to any other file before the app sees it. A link to a project's hub or
    a thread's note carries its place (data-place), and the host opens it as the row of that project or thread opens;
    any other file the host opens as macOS does, a folder in Finder. Capture, so it is heard wherever the link sits;
-   a handler that took the click first, such as a thread's name opening its default, keeps it. */
+   a handler that took the click first, such as a thread's name opening its default, keeps it. The attribute as
+   written is read, never a.href, which resolves "#checks" against the page into a file link of its own. */
 document.addEventListener('click',function(e){if(!host||e.defaultPrevented||e.button!==0)return;
-var a=e.target.closest&&e.target.closest('a[href]');if(!a||!/^file:/i.test(a.href))return;e.preventDefault();
-var m={open:a.href};if(a.dataset.place)m.place=a.dataset.place;host.postMessage(m)},true);
+var a=e.target.closest&&e.target.closest('a[href]');if(!a||!/^file:/i.test(a.getAttribute('href')||''))return;e.preventDefault();
+host.postMessage({open:a.href,place:a.dataset.place||undefined})},true);
 /* A drifted file's line in Needs attention (#323) leads to the row of its thread, or of its project where the thread
    has none on the card: on its tab, its folds open, scrolled to and with its card open, as a match found opens.
    Show both asks the host to reveal the copy here and the shared copy; only the app answers it. */
@@ -7882,7 +7885,7 @@ var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n
 place:function(){return zsel},follow:function(z){if(held||z===zsel||places.indexOf(z)<0)return false;show(z);return true}};
 /* a double-click opens the note: in a host, over its bridge, as every file link goes (#318); in a browser, as a link */
 cv.addEventListener('dblclick',function(e){var h=at(e),hb=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-if(!h.n||!h.n.u)return;if(hb&&/^file:/i.test(h.n.u))hb.postMessage({open:h.n.u});else location.href=h.n.u});
+if(!h.n||!h.n.u)return;if(!hb||!/^file:/i.test(h.n.u)){location.href=h.n.u;return}hb.postMessage({open:h.n.u,place:h.n.pl||undefined})});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
 var esc=Panel.esc;

@@ -88,6 +88,52 @@ window.addEventListener('click',function(e){if(e.defaultPrevented||e.button!==0)
 var a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href')||'';
 if(!h||h.charAt(0)==='#'||/^javascript:/i.test(h))return;e.preventDefault();out('link',a.href)});})();`;
 
+// A file a link on the page may open, as Garrick.app's workspaceFile() checks
+// it (#318): inside the workspace, still there, and with no symlink anywhere
+// below the workspace's folder, the last part included; else null.
+function workspaceFile(root, p) {
+	if (!root || typeof p !== "string" || !path.isAbsolute(p)) return null;
+	const base = path.resolve(root), named = path.resolve(p), rel = path.relative(base, named);
+	if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+	let at = base;
+	for (const part of rel.split(path.sep)) {
+		at = path.join(at, part);
+		try { if (fs.lstatSync(at).isSymbolicLink()) return null; } catch (e) { return null; }
+	}
+	return named;
+}
+
+// What opening a file could run, install or follow rather than show, as
+// Garrick.app's runsSomething() has it, here by name: an app or a bundle, a
+// script or anything executable, an installer, a disk image, a profile, a
+// shortcut, a workflow, a Terminal setting, a web or file location and a web
+// page; and a Finder alias, known by its first bytes.
+const RUNS = new Set(["app", "command", "tool", "terminal", "webloc", "inetloc", "fileloc", "workflow", "action", "pkg", "mpkg",
+	"dmg", "iso", "sparseimage", "sparsebundle", "mobileconfig", "shortcut", "html", "htm", "xhtml", "webarchive", "sh", "bash",
+	"zsh", "csh", "ksh", "py", "pyw", "rb", "pl", "php", "js", "mjs", "jar", "scpt", "scptd", "applescript", "bundle",
+	"plugin", "framework", "kext", "prefpane", "saver", "service", "xpc", "appex", "qlgenerator"]);
+const ALIAS = Buffer.from("book\0\0\0\0mark", "latin1");
+function runsSomething(p) {
+	if (RUNS.has(path.extname(p).slice(1).toLowerCase())) return true;
+	let st;
+	try { st = fs.statSync(p); } catch (e) { return true; }
+	if (st.isDirectory()) return false;                       // a folder opens in Finder
+	if (st.mode & 0o111) return true;                         // executable
+	try {
+		const fd = fs.openSync(p, "r"), head = Buffer.alloc(ALIAS.length);
+		const n = fs.readSync(fd, head, 0, ALIAS.length, 0);
+		fs.closeSync(fd);
+		return n === ALIAS.length && head.equals(ALIAS);
+	} catch (e) { return true; }
+}
+
+// A job's log, from its panel's Open log: a .log directly in the jobs folder.
+function jobLog(p) {
+	const set = process.env.GARRICK_JOBS_DIR;
+	const jobs = path.resolve(set ? set.replace(/^~(?=$|\/)/, os.homedir()) : path.join(os.homedir(), "Library", "Logs", "garrick-jobs"));
+	return path.extname(p) === ".log" && path.dirname(path.resolve(p)) === jobs;
+}
+
 function quoted(s) {
 	return JSON.stringify(String(s)).replace(/</g, "\\u003c");
 }
@@ -591,28 +637,38 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		}
 	}
 
-	// A link on the page: a note in this vault opens here, in a new tab;
-	// anything else goes to macOS.
+	// A link on the page, as Garrick.app follows one (#318): a job's log, the
+	// one file outside the workspace the page links; a file of the workspace,
+	// with no symlink anywhere below its folder, a note of this vault opening
+	// here in a new tab, one that could run something shown in Finder, and
+	// anything else opened by macOS; and the web, http and https only.
+	// Anything else opens nothing.
 	follow(url) {
 		if (url === this.last && Date.now() - this.lastAt < 1000) return;   // one click can report twice
 		this.last = url;
 		this.lastAt = Date.now();
-		try {
-			const u = new URL(url);
-			const file = u.searchParams.get("file");
-			if (u.protocol === "obsidian:" && u.hostname === "open" && file && u.searchParams.get("vault") === this.app.vault.getName()) {
-				return this.app.workspace.openLinkText(file, "", "tab");
-			}
-			if (u.protocol === "file:") {
-				const p = fileURLToPath(u);
-				const rel = path.relative(this.vaultPath(), p);
-				if (!rel.startsWith("..") && !path.isAbsolute(rel) && this.app.vault.getAbstractFileByPath(rel.split(path.sep).join("/"))) {
-					return this.app.workspace.openLinkText(rel.split(path.sep).join("/"), "", "tab");
-				}
-				return shell.openPath(p);
-			}
-		} catch (e) {}
-		shell.openExternal(url);
+		let u;
+		try { u = new URL(url); } catch (e) { return; }
+		const file = u.searchParams.get("file");
+		if (u.protocol === "obsidian:" && u.hostname === "open" && file && u.searchParams.get("vault") === this.app.vault.getName()) {
+			return this.app.workspace.openLinkText(file, "", "tab");
+		}
+		if (u.protocol === "http:" || u.protocol === "https:") return shell.openExternal(url);
+		if (u.protocol !== "file:") return;
+		let p;
+		try { p = fileURLToPath(u); } catch (e) { return; }
+		if (jobLog(p)) return shell.openPath(p);
+		const mine = workspaceFile(this.root(), p);
+		if (!mine) return new Notice("That link leads outside this workspace, so nothing was opened.");
+		const rel = path.relative(this.vaultPath(), mine);
+		if (!rel.startsWith("..") && !path.isAbsolute(rel) && this.app.vault.getAbstractFileByPath(rel.split(path.sep).join("/"))) {
+			return this.app.workspace.openLinkText(rel.split(path.sep).join("/"), "", "tab");
+		}
+		if (runsSomething(mine)) {
+			new Notice(path.basename(mine) + " could run something, so it is shown in Finder rather than opened.");
+			return shell.showItemInFolder(mine);
+		}
+		return shell.openPath(mine);
 	}
 
 	// MARK: parked projects and threads, out of the file explorer

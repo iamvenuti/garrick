@@ -147,6 +147,12 @@ class TodoTest(unittest.TestCase):
         self.assertEqual("[x](obsidian://open?vault=W&file=a)", todo.relinked("[x](obsidian://open?vault=W&file=a)", self.zone,
                                                                               self.zone / "archive"))
         self.assertEqual("[x](../../../A%20b.md#h)", todo.relinked("[x](../../A%20b.md#h)", self.zone, self.zone / "archive"))
+        moved = lambda line: todo.relinked(line, self.zone, self.zone / "archive")
+        self.assertEqual("see `[code](../x.md)` and [x](../../x.md)", moved("see `[code](../x.md)` and [x](../x.md)"))   # code stays code
+        self.assertEqual("[q](../a.md?x=1&y=2) [t](../../../W.md#Sec%20one)", moved("[q](a.md?x=1&y=2) [t](../../W.md#Sec%20one)"))
+        self.assertEqual("[p](../../../Wikis/Meetings/wiki/sources/a(1).md) ✅", moved("[p](../../Wikis/Meetings/wiki/sources/a(1).md) ✅"))
+        self.assertEqual("[a](#h) [w](https://e.com/a.md) [abs](/etc/hosts)", moved("[a](#h) [w](https://e.com/a.md) [abs](/etc/hosts)"))
+        self.assertEqual("![i](../pic.png)", moved("![i](pic.png)"))
 
     def test_tidy_puts_fields_last_and_the_inbox_in_thread_order(self):
         self.assertGreater(todo.tidy(self.zone), 0)

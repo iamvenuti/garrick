@@ -1067,42 +1067,103 @@ def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], 
         return [], N.scope_said
 
 
+DEBT_LEAST = 3         # fewer records than this and the figure stands alone, with no chart (#321)
+
+
+def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
+    """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
+    twice the threshold, or the highest value that is no spike (at most twice
+    the median), whichever is larger; a value above it is drawn at the cap.
+    The scale runs from a little under the lowest value or the threshold to a
+    little over the cap, so one night far above the rest leaves the
+    difference between the others to be seen."""
+    ordered = sorted(values)
+    median = ordered[len(ordered) // 2]
+    usual = [v for v in values if v <= 2 * median] or ordered[:1]
+    cap = max(2 * threshold, max(usual), 1)
+    low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
+    bottom = max(0.0, low - (cap - low) * 0.1)
+    return bottom, cap + (cap - bottom) * 0.08, cap
+
+
 def debt_chart(history: List[Tuple[dt.date, dict]], today: dt.date, threshold: float) -> str:
-    """The last DEBT_DAYS days as a small line, one point a day that has a
-    record, broken where a day has none, against the threshold, dashed. In
-    the page's own tokens, so it reads in light and dark."""
-    w, h, pad = 300.0, 56.0, 5.0
-    top = max([x["total"] for _, x in history] + [threshold, 1]) * 1.1
-    first = today - dt.timedelta(days=DEBT_DAYS - 1)
-    at = lambda d: pad + (d - first).days / (DEBT_DAYS - 1) * (w - 2 * pad)
-    y = lambda v: h - pad - v / top * (h - 2 * pad)
-    runs, run, last = [], [], None
+    """The line of the context debt (#321): from the first record, or
+    DEBT_DAYS back, whichever is later, to the latest, so the line fills the
+    width; one point a day that has a record, broken where a day has none,
+    and a tick on the axis for each such night, saying so when pointed at.
+    The scale is capped (debt_scale()): a night above the cap is an open dot
+    at the cap with its value beside it. The first and latest values and the
+    threshold, dashed, are written on the chart. In the page's own tokens, so
+    it reads in light and dark. Nothing with fewer than DEBT_LEAST records."""
+    if len(history) < DEBT_LEAST:
+        return ""
+    w, h, pad = 300.0, 64.0, 5.0
+    first, last = max(history[0][0], today - dt.timedelta(days=DEBT_DAYS - 1)), history[-1][0]
+    history = [(d, x) for d, x in history if d >= first]
+    span = max(1, (last - first).days)
+    bottom, top, cap = debt_scale([x["total"] for _, x in history], threshold)
+    at = lambda d: pad + (d - first).days / span * (w - 2 * pad)
+    y = lambda v: h - pad - (min(v, cap) - bottom) / (top - bottom) * (h - 2 * pad)
+    pct = lambda v, of: "%.2f%%" % (v / of * 100)
+    runs, run, prev = [], [], None
     for d, x in history:
-        if last is not None and (d - last).days != 1:
+        if prev is not None and (d - prev).days != 1:
             runs.append(run)
             run = []
         run.append((at(d), y(x["total"])))
-        last = d
+        prev = d
     runs.append(run)
-    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % p for p in r) for r in runs if len(r) > 1)
-    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % p for p in r),
+    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % q for q in r) for r in runs if len(r) > 1)
+    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % q for q in r),
                                                                           r[-1][0], h - pad) for r in runs if len(r) > 1)
-    # A dot is a line of no length with round ends, so it stays round however the chart is stretched.
-    dots = "".join('<line class="dd%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>'
-                   % (" now" if i == len(history) - 1 else "", at(d), at(d), y(x["total"]), y(x["total"]),
-                      E("%s · %s" % (d.strftime("%a %d %b"), x["total"]))) for i, (d, x) in enumerate(history))
+    # A dot is a line of no length with round ends, so it stays round however the chart is stretched;
+    # a night above the cap is an open one, a narrower dot in the card's colour over it.
+    dots, notes = "", ""
+    for i, (d, x) in enumerate(history):
+        v, cls = x["total"], " now" if i == len(history) - 1 else ""
+        tip = E("%s · %s" % (d.strftime("%a %d %b"), debt_points(v)))
+        dots += '<line class="dd%s%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>' % (
+            cls, " over" if v > cap else "", at(d), at(d), y(v), y(v), tip)
+        if v > cap:
+            dots += '<line class="dhole" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (at(d), at(d), y(v), y(v))
+            notes += '<span class="dval dspike" style="left:%s;top:%s">%s</span>' % (pct(at(d), w), pct(y(v), h), E(str(debt_points(v))))
+    have = {d for d, _ in history}
+    for n in range(1, span):
+        d = first + dt.timedelta(days=n)
+        if d not in have:
+            notes += '<i class="dmiss" style="left:%s" data-tip="%s"></i>' % (
+                pct(at(d), w), E("No Nurture record for %s" % d.strftime("%a %d %b")))
+    v0, v1 = history[0][1]["total"], history[-1][1]["total"]
+    notes += ('<span class="dval dfirst" style="top:%s">%s</span><span class="dval dlast" style="top:%s">%s</span>'
+              '<span class="dthr" style="top:%s">threshold %s</span>'
+              % (pct(y(v0), h), E(str(debt_points(v0))), pct(y(v1), h), E(str(debt_points(v1))), pct(y(threshold), h),
+                 E(str(debt_points(threshold)))))
     bar = '<line class="dt" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (pad, w - pad, y(threshold), y(threshold))
-    said = "Context debt, last %d days: %s on %s, %s on %s, against a threshold of %s" % (
-        DEBT_DAYS, history[0][1]["total"], history[0][0].strftime("%d %b"), history[-1][1]["total"],
-        history[-1][0].strftime("%d %b"), threshold)
-    return ('<svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">%s%s%s%s</svg>'
-            '<div class="dticks"><span>%s</span><span>today</span></div>'
-            % (w, h, E(said), areas, bar, lines, dots, E(first.strftime("%d %b").lstrip("0"))))
+    said = "Context debt from %s to %s: %s on %s, %s on %s, against a threshold of %s" % (
+        first.strftime("%d %b"), last.strftime("%d %b"), debt_points(v0), history[0][0].strftime("%d %b"),
+        debt_points(v1), last.strftime("%d %b"), debt_points(threshold))
+    return ('<div class="dwrap"><svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">'
+            '%s%s%s%s</svg>%s</div><div class="dticks"><span>%s</span><span>%s</span></div>'
+            % (w, h, E(said), areas, bar, lines, dots, notes, E(first.strftime("%d %b").lstrip("0")),
+               "today" if last == today else E(last.strftime("%d %b").lstrip("0"))))
+
+
+def debt_kinds(debt: dict) -> str:
+    """What the figure is made of, by kind as Nurture weighs them (#321):
+    "49: judgment 38, attribution 10, mechanical 1", the heaviest first, and
+    a wall finding first of all, in the critical colour."""
+    kinds = {k: v for k, v in (debt.get("kinds") or {}).items() if isinstance(v, (int, float)) and v}
+    if not kinds:
+        return ""
+    order = sorted(kinds, key=lambda k: (k != "wall", -kinds[k], k))
+    return '<p class="dkinds">%s: %s</p>' % (E(str(debt_points(debt["total"]))), ", ".join(
+        '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
 
 
 def debt_block(ws: Path, today: dt.date) -> str:
-    """The figure, its trend over the last DEBT_DAYS days and the scopes
-    carrying most of it, for the Checks card; "" with no record."""
+    """The figure, what it is made of, its trend over the last DEBT_DAYS days
+    and the scopes carrying most of it, for the Checks card; "" with no
+    record."""
     history, said = debt_history(ws, today)
     if not history:
         return ""
@@ -1127,10 +1188,10 @@ def debt_block(ws: Path, today: dt.date) -> str:
             "build's quick check." % (day.strftime("%a %d %b"), outcome.get("fixed", 0), outcome.get("answered", 0),
                                        outcome.get("left", 0)))
     return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
-            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p>%s</div>'
+            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s%s<p class="hint dmost">%s%s</p>%s</div>'
             % (E(str(total)), E(when), " late" if over else "",
                E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
-               "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
+               "over" if over else "under", E(str(threshold)), debt_kinds(debt), debt_chart(history, today, threshold),
                ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button, lines))
 
 
@@ -1283,13 +1344,20 @@ def review_block(ws: Path) -> str:
 
 
 DEBT_CSS = r"""
-/* Context debt, on the Checks card: the figure, a line over thirty days against the threshold, dashed, and the scopes carrying most */
+/* Context debt, on the Checks card: the figure and what it is made of, a line from the first record against the threshold,
+   dashed, with the first, latest and threshold values written and a tick for a night with no record, and the scopes carrying most */
 .debt{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line)}.dhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .dfig{font:600 28px/1 var(--display);letter-spacing:-.01em}.dlbl{color:var(--ink2);font-size:12.5px}
-.dchart{display:block;width:100%;height:56px;margin:8px 0 2px;overflow:visible}
+.dkinds{margin:2px 0 0;font-size:12.5px;color:var(--ink2)}.dkinds .dwall{color:var(--critical);font-weight:600}
+.dwrap{position:relative;margin:18px 0 2px}.dchart{display:block;width:100%;height:64px;overflow:visible}
 .dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
+.dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
+.dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+.dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
+.dthr{left:50%;transform:translate(-50%,-130%);color:var(--muted)}
+.dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
 """

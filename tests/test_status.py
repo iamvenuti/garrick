@@ -3498,7 +3498,8 @@ class TestContextDebt(StatusCase):
         self.assertEqual(6, b.count('class="dd'))                          # thirty days: the one 40 days back left out
         self.assertEqual(1, b.count('class="dd now"'))
         self.assertIn('class="dt"', b)                                     # the threshold, dashed
-        self.assertIn('role="img" aria-label="Context debt, last 30 days: 18 on ', b)
+        self.assertIn('role="img" aria-label="Context debt from ', b)
+        self.assertIn(': 18 on ', b)
         self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
         self.assertIn('data-request="nurture the meetings" data-folder="%s"' % self.root, b)      # a button, not "Say …" (#234)
         self.assertIn('>Nurture the meetings</button>', b)
@@ -3516,6 +3517,73 @@ class TestContextDebt(StatusCase):
         self.assertIn('<button class="act dask" type="button" data-request="nurture Work"', b)
         self.assertIn(">Nurture Work</button>", b)
         self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
+
+    def chart(self, b):
+        """The chart's points, as (x, y) per dot in order, and its labels by class."""
+        dots = [(float(x), float(y)) for x, y in re.findall(r'<line class="dd[^"]*" x1="([\d.]+)" x2="[\d.]+" y1="([\d.]+)"', b)]
+        labels = {cls: htmllib.unescape(text) for cls, text in re.findall(r'<span class="(?:dval |)(\w+)" style="[^"]*">([^<]*)</span>', b)}
+        return dots, labels
+
+    def test_the_line_runs_from_the_first_record_and_fills_the_width(self):
+        """#321: ten records fill the chart, from the first record to the latest."""
+        for back in range(10):
+            self.record(back, 40 + back)
+        b = self.block(self.page())
+        dots, labels = self.chart(b)
+        self.assertEqual(10, len(dots))
+        self.assertEqual((5.0, 295.0), (dots[0][0], dots[-1][0]))                    # edge to edge
+        first = self.now.date() - dt.timedelta(days=9)
+        self.assertIn('<div class="dticks"><span>%s</span><span>today</span></div>' % first.strftime("%d %b").lstrip("0"), b)
+        self.assertEqual(("49", "40", "threshold 40"), (labels["dfirst"], labels["dlast"], labels["dthr"]))   # written, no hovering
+        self.assertNotIn("dmiss", b)
+
+    def test_one_spike_does_not_flatten_the_rest(self):
+        """#321: a night at 164 against a usual 40 to 65 is an open dot at the
+        cap with its value written, and the rest use over half the height."""
+        for back, total in enumerate((52, 45, 64, 40, 164, 58, 42, 61, 50, 65)):
+            self.record(back, total)
+        b = self.block(self.page())
+        dots, labels = self.chart(b)
+        self.assertEqual(1, b.count('class="dd over"'))
+        self.assertEqual(1, b.count('class="dhole"'))
+        self.assertEqual("164", labels["dspike"])
+        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 164, 40, 64, 45, 52)) if v != 164]
+        self.assertGreaterEqual(max(rest) - min(rest), (64 - 2 * 5) / 2)            # over at least half the plot
+        spike = dots[5][1]
+        self.assertLess(spike, min(rest))                                            # at the top, above every other night
+        self.assertGreaterEqual(spike, 0)
+        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 164, 58, 42, 61, 50, 65], 40)
+        self.assertEqual(80, cap)                                                    # twice the threshold
+        self.assertLess(bottom, 40)
+        self.assertGreater(top, 80)
+        self.assertEqual(65, status.debt_scale([52, 45, 64, 40, 50, 65], 5)[2])      # a low threshold: the highest ordinary night
+
+    def test_a_missing_night_is_marked(self):
+        for back in (5, 4, 2, 1, 0):
+            self.record(back, 30)
+        b = self.block(self.page())
+        gone = self.now.date() - dt.timedelta(days=3)
+        self.assertEqual(1, b.count('class="dmiss"'))
+        self.assertIn('data-tip="No Nurture record for %s"' % gone.strftime("%a %d %b"), b)
+        self.assertEqual(2, b.count('<polyline class="dl"'))
+
+    def test_fewer_than_three_records_draw_no_chart(self):
+        self.record(1, 30)
+        self.record(0, 32)
+        b = self.block(self.page())
+        self.assertNotIn("dchart", b)
+        self.assertIn('<span class="dfig">32</span>', b)
+
+    def test_the_figure_says_what_it_is_made_of(self):
+        """#321: by kind, the heaviest first, and a wall first of all, in the critical colour."""
+        self.record(0, 49, {"Zones/Work": {"judgment": 30, "mechanical": 1}, "Wikis/Meetings": {"attribution": 10, "judgment": 8}})
+        b = self.block(self.page())
+        self.assertIn('<p class="dkinds">49: <span>judgment 38</span>, <span>attribution 10</span>, <span>mechanical 1</span></p>', b)
+        self.record(0, 59, {"Zones/Work": {"judgment": 30, "wall": 10, "mechanical": 1}, "System": {"attribution": 18}})
+        b = self.block(self.page())
+        self.assertIn('<p class="dkinds">59: <span class="dwall">wall 10</span>, <span>judgment 30</span>, <span>attribution 18</span>, '
+                      '<span>mechanical 1</span></p>', b)
+        self.assertIn(".dkinds .dwall{color:var(--critical)", status.DEBT_CSS)
 
     def test_left_out_without_a_nurture_that_keeps_it(self):
         self.record(0, 42)

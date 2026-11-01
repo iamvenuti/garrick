@@ -13,9 +13,11 @@ or places differ, and that the other names in the request do not settle,
 is unclear: the box asks which, and nothing is read. The answer settles it
 by another name, by the zone it names, or by an option exactly as the
 question offered it; an answer that names two options is asked again
-(#294). scope() then takes the session's `find`, the route and the place it
-proposed, checked against the list as ask.py checks an action, and works
-out the parties it covers.
+(#294). A request of its own ending in one of those, in brackets, "Where
+does Pricing stand? (Pricing in Work)", settles the same way: it is the
+form the box puts back after a wall reset. scope() then takes the
+session's `find`, the route and the place it proposed, checked against the
+list as ask.py checks an action, and works out the parties it covers.
 
 **The records.** search() reads files inside the scope and nowhere else:
 
@@ -208,8 +210,9 @@ class Mentions:
     `<names>` block (ask.heard_names())."""
 
     def __init__(self, found: List[Entry], question: Optional[str] = None,
-                 heard: Optional[List[Tuple[int, int, str, List[Entry]]]] = None):
+                 heard: Optional[List[Tuple[int, int, str, List[Entry]]]] = None, option: Optional[str] = None):
         self.entries, self.question, self.heard = found, question, heard or []
+        self.option = option        # the option, as which() offered it, the answer settled the name asked about to
 
     @property
     def parties(self) -> Set[str]:
@@ -222,12 +225,6 @@ class Mentions:
             if e.kind in ("project", "thread") and (e.zone, e.project, e.thread) not in seen:
                 seen.append((e.zone, e.project, e.thread))
         return seen
-
-    def since(self, start: int) -> "Mentions":
-        """The names heard from `start` on: what is left when the words
-        before it are dropped."""
-        keep = [i for i, h in enumerate(self.heard) if h[0] >= start]
-        return Mentions([self.entries[i] for i in keep], self.question, [self.heard[i] for i in keep])
 
 
 def _pattern(form: str) -> str:
@@ -267,8 +264,41 @@ def _zone_said(answer: str, names: Dict[str, Dict[str, dict]]) -> Optional[Tuple
     return None
 
 
+def _bracketed(request: str) -> Optional[Tuple[str, int]]:
+    """A request that ends in brackets, "Where does Pricing stand? (Pricing
+    in Work)", as a request and its answer: the brackets' words where an
+    answer would stand, at the same place, and where they begin. None when
+    it does not end so, or the brackets hold brackets or nothing."""
+    body = str(request).rstrip()
+    if not body.endswith(")"):
+        return None
+    at = body.rfind("(")
+    inner = body[at + 1:-1]
+    if at < 1 or not body[:at].strip() or not inner.strip() or ")" in inner:
+        return None
+    return body[:at] + "\n" + inner + " ", at + 1
+
+
 def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict, lib_,
              answer: Optional[int] = None) -> Mentions:
+    """The names in a request: _settle()'s, or, for a request of its own
+    that _settle() asks about and that ends in brackets, the brackets read
+    as the answer to that question, when that settles every name (#294).
+    The box puts a question back in that form after a wall reset; read so,
+    every rule an answer is held to holds for the brackets too, and they
+    settle nothing that the question would not have settled."""
+    got = _settle(ws, request, names, ctx, lib_, answer)
+    if got.question and answer is None:
+        split = _bracketed(request)
+        if split is not None:
+            again = _settle(ws, split[0], names, ctx, lib_, split[1])
+            if not again.question:
+                return Mentions(again.entries, heard=again.heard)
+    return got
+
+
+def _settle(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict, lib_,
+            answer: Optional[int] = None) -> Mentions:
     """The names in a request, each settled to one party or place, or the one
     question that settles the first that is not. A longer name holds the
     shorter ones inside it ("Acme Review" holds "Acme"); a name that fits
@@ -337,7 +367,11 @@ def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dic
     for span in kept:
         if span not in settled:
             return Mentions([], which(sorted(spans[span], key=_order), ctx))
-    return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept])
+    option = None
+    if asked is not None:                       # what the answer settled it to, as the question offered it
+        option = next((label for label, e in _labels(sorted(spans[asked], key=_order), ctx) if e == settled[asked]), None)
+    return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept],
+                    option=option)
 
 
 def _all_of(cands: Iterable[Entry], zone: str, ctx: dict) -> bool:

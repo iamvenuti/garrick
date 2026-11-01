@@ -873,6 +873,24 @@ class TestFailsClosed(AnswerCase):
             self.assertNotIn("HOMEPRICE13", m)
         self.assertEqual({"birch"}, a.seen)
 
+    def test_a_refill_holds_the_question_and_the_option_only(self):
+        """An answer that settled nothing, "the other one", is asked about
+        again; when the next answer crosses the wall, the refill is the
+        question as first asked and the option, not every answer between."""
+        self.pricing_in_two_zones()
+        self.rules([["(Pricing in Work)", find("thread", [], zone="Work", project="Pricing")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+        out = a.ask("the other one")
+        self.assertEqual("clarify", out["kind"])
+        self.assertNotIn("reset", out)
+        out = a.ask("The Birch one.")
+        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Work)")
+        self.assertIsNone(a.question)
+        out = a.ask(out["refill"])
+        self.assertEqual("answer", out["kind"])
+
     def test_the_refill_settles_as_a_request_of_its_own(self):
         """The brackets read as the answer to the question the request would
         ask, under every rule an answer is held to, and only in a request
@@ -1497,6 +1515,11 @@ class TestCitations(AnswerCase):
         self.assertEqual(([{"text": "Supply stays tight.", "ids": []}], "", False),    # prose after it holding a }
                          ask.cited(cites(("Supply stays tight.", ["r1"])) + " see {r1} and %s}" % self.KICKOFF, {}))
         self.assertEqual(([], "Supply stays tight.", False), ask.cited("Supply stays tight.", {}))   # plain words
+        for words in ("The insurance claims rose in March.", "Pricing stands at {draft} stage.",
+                      "Two claims: {a} and {b}."):                                # plain words that only mention them
+            self.assertEqual(([], words, False), ask.cited(words, {}), words)
+        for text in ("{ 'claims': [", 'Here: "claims" are', '{\n  "say": "x"'):     # still looks like the format
+            self.assertEqual(ask.UNREADABLE, ask.cited(text, {})[1], text)
 
     def test_a_forged_citation_to_a_far_side_record_never_reaches_the_window(self):
         """Ask about Acme, then about Birch across the wall: the Birch answer

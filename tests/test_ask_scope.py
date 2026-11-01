@@ -1266,6 +1266,11 @@ class TestCitations(AnswerCase):
         out = a.ask("And Dana, about the pallet price?")
         self.assertEqual((True, [], [], ask.NOTHING_FOUND), (out["incomplete"], out["claims"], out["sources"], out["say"]))
 
+    def test_an_answer_with_no_claims_and_incomplete_says_what_it_has(self):
+        self.sonnet(["pallet quote", '{"say": "Dana gave a price.", "incomplete": true}'])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual(([ask.INCOMPLETE], "Dana gave a price. " + ask.INCOMPLETE), (out["after"], out["say"]))
+
     def test_the_wall_sentence_follows_the_claims(self):
         self.sonnet(["this week", cites(("Theo moved the launch.", ["r1"]))])
         out = self.asker().ask("What did I discuss this week?")

@@ -1059,7 +1059,7 @@ class Asker:
         claims, rest, incomplete = cited(text, this_turn)
         after = []
         if incomplete:
-            after.append(INCOMPLETE if claims else NOTHING_FOUND)
+            after.append(INCOMPLETE if claims or rest else NOTHING_FOUND)    # NOTHING_FOUND only for no answer at all
         if back:
             after.append(self.wall())
         say = " ".join(s for s in [c["text"] for c in claims] + [rest] + after if s)

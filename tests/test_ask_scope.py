@@ -1206,6 +1206,28 @@ class TestCitations(AnswerCase):
         self.assertEqual("Wikis/Knowledge/wiki/sources/supply-chain-report.md", out["sources"][0]["path"])
         self.assertNotIn(self.KICKOFF, json.dumps(out))
 
+    def test_a_reply_that_is_not_one_object_never_shows_its_raw_text(self):
+        """The claims object with a second object after it: only the first is
+        read, so its refused citations are dropped as usual. A claims reply
+        that does not parse at all is never shown: a fixed sentence is said."""
+        bad = ('{"claims":[{"text":"…","cite":["r1","%s","Acme kick-off"]}],"incomplete":false}\n{"x":1}'
+               % self.KICKOFF)
+        self.sonnet(["supply chain report", bad], ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
+        a = self.asker()
+        self.assertEqual(self.KICKOFF, a.ask("What did Dana say about the pallet quote?")["sources"][0]["path"])
+        out = a.ask("What does the supply chain report say about pallets?")
+        self.assertEqual(("…", [{"text": "…", "ids": []}], []), (out["say"], out["claims"], out["sources"]))
+        said = json.dumps(out, ensure_ascii=False)
+        for mark in (self.KICKOFF, "acme-kickoff", "Acme kick-off", '"r1"'):
+            self.assertNotIn(mark, said)
+        for text in (bad.replace("}],", "}] oops,"),                                 # no object parses
+                     '{"claims": [{"text": "Dana', '```json\n{"claims": [], "cite": ["%s"]' % self.KICKOFF):
+            claims, say, incomplete = ask.cited(text, {})
+            self.assertEqual(([], ask.UNREADABLE, False), (claims, say, incomplete), text)
+        self.assertEqual(([{"text": "Supply stays tight.", "ids": []}], "", False),    # prose after it holding a }
+                         ask.cited(cites(("Supply stays tight.", ["r1"])) + " see {r1} and %s}" % self.KICKOFF, {}))
+        self.assertEqual(([], "Supply stays tight.", False), ask.cited("Supply stays tight.", {}))   # plain words
+
     def test_a_forged_citation_to_a_far_side_record_never_reaches_the_window(self):
         """Ask about Acme, then about Birch across the wall: the Birch answer
         cites Acme's record by its old id, its path and its title. What the

@@ -165,6 +165,9 @@ with claims, each naming the ids of the records it rests on, and an
 Only the ids admitted this turn can be cited: any other, an earlier turn's,
 a replaced process's or one made up, is dropped before anything is looked
 up, so a citation never names a record outside the scope this turn read.
+Only the reply's first JSON object is read, and a reply that looks like one
+but does not parse is never shown: its raw text could hold what a refused
+citation named, so a fixed sentence is said in its place.
 The final line carries `claims`, `sources`, `incomplete` and `after`, the
 fixed sentences said after the claims; `say` is the claims and `after`, for
 the ear. Each source has its path, title, `date` (when it happened, which
@@ -252,6 +255,9 @@ NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does c
                "and add a line to a Todo list.")
 NOTHING_FOUND = "Nothing in the records answers that."
 INCOMPLETE = "The records hold only part of the answer."     # said for the answer's `incomplete` field
+# Said in place of an answer that looks like the claims format but is not one object that parses:
+# its raw text may hold an id, a path or a title the citations would have refused.
+UNREADABLE = "The answer came back in a form Garrick could not read, so none of it is shown."
 
 
 class Bad(Exception):
@@ -481,28 +487,32 @@ def wanted(text: str) -> Optional[dict]:
     return obj["find"] if isinstance(obj, dict) and "find" in obj else None
 
 
-def said(text: str) -> str:
-    """An answer's sentence: its JSON's `say`, or the text itself when the
-    session answered in plain words. Anything else it holds is dropped."""
+def first_object(text: str) -> Optional[dict]:
+    """The first complete JSON object in a reply, fence or no fence, and
+    nothing after it: None when the reply holds none that parses."""
+    start = (text or "").find("{")
+    if start < 0:
+        return None
     try:
-        return parse(text)[0]
-    except Bad:
-        return (text or "").strip()
-
-
-def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], bool]:
-    """An answer's claims, each with the ids of the records it rests on, and
-    whether the records hold only part of the answer: (claims, incomplete).
-    An id not in `allowed`, the records retrieved this turn, is dropped and
-    never looked up; a claim keeps its words with no id left. An answer with
-    no claims gives none: its `say` is shown as it stands."""
-    m = re.search(r"\{.*\}", text or "", re.S)
-    try:
-        obj = json.loads(m.group(0)) if m else None
+        obj, _ = json.JSONDecoder().raw_decode(text, start)
     except ValueError:
-        obj = None
-    if not isinstance(obj, dict):
-        return [], False
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
+    """An answer's claims, each with the ids of the records it rests on, what
+    an answer with no claims says, and whether the records hold only part of
+    the answer: (claims, say, incomplete). Only the reply's first JSON object
+    is read. An id not in `allowed`, the records retrieved this turn, is
+    dropped and never looked up; a claim keeps its words with no id left. A
+    reply that is not such an object is said as it stands when it is plain
+    words, and never when it looks like one: its raw text could hold what
+    a refused citation named, so UNREADABLE is said in its place."""
+    obj = first_object(text)
+    if obj is None:
+        plain = (text or "").strip()
+        return [], (UNREADABLE if "{" in plain or "claims" in plain else plain), False
     claims = []
     for c in obj.get("claims") if isinstance(obj.get("claims"), list) else []:
         if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not c["text"].strip():
@@ -510,7 +520,8 @@ def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], bool]:
         cite = c.get("cite") if isinstance(c.get("cite"), list) else []
         ids = [i for i in dict.fromkeys(x for x in cite if isinstance(x, str)) if i in allowed]
         claims.append({"text": " ".join(c["text"].split()), "ids": ids})
-    return claims, obj.get("incomplete") is True
+    say = obj.get("say") if isinstance(obj.get("say"), str) and not claims else ""
+    return claims, say.strip(), obj.get("incomplete") is True
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
@@ -1045,16 +1056,13 @@ class Asker:
         # process since replaced or nowhere at all is refused, and leaves no
         # trace in the reply (#261, slice D).
         this_turn = {p["id"]: p for p in self.passages[before:]}
-        claims, incomplete = cited(text, this_turn)
+        claims, rest, incomplete = cited(text, this_turn)
         after = []
         if incomplete:
             after.append(INCOMPLETE if claims else NOTHING_FOUND)
         if back:
             after.append(self.wall())
-        if claims:
-            say = " ".join([c["text"] for c in claims] + after)
-        else:
-            say = " ".join([said(text)] + after).strip()
+        say = " ".join(s for s in [c["text"] for c in claims] + [rest] + after if s)
         out = reply(say, "answer")
         ids = [i for c in claims for i in c["ids"]]
         out.update(claims=claims, after=after, incomplete=incomplete,

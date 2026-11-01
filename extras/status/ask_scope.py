@@ -48,7 +48,6 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import collections
-import datetime as dt
 import importlib.util
 import re
 from pathlib import Path
@@ -504,15 +503,12 @@ def _date(fm: dict, path: Path) -> str:
 
 
 def _imported(fm: dict, path: Path) -> str:
-    """When a record came into the workspace: the page's `created`, else the
-    file's own date. Never what "last time" or "how long ago" is told from."""
+    """When a record was filed: the page's `created`, or nothing. A file's
+    own date is the last edit, a clone or a sync, never a filing date, so it
+    is not guessed from. Never what "last time" or "how long ago" is told
+    from."""
     value = fm.get("created")
-    if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value):
-        return value[:10]
-    try:
-        return dt.date.fromtimestamp(path.stat().st_mtime).isoformat()
-    except OSError:
-        return ""
+    return value[:10] if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value) else ""
 
 
 def passage(body: str, words: List[str], most: int = PASSAGE) -> str:

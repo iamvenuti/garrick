@@ -324,7 +324,7 @@ class TestAnswers(AnswerCase):
         first = self.msgs(sonnet["pid"])[0]
         self.assertIn("<workspace>\nPersonal:\nWork:\n- Acme Review", first)
         self.assertIn("- Birch Entry", first)                                  # every zone's names, as question 12 says
-        self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10" imported="', first)
+        self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10">', first)      # no `created`: no import date
         self.assertIn("<request>\nWhat did Dana say about the pallet quote?\n</request>", first)
         self.assertEqual(ask.ANSWER_BRIEF.read_text(), sonnet["argv"][sonnet["argv"].index("--system-prompt") + 1])
         self.assertEqual(["Finding the records", "Reading 1 record"], steps)
@@ -1310,7 +1310,8 @@ class TestCitations(AnswerCase):
         self.assertEqual("2026-03-12", sc._imported({"created": "2026-03-12"}, page))
         doc = self.work / "Acme Review" / "Sources" / "260301 - Pallet terms.docx"
         os.utime(doc, (1767225600, 1767225600))                                            # 1 January 2026, UTC
-        self.assertIn(sc._imported({}, doc), ("2025-12-31", "2026-01-01"))                 # a file's own date
+        self.assertEqual("", sc._imported({}, doc))                    # a file's own date is not when it was filed
+        self.assertEqual("", sc._imported({"created": "soon"}, page))
 
 
 class TestTheWindowCites(unittest.TestCase):

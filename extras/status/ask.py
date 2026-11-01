@@ -172,8 +172,9 @@ The final line carries `claims`, `sources`, `incomplete` and `after`, the
 fixed sentences said after the claims; `say` is the claims and `after`, for
 the ear. Each source has its path, title, `date` (when it happened, which
 "last time" and "how long ago" are told from) and `imported` (when it was
-filed). The app opens a thread's note as its row opens it (`place`), and
-any other record in the default app.
+filed: its `created`, or empty, never guessed from the file's own date).
+The app opens a thread's note as its row opens it (`place`), and any other
+record in the default app.
 
 **A request sent again is asked about, not done twice.** The record
 recognises one that repeats an action it holds (operations.py): past a double

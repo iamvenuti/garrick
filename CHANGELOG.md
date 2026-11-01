@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Added
+
+- **Ask's answers cite their records, with both dates and a link to each** ([#261](https://github.com/iamvenuti/garrick/issues/261), slice D). With the preview `ask` on, the answer session replies with claims, each naming the ids of the records it rests on, and an `incomplete` field for records that hold only part of the answer; Garrick says that sentence itself, after the claims. `ask.py` takes only the ids admitted for this question: one from an earlier question, from a session replaced at a wall, or made up, is dropped before anything is looked up, and leaves no path, title or date in the reply. The final line carries `claims`, `sources` and `after`, and each source its path, title, `date`, when it happened, and `imported`, when it was filed: a meeting's `date` and `created`, a published work's `published`, else the date in the file's name and the file's own date. The answer session is told to count "last time" and "how long ago" from `date`. In the Ask window each claim is followed by a numbered link to each record, and the records are listed under the answer with both dates. A click opens a thread's note as its row opens it, through the default Settings picks, and any other record in the app macOS opens it in, by its file and never an Obsidian link, so nothing depends on Obsidian being installed; the app opens only a file inside the workspace that is still there.
+
 ## [0.49.1] - 2026-11-01
 
 A patch release. Ask resets both of its sessions at a wall, whichever one was told of the other side, keeps no Codex transcript of your requests, and takes a plain zone as the answer to its question back; the wall check finds a meeting page after it fades; and a kept check result says its age wherever its counts show.

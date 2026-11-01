@@ -79,6 +79,17 @@ FAKE_CLAUDE = textwrap.dedent("""\
     """) % sys.executable
 
 
+# A stand-in for `codex exec`: it prints its prompt, the last argument, as the
+# real one prints the whole run, and writes a plain answer where -o says.
+CODEX_PRINTS_ITS_PROMPT = textwrap.dedent("""\
+    #!%s
+    import sys
+    args = sys.argv[1:]
+    open(args[args.index("-o") + 1], "w").write('{"say": "ok", "do": []}')
+    print(args[-1])
+    print("a line on stderr", file=sys.stderr)
+    """) % sys.executable
+
 class AskCase(ActionCase):
     def setUp(self):
         super().setUp()
@@ -461,7 +472,7 @@ class TestHarness(AskCase):
     def test_codex_runs_read_only_with_history(self):
         calls = []
         real = ask.agent().run
-        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None: calls.append((tier, prompt, list(allow), job)) or (0, '{"say": "ok", "do": []}')
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: calls.append((tier, prompt, list(allow), job)) or (0, '{"say": "ok", "do": []}')
         try:
             s = ask.OnceSession(self.root, "haiku")
             s.turn("<request>\nfirst\n</request>")
@@ -476,7 +487,7 @@ class TestHarness(AskCase):
         """Sealed as the Claude sessions are: from there Codex finds no AGENTS.md of the workspace's."""
         seen = []
 
-        def run(tier, prompt, allow=(), cwd=None, job=None):
+        def run(tier, prompt, allow=(), cwd=None, job=None, **kw):
             seen.append((Path(cwd), sorted(p.name for p in Path(cwd).iterdir())))
             return 0, '{"say": "ok", "do": []}'
         real = ask.agent().run
@@ -493,6 +504,30 @@ class TestHarness(AskCase):
         for home in (one, two):
             self.assertNotIn(self.root.resolve(), [home, *home.parents])             # outside the workspace
             self.assertFalse(home.exists())                                          # removed when it returned
+
+    def test_codex_keeps_no_transcript_of_the_request(self):
+        """#293: Codex prints its prompt, so `ask.transcript.log` held every
+        request, its names and the exchanges before it. Unless LOG_TEXT is 1,
+        nothing under the jobs folder holds a request."""
+        codex = self.root.parent / "codex-bin" / "codex"
+        write(codex, CODEX_PRINTS_ITS_PROMPT)
+        codex.chmod(0o755)
+        jobs = self.root.parent / "jobs"
+        os.environ.update({"PATH": "%s%s%s" % (codex.parent, os.pathsep, os.environ.get("PATH", "")),
+                           "GARRICK_HARNESS": "codex", "GARRICK_JOBS_DIR": str(jobs)})
+        for key in (ask.LOG_TEXT, "GARRICK_TRANSCRIPT", "GARRICK_CAP_ASK_DAY", "GARRICK_CAP_ASK_HOUR",
+                    "GARRICK_CAP_ASK_COST_DAY"):
+            os.environ.pop(key, None)
+        s = ask.OnceSession(self.root, "haiku")
+        self.assertEqual('{"say": "ok", "do": []}', s.turn("<request>\nopen the pallet quote\n</request>")[0])
+        s.turn("<request>\nand Birch Entry\n</request>")                     # the first comes again, as history
+        self.assertEqual(2, len((jobs / "ledger.jsonl").read_text().splitlines()))  # both ran, and were counted
+        held = [p.name for p in jobs.rglob("*") if p.is_file()
+                and ("pallet quote" in p.read_text(errors="replace") or "Birch Entry" in p.read_text(errors="replace"))]
+        self.assertEqual([], held)
+        os.environ[ask.LOG_TEXT] = "1"                                          # asked for: kept, as a job's is
+        s.turn("<request>\nopen Pricing\n</request>")
+        self.assertIn("open Pricing", (jobs / "ask.transcript.log").read_text())
 
     def test_a_folder_inside_the_workspace_starts_nothing(self):
         inside = self.root / "tmp"

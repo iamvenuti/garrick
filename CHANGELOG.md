@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
 
+### Fixed
+
+- **Ask on Codex keeps no transcript of the request** ([#293](https://github.com/iamvenuti/garrick/issues/293)). `ask.log` holds no request or answer text unless `GARRICK_ASK_LOG_TEXT=1`, but with Codex each request's `codex exec` wrote its whole run to `ask.transcript.log` in the jobs folder, as a scheduled job's does: the request, the names it was settled to, the exchanges before it and the answer, every time. Ask's calls now throw that output away unless `GARRICK_ASK_LOG_TEXT=1`, which keeps the transcript as before. `agent.run()` takes `transcript=False` for this; every scheduled job keeps its transcript as now.
+
 ## [0.49.0] - 2026-10-31
 
 Ask answers questions from your records, inside one scope and sealed from everything else; Garrick's scheduled jobs take `gr-` names and one nightly job does what four did; the Checks card acts on each finding; Settings chooses the graph's colours and the cmux tab's assistant; and the wall check reads links and paths into another project.

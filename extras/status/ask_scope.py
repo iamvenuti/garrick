@@ -531,8 +531,9 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
             raise Refused("no project %r" % (project,))
     if thread is not None and (project is None or not isinstance(thread, str) or thread not in names[zone][project]["threads"]):
         raise Refused("no thread %r in %s" % (thread, project or zone))
-    if project is None and route in ("thread", "meetings", "actions") and len(said.places) == 1:
-        zone, project, thread = said.places[0]          # the place the request named, when the find left it out
+    if project is None and route in ("thread", "meetings", "actions") and len(said.places) == 1 \
+            and (zone is None or said.places[0][0] == zone):
+        zone, project, thread = said.places[0]          # the place the request named, in its zone, when the find left it out
     if route == "thread" and project is None:
         raise Unclear("Which project or thread do you mean?")
     if route in ZONED and zone is None:

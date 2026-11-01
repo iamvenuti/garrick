@@ -1501,6 +1501,12 @@ class TestCodexParity(base.AskCase):
         self.assertNotIn("<earlier-request>\n", self.prompts[-1])
         self.assertNotIn("<last-results>\n", self.prompts[-1])
 
+    def test_an_exit_130_with_no_stop_is_not_a_stop(self):
+        self.codex(lambda prompt, kw: (ask.agent().EXIT_STOPPED, ""))
+        a = ask.Asker(self.root)
+        with self.assertRaisesRegex(ask.Bad, "exited 130"):                # a failure, said as one
+            a.ask("open Acme Review", zone="Work")
+
     def test_every_reset_clears_what_codex_sends_again(self):
         self.codex(lambda prompt, kw: (0, json.dumps({"say": "ok", "do": []})))
         a = ask.Asker(self.root)
@@ -1827,6 +1833,26 @@ class TestTheNewestFirst(AnswerCase):
             self.assertEqual(([], "", True), ask.cited(reply, {}, partial=True), reply)
             self.assertEqual(([], "", True), ask.cited(cites((reply, [])), {}, partial=True), reply)
 
+    def test_an_answer_that_was_only_an_absence_says_incomplete_never_nothing_found(self):
+        self.haiku(find("meetings", ["Acme Corp"], zone="Work", order="recent"),
+                   [["last meeting", cites(("There was no meeting with Acme Corp after 20 April.", ["r1"]))]])
+        out = self.asker().ask("What's the last meeting with Acme Corp?")
+        self.assertTrue(out["incomplete"])
+        self.assertEqual(([], [ask.INCOMPLETE]), (out["claims"], out["after"]))
+        self.assertNotIn(ask.NOTHING_FOUND, out["say"])
+
+    def test_only_a_claim_that_something_did_not_happen_is_dropped(self):
+        for text in ("Theo would not sign until after the board meeting.", "Dana did not want other suppliers in the tender.",
+                     "Acme asked not to be contacted again before May.", "There is no deadline for the quote.",
+                     "Dana said no to the price."):
+            claims, _, incomplete = ask.cited(cites((text, ["r1"])), {"r1": {}}, partial=True)
+            self.assertEqual((1, False), (len(claims), incomplete), text)
+        for text in ("There was no meeting with Acme after 3 March.", "No other calls are recorded.", "Nothing since then.",
+                     "Acme Corp didn't meet again after that.", "The records hold nothing later than 20 April.",
+                     "Dana has not called since May."):
+            claims, _, incomplete = ask.cited(cites((text, ["r1"])), {"r1": {}}, partial=True)
+            self.assertEqual((0, True), (len(claims), incomplete), text)
+
     def test_with_every_match_given_an_absence_stands(self):
         self.haiku(find("meetings", ["pallet quote"], zone="Work"),
                    [["last meeting", cites(("There was no meeting about the pallet quote after 10 March.", ["r1"]))]])
@@ -1859,6 +1885,24 @@ class TestTheNewestFirst(AnswerCase):
         self.assertTrue(sc.wants_recent("What's the latest with Acme?"))
         self.assertTrue(sc.wants_recent("anything since Monday"))
         self.assertFalse(sc.wants_recent("at least the pallet terms"))
+
+    def test_the_count_never_depends_on_a_record_a_wall_held_back(self):
+        import random
+        sc = ask.scope_lib()
+        lib = sc.lib(REPO)
+        parties = ["a", "b", "c", "d", "e"]
+        ctx = {"walls": {frozenset(("a", "b")), frozenset(("c", "d")), frozenset(("b", "e"))},
+               "parties": {p: {} for p in parties}}
+        rnd = random.Random(7)
+        for _ in range(2000):
+            recs = [{"parties": rnd.sample(parties, rnd.choice([1, 1, 1, 2]))} for _ in range(rnd.randint(1, 14))]
+            held = set(rnd.sample(parties, rnd.choice([0, 0, 1])))
+            most = rnd.randint(1, 5)
+            chosen, _, matched = sc.choose(recs, held, ctx, lib, most)
+            group = set(held) | {p for r in chosen for p in r["parties"]}
+            kept = [r for r in recs if not sc.any_wall(ctx, set(r["parties"]), set(r["parties"]) | group, lib)]
+            again, _, recount = sc.choose(kept, held, ctx, lib, most)
+            self.assertEqual((chosen, matched), (again, recount), (recs, held, most))
 
     def test_choose_counts_only_what_no_wall_holds_back(self):
         sc = ask.scope_lib()
@@ -1994,6 +2038,27 @@ class TestActions(AnswerCase):
                 sc.scope(self.root, bad, sc.Mentions([]), names, ctx, lib)
         where = sc.scope(self.root, {"route": "actions", "until": "2026-10-13"}, sc.Mentions([]), names, ctx, lib)
         self.assertEqual(("actions", None, "2026-10-13", True), (where.route, where.zone, where.until, where.every))
+
+    def test_codex_is_sent_again_the_request_and_its_find_never_an_item(self):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        real = ask.agent().run
+        prompts = []
+
+        def run(tier, prompt, allow=(), cwd=None, job=None, **kw):
+            prompts.append(prompt)
+            if "most urgent" in prompt.split("<request>")[-1]:
+                return 0, json.dumps({"say": "", "find": {"route": "actions", "until": "2026-10-13"}})
+            return 0, json.dumps({"say": "Which one?", "do": [], "asks": True})
+        ask.agent().run = run
+        try:
+            a = ask.Asker(self.root)
+            self.assertIn("revised terms", json.dumps(a.ask("What's most urgent tomorrow?", today=self.TODAY)))
+            a.ask("tell me more about the first one", today=self.TODAY)
+        finally:
+            ask.agent().run = real
+        for item in ("revised terms", "sizing deck", "passport", "Call Theo"):
+            self.assertNotIn(item, prompts[-1])
+        self.assertEqual(set(), a.heard)
 
     def test_with_codex_too(self):
         os.environ["GARRICK_HARNESS"] = "codex"
@@ -2151,6 +2216,63 @@ class TestOneZone(AnswerCase):
         self.assertEqual(("answer", "Personal"), (out["kind"], out.get("zone")))
         out = a.ask("What do I owe Pat?")
         self.assertEqual(["Open: Cedar Club: pay Pat the fee (in Personal)."], [c["text"] for c in out["claims"]])
+
+    def test_a_project_the_request_never_names_never_moves_the_zone(self):
+        """From the wall review: a question that names nothing is answered in
+        the window's zone, whatever place the command session carries over."""
+        self.answers.write_text(json.dumps({"haiku": [
+            ["latest news", find("thread", ["pallet"], project="Acme Review")],
+            ["meeting with Pat", find("meetings", ["regatta"])],
+        ] + HAIKU}))
+        a = self.asker(zone="Personal")
+        a.ask("What's the last meeting with Pat?")
+        out = a.ask("Any latest news?")
+        self.assertNotEqual("Work", out.get("zone"), out)
+        self.assertNotIn(ACME, "\n".join(self.msgs()))
+        self.assertEqual("Personal", self.askers[-1].zone)
+
+    def test_a_zone_move_after_commands_only_is_a_new_conversation(self):
+        """From the wall review: the zone of every request counts, so a
+        command's <last-results> in Work never reach a request in Personal."""
+        self.answers.write_text(json.dumps({"haiku": [["discuss this week", find("meetings", ["fee"])]] + HAIKU}))
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        a.ask("add call Dana to Acme", zone="Work")
+        self.assertIn("Call Dana", a.results)
+        before = {p["pid"] for p in self.procs()}
+        out = a.ask("What did I discuss this week?", zone="Personal")
+        self.assertEqual("zone", out.get("reset"))
+        for pid in before:
+            self.assertTrue(self.gone(pid))
+        sent = [m for m in self.msgs() if "discuss this week" in m and "<records" not in m][-1]
+        self.assertNotIn("Call Dana", sent)
+        self.assertNotIn("<last-results>", sent)
+        self.assertNotIn("reset", a.ask("open Acme Review", zone="Personal"))   # same zone: the conversation goes on
+
+    def test_picking_the_other_zone_leaves_the_first_zones_project_out(self):
+        self.answers.write_text(json.dumps({"haiku": [["Pat", find("thread", ["fee"], project="Acme Review")]] + HAIKU}))
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        out = a.ask("What did Pat say about Acme Review?", zone="Work")
+        self.assertEqual("clarify", out["kind"], out)
+        out = a.ask(out["retry"], zone="Personal", picked=True)   # no "no project 'Acme Review'"
+        self.assertEqual("clarify", out["kind"])                  # a thread find with no place left: which project
+        self.assertNotIn(ACME, "\n".join(self.msgs()))
+
+    def test_two_zones_with_a_wall_between_read_nothing_and_then_one_side(self):
+        ctx = self.root / "System" / "context.md"
+        write(ctx, ctx.read_text().replace("| `acme` | `birch` | Competitors, and both are clients |",
+                                           "| `acme` | `birch` | Competitors, and both are clients |\n| `acme` | `cedar` | Kept apart |"))
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        out = a.ask("What did Pat and Dana say about the fee?", zone="Work")
+        self.assertEqual("clarify", out["kind"])
+        self.assertFalse(any("<records " in m for m in self.msgs()))
+        self.assertEqual(["haiku"], [p["model"] for p in self.procs()])
+        a.ask(out["retry"], zone="Personal", picked=True)
+        (sent,) = [m for m in self.msgs() if "<records " in m]
+        self.assertIn("CEDARMARK83", sent)
+        self.assertNotIn(ACME, sent)
 
     def test_codex_also_resets_at_a_zone(self):
         os.environ["GARRICK_HARNESS"] = "codex"

@@ -1531,8 +1531,8 @@ class TestTheAskWindow(unittest.TestCase):
         submit = (self.body("askSubmit") + self.body("askSend"))
         after = submit[submit.index("self.askRunning = nil"):]
         kept = after.index("self.askTurns[at] = turn")
-        self.assertLess(kept, after.index("if startNew {"))              # what it did is on screen first
-        tail = after[after.index("if startNew {"):]
+        self.assertLess(kept, after.index("if startNew || zoneNew {"))   # what it did is on screen first
+        tail = after[after.index("if startNew || zoneNew {"):]
         self.assertIn("self.askNextAfresh = true", tail)
         self.assertIn("self.askReset()", tail)
         self.assertNotIn("removeAll", tail)
@@ -1646,9 +1646,10 @@ class TestTheZoneSelector(unittest.TestCase):
 
     def test_a_reply_moves_the_selector_without_a_reset(self):
         send = self.body("askSend")
-        line = next(l for l in send.splitlines() if 'out["zone"]' in l)
-        self.assertIn("self.askSetZone(z)", line)
-        self.assertNotIn("askReset", line)
+        moved = send[send.index('if let z = out["zone"]'):]
+        moved = moved[:moved.index("}")]
+        self.assertIn("self.askSetZone(z)", moved)
+        self.assertNotIn("askReset", moved)
 
     def test_one_zone_shows_no_selector(self):
         self.assertIn("picker.isHidden = zones.count <= 1", self.body("askZoneShow"))
@@ -1666,3 +1667,17 @@ class TestTheZoneSelector(unittest.TestCase):
         self.assertEqual(page, app)
         self.assertIn('askZoneColour(z["color"] as? String ?? "")', self.body("askChoicesShow"))
         self.assertEqual(ask.page_action().ZONE_COLOURS, tuple(page))
+
+    def test_a_zone_picked_during_a_request_stops_it_and_a_reply_never_undoes_it(self):
+        """From the wall review: picking a zone while a request runs stops it,
+        and the new conversation starts once it has; its reply's `zone` never
+        sets the selector back to the zone it was sent in."""
+        pick = self.body("askPickZone")
+        running = pick[pick.index("askRunning != nil"):]
+        self.assertLess(running.index("askZoneAfterStop = true"), running.index("askStop(nil)"))
+        send = self.body("askSend")
+        self.assertIn("let sentZone = askZone()", send)
+        line = send[send.index('out["zone"]'):].split("\n")[0]
+        self.assertIn("!zoneNew, self.askZone() == sentZone", line)
+        self.assertIn("if startNew || zoneNew {", send)
+

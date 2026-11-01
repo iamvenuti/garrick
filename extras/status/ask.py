@@ -568,12 +568,23 @@ def asks_back(text: str, said_: str, do: list) -> bool:
 LOOKS_JSON = re.compile(r"""\{\s*["']|["'](?:claims|cite|say|incomplete|asks)["']""")
 
 
-# A sentence that says something did not happen after a time, or that the
-# records hold nothing more: "there was no meeting with Acme after 3 March",
-# "nothing since then", "no later call". Said from part of the matches, it is a
-# fact about the records given, not the records (#315).
-ABSENCE = re.compile(r"(?:\b(?:no|none|nothing|never|not|neither|nor)\b|n't\b)(?:(?![.;!?]).)*?"
-                     r"\b(?:after|since|later|newer|more\s+recent|other|further|again|any\s+more|anymore)\b", re.I)
+# A sentence that says something did not happen, or is not in the records:
+# "there was no meeting with Acme after 3 March", "no other calls are
+# recorded", "nothing since then", "Acme didn't meet again", "the records
+# hold nothing later". Said from part of the matches, it is a fact about the
+# records given, not the records (#315). What someone said they would not
+# do ("Theo would not sign until after the board") is not one.
+_EVENTS = (r"(?:meetings?|records?|mentions?|calls?|conversations?|interactions?|contacts?|entries|entry|pages?|"
+           r"notes?|updates?|news|discussions?|mails?|emails?|messages?|sessions?|visits?)")
+ABSENCE = re.compile(
+    r"\b(?:no|not\s+any|none\s+of\s+the)\s+(?:other\s+|further\s+|later\s+|newer\s+|more\s+recent\s+|new\s+|"
+    r"subsequent\s+|recorded\s+)?" + _EVENTS + r"\b"
+    r"|\bnothing\b(?:(?![.;!?]).)*?\b(?:since|after|later|newer|more\s+recent|new|further)\b"
+    r"|(?:\b(?:did\s+not|has\s+not|have\s+not|had\s+not|never)|n't)\s+(?:meet|met|spoke|speak|spoken|talk|talked|call|"
+    r"called|happen|happened|take\s+place|taken\s+place|come\s+up|came\s+up|mention|mentioned|write|wrote|written)\b"
+    r"(?:(?![.;!?]).)*?\b(?:again|since|after|later|more\s+recently|any\s+more|anymore)\b"
+    r"|\b(?:records?|pages?|notes?)\s+(?:hold|holds|show|shows|contain|contains|have|has|mention|mentions)\s+"
+    r"(?:no|nothing|none)\b", re.I)
 
 
 def absent(text: str) -> bool:
@@ -969,10 +980,13 @@ class OnceSession:
         self.started = 0.0
         self.turns = 0
         self.watch = None           # the connection a call listens to for STOP, while one is asked on it
+        self.heard_stop = False     # STOP was heard during the call under way: what makes it stopped, not its exit code
 
     def stopped(self) -> bool:
         """Whether STOP came in on the request's connection, looked at
         without waiting; a client that left is not a Stop, and is no longer watched."""
+        if self.heard_stop:
+            return True
         if self.watch is None:
             return False
         try:
@@ -985,7 +999,8 @@ class OnceSession:
         said = stop_said(self.watch)
         if said is None:
             self.watch = None
-        return bool(said)
+        self.heard_stop = bool(said)
+        return self.heard_stop
 
     def alive(self) -> bool:
         return bool(self.history)
@@ -1005,6 +1020,7 @@ class OnceSession:
             self.start()
 
     def turn(self, text: str, cap: bool = True, record: bool = True) -> Tuple[str, dict]:
+        self.heard_stop = False
         if cap:
             check_caps(self.tier)
         self.ready()
@@ -1018,7 +1034,8 @@ class OnceSession:
                                     transcript=os.environ.get(LOG_TEXT) == "1", stop=self.stopped)
         finally:
             shutil.rmtree(str(home), ignore_errors=True)
-        if code == getattr(agent(), "EXIT_STOPPED", None):
+        if self.heard_stop:                 # Stop was said, whatever the code (130 is an interrupt's too)
+            self.heard_stop = False
             self.stop()                     # nothing of the call is kept: the request ends here, as with Claude
             raise Stopped("stopped")
         if code == agent().EXIT_CAP:
@@ -1087,7 +1104,7 @@ class Asker:
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
         self.question = None        # that request as first asked about, before any answer that settled nothing
         self.afresh = None          # "wall" or "zone": a reset ran during the request under way, whatever ends it
-        self.zone = None            # the zone whose records the sessions hold: the conversation's (#317)
+        self.zone = None            # the zone of the conversation: its last request's, its records' (#317)
         self.last_zone = None       # the zone last answered in, kept across resets: a zone name, never material
         self.zone_question = None   # a question asked about its zone, waiting for one
         self.asking = False         # whether the last reply was a session's own question for the user
@@ -1146,7 +1163,11 @@ class Asker:
             if earlier is not None:                 # an answer: nothing of it, or of its question, is sent (#294)
                 out = self.refilled(first, request, named, names, reset)
                 out["reset"] = reset
+                if window is not None:
+                    self.zone = window
                 return out
+        if window is not None:                      # every request, a command too, is sent in the window's zone
+            self.zone = self.last_zone = window
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -1214,15 +1235,15 @@ class Asker:
         return out
 
     def moves(self, zone: Optional[str]) -> bool:
-        """Whether answering in `zone` leaves the zone whose records the
-        sessions hold (#317): a new conversation, as at a wall."""
+        """Whether answering in `zone` leaves the zone the sessions were last
+        sent a request in, or read records in (#317): a new conversation, as
+        at a wall, so not even a command's <last-results> crosses zones."""
         return zone is not None and self.zone is not None and zone != self.zone
 
     def zone_for(self, find: dict, named, names, window: Optional[str]) -> Tuple[Optional[str], object]:
         """The one zone a question about meetings or a thread is answered in
         (#317), and where it came from: ("Work", "question") when every name
-        it holds, the zone it says ("in Work") and the project it names all
-        live in one zone; else the window's zone, or the one last answered
+        it holds and the zone it says ("in Work") all live in one zone; else the window's zone, or the one last answered
         in ("window"); else the only zone there is ("only"). (None, "two")
         when its names live in two zones, (None, "none") with nothing to go
         on: the box asks which, and nothing is read. For two, the second
@@ -1231,11 +1252,6 @@ class Asker:
         z = find.get("zone")
         if isinstance(z, str) and z in names:
             zones.add(z)
-        p = find.get("project")
-        if isinstance(p, str):
-            holds = [zz for zz, ps in names.items() if p in ps]
-            if len(holds) == 1:
-                zones.add(holds[0])
         if len(zones) > 1:
             return None, sorted(zones, key=str.casefold)
         if zones:
@@ -1297,6 +1313,10 @@ class Asker:
             if why == "question" and zoned == window:
                 why = "window"                      # the window shows it already: nothing to say
             find = dict(find, zone=zoned)
+            if isinstance(find.get("project"), str) and find["project"] not in names.get(zoned, {}):
+                # The session's place, from a question before or its own guess, never chooses
+                # the zone: a project outside the zone answered in is left out of the find.
+                find = {k: v for k, v in find.items() if k not in ("project", "thread")}
         try:
             where = sc.scope(self.ws, find, named, names, self.ctx, lib)
         except sc.Unclear as e:
@@ -1357,7 +1377,8 @@ class Asker:
         self.asking = asks_back(text, " ".join([c["text"] for c in claims] + [rest]), [])
         after = []
         if not claims and not rest:                 # no answer at all, incomplete or not
-            after.append(NOTHING_FOUND)
+            # From part of the matches, "nothing answers that" is an absence too (#315).
+            after.append(INCOMPLETE if matched > len(records) else NOTHING_FOUND)
         elif incomplete:
             after.append(INCOMPLETE)
         if back:

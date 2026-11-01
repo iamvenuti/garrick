@@ -680,6 +680,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askZonePicker: NSPopUpButton! // the zone the window answers in, beside the field (#317)
 	var askChoices: NSStackView!      // "Which zone?": a button for each zone, in its colour
 	var askAfterReset: (() -> Void)?  // what waits for a new conversation to have started: a zone's question sent again
+	var askZoneAfterStop = false      // a zone picked during a request: it is stopped, then a new conversation starts under a divider
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -2178,6 +2179,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// One request on its way, as a turn of the exchange; `picked` when a zone's button sent it again (#317).
 	func askSend(_ text: String, picked: Bool = false) {
 		var asked = AskTurn(request: text)
+		let sentZone = askZone()          // the zone this request goes in: a reply moves the selector only from it
 		asked.afresh = askNextAfresh
 		askNextAfresh = false
 		askTurns.append(asked)
@@ -2187,6 +2189,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.askRunning = nil
 			let startNew = self.askNewAfterStop
 			self.askNewAfterStop = false
+			let zoneNew = self.askZoneAfterStop
+			self.askZoneAfterStop = false
 			if startNew && out["stopped"] as? Bool == true {    // Stop and start new, stopped: nothing was done to keep
 				return self.askNew(nil)
 			}
@@ -2204,7 +2208,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.retry = out["retry"] as? String ?? ""
 			// The zone the answer was read in: the selector follows it, with no new conversation, since
 			// ask.py started one itself when the zone changed (#317).
-			if let z = out["zone"] as? String, askZoneNames().contains(z) { self.askSetZone(z) }
+			// Never over a zone you picked after sending: that one stands, and starts its own conversation.
+			if let z = out["zone"] as? String, askZoneNames().contains(z), !zoneNew, self.askZone() == sentZone {
+				self.askSetZone(z)
+			}
 			if turn.kind == "answer" {
 				turn.claims = out["claims"] as? [[String: Any]] ?? []
 				turn.after = out["after"] as? [String] ?? []
@@ -2224,7 +2231,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 			// Stop and start new, but the request had finished, or was past where Stop is heard: what it
 			// did stays on screen, and the new conversation starts under it.
-			if startNew {
+			if startNew || zoneNew {
 				self.askNextAfresh = true
 				self.askReset()
 			}
@@ -2314,7 +2321,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard askZoneNames().contains(zone), zone != askZone() else { return askZoneShow() }
 		let had = !askZone().isEmpty
 		askSetZone(zone)
-		if had && !askTurns.isEmpty && askRunning == nil {
+		if had && askRunning != nil {
+			// A request on its way in the old zone: it is stopped, and the new conversation starts once it
+			// has, as Stop and start new does, the exchange kept above the divider.
+			askZoneAfterStop = true
+			askStop(nil)
+		} else if had && !askTurns.isEmpty {
 			askNextAfresh = true
 			askReset()
 		}

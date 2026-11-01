@@ -218,6 +218,9 @@ STOPPED = "Stopped. Nothing was done, and the next request starts a new conversa
 # Stop while the answer session writes ends that session only: the command
 # session, and the conversation it holds, go on (#294).
 STOPPED_ANSWER = "Stopped. Nothing was done. The conversation goes on, and the next question reads its records afresh."
+# Stop while the answer is written, in a request that had already started
+# afresh at a wall: both sessions are new, and nothing from before goes on.
+STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at a wall, so nothing from before this request goes on."
 APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
@@ -240,15 +243,15 @@ class Bad(Exception):
 class Stopped(Bad):
     """The request was stopped on its connection, and the session with it."""
 
-    def said(self) -> str:
+    def said(self, afresh: bool = False) -> str:
         return STOPPED
 
 
 class StoppedAnswer(Stopped):
     """Stopped while the answer session wrote: that session ended, the command session goes on."""
 
-    def said(self) -> str:
-        return STOPPED_ANSWER
+    def said(self, afresh: bool = False) -> str:
+        return STOPPED_AFRESH if afresh else STOPPED_ANSWER
 
 
 class Capped(Bad):
@@ -861,10 +864,12 @@ class Asker:
         self.seen_for = None        # the `started` of the process `seen` describes
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
+        self.afresh = False         # a wall reset ran during the request under way, whatever ends it
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
+        self.afresh = False
         if not flag_on(self.ws):
             return off()
         if self.session is None:
@@ -889,6 +894,7 @@ class Asker:
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
+            self.afresh = True
             # The new processes get the new request alone, and the scope the
             # names heard in it: nothing of the request the box asked about (#294).
             if earlier is not None:
@@ -965,6 +971,7 @@ class Asker:
         if reset:                                   # before anything is read
             self.progress("Starting a fresh session")
             self.reset()
+            self.afresh = True
             request = request[asked:]               # the fresh session gets the new request alone, never the one asked about (#294)
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
@@ -1349,7 +1356,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
                 except Stopped as e:
                     asker.results, asker.asked = "", {}     # said to a process that is gone
-                    out = {"kind": "command", "say": e.said(), "done": [], "launch": [], "ok": False, "stopped": True}
+                    out = {"kind": "command", "say": e.said(asker.afresh), "done": [], "launch": [], "ok": False,
+                           "stopped": True}
                 except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
                     out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}
                 except Bad as e:
@@ -1359,6 +1367,10 @@ def serve_locked(ws: Path, path: Path) -> None:
                            "failed": True}
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
+                if op == "ask" and asker.afresh:
+                    # A wall reset ran before the request stopped, was capped or failed:
+                    # the app draws its divider all the same (#294).
+                    out["reset"] = "wall"
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
                     log(log_line(str(msg.get("text", "")), out))

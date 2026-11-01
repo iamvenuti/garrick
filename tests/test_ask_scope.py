@@ -357,36 +357,60 @@ class TestAnswers(AnswerCase):
         self.assertEqual(1, len(ledger))            # the find and the stopped answer: one call
         self.assertEqual("stopped", ledger[0]["subtype"])
 
+    def served(self):
+        """The server in a thread, once it listens; stopped when the test ends."""
+        t = self.serve_in_thread()
+        self.addCleanup(lambda: (ask.call(self.root, "stop", start=False), t.join(10)))
+        for _ in range(200):                            # the socket refuses until the server listens
+            if ask.call(self.root, "status", start=False) is not None:
+                return
+            time.sleep(0.05)
+        self.fail("the server never listened")
+
+    def request(self, text, stop_on=None):
+        """One request on its own connection, its final line; with `stop_on`,
+        Stop is said once the answer session has been sent those words."""
+        import socket
+        msgs = Path(str(self.args) + ".msgs")
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.connect(str(ask.sock_path(self.root)))
+        c.sendall((json.dumps({"op": "ask", "text": text}) + "\n").encode("utf-8"))
+        if stop_on is not None:
+            until = time.time() + 10
+            while time.time() < until and not (msgs.exists() and any(
+                    m["model"] == "sonnet" and stop_on in m["content"]
+                    for m in map(json.loads, msgs.read_text().splitlines()))):
+                time.sleep(0.05)
+            c.sendall(ask.STOP)
+        with c:
+            return [json.loads(line) for line in c.makefile("rb")][-1]
+
     def test_stop_while_the_answer_is_written_says_only_what_was_reset(self):
         """#294: Stop in the answer turn ends the answer session alone, but the
         box said the next request starts a new conversation."""
-        import socket
         self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet quote", 30]]}))
-        msgs = Path(str(self.args) + ".msgs")
-        t = self.serve_in_thread()
-        try:
-            for _ in range(200):                        # the socket refuses until the server listens
-                if ask.call(self.root, "status", start=False) is not None:
-                    break
-                time.sleep(0.05)
-            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            c.connect(str(ask.sock_path(self.root)))
-            c.sendall((json.dumps({"op": "ask", "text": "What did Dana say about the pallet quote?"}) + "\n").encode("utf-8"))
-            until = time.time() + 10
-            while time.time() < until and not (msgs.exists() and '"model": "sonnet"' in msgs.read_text()):
-                time.sleep(0.05)
-            c.sendall(ask.STOP)
-            with c:
-                final = [json.loads(line) for line in c.makefile("rb")][-1]
-            self.assertEqual((True, ask.STOPPED_ANSWER), (final.get("stopped"), final["say"]))
-            self.assertNotIn("new conversation", final["say"])
-            self.assertTrue(self.op_status()["session"])     # the command session, and its conversation, go on
-        finally:
-            ask.call(self.root, "stop", start=False)
-            t.join(10)
+        self.served()
+        final = self.request("What did Dana say about the pallet quote?", stop_on="pallet quote")
+        self.assertEqual((True, ask.STOPPED_ANSWER), (final.get("stopped"), final["say"]))
+        self.assertNotIn("new conversation", final["say"])
+        self.assertNotIn("reset", final)
+        self.assertTrue(ask.call(self.root, "status", start=False)["session"])     # the command session goes on
 
-    def op_status(self):
-        return ask.call(self.root, "status", start=False)
+    def test_a_stop_or_a_cap_after_a_wall_reset_still_says_the_reset(self):
+        """#294: Stop in the answer turn of a request that had started afresh
+        at a wall said the conversation goes on, though both sessions were
+        new, and the reply carried no "reset", so the app drew no divider.
+        A request capped after the reset was the same."""
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet launch", 30]]}))
+        self.served()
+        self.assertEqual("answer", self.request("What did Dana say about the pallet quote?")["kind"])
+        final = self.request("What did Theo say about the pallet launch?", stop_on="pallet launch")
+        self.assertEqual((True, "wall", ask.STOPPED_AFRESH), (final.get("stopped"), final.get("reset"), final["say"]))
+        self.assertNotIn("goes on, and", final["say"])
+        self.assertEqual("answer", self.request("What did Dana say about the pallet quote?").get("kind"))
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
+        final = self.request("What did Theo say about the pallet launch?")
+        self.assertEqual((True, "wall"), (final.get("capped"), final.get("reset")))
 
     def test_one_ledger_line_per_find_and_its_answer(self):
         a = self.asker()

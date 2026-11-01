@@ -222,8 +222,6 @@ GONE = ("done",)
 STOP = b'{"stop": true}\n'    # said on a request's own connection: stop that request
 KINDS = ("command", "clarify", "answer")    # what a final line's `kind` says it is
 STOPPED = "Stopped. Nothing was done, and the next request starts a new conversation."
-# Stop while the answer session writes ends that session only: the command
-# session, and the conversation it holds, go on (#294).
 # Stop in a request that had already started afresh at a wall: said so, as
 # the reply's "reset" is, for the app's divider (#294).
 STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at a wall, and the next request starts a new conversation."

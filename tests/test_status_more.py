@@ -511,17 +511,17 @@ class TestSessions(StatusCase):
         launch = swift[swift.index("func launch(_ app: String"):swift.index("func deskReady()")]
         rule = launch.index('if app == "cmux" && (desk || deskReady()) {')
         self.assertLess(rule, launch.index("switch app {"))
-        self.assertIn('act(["verb": "open", "folder": folder.path, "prompt": phrase])', launch[rule:])
+        self.assertIn('act(["verb": "open", "folder": folder.path, "prompt": phrase].merging(agent.isEmpty ? [:] : ["agent": agent]) { a, _ in a })',
+                      launch[rule:])                                    # an Ask open's assistant goes with it (#307)
+        self.assertIn('if !agent.isEmpty {', launch[rule:launch.index("switch app {")])    # no desk: refused, never a bare cmux
         self.assertIn('(menuState?["data"] as? [String: Any])?["dk"] as? Int == 1', swift)       # the page's word for it
         self.assertEqual(3, swift.count("openInCmux("))          # itself, launch()'s plain cmux, and a page from before 0.5
         self.assertEqual(1, swift.count("withApplicationAt: cmux"))
-        for route in ('launch(k, f, phrase: r["w"] ?? "")',                                   # Process the Inbox, the menu's
-                      'self.launch(k, f, phrase: act["w"] ?? "")',                            # and the panel's
-                      'launch(app, workspace.path, phrase: text)',                            # the menu's field, ask off
-                      'self.launch(app, workspace.path, phrase: text)',                       # the panel's field, ask off
-                      'self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil)',   # Ask
+        for route in ('launch(k, f, phrase: act["w"] ?? "")',                                 # Process the Inbox, menu and panel (#311)
+                      'self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil, agent: agent)',   # Ask
                       'launch(app, folder, phrase: body["phrase"] as? String ?? "", desk: body["dk"] != nil)'):         # the page
             self.assertIn(route, swift)
+        self.assertNotIn('launch(app, workspace.path, phrase: text)', swift)   # the fields find, and never open an assistant (#310)
         self.assertNotIn('["verb": "open", "zone"', swift)        # rows open by folder too, through the same rule
 
     def test_the_desks_buttons(self):

@@ -2602,31 +2602,68 @@ def say_kinds(changes) -> str:
 
 # One line per ingest in each wiki's log: `- 2026-09-24: [[wiki/sources/slug|Title]] (…)`.
 LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+# A dated line with no link first, as the knowledge skill wrote its log before
+# 0.51.0: its title is its text up to the first parenthesis or semicolon. And
+# a dated `## ` heading, as a wiki whose schema.json says `"log": "section"`
+# keeps it: its title is the rest of the heading, or the first line under it (#322).
+LOG_DATED = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+(.*)$")
+LOG_SECTION = re.compile(r"^##\s+(\d{4}-\d\d-\d\d)\b[\s:·,—–-]*(.*)$")
+LOG_NOT_READ = "log not read"
+
+
+def log_entries(text: str) -> Tuple[List[Tuple[dt.date, int, str, str]], bool]:
+    """(date, -line, title, page target or "") for every entry a wiki's log
+    holds, in the three forms (#322); and whether it holds lines that look
+    like entries, a list item or a `## ` section, so a log that reads as none
+    of them says so rather than "nothing logged yet"."""
+    lines = text.splitlines()
+    entries, tried = [], False
+    for n, line in enumerate(lines):
+        m = LOG_ENTRY.match(line)
+        if m:
+            when = as_date(m.group(1))
+            if when:
+                target = m.group(2).strip()
+                entries.append((when, -n, (m.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                continue
+        m = LOG_DATED.match(line) or LOG_SECTION.match(line)
+        if m and as_date(m.group(1)):
+            rest = m.group(2).strip()
+            if not rest and line.startswith("##"):          # the section's first line says what it holds
+                rest = next((l.strip().lstrip("-* ").strip() for l in lines[n + 1:n + 6] if l.strip() and not l.startswith("#")), "")
+                k = LOG_ENTRY.match("- %s: %s" % (m.group(1), rest))
+                if k:
+                    target = k.group(2).strip()
+                    entries.append((as_date(m.group(1)), -n, (k.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                    continue
+            title = plain_text(re.split(r"[(;]", rest, 1)[0]).strip(" .,:") or "an entry"
+            entries.append((as_date(m.group(1)), -n, title, ""))
+            continue
+        tried = tried or line.lstrip().startswith(("- ", "* ")) or line.startswith("## ")
+    return entries, tried
 
 
 def wikis(ws: Path) -> List[dict]:
     """Per wiki: its log, how many entries it holds, and the newest entry's
-    date and title. Nothing else from the line: not its zone, not its parties."""
+    date and title. Nothing else from the line: not its zone, not its parties.
+    An entry with a link opens its page; a log whose entries it cannot read
+    at all says so (`unread`)."""
     out = []
     for w in visible_dirs(ws / "Wikis"):
         log = w / "wiki" / "log.md"
         if not log.is_file():
             continue
-        entries = []
-        for n, line in enumerate(log.read_text(encoding="utf-8", errors="replace").splitlines()):
-            m = LOG_ENTRY.match(line)
-            when = as_date(m.group(1)) if m else None
-            if when:
-                target = m.group(2).strip()
-                title = (m.group(3) or target.rsplit("/", 1)[-1]).strip()
-                entries.append((when, -n, title, target))
-        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None}
+        entries, tried = log_entries(log.read_text(encoding="utf-8", errors="replace"))
+        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None,
+               "unread": tried and not entries}
         if entries:
             when, _, title, target = max(entries)   # the newest; on a tie, the line nearer the top
-            page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
-            inside = str(page).startswith(str(w.resolve()) + os.sep)
-            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""),
-                       page=page if inside and page.is_file() else None)
+            page = None
+            if target:
+                page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
+                if not (str(page).startswith(str(w.resolve()) + os.sep) and page.is_file()):
+                    page = None
+            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""), page=page)
         out.append(row)
     return out
 
@@ -8333,7 +8370,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                       if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
         if not w["when"]:
-            return "nothing logged yet"
+            return LOG_NOT_READ if w.get("unread") else "nothing logged yet"
         title = ('<a href="%s">%s</a>' % (E(link(w["page"])), E(w["title"]))) if w["page"] else E(w["title"])
         return "%s · %s" % (E(w["when"].strftime("%d %b %Y").lstrip("0")), title)
     wr = "".join('<div class="row" style="grid-template-columns:1fr"><div class="name"><a href="%s">%s</a><small style="white-space:normal">%s</small></div></div>' % (

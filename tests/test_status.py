@@ -2582,6 +2582,43 @@ class TestWikisAndRepos(StatusCase):
         self.assertNotIn("Work; birch", block)                 # nothing else from the line
         self.assertEqual(1, block.count("nothing logged yet"))  # the Knowledge log has no entry
 
+    def block(self, html):
+        start = html.index('id="wikis"')
+        return html[start:html.index("</details>", start)]
+
+    def write_logs(self, knowledge):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "log.md", "# Log\n\nOne line per ingest, newest first.\n")
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "log.md", "# Log\n\nOne line per ingest, newest first.\n\n" + knowledge)
+        return self.block(self.page())
+
+    def test_a_knowledge_log_in_the_skills_old_form_shows_its_newest_entry(self):
+        """#322: a dated line with no link, as the knowledge skill wrote it: its
+        date, and its text up to the first parenthesis or semicolon, with
+        nothing to open."""
+        block = self.write_logs("- 2026-10-30: ingested *Resilience at Scale* (Fictus Cloud); touches failover resilience\n"
+                                "- 2026-10-12: ingested Pallet lanes; touches lane capacity\n")
+        self.assertIn("30 Oct 2026 · ingested Resilience at Scale</small>", block)
+        self.assertNotIn("Pallet lanes", block)
+        self.assertNotIn("Fictus Cloud", block)
+        self.assertEqual(1, block.count("nothing logged yet"))          # Meetings', whose log has no entry
+
+    def test_a_knowledge_log_in_the_linked_form_opens_its_page(self):
+        block = self.write_logs("- 2026-10-30: [[wiki/sources/supply-chain-report|Supply chains]], Pellow & Strand; touched resilience\n")
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "sources" / "supply-chain-report.md"
+        self.assertIn('30 Oct 2026 · <a href="%s">Supply chains</a>' % page.resolve().as_uri(), block)
+
+    def test_a_log_of_dated_sections_shows_the_newest(self):
+        block = self.write_logs("## 2026-10-12\n\n- [[wiki/sources/supply-chain-report|Supply chains]], Pellow & Strand\n\n"
+                                "## 2026-10-30 Resilience at Scale\n\nFictus Cloud; touched failover.\n")
+        self.assertIn("30 Oct 2026 · Resilience at Scale</small>", block)
+        block = self.write_logs("## 2026-10-30\n\n- [[wiki/sources/supply-chain-report|Supply chains]], Pellow & Strand\n")
+        self.assertIn(">Supply chains</a>", block)                      # a section's first line, its link
+
+    def test_a_log_it_cannot_read_says_so(self):
+        block = self.write_logs("- Ingested the pallet report on 30 October\n- Then the lanes one\n")
+        self.assertIn("log not read", block)
+        self.assertEqual(1, block.count("nothing logged yet"))          # only where nothing is there
+
     def test_the_wikis_repository_is_listed(self):
         from fixtures import git_init
         git_init(self.root / "Wikis")

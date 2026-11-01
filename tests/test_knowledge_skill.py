@@ -13,6 +13,7 @@ outside it.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -102,8 +103,8 @@ INDEX_ROWS = (
     "| [[wiki/entities/fictus-cloud|Fictus Cloud]] | entity | 2026-03-20 |\n"
 )
 
-LOG_LINE = ("- 2026-03-20: ingested *Resilience at Scale* (Fictus Cloud); "
-            "touches Failover resilience, Fictus Cloud.\n")
+LOG_LINE = ("- 2026-03-20: [[wiki/sources/fictus-resilience-at-scale|Resilience at Scale]], Fictus Cloud; "
+            "touched Failover resilience, Fictus Cloud\n")
 
 
 class KnowledgeIngestTest(unittest.TestCase):
@@ -265,6 +266,16 @@ class KnowledgeSkillDocumentTest(unittest.TestCase):
     def test_requires_rereading_shared_files_before_appending(self):
         self.assertIn("Re-read `wiki/index.md` right before you add to it", self.text)
         self.assertIn("Re-read `wiki/log.md` right before you append", self.text)
+
+    def test_the_log_line_opens_with_the_source_pages_link(self):
+        """#322: one log format for both wikis, so the status page reads one."""
+        self.assertIn("- 2026-10-30: [[wiki/sources/<slug>|<title>]], <author or vendor>; touched <page>, <page>", self.text)
+        example = re.search(r"For example, `(- [^`]+)`", self.text).group(1)
+        sys.path.insert(0, str(REPO / "extras" / "status"))
+        import status
+        entries, _ = status.log_entries(example)
+        self.assertEqual([("wiki/sources/fictus-resilience-at-scale", "Resilience at Scale")], [(e[3], e[2]) for e in entries])
+        self.assertEqual(1, len(status.log_entries(LOG_LINE)[0]))
 
     def test_names_what_it_does_not_do(self):
         self.assertIn("## What this skill does not do", self.text)

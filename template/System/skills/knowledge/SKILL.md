@@ -170,9 +170,16 @@ project, never here.
    place. When the wiki's `schema.json` says `"index": "tables"`, the row
    goes in the table for its type instead.
 9. **Re-read `wiki/log.md` right before you append.** One line, newest on
-   top: what was ingested, its author or vendor, and which concept or entity
-   pages it touches. With `"log": "section"`, a dated `## ` section on top
-   instead, holding the same.
+   top, opening with the date and the source page's link, as the `meetings`
+   skill's log does, then its author or vendor and the concept or entity
+   pages it touches:
+   ```markdown
+   - 2026-10-30: [[wiki/sources/<slug>|<title>]], <author or vendor>; touched <page>, <page>
+   ```
+   For example, `- 2026-10-30: [[wiki/sources/fictus-resilience-at-scale|Resilience at Scale]], Fictus Cloud; touched failover resilience, Fictus Cloud`.
+   The status page's Wikis card shows the newest line and opens its page.
+   With `"log": "section"`, a dated `## <date>` section on top instead, its
+   first line the same link.
 10. **Commit, in the Wikis repository.** Stage only what this ingest wrote:
     the raw file, the source page, any concept and entity pages touched, the
     index, the log and any question file. Never `git add -A`, and never a

@@ -78,10 +78,13 @@ it (#246). It cannot be given with those flags; the last build to store wins.
 Each build keeps the check's result beside the page too, in
 status.check.json, and `--reuse-check SECONDS`, which those tools also
 pass, shows that result while it is younger than that instead of running
-the check again, saying how old it is (#260). A build by hand or on
+the check again, saying how old it is wherever its counts show (#260, #298). A build by hand or on
 schedule runs the check. With Effort switched on, status.effort.json beside
 the page holds what effort.py read of each transcript, so a build reads only
-the transcripts that changed since.
+the transcripts that changed since: every session's working folder and the
+paths of the files it wrote, in every zone. Both files go wherever --out
+puts the page, named after it, so --out inside a zone puts them where a
+commit can carry them into that zone's history.
 A build whose status.py is replaced while it runs, as an update replaces it
 during a `--settle` wait, writes nothing and builds again from the new file,
 so the page is always drawn by the status.py on disk.
@@ -2386,6 +2389,14 @@ def kept_check(store: Path, ws: Path, now: dt.datetime, reuse: float) -> Optiona
     if not 0 <= now.timestamp() - at < reuse:
         return None
     return dict(result, at=at, kept=True)
+
+
+def kept_said(C: Optional[dict], now: dt.datetime) -> str:
+    """How old a kept check result is, in the Checks card's words, for every
+    place that shows its counts (#298): "" when this build ran the check."""
+    if not (C and C.get("kept")):
+        return ""
+    return "As the check found it %s" % age(dt.datetime.fromtimestamp(C["at"]), now)
 
 
 def check(ws: Path, store: Optional[Path] = None, reuse: Optional[float] = None,
@@ -7826,10 +7837,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
 
     # ---- what needs attention, worst first
     attn = []
+    check_age = kept_said(C, now)              # a kept result's counts say how old they are, wherever they show (#298)
+    of_kept = " (%s)" % (check_age[:1].lower() + check_age[1:]) if check_age else ""
     if C and C.get("failed"):
         attn.append(("critical", "The check did not run", "#checks"))
     elif C and C.get("errors"):
-        attn.append(("critical", "The check found %d error%s" % (C["errors"], "" if C["errors"] == 1 else "s"), "#checks"))
+        attn.append(("critical", "The check found %d error%s%s" % (C["errors"], "" if C["errors"] == 1 else "s", of_kept), "#checks"))
     for j in J:
         if j["state"] == "critical":
             attn.append(("critical", "%s: %s" % (j["name"], j["status"]), "#jobs"))
@@ -7855,7 +7868,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if waiting:
         attn.append(("warning", "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s"), "#inboxes"))
     if C and C.get("warnings"):
-        attn.append(("warning", "The check found %d warning%s" % (C["warnings"], "" if C["warnings"] == 1 else "s"), "#checks"))
+        attn.append(("warning", "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept), "#checks"))
     for j in J:
         if j["idle"]:
             attn.append(("warning", "%s: %s" % (j["name"], j["status"]), "#jobs"))
@@ -7937,7 +7950,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                       "todolist" if lists else "todo"))
     tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
               ("Checks", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
-               if C and not C.get("failed") else "—", "" if C else "check.py not found", "checks")]
+               if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
         tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
@@ -8124,9 +8137,8 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
-    if C and C.get("kept"):                    # a tool's rebuild showed the last result rather than run the check (#260)
-        body = ('<p class="hint ckept">As the check found it %s; a build by hand or on schedule runs it again.</p>'
-                % E(age(dt.datetime.fromtimestamp(C["at"]), now))) + body
+    if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
+        body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
     checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + review_block(ws) + body)
 
     # ---- open actions and inboxes
@@ -8484,7 +8496,10 @@ def stored_words(path: Path) -> List[str]:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build the status page for a Garrick workspace.")
     ap.add_argument("--workspace", help="the workspace folder (default: GARRICK_WORKSPACE, or the folder this runs in)")
-    ap.add_argument("--out", help="where to write the page (default: System/generated/status.html)")
+    ap.add_argument("--out", help="where to write the page (default: System/generated/status.html). The files a build "
+                    "keeps go beside it, named after it: status.check.json, the check's last result, and status.effort.json, "
+                    "every session's working folder and the paths it wrote, in every zone. Inside a zone, a commit can carry "
+                    "them into its history")
     ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault "
                     "(by default the page uses the vaults Obsidian has registered)")
     ap.add_argument("--no-obsidian", action="store_true", help="link to the files themselves, even where Obsidian has a vault")

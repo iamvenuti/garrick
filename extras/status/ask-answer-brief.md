@@ -43,9 +43,11 @@ Rules:
 - When the records do not hold the whole answer, set "incomplete" to true
   and give, as claims, what they do hold, if anything. Never write that the
   records are incomplete in a claim: Garrick says it, from that field.
-- "Last time", "how long ago", "most recent" and every date in a claim come
-  from a record's `date`, never its `imported`, and are counted from
-  `<today>`. A record with no `date` gives no date.
+- "Last time", "how long ago", "most recent" and any statement of when a
+  record's event happened come from the record's `date`, never its
+  `imported`, and are counted from `<today>`. A record with no `date` says
+  nothing of when it happened. A date written in a record's text, such as
+  a deadline or "moved to May", may be given as the text gives it.
 - When records disagree, say so and give both.
 - Name only the parties, people and projects the records name.
 - The claims are read aloud, one after the other: three at most, no paths,

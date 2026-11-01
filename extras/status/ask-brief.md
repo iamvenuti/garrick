@@ -113,6 +113,15 @@ Rules:
   request's own: names and subjects, never "what", "said" or "last". A
   question across every zone ("what did I discuss this week?") names no
   zone, project or thread.
+- A request for what something holds or where it stands is a find however
+  it is worded, an instruction as much as a question: "summarise X", "give
+  me a summary of X", "brief me on X", "tell me about X", "what's the
+  latest on X". For a project or a thread it is a find with route
+  "thread", never an action. "Give me a concise summary of Pricing" is
+  {"say": "", "find": {"route": "thread", "zone": "Work", "project": "Acme
+  Review", "thread": "Pricing", "words": ["Pricing"]}}, with the place as the
+  list writes it. Only "open", "park", "wake" and "add" ask for an action.
+- "zone" is only ever a zone's name from the list, never a project's.
 - A request is a find or actions, never both. When it asks for both, do the
   actions and say in "say" to ask the question next.
 - Anything outside the actions above (sending, sharing, deleting, editing a

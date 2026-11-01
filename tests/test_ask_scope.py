@@ -348,6 +348,31 @@ class TestAnswers(AnswerCase):
         self.assertIn('path="Zones/Work/Acme Review/Sources/260301 - Pallet terms.docx"', said)
         self.assertNotIn("BIRCHTHREAD71", said)
 
+    def test_a_summary_asked_for_is_a_find(self):
+        """#308: a request for content worded as an instruction is a find,
+        as the brief now says; the finds its examples give are accepted and
+        answered from the thread, and a find naming a project as its zone is
+        refused in words the user can act on."""
+        brief = ask.BRIEF.read_text()
+        for worded in ("summarise X", "give me a summary of X", "brief me on X", "tell me about X", "what's the latest on X"):
+            self.assertIn('"%s"' % worded, " ".join(brief.split()))
+        example = '{"say": "", "find": {"route": "thread", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "words": ["Pricing"]}}'
+        self.assertIn(example, " ".join(brief.split()))
+        asked = ["Give me a concise summary of Pricing", "Summarise Pricing", "Brief me on Pricing",
+                 "Tell me about Pricing", "What's the latest on Pricing?"]
+        self.answers.write_text(json.dumps({"haiku": [[q, example] for q in asked]}))
+        for q in asked:
+            a = self.asker()
+            out = a.ask(q)
+            self.assertEqual("answer", out["kind"], q)
+            sent = [m for m in self.msgs() if "<records>" in m and q in m]
+            self.assertTrue(sent, q)
+            self.assertIn('path="Zones/Work/Acme Review/Threads/Pricing/Pricing.md"', sent[-1])
+        wrong = find("thread", ["Pricing"], zone="Acme Review", project="Acme Review", thread="Pricing")
+        self.answers.write_text(json.dumps({"haiku": [["Pricing", wrong]]}))
+        with self.assertRaisesRegex(ask.Bad, "^Acme Review is a project, not a zone$"):
+            self.asker().ask("Give me a concise summary of Pricing")
+
     def test_a_thread_reads_its_note_first(self):
         self.asker().ask("Where does Pricing stand?")
         (said,) = [m for m in self.msgs() if "<records>" in m]

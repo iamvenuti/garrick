@@ -569,7 +569,7 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
         raise Bad("not something the box does: %r" % (verb,))
     zone, project, thread = a.get("zone"), a.get("project"), a.get("thread")
     if not isinstance(zone, str) or zone not in names:
-        raise Bad("no zone %r" % (zone,))
+        raise Bad(scope_lib().no_zone(zone, names))
     if project is not None and (not isinstance(project, str) or project not in names[zone]):
         raise Bad("no project %r in %s" % (project, zone))
     if thread is not None and (project is None or not isinstance(thread, str) or thread not in names[zone][project]["threads"]):

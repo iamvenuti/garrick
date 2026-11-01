@@ -198,6 +198,19 @@ class TestProposals(AskCase):
         with self.assertRaisesRegex(ask.Bad, "cmux is switched off"):
             ask.proposal(dict(a, app="cmux"), self.names, self.root)
 
+    def test_a_project_named_as_the_zone_is_said_so(self):
+        """#308: still refused, never guessed, but in words the user can act on."""
+        a = {"verb": "open", "zone": "Acme Review", "project": "Acme Review", "thread": "Pricing"}
+        with self.assertRaisesRegex(ask.Bad, "^Acme Review is a project, not a zone$"):
+            ask.proposal(a, self.names, self.root)
+        with self.assertRaisesRegex(ask.Bad, "^no zone 'Elsewhere'$"):
+            ask.proposal(dict(a, zone="Elsewhere"), self.names, self.root)
+        write(self.root / "Zones" / "Personal" / "Acme Review" / "Acme Review.md", "---\nstatus: active\n---\n")
+        with self.assertRaisesRegex(ask.Bad, "^no zone 'Acme Review'$"):        # two projects: not one to name
+            ask.proposal(a, ask.scan(self.root), self.root)
+        out = ask.Asker(self.root).carry_out("Opening.", [a], self.names)
+        self.assertEqual(["Refused: Acme Review is a project, not a zone"], out["done"])
+
     def test_refused(self):
         for a in ({"verb": "run", "job": "whats-open"}, {"verb": "shutdown"}, {"verb": "settings", "launchers": []},
                   {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16}, {"verb": "rm", "zone": "Work"},

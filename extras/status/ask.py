@@ -159,6 +159,19 @@ reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
 
+**An answer cites its records (#261, slice D).** The answer session replies
+with claims, each naming the ids of the records it rests on, and an
+`incomplete` field for records that hold only part of the answer (cited()).
+Only the ids admitted this turn can be cited: any other, an earlier turn's,
+a replaced process's or one made up, is dropped before anything is looked
+up, so a citation never names a record outside the scope this turn read.
+The final line carries `claims`, `sources`, `incomplete` and `after`, the
+fixed sentences said after the claims; `say` is the claims and `after`, for
+the ear. Each source has its path, title, `date` (when it happened, which
+"last time" and "how long ago" are told from) and `imported` (when it was
+filed). The app opens a thread's note as its row opens it (`place`), and
+any other record in the default app.
+
 **A request sent again is asked about, not done twice.** The record
 recognises one that repeats an action it holds (operations.py): past a double
 click's window, the action comes back as a question, which goes into
@@ -238,6 +251,7 @@ GAVE_UP = ("The ask server did not answer in %s. The change may still be on its 
 NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does commands: open, park, wake, "
                "and add a line to a Todo list.")
 NOTHING_FOUND = "Nothing in the records answers that."
+INCOMPLETE = "The records hold only part of the answer."     # said for the answer's `incomplete` field
 
 
 class Bad(Exception):
@@ -474,6 +488,29 @@ def said(text: str) -> str:
         return parse(text)[0]
     except Bad:
         return (text or "").strip()
+
+
+def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], bool]:
+    """An answer's claims, each with the ids of the records it rests on, and
+    whether the records hold only part of the answer: (claims, incomplete).
+    An id not in `allowed`, the records retrieved this turn, is dropped and
+    never looked up; a claim keeps its words with no id left. An answer with
+    no claims gives none: its `say` is shown as it stands."""
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        obj = json.loads(m.group(0)) if m else None
+    except ValueError:
+        obj = None
+    if not isinstance(obj, dict):
+        return [], False
+    claims = []
+    for c in obj.get("claims") if isinstance(obj.get("claims"), list) else []:
+        if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not c["text"].strip():
+            continue
+        cite = c.get("cite") if isinstance(c.get("cite"), list) else []
+        ids = [i for i in dict.fromkeys(x for x in cite if isinstance(x, str)) if i in allowed]
+        claims.append({"text": " ".join(c["text"].split()), "ids": ids})
+    return claims, obj.get("incomplete") is True
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
@@ -991,6 +1028,7 @@ class Asker:
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         whole = sent != self.answer_sent or self.answers.started != self.answer_told
+        before = len(self.passages)                 # the ids admitted from here on are this turn's
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>",
                  "<request>\n%s\n</request>" % request[-MAX_REQUEST:],
@@ -1003,13 +1041,49 @@ class Asker:
             self.answers.watch = None
             turns.append(self.answers.last)
         self.answer_sent, self.answer_told = sent, self.answers.started
-        say = said(text)
+        # Only this turn's records may be cited: an id from an earlier turn, a
+        # process since replaced or nowhere at all is refused, and leaves no
+        # trace in the reply (#261, slice D).
+        this_turn = {p["id"]: p for p in self.passages[before:]}
+        claims, incomplete = cited(text, this_turn)
+        after = []
+        if incomplete:
+            after.append(INCOMPLETE if claims else NOTHING_FOUND)
         if back:
-            say = (say + " " + self.wall()).strip()
+            after.append(self.wall())
+        if claims:
+            say = " ".join([c["text"] for c in claims] + after)
+        else:
+            say = " ".join([said(text)] + after).strip()
         out = reply(say, "answer")
+        ids = [i for c in claims for i in c["ids"]]
+        out.update(claims=claims, after=after, incomplete=incomplete,
+                   sources=self.sources([this_turn[i] for i in dict.fromkeys(ids)], names))
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return out, reset
+
+    def sources(self, cited_: List[dict], names) -> List[dict]:
+        """What the window shows and opens for each record cited: its path
+        in the workspace, its title, when it happened (`date`) and when it
+        was filed (`imported`). A thread's note opens as its row opens it
+        (`place`, what the app's run() takes); anything else opens in the
+        default app. Built from records admitted this turn only."""
+        out, desk = [], None
+        for p in cited_:
+            src = {k: p[k] for k in ("id", "path", "title", "date", "imported")}
+            parts = p["path"].split("/")
+            if (len(parts) == 6 and parts[0] == "Zones" and parts[3] == "Threads" and parts[5] == parts[4] + ".md"
+                    and parts[4] in names.get(parts[1], {}).get(parts[2], {}).get("threads", {})):
+                zone, project, thread = parts[1], parts[2], parts[4]
+                name = spoken(names, zone, project, thread)
+                src["place"] = {"n": name, "w": name, "f": str(self.ws / "Zones" / zone / project / "Threads" / thread),
+                                "oc": [zone, "/".join(parts[2:])]}
+                desk = desk_ready(self.ws) if desk is None else desk
+                if desk:
+                    src["place"]["dk"] = 1
+            out.append(src)
+        return out
 
     def admit(self, passages: List[dict], parties) -> str:
         """The only way a record reaches a prompt (#261, section 3): the
@@ -1027,9 +1101,11 @@ class Asker:
         rows = ["<records>"]
         for r in passages:
             rid = "r%d" % (len(self.passages) + 1)
-            self.passages.append({"id": rid, "path": r["path"]})
-            rows.append('<record id="%s" path="%s"%s>' % (rid, attr(r["path"]),
-                                                          ' date="%s"' % attr(r["date"]) if r.get("date") else ""))
+            self.passages.append({"id": rid, "path": r["path"], "title": r.get("title") or "",
+                                  "date": r.get("date") or "", "imported": r.get("imported") or ""})
+            rows.append('<record id="%s" path="%s"%s%s>' % (
+                rid, attr(r["path"]), ' date="%s"' % attr(r["date"]) if r.get("date") else "",
+                ' imported="%s"' % attr(r["imported"]) if r.get("imported") else ""))
             rows += [inert(r["text"]), "</record>"]
         rows.append("</records>")
         return "\n".join(rows)

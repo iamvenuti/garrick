@@ -48,6 +48,7 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import collections
+import datetime as dt
 import importlib.util
 import re
 from pathlib import Path
@@ -488,11 +489,30 @@ def _body(text: str) -> str:
 
 
 def _date(fm: dict, path: Path) -> str:
+    """When what a record holds happened (#261, slice D): a meeting's
+    `date`, a published work's `published` (a month or a year where that is
+    all it gives), else the date its name starts with."""
     value = fm.get("date")
     if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value):
         return value[:10]
+    value = fm.get("published")
+    m = re.match(r"\d{4}(?:-\d{2}){0,2}(?!\d)", value) if isinstance(value, str) else None
+    if m:
+        return m.group(0)
     m = re.match(r"(\d{2})(\d{2})(\d{2})(?:\D|$)", path.name)
     return "20%s-%s-%s" % m.groups() if m else ""
+
+
+def _imported(fm: dict, path: Path) -> str:
+    """When a record came into the workspace: the page's `created`, else the
+    file's own date. Never what "last time" or "how long ago" is told from."""
+    value = fm.get("created")
+    if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value):
+        return value[:10]
+    try:
+        return dt.date.fromtimestamp(path.stat().st_mtime).isoformat()
+    except OSError:
+        return ""
 
 
 def passage(body: str, words: List[str], most: int = PASSAGE) -> str:
@@ -528,7 +548,9 @@ def _text(ws: Path, path: Path, sources: bool) -> Optional[str]:
 
 def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     """Every record inside the scope that the words find, best first, as
-    {"path", "date", "parties", "text"}: the whole of it a prompt may hold.
+    {"path", "date", "imported", "title", "parties", "text"}: the whole of it
+    a prompt or a citation may hold. `date` is when it happened, `imported`
+    when it was filed.
     Nothing outside the scope is opened."""
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
@@ -542,8 +564,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             return
         date = _date(fm, path)
         rank = (1 if first else 0, sum(1 for h in hits if h), sum(hits), date)
-        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "parties": sorted(parties),
-                             "text": passage(body, sc.words)}))
+        title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
+        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": _imported(fm, path),
+                             "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
 
     if sc.route in ("knowledge", "docs"):
         root = ws / ("Wikis/Knowledge/wiki" if sc.route == "knowledge" else "System/garrick-docs")

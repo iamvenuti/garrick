@@ -813,19 +813,17 @@ def session_for(ws: Path):
     return (ClaudeSession if h == "claude" else OnceSession)(ws, tier())
 
 
-def heard_names(named, ctx: dict, since: int = 0) -> str:
+def heard_names(named, ctx: dict) -> str:
     """The command session's `<names>` block: each name the request holds,
     as it was heard, and what ask_scope.mentions() settled it to, from the
     list and System/context.md's Parties, People and Aliases. The session
     is sealed and loads no context, so this is how a mangled name, an alias
     or a person reaches it. Names, kinds and zones only: never a role, a
-    domain or anything from a note. A name heard before `since` is left out:
-    the request a wall reset dropped."""
+    domain or anything from a note. After a wall reset `named` holds only
+    the names of the request sent (Mentions.since())."""
     parties = ctx.get("parties", {})
     lines = []
-    for start, _, words, means in getattr(named, "heard", None) or []:
-        if start < since:
-            continue
+    for _, _, words, means in getattr(named, "heard", None) or []:
         said = []
         for e in means:
             if e.kind == "party":
@@ -888,7 +886,6 @@ class Asker:
             return clarify(named.question)
         self.unclear = None
         reset = self.crosses(named.parties)
-        since = 0                                   # where in `heard` the names sent begin
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
@@ -896,8 +893,7 @@ class Asker:
             # The new processes get the new request alone, and the scope the
             # names heard in it: nothing of the request the box asked about (#294).
             if earlier is not None:
-                since = len(earlier) + 1
-                earlier, heard, named = None, request, named.since(since)
+                earlier, heard, named = None, request, named.since(len(earlier) + 1)
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -914,7 +910,7 @@ class Asker:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         if earlier is not None:                     # the request the box asked about, which this one answers
             parts.append("<earlier-request>\n%s\n</earlier-request>" % earlier[:MAX_REQUEST])
-        known = heard_names(named, self.ctx, since)
+        known = heard_names(named, self.ctx)
         if known:                                   # the names it heard, settled: the session loads no context
             parts.append(known)
         parts.append("<request>\n%s\n</request>" % request[:MAX_REQUEST])

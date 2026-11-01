@@ -1126,7 +1126,7 @@ class TestRenewal(AnswerCase):
             self.assertTrue(self.gone(pid), pid)
         for p in renewed:
             assert_sealed(self, p, self.root)                               # sealed as every session is
-        self.assertEqual((set(), [], {}, ""), (a.seen, a.passages, a.asked, a.results))
+        self.assertEqual((set(), set(), [], {}, ""), (a.seen, a.heard, a.passages, a.asked, a.results))
         a.ask("what's open")
         a.ask("What does the supply chain report say about pallets?")        # read by the renewed answer session
         self.assertEqual(2, len(self.procs()) - len(before))                 # no other process started
@@ -1137,6 +1137,32 @@ class TestRenewal(AnswerCase):
         for m in said:                                                    # nothing from before the wall, or after it
             for mark in (ACME, BIRCH, "Dana", "Theo", "<last-results>", "<earlier-request>"):
                 self.assertNotIn(mark, m)
+
+    def test_a_reply_that_says_a_wall_reset_ran_is_never_renewed(self):
+        """A wall reset is a fresh start of its own: the reply that carries
+        `"reset": "wall"` is never also "refreshed", and the new processes
+        are never told <refreshed/>."""
+        t = self.serve_in_thread()
+        try:
+            for _ in range(200):                    # the socket refuses until the server listens
+                if ask.call(self.root, "status", start=False) is not None:
+                    break
+                time.sleep(0.05)
+            first = ask.call(self.root, "ask", "What did Dana say about the pallet quote?", start=False)
+            self.assertNotIn("refreshed", first)
+            before = {p["pid"] for p in self.procs()}
+            with self.small():                                              # the new processes measure full
+                out = ask.call(self.root, "ask", "What did Theo say about the pallet launch?", start=False)
+            self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+            self.assertNotIn("refreshed", out)
+            after = [p["pid"] for p in self.procs() if p["pid"] not in before]
+            self.assertEqual(2, len(after))                                 # the reset's two, and no renewal's
+            for pid in after:
+                for m in self.msgs(pid):
+                    self.assertNotIn("<refreshed/>", m)
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
 
     def test_a_question_waiting_for_its_answer_holds_the_renewal(self):
         write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))

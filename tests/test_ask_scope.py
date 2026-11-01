@@ -184,6 +184,32 @@ class TestTheWallReset(AnswerCase):
             self.assertIn("<workspace>\n", self.msgs(pid)[0])                 # each told the whole list
         self.assertEqual({"birch"}, a.seen)
 
+    def test_last_results_go_with_the_command_process_they_were_said_to(self):
+        """From the 0.49.1 review: `heard` went with a command process that
+        died or was replaced, but what its last actions did stayed, and the
+        next process was sent "Added to Inbox: Call Dana" with a request for
+        Birch. The process is killed here, then stopped by a turn that took
+        too long."""
+        from unittest import mock
+        self.answers.write_text(json.dumps({"haiku": [["open slowly", 5]] + HAIKU}))
+        for ends in ("killed", "timed out"):
+            a = self.asker()
+            a.ask("add call Dana to Acme")
+            self.assertIn("Call Dana", a.results)
+            if ends == "killed":
+                os.kill(a.session.proc.pid, signal.SIGKILL)
+                a.session.proc.wait()
+            else:
+                with mock.patch.object(ask, "TURN_TIMEOUT", 0.5), self.assertRaisesRegex(ask.Bad, "too long"):
+                    a.ask("open slowly")
+            self.assertNotIn("reset", a.ask("open Birch Entry"))
+            (said,) = self.msgs(a.session.proc.pid)
+            self.assertNotIn("<last-results>", said, ends)
+            self.assertNotIn("Call Dana", said, ends)
+            self.assertEqual({}, a.asked)
+            a.stop()
+            Path(str(self.args) + ".msgs").unlink()
+
     def test_knowledge_crosses_no_wall(self):
         a = self.asker()
         for q in ("What did Dana say about the pallet quote?", "What does the supply chain report say about pallets?",

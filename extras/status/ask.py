@@ -906,6 +906,10 @@ class Asker:
         # a warm that replaced an aged session, or a restart, the hash alone
         # would leave it with no names at all.
         whole = sent != self.sent or self.session.fresh() or self.session.started != self.told
+        if self.session.remembers and self.session.fresh():
+            # The turn starts a new process, which was told none of what the
+            # last actions did nor asked any question waiting for a yes.
+            self.results, self.asked = "", {}
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if self.results:
@@ -1040,13 +1044,16 @@ class Asker:
         """The parties either process holds: those whose records the answer
         process was given, and those the command process was told of. Each
         set goes once its own process has ended or another has taken its
-        place, and only that one: the other process still holds its own."""
+        place, and only that one: the other process still holds its own.
+        What the last actions did, and the questions waiting for a yes, were
+        said to the command process, so they go with it too."""
         s = self.answers
         if s is None or not s.alive() or s.started != self.seen_for:
             self.seen, self.passages = set(), []
         c = self.session
         if c is None or not c.alive() or c.started != self.heard_for:
             self.heard = set()
+            self.results, self.asked = "", {}
         return self.seen | self.heard
 
     def hear(self, parties) -> None:

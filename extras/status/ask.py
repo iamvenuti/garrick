@@ -163,9 +163,13 @@ yes, `seen`, `heard`, the records admitted, and which process was given
 the list. The new processes get the new request
 only, and the reply carries `"reset": "wall"`. A request the box asked
 about is never carried across: no reliable test can say that the user's
-own words name nothing on the far side, so the new processes get the
-answer that settled it alone, and only the names heard in that answer
-reach the scope (#294). A question across every zone
+own words name nothing on the far side. When the answer to its question is
+what crosses the wall, or the records it leads to are, nothing of either
+is sent to the new processes and nothing is read: the reply says so
+(REFILLED), and its `refill` holds the question with the option the
+answer settled it to, "Where does Pricing stand? (Pricing in Work)", for
+the app to put back in the box. Sent from there, it is a new request like
+any other, and settles without the question (#294). A question across every zone
 reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
@@ -256,6 +260,9 @@ STOPPED = "Stopped. Nothing was done, and the next request starts a new conversa
 # Stop in a request that had already started afresh at a wall: said so, as
 # the reply's "reset" is, for the app's divider (#294).
 STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at a wall, and the next request starts a new conversation."
+# Said when the answer to a question back crossed a wall: nothing of it was sent, and
+# the question waits in the box, the reply's `refill`, for the user to send (#294).
+REFILLED = "Started afresh at a wall. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
@@ -913,8 +920,7 @@ def heard_names(named, ctx: dict) -> str:
     list and System/context.md's Parties, People and Aliases. The session
     is sealed and loads no context, so this is how a mangled name, an alias
     or a person reaches it. Names, kinds and zones only: never a role, a
-    domain or anything from a note. After a wall reset `named` holds only
-    the names of the request sent (Mentions.since())."""
+    domain or anything from a note."""
     parties = ctx.get("parties", {})
     lines = []
     for _, _, words, means in getattr(named, "heard", None) or []:
@@ -987,10 +993,10 @@ class Asker:
             self.progress("Starting a fresh session")
             self.reset()
             self.afresh = True
-            # The new processes get the new request alone, and the scope the
-            # names heard in it: nothing of the request the box asked about (#294).
-            if earlier is not None:
-                earlier, heard, named = None, request, named.since(len(earlier) + 1)
+            if earlier is not None:                 # an answer: nothing of it, or of its question, is sent (#294)
+                out = self.refilled(earlier, request, named, names)
+                out["reset"] = "wall"
+                return out
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -1079,7 +1085,8 @@ class Asker:
             self.progress("Starting a fresh session")
             self.reset()
             self.afresh = True
-            request = request[asked:]               # the fresh session gets the new request alone, never the one asked about (#294)
+            if asked:                               # an answer: nothing is read, and nothing more sent (#294)
+                return self.refilled(request[:asked - 1], request[asked:], named, names), True
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
@@ -1131,6 +1138,36 @@ class Asker:
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return out, reset
+
+    def refilled(self, earlier: str, said: str, named, names) -> dict:
+        """The reply when the answer to a question back crossed a wall (#294),
+        once both sessions are reset: nothing of the request or its question
+        has been sent to them, and nothing is. Its `refill` is the question
+        with the option the answer settled it to, in brackets, for the app to
+        put back in the box and the user to send: "Where does Pricing stand?
+        (Pricing in Work)". Sent, it is a new request like any other, and
+        mentions() reads the brackets as the answer. The option as the question
+        offered it comes first, then the answer as typed; each is used only
+        when, read back so, it settles every name as the answer did. The text
+        is the user's own, and goes to the app alone: never to a session, a
+        log or a file."""
+        sc = scope_lib()
+        lib = sc.lib(self.ws)
+        body = earlier.rstrip()
+        tries = []
+        for o in (getattr(named, "option", None), " ".join(said.split())):
+            if o and "(" not in o and ")" not in o and o not in tries:
+                tries.append(o)
+        refill = "%s (%s)" % (body, tries[0]) if tries else body
+        for o in tries:
+            text = "%s (%s)" % (body, o)
+            got = sc.mentions(self.ws, text, names, self.ctx, lib)
+            if not got.question and got.parties == named.parties:
+                refill = text
+                break
+        out = clarify(REFILLED)
+        out["refill"] = refill
+        return out
 
     def sources(self, cited_: List[dict], names) -> List[dict]:
         """What the window shows and opens for each record cited: its path
@@ -1742,6 +1779,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(out.get("say", ""))
         for m in out.get("done", []):
             print("  " + m)
+        if out.get("refill"):                       # the question to send again (#294): shown, never sent
+            print("  " + out["refill"])
     return 0 if out.get("ok", True) else 1
 
 

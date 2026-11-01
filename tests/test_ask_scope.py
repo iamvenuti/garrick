@@ -793,70 +793,161 @@ class TestFailsClosed(AnswerCase):
     # plain, a hyphen written as a space; none is a name the context knows.
     EARLIER = "for İlker, Soren, Jean Luc and Da\u0301na? EARLY88"
 
-    def assert_carries_nothing(self, before, request):
-        new = self.new_since(before)
-        self.assertTrue(new.get("sonnet"))
-        for m in new.get("haiku", []) + new["sonnet"]:
-            for word in ("EARLY88", "İlker", "Soren", "Jean Luc", "Da\u0301na", "Dána", "<earlier-request>"):
-                self.assertNotIn(word, m)
-        self.assertIn("<request>\n%s\n</request>" % request, new["sonnet"][0])
-        return new
+    def sent_since(self, before):
+        """Every message sent to a process started since `before`."""
+        return [m for ms in self.new_since(before).values() for m in ms]
 
-    def test_a_wall_reset_after_a_question_back_carries_nothing_of_it(self):
-        """#294: the request the box asked about is the user's own words, and
-        no test can say they name nothing on the far side. A reset gives the
-        new sessions the answer alone, and the scope its names alone."""
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md",
-              thread_note("Birch Entry", "Pricing", "birch", "Birch pricing. BIRCHPRICE12"))
+    def pricing_in_two_zones(self):
+        """The issue's case: a project called Pricing in Work, Birch's, and
+        one in Personal of no party, beside Acme Review's Pricing thread, so
+        the question offers "Pricing in Work" and "Pricing in Personal"."""
+        from fixtures import project_hub
+        for zone, party in (("Work", "birch"), ("Personal", "")):
+            folder = self.root / "Zones" / zone / "Pricing"
+            write(folder / "Pricing.md", project_hub(zone, "Pricing", party=party, threads=["Rates"]))
+            write(folder / "Threads" / "Rates" / "Rates.md",
+                  thread_note("Pricing", "Rates", party, "Rates. %s" % ("BIRCHPRICE12" if party else "HOMEPRICE13")))
         self.commit()
-        self.rules([["The Birch one", find("thread", [], project="Birch Entry", thread="Pricing")]])
+
+    def assert_refilled(self, out, refill):
+        self.assertEqual(("clarify", ask.REFILLED, "wall", refill),
+                         (out["kind"], out["say"], out.get("reset"), out.get("refill")))
+
+    def test_a_wall_reset_after_a_question_back_puts_the_question_back_in_the_box(self):
+        """#294, design A: with Acme held, "Where does Pricing stand?", asked
+        which Pricing, then "The Birch one." starts afresh at the wall and
+        sends nothing of either to the new sessions, nor reads anything. The
+        question comes back with the option it was settled to, as the
+        question offered it; sent, it answers about Birch's Pricing, asking
+        nothing again."""
+        self.pricing_in_two_zones()
+        self.rules([["(Pricing in Work)", find("thread", [], zone="Work", project="Pricing")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
-        before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Where does Pricing stand " + self.EARLIER)["kind"])
+        out = a.ask("Where does Pricing stand?")
+        self.assertEqual(("clarify", "Which do you mean: Pricing in Personal, Pricing in Work or Acme Review, Pricing?"),
+                         (out["kind"], out["say"]))
+        before, sent = {p["pid"] for p in self.procs()}, len(self.msgs())
         out = a.ask("The Birch one.")
-        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        self.assertNotIn("carried", out)
-        new = self.assert_carries_nothing(before, "The Birch one.")
-        (cmd,) = new["haiku"]
-        self.assertIn('<names>\n- "Birch": the party Birch & Co in Work\n</names>', cmd)   # the answer's names alone
-        self.assertNotIn("Where does Pricing stand", "\n".join(new["haiku"] + new["sonnet"]))
+        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Work)")
+        self.assertEqual(sent, len(self.msgs()))                            # not one turn, on any session
+        self.assertEqual([], self.sent_since(before))
+        self.assertTrue(all(self.gone(pid) for pid in before))              # the sessions that held Acme went
+        self.assertEqual((None, set(), set(), []), (a.unclear, a.seen, a.heard, a.passages))
+        with mock.patch.dict(os.environ, {ask.LOG_TEXT: "1"}):
+            self.assertNotIn("Pricing in Work", ask.log_line("The Birch one.", out))   # the log never holds it
+        out = a.ask(out["refill"])                                          # the user reads it and sends it
+        self.assertEqual("answer", out["kind"])
+        self.assertNotIn("reset", out)
+        new = self.new_since(before)
+        self.assertIn("<request>\nWhere does Pricing stand? (Pricing in Work)\n</request>", new["haiku"][0])
+        self.assertNotIn("<earlier-request>", new["haiku"][0])
         self.assertIn("BIRCHPRICE12", new["sonnet"][0])
+        for m in new["haiku"] + new["sonnet"]:
+            self.assertNotIn(ACME, m)
+            self.assertNotIn("HOMEPRICE13", m)
         self.assertEqual({"birch"}, a.seen)
 
-    def test_a_reset_before_reading_carries_nothing_of_a_question_back(self):
+    def test_the_refill_settles_as_a_request_of_its_own(self):
+        """The brackets read as the answer to the question the request would
+        ask, under every rule an answer is held to, and only in a request
+        that would otherwise be asked about."""
+        self.pricing_in_two_zones()
+        lib = ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+
+        def settled(text):
+            got = ask.scope_lib().mentions(self.root, text, names, ctx, lib)
+            return got.question or got.places
+        work, home = [("Work", "Pricing", None)], [("Personal", "Pricing", None)]
+        for text, places in (("Where does Pricing stand? (Pricing in Work)", work),
+                             ("Where does Pricing stand? (Pricing in Personal.)", home),
+                             ("Where does Pricing stand?  (in Personal)  ", home),
+                             ("Where does Pricing stand? (Acme Review, Pricing)",
+                              [("Work", "Acme Review", "Pricing"), ("Work", "Acme Review", None)]),
+                             ("Where does Pricing stand? (The Birch one.)", work)):
+            self.assertEqual(places, settled(text), text)
+        for text in ("Where does Pricing stand? (not Pricing in Work)", "Where does Pricing stand? (Work or Personal)",
+                     "Where does Pricing stand? (the other one)", "Where does Pricing stand? (Pricing in Work",
+                     "(Pricing in Work)", "Where does Pricing stand? ()", "Where (Pricing in Work) does Pricing stand?",
+                     "Where does Pricing stand? (Pricing (in Work))"):
+            self.assertTrue(str(settled(text)).startswith("Which do you mean"), text)
+        got = ask.scope_lib().mentions(self.root, "Where does Pricing stand?\nThe Birch one.", names, ctx, lib,
+                                       answer=len("Where does Pricing stand?") + 1)
+        self.assertEqual(("Pricing in Work", {"birch"}), (got.option, got.parties))
+
+    def test_a_refill_names_the_option_or_else_the_answer_as_typed(self):
+        """The option as the question offered it, whatever the answer said;
+        with no option, the answer as typed, used as it is when it does not
+        settle as the answer did, for the user to read."""
+        write(self.root / "System" / "context.md", CONTEXT.replace(
+            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | |\n| Birch & Co |").replace(
+            "| Theo Marsh | `birch` | Managing partner |",
+            "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
+        a = self.asker()
+        lib = ask.scope_lib().lib(self.root)
+        a.ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        asked = "What did Dana say?"
+        for answer, refill in (("In Personal", "What did Dana say? (Dana Whitlock of Acme Corp in Personal)"),
+                               ("dana whitlock of acme corp in work.", "What did Dana say? (Dana Whitlock of Acme Corp in Work)")):
+            named = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, a.ctx, lib, answer=len(asked) + 1)
+            self.assertEqual(refill, a.refilled(asked, answer, named, names)["refill"], answer)
+        # No option to give: the answer as typed, in brackets, the answer's spaces folded.
+        named = ask.scope_lib().Mentions([])
+        self.assertEqual("What memo is that? (the Birch one)",
+                         a.refilled("What memo is that?  ", "the \n Birch one", named, names)["refill"])
+
+    def test_a_reset_before_reading_puts_the_question_back_and_reads_nothing(self):
         """The reset that runs when the find, not the request, crosses the
-        wall gave the fresh answer session the whole earlier request."""
+        wall: the command session had its turn before the scope was known,
+        and after the reset nothing more is sent, nothing is read, and the
+        question comes back. The request is one line in the ledger."""
         self.budget()
         self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
         self.assertEqual("clarify", a.ask("Where is the Budget plan " + self.EARLIER)["kind"])
+        sent = len(self.msgs())
+        ledger = ask.agent().ledger_path()
+        lines = len(ledger.read_text().splitlines()) if ledger.exists() else 0
         out = a.ask("The one in Personal.")                                 # no wall named: the find crosses it
-        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        new = self.assert_carries_nothing(before, "The one in Personal.")
-        self.assertNotIn("Budget plan", new["sonnet"][0])
-        self.assertIn(BIRCH, new["sonnet"][0])
+        self.assert_refilled(out, "Where is the Budget plan %s (Home, Budget)" % self.EARLIER)
+        msgs = self.msgs()
+        self.assertEqual(sent + 1, len(msgs))                               # the command turn, before the reset
+        self.assertIn("<earlier-request>", msgs[-1])
+        (old,) = [p["pid"] for p in self.procs() if p["pid"] in before and p["model"] == "haiku"]
+        self.assertEqual(msgs[-1], self.msgs(old)[-1])                     # to the session that was then reset
+        self.assertTrue(self.gone(old))
+        self.assertEqual([], self.sent_since(before))                      # nothing to any process since
+        self.assertNotIn("sonnet", [p["model"] for p in self.procs() if p["pid"] not in before])
+        self.assertEqual(lines + 1, len(ledger.read_text().splitlines()))  # one line, the command turn's
+        self.assertEqual((None, set(), set(), []), (a.unclear, a.seen, a.heard, a.passages))
+        out = a.ask(out["refill"])
+        self.assertNotEqual("clarify", out["kind"])                         # settled: Home's Budget, no question
+        self.assertNotIn("reset", out)
+        (cmd,) = self.new_since(before)["haiku"]
+        self.assertIn('"Budget": the thread Budget of Home in Personal', cmd)
 
-    def test_a_wall_reset_carries_no_far_name_settled_before_it(self):
+    def test_a_wall_reset_after_a_question_back_sends_no_far_name_settled_before_it(self):
         """#294: a far-side alias settled in the request asked about reaches
-        neither new session, nor the scope."""
+        neither new session. The question waits in the box; nothing is read."""
         self.budget()
-        self.rules([["The Birch one", find("thread", [], project="Birch Entry", thread="Budget")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
         self.assertEqual("clarify", a.ask("Did dana whitlaw ask about the Budget quote?")["kind"])
+        sent = len(self.msgs())
         out = a.ask("The Birch one.")
-        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        new = self.new_since(before)
-        self.assertTrue(new.get("haiku") and new.get("sonnet"))
-        self.assertIn("BIRCHBUDGET21", "\n".join(new["sonnet"]))
-        for m in new["haiku"] + new["sonnet"]:
-            for word in ("dana", "whitlaw", "whitlock", "quote", "<earlier-request>", ACME.lower()):
-                self.assertNotIn(word, m.lower())
-        self.assertIn("<request>\nThe Birch one.\n</request>", new["sonnet"][0])
+        self.assert_refilled(out, "Did dana whitlaw ask about the Budget quote? (Birch Entry, Budget)")
+        self.assertEqual(sent, len(self.msgs()))
+        self.assertEqual([], self.sent_since(before))
+        self.assertEqual([], self.together("BIRCHBUDGET21"))
+        self.assertIsNone(a.unclear)
+        self.assertNotIn("reset", a.ask("open Birch Entry"))                # the next request joins nothing
+        (cmd,) = self.new_since(before)["haiku"]
+        self.assertNotIn("<earlier-request>", cmd)
+        self.assertNotIn("Budget quote", cmd)
 
 
 class TestEitherProcess(AnswerCase):
@@ -1026,6 +1117,28 @@ class TestSealed(AnswerCase):
                 return out
             time.sleep(0.05)
         self.fail("the server never listened")
+
+    def test_the_server_sends_the_refill_and_logs_none_of_it(self):
+        """#294: the final line carries the question to put back, the reset
+        for the divider, and no renewal; ask.log holds none of the question."""
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "Birch's Pricing")
+        t = self.serve_in_thread()
+        try:
+            self.op("warm")
+            ask.call(self.root, "ask", "What did Dana say about the pallet quote?", start=False)
+            self.assertEqual("clarify", ask.call(self.root, "ask", "Where does Pricing stand?", start=False)["kind"])
+            out = ask.call(self.root, "ask", "The Birch one.", start=False)
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
+        self.assertEqual(("clarify", ask.REFILLED, "wall", "Where does Pricing stand? (Birch Entry, Pricing)"),
+                         (out["kind"], out["say"], out.get("reset"), out.get("refill")))
+        self.assertNotIn("refreshed", out)
+        logged = (ask.agent().jobs_dir() / "ask.log").read_text()
+        self.assertIn("ask clarify reset", logged)
+        self.assertNotIn("Pricing stand", logged)
 
     def test_the_command_session_is_sealed_however_it_starts(self):
         t = self.serve_in_thread()
@@ -1241,6 +1354,28 @@ class TestCodex(base.AskCase):
             self.assertNotIn("add call Dana", prompts[1])                        # nothing of Acme's resent
             self.assertNotIn("<earlier-answer>", prompts[1])
             self.assertEqual(["open Birch Entry"], [r for r, _ in a.session.history])
+        finally:
+            ask.agent().run = real
+
+    def test_a_wall_reset_after_a_question_back_calls_nothing(self):
+        """#294: with Codex too, the answer that crossed the wall is not sent,
+        and the question comes back for the user to send."""
+        os.environ["GARRICK_HARNESS"] = "codex"
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        prompts = []
+        real = ask.agent().run
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: prompts.append(prompt) or (
+            0, json.dumps({"say": "ok", "do": []}))
+        try:
+            a = ask.Asker(self.root)
+            a.ask("add call Dana to Acme")
+            self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+            out = a.ask("The Birch one.")
+            self.assertEqual(("clarify", ask.REFILLED, "wall", "Where does Pricing stand? (Birch Entry, Pricing)"),
+                             (out["kind"], out["say"], out.get("reset"), out.get("refill")))
+            self.assertEqual(1, len(prompts))                                    # the first request's call alone
+            self.assertEqual([], a.session.history)
+            self.assertIsNone(a.unclear)
         finally:
             ask.agent().run = real
 

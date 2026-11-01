@@ -1383,6 +1383,20 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertLess(shown.index("askAfresh"), shown.index("turn.request"))   # above the turn it came with
         self.assertNotIn("askTurns", self.between("let askAfresh", "\n"))
 
+    def test_a_refill_goes_in_the_field_and_is_never_sent(self):
+        """#294: the question a wall reset gave back is put in an empty field,
+        the cursor at its end, and the field focused; only the user sends it."""
+        submit = self.body("askSubmit")
+        block = submit[submit.index('if let refill = out["refill"] as? String'):]
+        block = block[:block.index("\n\t\t\t}\n")]
+        self.assertIn("self.askField.string.isEmpty", block)
+        self.assertIn("self.askField.string = refill", block)
+        self.assertIn("self.askField.setSelectedRange(NSRange(location: (refill as NSString).length, length: 0))", block)
+        self.assertIn("self.askPanel?.makeFirstResponder(self.askField)", block)
+        self.assertNotIn("askSubmit", block)
+        self.assertNotIn("askGarrick", block)
+        self.assertEqual(1, self.swift.count('out["refill"]'))                  # read there and nowhere else
+
     def test_lines_are_read_as_they_come_and_stop_interrupts(self):
         stream = self.between("func askStream(", "\n}\n")
         self.assertIn("readabilityHandler", stream)

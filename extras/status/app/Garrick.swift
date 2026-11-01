@@ -2045,6 +2045,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			if turn.kind != "command" || turn.afresh || startNew { self.askExpanded = true }
 			// Stopped: nothing was done, so the question goes back in the field, to be sent again or changed.
 			if turn.stopped && self.askField.string.isEmpty { self.askField.string = text }
+			// The answer to a question back crossed a wall (#294): nothing of it was sent, and the question
+			// comes back in the field with the option it was settled to, the cursor at its end, for you to
+			// read and send. Never sent from here.
+			if let refill = out["refill"] as? String, !refill.isEmpty, self.askField.string.isEmpty {
+				self.askField.string = refill
+				self.askField.setSelectedRange(NSRange(location: (refill as NSString).length, length: 0))
+				self.askPanel?.makeFirstResponder(self.askField)
+			}
 			// Stop and start new, but the request had finished, or was past where Stop is heard: what it
 			// did stays on screen, and the new conversation starts under it.
 			if startNew {

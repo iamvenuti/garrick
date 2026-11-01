@@ -82,6 +82,27 @@ class TodoTest(unittest.TestCase):
         self.assertEqual([("2026-10-15", "- [ ] later chase ⏳ 2026-10-15"), ("", "- [ ] no chase")], got["waiting"])
         self.assertEqual((1, 1), (got["undated"], got["no_chase"]))
 
+    def test_a_date_no_calendar_has_is_no_date(self):
+        """A typo such as 31 April fails no reader of the list: the line is
+        read as undated, or as waiting with no chase date, and the rest as
+        before."""
+        lines = ["## Inbox", "- [ ] past typo 📅 2026-02-30", "- [ ] future typo 📅 2026-04-31",
+                 "- [ ] late 📅 2026-10-01", "## Waiting on", "- [ ] chase typo ⏳ 2026-02-30",
+                 "- [ ] later chase typo ⏳ 2026-11-31", "- [ ] chased ⏳ 2026-10-11"]
+        got = todo.classify(lines, dt.date(2026, 10, 12))
+        self.assertEqual([(11, "- [ ] late 📅 2026-10-01")], got["overdue"])
+        self.assertEqual([], got["later"])
+        self.assertEqual(["- [ ] past typo 📅 2026-02-30", "- [ ] future typo 📅 2026-04-31"], got["open"])
+        self.assertEqual(["- [ ] chased ⏳ 2026-10-11"], got["chase"])
+        self.assertEqual([("", "- [ ] chase typo ⏳ 2026-02-30"), ("", "- [ ] later chase typo ⏳ 2026-11-31")],
+                         got["waiting"])
+        self.assertEqual((2, 2), (got["undated"], got["no_chase"]))
+        write(self.zone / "Todo.md", LIST.replace("📅 2026-10-14", "📅 2026-02-30").replace("✅ 2026-10-01", "✅ 2026-02-30"))
+        text = todo.digest(self.zone, dt.date(2026, 10, 21))
+        self.assertIn("Overdue · 1\n- Freight: book the call (1d late)", text)
+        self.assertIn("3 undated", text)
+        self.assertEqual(2, todo.archive(self.zone, dt.date(2026, 10, 21)))
+
     def test_expire_waits_its_days_then_moves_the_untriaged_lines_out_unchanged(self):
         day = dt.date(2026, 10, 1)
         self.assertEqual(0, todo.expire(self.root, self.zone, day))
@@ -275,6 +296,16 @@ class SourceFormsTest(unittest.TestCase):
         for line in self.LINES[:2]:                                     # a Markdown link's source is left out
             self.assertEqual("Pricing: chase Dana", todo.plain(line), line)
         self.assertTrue(todo.plain(self.LINES[2]).startswith("Pricing: chase Dana"))   # a wikilink's, as before
+
+    def test_the_digest_leaves_out_a_folded_source_with_its_link(self):
+        line = ("- [ ] [[Pricing]]: chase Dana · [Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md)"
+                " (also in [Acme 2](../../Wikis/Meetings/wiki/sources/260311-acme-2.md)) 📅 2026-03-12")
+        self.assertEqual("Pricing: chase Dana", todo.plain(line))
+        self.assertEqual("Pricing: chase Dana", todo.plain(line.replace(" (also in", " · (also in")))
+
+    def test_the_skill_reads_a_folded_source_as_the_check_does(self):
+        import garrick_lib
+        self.assertEqual(garrick_lib.TODO_ALSO_RE.pattern, todo.ALSO.pattern)
 
     def test_the_page_reads_the_line_whatever_the_source(self):
         for line in self.LINES:

@@ -2018,6 +2018,37 @@ class TestActions(AnswerCase):
         self.assertEqual(5, len(out["claims"]))
         self.assertEqual(["And 3 more."], out["after"])
 
+    def test_a_source_folded_onto_a_line_leaves_nothing_behind(self):
+        """#318's relative link inside an `(also in …)`: the reply says the
+        action alone, with no `)` left over from the link."""
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace(
+            "[[Pricing]]: Draft the rate card 📅 2026-10-30",
+            "[[Pricing]]: Draft the rate card · [Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md)"
+            " (also in [Acme kick-off, 2](../../Wikis/Meetings/wiki/sources/260311-acme-kickoff-2.md)) 📅 2026-10-30"))
+        out = self.asker().ask("What do I owe Dana?", today=self.TODAY)
+        self.assertIn("Due on 30 October: Draft the rate card (Pricing, in Work).", self.texts(out))
+        self.assertNotIn("kick-off", json.dumps(self.texts(out)))
+
+    def test_a_date_no_calendar_has_fails_no_list(self):
+        """A due or chase date such as 30 February is read as no date: the
+        line is listed with none, and the rest of the list as before."""
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace(
+            "## Waiting on\n", "- [ ] [[Pricing]]: Check the pallet count 📅 2026-04-31\n"
+                               "- [ ] [[Pricing]]: File the old quote 📅 2026-02-30\n\n## Waiting on\n"
+                               "- [ ] [[Pricing]]: Dana to send the forecast ⏳ 2026-11-31\n"
+                               "- [ ] [[Pricing]]: Dana to sign the letter ⏳ 2026-02-30\n"))
+        out = self.asker().ask("What do I owe Dana?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual("3 days late: Send the revised terms (Pricing, in Work).", said[0])
+        self.assertIn("Due on 30 October: Draft the rate card (Pricing, in Work).", said)
+        out = self.asker().ask("What am I waiting on?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertIn("Chase yesterday: Dana to confirm the volumes (Pricing, in Work).", said)
+        self.assertTrue(any("Dana to send the forecast" in t for t in said), said)
+        self.assertTrue(any("Dana to sign the letter" in t for t in said), said)
+
     def test_a_find_for_actions_is_checked(self):
         sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
         ctx, names = lib.load_context(self.root), ask.scan(self.root)

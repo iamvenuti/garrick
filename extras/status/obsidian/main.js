@@ -660,13 +660,15 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		if (jobLog(p)) return shell.openPath(p);
 		const mine = workspaceFile(this.root(), p);
 		if (!mine) return new Notice("That link leads outside this workspace, so nothing was opened.");
-		const rel = path.relative(this.vaultPath(), mine);
-		if (!rel.startsWith("..") && !path.isAbsolute(rel) && this.app.vault.getAbstractFileByPath(rel.split(path.sep).join("/"))) {
-			return this.app.workspace.openLinkText(rel.split(path.sep).join("/"), "", "tab");
-		}
+		// What could run something is shown in Finder before anything else is
+		// asked of it, a file the vault holds too: Obsidian lists every file.
 		if (runsSomething(mine)) {
 			new Notice(path.basename(mine) + " could run something, so it is shown in Finder rather than opened.");
 			return shell.showItemInFolder(mine);
+		}
+		const rel = path.relative(this.vaultPath(), mine);
+		if (!rel.startsWith("..") && !path.isAbsolute(rel) && this.app.vault.getAbstractFileByPath(rel.split(path.sep).join("/"))) {
+			return this.app.workspace.openLinkText(rel.split(path.sep).join("/"), "", "tab");
 		}
 		return shell.openPath(mine);
 	}

@@ -468,7 +468,8 @@ FOLLOW = textwrap.dedent(r"""
     const p = new Plugin();
     p.settings = { workspace: root, python: "/usr/bin/python3", script: "", flags: "", hideParked: true };
     p.app = { vault: { getName: () => "Workspace", adapter: { getBasePath: () => root },
-                       getAbstractFileByPath: (rel) => rel.endsWith(".md") ? {} : null },
+                       // Obsidian lists every file of a vault: a note, and a script beside it.
+                       getAbstractFileByPath: (rel) => /\.(md|command)$/.test(rel) ? {} : null },
               workspace: { openLinkText: (rel) => ran.push(["obsidian", rel]) } };
     const out = {};
     for (const [name, url] of JSON.parse(process.env.LINKS)) {
@@ -485,7 +486,8 @@ FOLLOW = textwrap.dedent(r"""
 class TestFollowAsTheAppDoes(ActionCase):
     """#318: in Obsidian's tab a link on the page follows the app's rules: a
     file of the workspace only, no symlink anywhere below its folder, a file
-    that could run something shown in Finder, and the web, http and https only."""
+    that could run something shown in Finder, the vault's own included, and
+    the web, http and https only."""
 
     def test_a_link_opens_only_what_the_app_would(self):
         base = Path(self._tmp.name).resolve()

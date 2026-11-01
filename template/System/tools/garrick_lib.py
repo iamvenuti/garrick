@@ -119,6 +119,8 @@ __all__ = [
     "entity_pages",
     "name_words",
     "name_keys",
+    "TODO_ALSO_RE",
+    "names_meet",
     "person_forms",
     "people_parties",
     "organisation_link",
@@ -1086,10 +1088,11 @@ def entity_pages(root: PathLike) -> List[Tuple[str, Path]]:
 
 def party_entities(root: PathLike) -> Dict[str, List[str]]:
     """{tag: [the rel of each entity page that stands for it]}, from the
-    Meetings wiki's `wiki/entities/`, subfolders included. Only a page of
-    `type: entity` that names one party in `party:` and carries no `parties:`
-    counts, as Ask reads a page's `party:` alone (ask_scope.PARTY_ALONE): one
-    naming several, `none` or nothing stands for no party here."""
+    Meetings wiki's `wiki/entities/`, subfolders included. A page there
+    counts when its `type:` is `entity` or missing, since the folder holds
+    entity pages; it names one party in `party:`; and it carries no
+    `parties:`, as Ask reads a page's `party:` alone (ask_scope.PARTY_ALONE).
+    One naming several, `none` or nothing stands for no party here."""
     out: Dict[str, List[str]] = {}
     for rel, page in entity_pages(root):
         fm = parse_frontmatter(page)
@@ -1118,14 +1121,54 @@ def name_words(name) -> List[str]:
     return re.findall(r"[a-z0-9]+", text)
 
 
+def _name_readings(name) -> List[List[str]]:
+    """A name's words as written, and, where one comma splits it in two, read
+    the other way round too, so `Whitlock, Dana` is also `Dana Whitlock`."""
+    text = str(name or "")
+    out = [name_words(text)]
+    head, comma, tail = text.partition(",")
+    if comma and "," not in tail:
+        out.append(name_words(tail) + name_words(head))
+    return [w for w in out if w]
+
+
 def name_keys(name) -> set:
-    """The keys a name is matched by: all its words run together, and its
+    """The keys a name is matched by, for names_meet(). Loose on purpose: it
+    errs toward finding a second hat, so a page that might be one of two
+    walled people links neither.
+
+    Exact keys, which meet the same key: all its words run together, and its
     first and last words, so a middle name or initial does not keep two
-    spellings apart. Loose on purpose: it errs toward finding a second hat."""
-    w = name_words(name)
-    if not w:
-        return set()
-    return {"all:" + "".join(w)} | ({"ends:%s|%s" % (w[0], w[-1])} if len(w) > 1 else set())
+    spellings apart. Then keys that meet only their partner, `<` a short form
+    and `>` the full one it may stand for: a name of one word stands for any
+    name opening with that word (`Eli` for `Eli Cohen`), an initial and a
+    surname for a name with that initial and surname (`D. Whitlock`), and a
+    first name and an initial for one with that name and last initial
+    (`Dana W.`). Each reading of the name counts (_name_readings)."""
+    keys = set()
+    for w in _name_readings(name):
+        keys.add("all:" + "".join(w))
+        if len(w) == 1:
+            keys.add("<first:" + w[0])
+            continue
+        first, last = w[0], w[-1]
+        keys |= {"ends:%s|%s" % (first, last), ">first:" + first,
+                 ">init:%s|%s" % (first[0], last), ">linit:%s|%s" % (first, last[0])}
+        if len(first) == 1:
+            keys.add("<init:%s|%s" % (first, last))
+        if len(last) == 1:
+            keys.add("<linit:%s|%s" % (first, last))
+    return keys
+
+
+def names_meet(a: set, b: set) -> bool:
+    """Do two sets of name_keys() stand for one name? An exact key or a short
+    form both share, or a short form in one and its full form in the other.
+    Two full forms alone never meet: `David Whitlock` is not `Dana Whitlock`."""
+    if any(not k.startswith(">") for k in a & b):
+        return True
+    turn = {"<": ">", ">": "<"}
+    return any(turn[k[0]] + k[1:] in b for k in a if k[:1] in turn)
 
 
 def person_forms(context: dict, row: dict) -> List[str]:
@@ -1137,22 +1180,24 @@ def person_forms(context: dict, row: dict) -> List[str]:
     for cell in (name, str(row.get("role") or "")):
         forms += [m.strip() for m in _SIGNS_AS.findall(cell)]
     keys = set().union(*(name_keys(f) for f in forms))
-    forms += [heard for heard, means in context.get("aliases", {}).items() if name_keys(means) & keys]
+    forms += [heard for heard, means in context.get("aliases", {}).items() if names_meet(name_keys(means), keys)]
     return [f for f in forms if name_words(f)]
 
 
 def people_parties(context: dict, names) -> set:
     """The tags the People table gives any of `names`, a page's title and its
-    file name say, by every name each row goes by (person_forms). A row found
-    brings every row of the same name with it, so a nickname or a `signs as`
-    written on one hat's row alone still finds the other hat."""
+    file name say, by every name each row goes by (person_forms), as
+    names_meet() matches them. A row found brings every row of the same name
+    with it, so a nickname or a `signs as` written on one hat's row alone
+    still finds the other hat."""
     keys = set().union(set(), *(name_keys(n) for n in ([names] if isinstance(names, str) else names)))
     if not keys:
         return set()
     rows = [(p, set().union(set(), *(name_keys(f) for f in person_forms(context, p)))) for p in context.get("people", [])]
-    hit = [r for r in rows if keys & r[1]]
-    named = set().union(set(), *(name_keys(p.get("name")) for p, _ in hit))
-    found = {strip_tag(p.get("party") or "") for p, forms in rows if (p, forms) in hit or named & name_keys(p.get("name"))}
+    hit = [i for i, (_, forms) in enumerate(rows) if names_meet(keys, forms)]
+    named = set().union(set(), *(name_keys(rows[i][0].get("name")) for i in hit))
+    found = {strip_tag(p.get("party") or "") for i, (p, _) in enumerate(rows)
+             if i in hit or names_meet(named, name_keys(p.get("name")))}
     return found - {""}
 
 
@@ -1164,9 +1209,9 @@ def organisation_link(root: PathLike, context: dict, names, party,
 
     - the page names exactly one party, a tag in the Parties table, not `none`;
     - where the People table has rows for the name, under any name the row
-      goes by, one of them is that party, and no two of them are walled from
-      each other: one page a name shares between two hats links neither
-      hat's entity page;
+      goes by and in any short form names_meet() reads as it, one of them is
+      that party, and no two of them are walled from each other: one page a
+      name shares between two hats links neither hat's entity page;
     - exactly one entity page stands for that party alone.
     """
     tags = sorted(set(tag_list(party)))
@@ -1659,7 +1704,13 @@ _TASKS_PRIORITY_RE = re.compile(r" *([\U0001F53A⏫\U0001F53C\U0001F53D⏬])️?
 _TASKS_DATE_RE = re.compile(r" *((?:\U0001F4C5|\U0001F4C6|\U0001F5D3|⏳|⌛|\U0001F6EB|➕|✅|❌)️?"
                             r" *\d{4}-\d{2}-\d{2})")
 _TASKS_SRC_RE = re.compile(r"\s*·\s*\[src\]\(([^)\s]*)\)")
-_TASKS_ALSO_RE = re.compile(r"\s*\(also in ((?:[^()]|\([^()]*\))*)\)")
+# The `(also in …)` the todo skill folds onto a line, whose sources are
+# Markdown links, one level of parentheses inside it; TODO_ALSO_RE takes the
+# `·` before it as well. todo.py, which stands alone, holds the same pattern,
+# and tests/test_todo.py holds the two together.
+_ALSO_IN = r"\(also in ((?:[^()]|\([^()]*\))*)\)"
+_TASKS_ALSO_RE = re.compile(r"\s*" + _ALSO_IN)
+TODO_ALSO_RE = re.compile(r"\s*·?\s*" + _ALSO_IN)
 
 
 def same_action(line: str) -> str:

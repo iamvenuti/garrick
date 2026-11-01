@@ -540,7 +540,21 @@ def asks_back(text: str, said_: str, do: list) -> bool:
 LOOKS_JSON = re.compile(r"""\{\s*["']|["'](?:claims|cite|say|incomplete|asks)["']""")
 
 
-def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
+# A sentence that says something did not happen after a time, or that the
+# records hold nothing more: "there was no meeting with Acme after 3 March",
+# "nothing since then", "no later call". Said from part of the matches, it is a
+# fact about the records given, not the records (#315).
+ABSENCE = re.compile(r"(?:\b(?:no|none|nothing|never|not|neither|nor)\b|n't\b)(?:(?![.;!?]).)*?"
+                     r"\b(?:after|since|later|newer|more\s+recent|other|further|again|any\s+more|anymore)\b", re.I)
+
+
+def absent(text: str) -> bool:
+    """Whether a claim says that something did not happen, or that nothing
+    more is recorded, which a part of the matches cannot show (#315)."""
+    return bool(ABSENCE.search(text or ""))
+
+
+def cited(text: str, allowed: Dict[str, dict], partial: bool = False) -> Tuple[List[dict], str, bool]:
     """An answer's claims, each with the ids of the records it rests on, what
     an answer with no claims says, and whether the records hold only part of
     the answer: (claims, say, incomplete). Only the reply's first JSON object
@@ -548,21 +562,36 @@ def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
     dropped and never looked up; a claim keeps its words with no id left. A
     reply that is not such an object is said as it stands when it is plain
     words, and never when it looks like one: its raw text could hold what
-    a refused citation named, so UNREADABLE is said in its place."""
+    a refused citation named, so UNREADABLE is said in its place.
+
+    `partial` is a turn given fewer records than matched (#315): a record
+    it was not given may exist, so a claim that something did not happen,
+    or that nothing more is recorded (absent()), is dropped, and the answer
+    is incomplete whatever it said. Plain words said as they stand are held
+    to the same."""
     obj = first_object(text)
     if obj is None:
         plain = (text or "").strip()
+        if partial and absent(plain):
+            return [], "", True
         return [], (UNREADABLE if LOOKS_JSON.search(plain) else plain), False
-    claims = []
+    claims, dropped = [], False
     for c in obj.get("claims") if isinstance(obj.get("claims"), list) else []:
         if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not c["text"].strip():
             continue
+        words = " ".join(c["text"].split())
+        if partial and absent(words):
+            dropped = True
+            continue
         cite = c.get("cite") if isinstance(c.get("cite"), list) else []
         ids = [i for i in dict.fromkeys(x for x in cite if isinstance(x, str)) if i in allowed]
-        claims.append({"text": " ".join(c["text"].split()), "ids": ids})
+        claims.append({"text": words, "ids": ids})
     claims = claims[:MOST_CLAIMS]               # the brief's three at most; the rest are neither said nor cited
     say = obj.get("say") if isinstance(obj.get("say"), str) and not claims else ""
-    return claims, say.strip(), obj.get("incomplete") is True
+    say = (say or "").strip()
+    if partial and absent(say):
+        say, dropped = "", True
+    return claims, say, obj.get("incomplete") is True or dropped
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
@@ -1118,6 +1147,8 @@ class Asker:
         if not self.session.remembers:
             return reply(NEED_CLAUDE), False
         self.progress("Finding the records")
+        if isinstance(find, dict) and find.get("order") is None and sc.wants_recent(request):
+            find = dict(find, order="recent")       # a question about the last or since, however the find put it (#315)
         try:
             where = sc.scope(self.ws, find, named, names, self.ctx, lib)
         except sc.Unclear as e:
@@ -1135,7 +1166,7 @@ class Asker:
             self.afresh = True
             if asked:                               # an answer: nothing is read, and nothing more sent (#294)
                 return self.refilled(first, request[asked:], named, names), True
-        records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
+        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
             out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
@@ -1155,7 +1186,7 @@ class Asker:
         if "answer" in self.refreshed:              # renewed by size: the records it held are gone
             parts.append("<refreshed/>")
         parts += ["<request>\n%s\n</request>" % request[-MAX_REQUEST:],
-                  self.admit(records, {p for r in records for p in r["parties"]})]
+                  self.admit(records, {p for r in records for p in r["parties"]}, matched, where.order)]
         self.seen |= named.parties                  # it is sent the request too, and so the names in it
         self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
         try:
@@ -1169,7 +1200,7 @@ class Asker:
         # process since replaced or nowhere at all is refused, and leaves no
         # trace in the reply (#261, slice D).
         this_turn = {p["id"]: p for p in self.passages[before:]}
-        claims, rest, incomplete = cited(text, this_turn)
+        claims, rest, incomplete = cited(text, this_turn, partial=matched > len(records))
         self.asking = asks_back(text, " ".join([c["text"] for c in claims] + [rest]), [])
         after = []
         if not claims and not rest:                 # no answer at all, incomplete or not
@@ -1239,20 +1270,26 @@ class Asker:
             out.append(src)
         return out
 
-    def admit(self, passages: List[dict], parties) -> str:
+    def admit(self, passages: List[dict], parties, matched: Optional[int] = None, order: Optional[str] = None) -> str:
         """The only way a record reaches a prompt (#261, section 3): the
         passages as `<records>`, each with an id, and their parties added to
         `seen`, the parties whose material the answer process holds. A
         passage of no party, Knowledge or the docs, adds none. Refuses what a
         wall divides from what the process holds: the reset runs before
-        anything is read, so this never happens unless that order breaks."""
+        anything is read, so this never happens unless that order breaks.
+        The tag says how many records matched, how many it was given and in
+        what order (#315): `<records matched="71" given="8" order="recent">`,
+        so the answer knows a record it was not given may exist. `matched`
+        counts only what a wall left it free to read (ask_scope.choose())."""
         lib = scope_lib().lib(self.ws)
         held = self.holding()
         adding = set(parties) | {p for r in passages for p in r["parties"]}
         if scope_lib().any_wall(self.ctx, adding, adding | held, lib):
             raise Bad("a wall stands between these records and what the session holds, so none was read")
         self.seen |= adding
-        rows = ["<records>"]
+        given = len(passages)
+        rows = ['<records matched="%d" given="%d"%s>' % (max(matched if isinstance(matched, int) else given, given), given,
+                                                        ' order="%s"' % attr(order) if order else "")]
         for r in passages:
             rid = "r%d" % (len(self.passages) + 1)
             self.passages.append({"id": rid, "path": r["path"], "title": r.get("title") or "",

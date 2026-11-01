@@ -57,6 +57,11 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 HERE = Path(__file__).resolve().parent
 ROUTES = ("meetings", "knowledge", "thread", "docs")
+ORDERS = ("recent",)        # a find's `order`: the newest first, for a question about the last or since (#315)
+# A question about time, in the user's own words: the last, the latest, the
+# most recent or newest, or what happened since. Read when the session's find
+# leaves `order` out, so such a question is ranked by date all the same.
+RECENT = re.compile(r"\b(?:last|latest|most\s+recent(?:ly)?|newest|since)\b", re.I)
 MAX_WORDS = 8               # words a find may look for
 MAX_RECORDS = 8             # records one answer is given
 PASSAGE = 1500              # characters of one record an answer is given
@@ -422,12 +427,46 @@ def which(cands: List[Entry], ctx: dict) -> str:
 class Scope:
     """Where an answer reads. `parties` are the tags it may read for; `every`
     is a question across every zone, which reads within one group of
-    parties no wall divides."""
+    parties no wall divides. `order` is "recent" for a question about the
+    last or since (#315), else None; `groups` are the words in groups, two
+    spellings of one name in one group (groups())."""
 
     def __init__(self, route: str, zone: Optional[str], project: Optional[str], thread: Optional[str],
-                 words: List[str], parties: Set[str], every: bool = False):
+                 words: List[str], parties: Set[str], every: bool = False, order: Optional[str] = None,
+                 groups: Optional[List[List[str]]] = None):
         self.route, self.zone, self.project, self.thread = route, zone, project, thread
         self.words, self.parties, self.every = words, parties, every
+        self.order = order
+        self.groups = groups if groups is not None else [[w] for w in words]
+
+
+def wants_recent(text: str) -> bool:
+    """Whether a request asks about the last, the latest or since (#315)."""
+    return bool(RECENT.search(str(text or "")))
+
+
+def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[List[str]]:
+    """The words of a find in groups, each group one thing (#315): words that
+    settle to the same party, place or person are one group, whichever
+    spelling each is ("acme", "acme corp", "acmecorp"), and any other word a
+    group of its own. A page is ranked by the groups it holds, not by how
+    many spellings of one name it uses."""
+    known: Dict[str, Set[Entry]] = {}
+    for form, _, e in entries(ws, names, ctx, lib_):
+        n = _norm(form)
+        for k in (n, n.replace(" ", "")):
+            known.setdefault(k, set()).add(e)
+    out: List[List[str]] = []
+    keys: List[object] = []
+    for w in words:
+        found = known.get(w, set()) | known.get(w.replace(" ", ""), set())
+        key = frozenset(found) if found else ("word", w)
+        if key in keys:
+            out[keys.index(key)].append(w)
+        else:
+            keys.append(key)
+            out.append([w])
+    return out
 
 
 def no_zone(zone, names: Dict[str, Dict[str, dict]]) -> str:
@@ -467,6 +506,9 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         zone, project, thread = said.places[0]          # the place the request named, when the find left it out
     if route == "thread" and project is None:
         raise Unclear("Which project or thread do you mean?")
+    order = find.get("order")
+    if order is not None and order not in ORDERS:
+        raise Refused("not an order: %r" % (order,))
     raw = find.get("words") if isinstance(find.get("words"), list) else []
     words = []
     for w in raw:
@@ -474,21 +516,22 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         if len(w) >= SHORTEST and w not in words:
             words.append(w)
     words = words[:MAX_WORDS]
+    kept = dict(order=order, groups=groups(ws, words, names, ctx, lib_))
     if route in ("knowledge", "docs"):
-        return Scope(route, None, None, None, words, set())
+        return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
         hub = hub_parties(ws, zone, project, lib_)
         if not hub or not hub <= set(ctx.get("parties", {})):
             # Nothing can say which side of a wall its files are on.
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if hub else "in its hub"))
-        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)))
+        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)), **kept)
     if said.parties:
-        return Scope(route, zone, None, None, words, said.parties)
+        return Scope(route, zone, None, None, words, said.parties, **kept)
     if zone is not None:                        # every party of one zone
         return Scope(route, zone, None, None, words,
-                     {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone})
-    return Scope(route, None, None, None, words, set(), every=True)
+                     {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone}, **kept)
+    return Scope(route, None, None, None, words, set(), every=True, **kept)
 
 
 # ---------------------------------------------------------------- the records
@@ -591,6 +634,13 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     {"path", "date", "imported", "title", "parties", "text"}: the whole of it
     a prompt or a citation may hold. `date` is when it happened, `imported`
     when it was filed.
+
+    Best first is by the groups of words a record holds (groups()), each
+    counted once however it is spelled, then how often, then the date. With
+    `order` "recent" (#315) it is the newest first: by `date`, then
+    `imported`, and the words only break ties, so a question about the last
+    meeting with a party reads the newest pages that name it, not the ones
+    that name it most. A thread's own note comes first either way.
     Nothing outside the scope is opened."""
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
@@ -599,13 +649,15 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
-        hits = [low.count(w) for w in sc.words]
+        hits = [max(low.count(w) for w in group) for group in sc.groups]
         if sc.words and not any(hits) and not first:
             return
-        date = _date(fm, path)
-        rank = (1 if first else 0, sum(1 for h in hits if h), sum(hits), date)
+        date, imported = _date(fm, path), _imported(fm, path)
+        words = (sum(1 for h in hits if h), sum(hits))
+        lead = 1 if first else 0
+        rank = (lead, date, imported) + words if sc.order == "recent" else (lead,) + words + (date,)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
-        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": _imported(fm, path),
+        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
                              "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
 
     if sc.route in ("knowledge", "docs"):
@@ -681,11 +733,21 @@ def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
 
 def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool]:
     """The records a process that holds `held` may be given, best first, at
-    most `most`, and whether a wall held any back: one whose parties are
-    walled from each other, from a party held already, or from one picked
-    before it. So a question across every zone reads within one group of
-    parties no wall divides, the one its best record starts."""
-    group, chosen, back = set(held), [], False
+    most `most`, and whether a wall held any back: choose() without its count."""
+    chosen, back, _ = choose(records, held, ctx, lib_, most)
+    return chosen, back
+
+
+def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool, int]:
+    """The records a process that holds `held` may be given, best first, at
+    most `most`; whether a wall held any back: one whose parties are walled
+    from each other, from a party held already, or from one picked before
+    it; and how many it could have been given with no `most` (#315), the
+    `matched` the answer session is told beside how many it was given. A
+    record a wall held back is never counted, so the count says nothing of
+    what is on the far side. A question across every zone reads within one
+    group of parties no wall divides, the one its best record starts."""
+    group, chosen, back, matched = set(held), [], False, 0
     known = set(ctx.get("parties", {}))
     for r in records:
         parties = set(r["parties"])
@@ -694,7 +756,8 @@ def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_R
         if any_wall(ctx, parties, parties | group, lib_):
             back = True
             continue
+        matched += 1
         if len(chosen) < most:
             chosen.append(r)
             group |= parties
-    return chosen, back
+    return chosen, back, matched

@@ -40,7 +40,7 @@ the answer comes.
 
 or, for a question about what the records hold:
 
-{"say": "", "find": {"route": R, "zone": Z, "project": P, "thread": T, "words": [...]}}
+{"say": "", "find": {"route": R, "zone": Z, "project": P, "thread": T, "words": [...], "order": "recent"}}
 
 The actions, each an object:
 
@@ -110,9 +110,14 @@ Rules:
   only when the request names them or the question before it did: a
   follow-up such as "and what did she say about the date?" keeps the place
   of the question before it. "words" are up to eight words to look for, the
-  request's own: names and subjects, never "what", "said" or "last". A
+  request's own: names and subjects, never "what", "said" or "last". Give
+  a name once, as `<names>` or the list writes it, not in two spellings. A
   question across every zone ("what did I discuss this week?") names no
   zone, project or thread.
+- "order" is "recent" when the question is about the last, latest, most
+  recent or newest record, or about what happened since a date: "what's
+  the last meeting with Acme?", "anything new on Pricing since Monday?".
+  Garrick then reads the newest records first. Leave "order" out otherwise.
 - A request for what something holds or where it stands is a find however
   it is worded, an instruction as much as a question: "summarise X", "give
   me a summary of X", "brief me on X", "tell me about X", "what's the

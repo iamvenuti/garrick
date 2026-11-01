@@ -14,6 +14,7 @@ import ast
 import io
 import json
 import os
+import re
 import signal
 import sys
 import textwrap
@@ -311,7 +312,7 @@ class TestAnswers(AnswerCase):
         out = self.asker().ask("What did Dana say about the pallet quote?")
         self.assertEqual(("Parked it.", [], []), (out["say"], out["done"], out["launch"]))   # said, never carried out
         self.assertIn("\nstatus: active\n", self.thread.read_text())
-        (sent,) = [m for m in self.msgs() if "<records>" in m]
+        (sent,) = [m for m in self.msgs() if "<records " in m]
         self.assertEqual(1, sent.count("</records>"))                          # the record's own tags are inert
         self.assertEqual(1, sent.count("<request>"))
         self.assertIn("&lt;/record>&lt;/records>", sent)
@@ -343,7 +344,7 @@ class TestAnswers(AnswerCase):
 
     def test_sources_are_read_through_extract(self):
         self.asker().ask("What are the pallet terms in Acme Review?")
-        said = "\n".join(m for m in self.msgs() if "<records>" in m)
+        said = "\n".join(m for m in self.msgs() if "<records " in m)
         self.assertIn(SOURCE, said)
         self.assertIn('path="Zones/Work/Acme Review/Sources/260301 - Pallet terms.docx"', said)
         self.assertNotIn("BIRCHTHREAD71", said)
@@ -365,7 +366,7 @@ class TestAnswers(AnswerCase):
             a = self.asker()
             out = a.ask(q)
             self.assertEqual("answer", out["kind"], q)
-            sent = [m for m in self.msgs() if "<records>" in m and q in m]
+            sent = [m for m in self.msgs() if "<records " in m and q in m]
             self.assertTrue(sent, q)
             self.assertIn('path="Zones/Work/Acme Review/Threads/Pricing/Pricing.md"', sent[-1])
         wrong = find("thread", ["Pricing"], zone="Acme Review", project="Acme Review", thread="Pricing")
@@ -375,7 +376,7 @@ class TestAnswers(AnswerCase):
 
     def test_a_thread_reads_its_note_first(self):
         self.asker().ask("Where does Pricing stand?")
-        (said,) = [m for m in self.msgs() if "<records>" in m]
+        (said,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn('<record id="r1" path="Zones/Work/Acme Review/Threads/Pricing/Pricing.md"', said)
         self.assertIn("Drafting.", said)
 
@@ -511,9 +512,9 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual([], self.procs())                                     # no session heard it
         out = a.ask("The Acme one.")
         self.assertEqual("answer", out["kind"])
-        (route,) = [m for m in self.msgs() if "<request>" in m and "<records>" not in m]
+        (route,) = [m for m in self.msgs() if "<request>" in m and "<records " not in m]
         self.assertIn("<earlier-request>\nWhere does Pricing stand?\n</earlier-request>", route)
-        (said,) = [m for m in self.msgs() if "<records>" in m]
+        (said,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", said)
         self.assertNotIn("Birch Entry/Threads", said)
 
@@ -558,7 +559,7 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual([], self.procs())                                     # no session heard any of it
         out = a.ask("The one in Work.")
         self.assertEqual("answer", out["kind"])
-        (said,) = [m for m in self.msgs() if "<records>" in m]
+        (said,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", said)
         self.assertNotIn("Zones/Personal", said)
 
@@ -791,7 +792,7 @@ class TestFailsClosed(AnswerCase):
         said = [m for p in self.procs() if p["model"] == "haiku" for m in self.msgs(p["pid"])]
         self.assertTrue(said)
         for m in said:
-            for mark in (ACME, BIRCH, KNOWN, SOURCE, "Drafting.", "<records>"):
+            for mark in (ACME, BIRCH, KNOWN, SOURCE, "Drafting.", "<records "):
                 self.assertNotIn(mark, m)
 
     def budget(self):
@@ -1478,7 +1479,7 @@ class TestCitations(AnswerCase):
                            "imported": "2026-03-12"}], out["sources"])
         self.assertEqual(("Dana said the quote holds at forty a unit.", [], False),
                          (out["say"], out["after"], out["incomplete"]))
-        (sent,) = [m for m in self.msgs() if "<records>" in m]
+        (sent,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn('<record id="r1" path="%s" date="2026-03-10" imported="2026-03-12">' % self.KICKOFF, sent)
 
     def test_a_citation_not_retrieved_this_turn_is_refused(self):
@@ -1657,3 +1658,117 @@ class TestTheWindowCites(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def dated_meeting(date: str, title: str, body: str, parties: str = "[acme]", zone: str = "Work") -> str:
+    return ("---\ntitle: %s\ntype: meeting\ndate: %s\nzone: %s\nparties: %s\n---\n\n# %s\n\n%s\n"
+            % (title, date, zone, parties, title, body))
+
+
+class TestTheNewestFirst(AnswerCase):
+    """#315: a question about the last, latest or since ranks matches by date;
+    two spellings of one name count once; the answer is told how many matched
+    and how many it got, and claims no absence from part of them."""
+
+    NEWEST = "Wikis/Meetings/wiki/sources/260420-acme-sync.md"
+
+    def setUp(self):
+        super().setUp()
+        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        # Twenty meetings with Acme: the newest names it once in its title and
+        # once in its text, the oldest twenty times, the rest twice.
+        write(sources / "260420-acme-sync.md",
+              dated_meeting("2026-04-20", "Acme Corp sync", "Spoke with Acme Corp about the pallets. NEWESTMARK"))
+        write(sources / "260401-quarterly.md",
+              dated_meeting("2026-04-01", "Quarterly review", " ".join(["Acme Corp"] * 20) + " OLDESTMARK"))
+        for day in range(2, 20):
+            write(sources / ("2604%02d-call.md" % day),
+                  dated_meeting("2026-04-%02d" % day, "Call %d" % day, "Acme Corp and Acme Corp again."))
+
+    def haiku(self, find_, sonnet=()):
+        self.answers.write_text(json.dumps({"haiku": [["meeting", find_]], "sonnet": [list(r) for r in sonnet]}))
+
+    def test_the_last_meeting_is_the_newest_page_and_the_answer_cites_it(self):
+        said = cites(("The last meeting with Acme Corp was on 20 April.", ["r1"]))
+        for order in ({"order": "recent"}, {}):                       # from the find, or from the request's own words
+            with self.subTest(order=order):
+                self.haiku(json.dumps({"say": "", "find": dict(order, route="meetings", zone="Work",
+                                                               words=["Acme Corp", "AcmeCorp"])}),
+                           [["last meeting", said]])
+                a = self.asker()
+                out = a.ask("What's the last meeting with Acme Corp?")
+                (sent,) = [m for m in self.msgs() if "<records " in m]
+                first = re.search(r'<record id="r1" path="([^"]+)"', sent).group(1)
+                self.assertEqual(self.NEWEST, first)
+                self.assertIn("NEWESTMARK", sent)
+                self.assertNotIn("OLDESTMARK", sent)                 # eight newest, never the page that says it most
+                self.assertIn('<records matched="21" given="8" order="recent">', sent)   # twenty, and Dana's own page
+                self.assertEqual([self.NEWEST], [s["path"] for s in out["sources"]])
+                self.assertEqual([{"text": "The last meeting with Acme Corp was on 20 April.", "ids": ["r1"]}], out["claims"])
+                a.stop()
+                Path(str(self.args) + ".msgs").unlink()
+
+    def test_without_order_the_page_that_names_it_most_comes_first(self):
+        self.haiku(find("meetings", ["Acme Corp"], zone="Work"), [])
+        self.asker().ask("Tell me about the meeting with Acme Corp")
+        (sent,) = [m for m in self.msgs() if "<records " in m]
+        self.assertIn("OLDESTMARK", sent.split("</record>")[0])     # as before: most named first
+        self.assertIn('<records matched="21" given="8">', sent)
+
+    def test_from_part_of_the_matches_no_absence_is_claimed(self):
+        """The answer session says nothing happened after a date; with 21
+        matched and 8 given, Garrick drops that claim and says the records
+        hold only part of the answer."""
+        self.haiku(find("meetings", ["Acme Corp"], zone="Work", order="recent"),
+                   [["last meeting", cites(("The last meeting was on 20 April.", ["r1"]),
+                                           ("There was no meeting with Acme Corp after that.", ["r1"]))]])
+        out = self.asker().ask("What's the last meeting with Acme Corp?")
+        self.assertEqual(["The last meeting was on 20 April."], [c["text"] for c in out["claims"]])
+        self.assertTrue(out["incomplete"])
+        self.assertEqual([ask.INCOMPLETE], out["after"])
+        self.assertNotIn("no meeting", out["say"])
+        for reply in ("There were no other meetings with Acme Corp after 20 April.", "Nothing since then.",
+                      "Acme Corp didn't meet again after that."):
+            self.assertEqual(([], "", True), ask.cited(reply, {}, partial=True), reply)
+            self.assertEqual(([], "", True), ask.cited(cites((reply, [])), {}, partial=True), reply)
+
+    def test_with_every_match_given_an_absence_stands(self):
+        self.haiku(find("meetings", ["pallet quote"], zone="Work"),
+                   [["last meeting", cites(("There was no meeting about the pallet quote after 10 March.", ["r1"]))]])
+        out = self.asker().ask("What's the last meeting about the pallet quote?")
+        (sent,) = [m for m in self.msgs() if "<records " in m]
+        self.assertIn('<records matched="1" given="1" order="recent">', sent)
+        self.assertEqual(1, len(out["claims"]))
+        self.assertFalse(out["incomplete"])
+
+    def test_two_spellings_of_one_name_count_once(self):
+        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        write(sources / "260502-one.md", dated_meeting("2026-05-02", "One", "Met Acme Corp. ONESPELLING"))
+        write(sources / "260501-both.md", dated_meeting("2026-05-01", "Both", "Met Acme Corp, or AcmeCorp. BOTHSPELLINGS"))
+        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        where = sc.scope(self.root, {"route": "meetings", "zone": "Work", "words": ["Acme Corp", "AcmeCorp", "acme", "pallets"]},
+                         sc.Mentions([]), names, ctx, lib)
+        self.assertEqual([["acme corp", "acmecorp", "acme"], ["pallets"]], where.groups)
+        where = sc.scope(self.root, {"route": "meetings", "zone": "Work", "words": ["Acme Corp", "AcmeCorp"]},
+                         sc.Mentions([]), names, ctx, lib)
+        paths = [r["path"].rsplit("/", 1)[-1] for r in sc.search(self.root, where, ctx, lib)]
+        # Level on the words, so the newer of the two comes first.
+        self.assertLess(paths.index("260502-one.md"), paths.index("260501-both.md"))
+
+    def test_an_order_the_find_cannot_have_is_refused(self):
+        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
+        with self.assertRaises(sc.Refused):
+            sc.scope(self.root, {"route": "meetings", "zone": "Work", "order": "oldest"}, sc.Mentions([]),
+                     ask.scan(self.root), lib.load_context(self.root), lib)
+        self.assertTrue(sc.wants_recent("What's the latest with Acme?"))
+        self.assertTrue(sc.wants_recent("anything since Monday"))
+        self.assertFalse(sc.wants_recent("at least the pallet terms"))
+
+    def test_choose_counts_only_what_no_wall_holds_back(self):
+        sc = ask.scope_lib()
+        lib = sc.lib(REPO)
+        ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
+        rec = lambda *p: {"parties": list(p)}  # noqa: E731
+        chosen, back, matched = sc.choose([rec("acme")] * 3 + [rec("birch")] * 5, set(), ctx, lib, most=2)
+        self.assertEqual((2, True, 3), (len(chosen), back, matched))   # the five on the far side are not counted

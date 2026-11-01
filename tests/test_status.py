@@ -2380,6 +2380,16 @@ class TestJobs(StatusCase):
             L = status.ledger(status.load_agent(self.root), self.jobs, self.now + dt.timedelta(minutes=5))
         self.assertEqual({"todo-sweep": 1}, {k: v["calls"] for k, v in L["by"].items()})
 
+    def test_a_stopped_request_is_not_a_failed_call(self):
+        """#294: a request ended with Ask's Stop is billed with exit 1, and
+        the calls table counted it as failed."""
+        self.ledger({"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "stopped"},
+                    {"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "error_during_execution"},
+                    {"job": "ask", "cost_usd": 0.01, "exit": 0, "subtype": "success"})
+        with self.plists():
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual((3, 1), (L["by"]["ask"]["calls"], L["by"]["ask"]["failed"]))
+
     def test_the_evening_builds_row_goes_by_the_nightlys_first_run(self):
         """#276: the jobs folder decides, not the .retired file, which the
         user may delete: status is hidden once the nightly is there and no

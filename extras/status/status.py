@@ -3427,7 +3427,8 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             continue
         j["calls"] += 1
         j["cost"] += float(e.get("cost_usd") or 0)
-        j["failed"] += 1 if e.get("exit") else 0
+        # A request ended with Ask's Stop is billed with exit 1, but it did not fail (#294).
+        j["failed"] += 1 if e.get("exit") and e.get("subtype") != "stopped" else 0
         j["denied"] |= set(e.get("denied") or [])
         if isinstance(e.get("turns"), (int, float)):
             j["turns"].append(e["turns"])

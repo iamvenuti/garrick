@@ -1058,8 +1058,10 @@ class Asker:
         this_turn = {p["id"]: p for p in self.passages[before:]}
         claims, rest, incomplete = cited(text, this_turn)
         after = []
-        if incomplete:
-            after.append(INCOMPLETE if claims or rest else NOTHING_FOUND)    # NOTHING_FOUND only for no answer at all
+        if not claims and not rest:                 # no answer at all, incomplete or not
+            after.append(NOTHING_FOUND)
+        elif incomplete:
+            after.append(INCOMPLETE)
         if back:
             after.append(self.wall())
         say = " ".join(s for s in [c["text"] for c in claims] + [rest] + after if s)

@@ -1266,6 +1266,15 @@ class TestCitations(AnswerCase):
         out = a.ask("And Dana, about the pallet price?")
         self.assertEqual((True, [], [], ask.NOTHING_FOUND), (out["incomplete"], out["claims"], out["sources"], out["say"]))
 
+    def test_an_answer_with_nothing_in_it_says_nothing_was_found(self):
+        a = self.asker()
+        for text in ('{"claims": [], "incomplete": false}', '{"claims": [{"text": 4, "cite": ["r1"]}, {"text": " "}]}',
+                     '{"say": ""}'):
+            self.sonnet(["pallet quote", text])
+            out = a.ask("What did Dana say about the pallet quote?")
+            self.assertEqual(([], [ask.NOTHING_FOUND], ask.NOTHING_FOUND, []),
+                             (out["claims"], out["after"], out["say"], out["sources"]), text)
+
     def test_an_answer_with_no_claims_and_incomplete_says_what_it_has(self):
         self.sonnet(["pallet quote", '{"say": "Dana gave a price.", "incomplete": true}'])
         out = self.asker().ask("What did Dana say about the pallet quote?")

@@ -2980,27 +2980,46 @@ class TestApp(unittest.TestCase):
         self.assertNotIn("addGlobalMonitorForEvents(matching: [.keyDown", swift)   # keys from other apps would
         self.assertIn("asyncAfter(deadline: .now() + 0.25", swift)              # resting at the edge, not passing by
         self.assertIn("p.y >= v.maxY - v.height / 3", swift)                   # a side opens from its top third only
-        self.assertIn('"Find a thread, or ask Garrick"', swift)                # the field asks too
-        self.assertIn("self.launch(app, workspace.path, phrase: text)", swift)  # a question opens the assistant at the root, as the inbox does
+        self.assertNotIn("Find a thread, or ask Garrick", swift)              # the field only finds (#310)
+        self.assertIn('TextField("Find a project or thread", text: $model.filter)', swift)
+        self.assertNotIn("launch(app, workspace.path, phrase: text)", swift)    # no assistant opened with the words
+        for gone in ("answersHere", "askVia", "model.answer", "submitAsk", "asking()", "var ask: ((String) -> Void)?"):
+            self.assertNotIn(gone, swift)
+        view = swift[swift.index("struct PanelView: View {"):]
+        first = view[view.index("func first()"):]
+        self.assertIn("guard !query.isEmpty else { return nil }", first[:first.index("\n\t}\n")])
+        self.assertIn(".onSubmit {\n\t\t\t\t\t\tif let open = first() { model.perform(open) }\n\t\t\t\t\t}", view)
         self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
         self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 
-    def test_the_icon_menu_finds_and_asks(self):
+    def test_the_icon_menu_only_finds(self):
+        """#310: the menu's field finds, takes the keys as the menu opens, and
+        never asks; asking is the Ask window's alone."""
         swift = (self.APP / "Garrick.swift").read_text()
         self.assertIn("final class MenuField: NSView, NSSearchFieldDelegate", swift)   # a field at the top of the menu
         fill = swift[swift.index("	func fill(_ menu: NSMenu) {"):swift.index("	func fillRows(")]
+        self.assertIn('MenuField("Find a project or thread")', fill)
         self.assertLess(fill.index("menu.addItem(field)"), fill.index('fillRows(menu, "")'))   # first, above every row
         self.assertIn("box.changed = { [weak self, weak menu] text in if let self, let menu { self.fillRows(menu, text) } }", fill)
         self.assertIn('let projects = found(zone["p"] as? [[String: Any]] ?? [], text)', swift)   # it finds as the panel does
-        self.assertIn("box.window?.makeFirstResponder(box.field)", swift)             # typing goes to it as the menu opens
-        self.assertIn("if let open { self.run(open) } else { self.askFrom(text) }", swift)   # Return opens what it found, or asks
-        ask = swift[swift.index("	func askFrom(_ text: String) {"):]
-        ask = ask[:ask.index("\n	}\n")]
-        self.assertIn("askSubmit(askField)", ask)                                     # through the Ask box, to ask.py, as the panel asks
-        self.assertIn("self.askGarrick(text)", swift)                                 # the panel's field
+        opening = swift[swift.index("	func menuWillOpen(_ menu: NSMenu) {"):]
+        opening = opening[:opening.index("\n	}\n")]
+        self.assertIn("NSApp.activate()", opening)                                    # the keys reach only an active app
+        self.assertIn("menuGaveBack = NSWorkspace.shared.frontmostApplication", opening)
+        self.assertIn("box.window?.makeKey()", opening)
+        self.assertIn("box.window?.makeFirstResponder(box.field)", opening)           # typing goes to it as the menu opens
+        closing = swift[swift.index("	func menuDidClose(_ menu: NSMenu) {"):]
+        closing = closing[:closing.index("\n	}\n")]
+        self.assertIn("!self.menuActed", closing)                                    # given back only when nothing opened
+        self.assertIn("back.activate()", closing)
+        enter = swift[swift.index("	func enter(_ typed: String, closing menu: NSMenu?) {"):]
+        enter = enter[:enter.index("\n	}\n")]
+        self.assertIn("else { return }", enter[enter.index("guard let open"):])     # nothing found: nothing happens
+        for gone in ("askFrom", "askItem", "askRow", "canAsk", "Ask Garrick first", "panel:ask", "menu:ask"):
+            self.assertNotIn(gone, swift)
+        self.assertEqual(1, swift.count("askGarrick(text"))                           # the Ask box's call, and only that
         self.assertIn("askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in",
-                      swift)                                                          # and the Ask box, the same call, line by line
-        self.assertIn("launch(app, workspace.path, phrase: text)", ask)               # with the preview off, the assistant opens with the words
+                      swift)
 
     def test_the_ask_hotkey_is_a_setting(self):
         swift = (self.APP / "Garrick.swift").read_text()

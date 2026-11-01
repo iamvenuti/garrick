@@ -39,6 +39,7 @@ sys.path.insert(0, str(TOOLS))
 from garrick_lib import (  # noqa: E402
     OffCourse, landing, move_new, parse_frontmatter, workspace_root, write_new, write_over,
 )
+from garrick_lib import load_context, organisation_link  # noqa: E402  (the person page's entity link)
 
 RAW_EXTS = {".txt", ".md", ".vtt"}
 SLUG_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -243,11 +244,20 @@ def ensure_person(root: Path, name: str, party: str, today: str) -> Tuple[Path, 
 
     Never overwrites an existing person page: identity and party, once
     written, are corrected by hand, not regenerated. Returns (path, created).
+
+    A new page links the entity page of its party, `organisation:`, when
+    exactly one entity page names that party, and nothing otherwise: the
+    link is identity alone, and garrick_lib's organisation_link() leaves it
+    out wherever it could say more than `party:` does, such as for a name
+    the People table places on both sides of a wall.
     """
     path = meetings_root(root) / "wiki" / "people" / ("%s.md" % person_slug(name))
     if path.is_file():
         return path, False
     party_line = "party: %s\n" % party if party else ""
+    link = organisation_link(root, load_context(root), name, party) if party else ""
+    if link:
+        party_line += 'organisation: "%s"\n' % link
     text = (
         "---\n"
         "title: %s\n"

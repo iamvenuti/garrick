@@ -38,7 +38,9 @@ holds only the key, so it names no file, check or material.
   `parked`); a note path written as code that, as a wikilink, leads to
   exactly one live note in the same zone; a note inside a thread's folder
   with no `parent:`, given its thread's, when that thread note is there and
-  its name leads nowhere else. No fix writes a link to a note across a wall
+  its name leads nowhere else; a person page in Meetings with no link to the
+  entity page of its party, given `organisation:` as ingest.py writes it on
+  a new page. No fix writes a link to a note across a wall
   from the note it is in: that one stays for a person. `fix --yes` applies
   them all, one commit per
   repository, of the files it changed and nothing else. A fix whose files
@@ -78,7 +80,9 @@ wiki's count reaches the `"memory"` setting's nightly minimum.
 
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
-changes with nobody watching. It reads drift from `System/generated/
+changes with nobody watching. Of the mechanical kind, the ops in
+ATTENDED_OPS wait for a yes too: the organisation link writes into a person
+page written by hand. It reads drift from `System/generated/
 drift.json`, since macOS keeps a scheduled job out of cloud folders. Under
 GARRICK_HEADLESS=1, as the jobs extra sets it, `fix --yes` behaves the same.
 
@@ -146,7 +150,9 @@ from garrick_lib import (  # noqa: E402
     foreign_git_env,
     live_files,
     load_context,
+    organisation_link,
     parse_frontmatter_text,
+    party_entities,
     strip_tag,
     walled,
     workspace_root,
@@ -211,6 +217,7 @@ class Ctx:
         self._notes: Optional[List[str]] = None
         self._texts: Dict[Path, List[Tuple[Path, str]]] = {}
         self.light = False                    # sort_item(light=True): a kind without the costly part of a fix
+        self._entities: Optional[Dict[str, List[str]]] = None
 
     def rel(self, path: Path) -> str:
         try:
@@ -523,6 +530,10 @@ UNDATED = "name does not start with its creation date"
 PARENT_RE = re.compile(r"^`parent: \[\[(.+)\]\]` leads to no live note$")
 CODE_NOTE_RE = re.compile(r"^names `(.+)` as code; write it as a wikilink")
 NO_PARENT = "no `parent:`, a link to its thread note or hub"
+NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
+# Ops that write into a page a person wrote by hand: offered on a yes, and
+# never applied in a run with nobody watching, whatever their kind allows.
+ATTENDED_OPS = ("organisation",)
 DATE_INSIDE = re.compile(r"(?<!\d)(?:\d{6}|\d{4}-\d{2}-\d{2}|\d{8})(?!\d)")
 NOT_LIVE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
 LINK = re.compile(r"(!?\[\[)([^\[\]|#\n]+)((?:#[^\[\]|\n]*)?(?:\|[^\[\]\n]*)?\]\])")
@@ -586,6 +597,8 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
             return codelink_fix(ctx, item, m.group(1))
         if item.message.startswith(NO_PARENT):
             return parent_fix(ctx, item)
+    if item.source == "check" and item.check == "people" and item.message.startswith(NO_ORGANISATION):
+        return organisation_fix(ctx, item, path)
     return None
 
 
@@ -753,6 +766,31 @@ def parent_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     return {"op": "parent", "thread": thread}
 
 
+def organisation_fix(ctx: Ctx, item: Item, path: Path) -> Optional[dict]:
+    """A person page with no link to the entity page of its party gets the
+    one ingest.py writes on a new page, `organisation: "[[wiki/entities/<x>]]"`.
+    It is worked out again here, by garrick_lib's organisation_link(), never
+    taken from the finding: a name the People table places on both sides of a
+    wall, a page naming two parties, or a party two entity pages claim, gets
+    none. It writes into a page written by hand, so it is in ATTENDED_OPS:
+    offered on a yes, never applied with nobody watching."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    fm = parse_frontmatter_text(text)
+    if not fm or "organisation" in fm:
+        return None
+    if ctx._entities is None:
+        ctx._entities = party_entities(ctx.root)
+    names = (str(fm.get("title") or path.stem), path.stem)
+    link = organisation_link(ctx.root, ctx.context, names, fm.get("party"), ctx._entities)
+    if not link:
+        return None
+    item.touches = [item.path]
+    return {"op": "organisation", "link": link}
+
+
 def follow(ctx: Ctx, repo: Path, path: str) -> Optional[str]:
     """Where a renamed file ended up, through every later rename; None when
     nothing is there now."""
@@ -872,12 +910,35 @@ def apply_parent(ctx: Ctx, item: Item, journal: "Journal") -> str:
     return "parent is now [[%s]]" % item.fix["thread"]
 
 
+def apply_organisation(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    """One line added under the page's `party:`, and nothing else changed."""
+    path = ctx.root / item.path
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"(---[^\n]*\n)(.*?)(\n(?:---|\.\.\.))", text, re.S)
+    if not m:
+        raise Held("its frontmatter does not read")
+    lines = m.group(2).split("\n")
+    if any(re.match(r"organisation\s*:", l) for l in lines):
+        raise Held("it has an organisation line already")
+    at = next((i for i, l in enumerate(lines) if re.match(r"party\s*:", l)), None)
+    if at is None:
+        raise Held("it has no party line")
+    at += 1
+    while at < len(lines) and lines[at].strip() and (lines[at][:1].isspace() or lines[at].startswith("-")):
+        at += 1                    # a party written as a list keeps its items
+    lines.insert(at, 'organisation: "%s"' % item.fix["link"])
+    journal.write(path, text[:m.start(2)] + "\n".join(lines) + text[m.end(2):])
+    return "organisation is now %s" % item.fix["link"]
+
+
 OPS: Dict[str, Callable[[Ctx, Item, "Journal"], str]] = {
     "status": apply_status, "list-thread": apply_list_thread, "date": apply_date, "relink": apply_relink,
-    "codelink": apply_codelink, "parent": apply_parent}
+    "codelink": apply_codelink, "parent": apply_parent,
+    "organisation": apply_organisation}
 OP_WORDS = {"status": ("status word", "status words"), "list-thread": ("hub list", "hub lists"),
             "date": ("date prefix", "date prefixes"), "relink": ("link", "links"),
-            "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links")}
+            "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links"),
+            "organisation": ("organisation link", "organisation links")}
 
 
 def apply_mechanical(ctx: Ctx, item: Item, journal: "Journal") -> str:
@@ -891,7 +952,8 @@ def say_mechanical(item: Item) -> str:
             "date": lambda: "rename it %s" % f["to"] if f.get("to") else "put its creation date in front of its name",
             "relink": lambda: "[[%s]] becomes [[%s]]" % (f.get("target"), f.get("to")),
             "codelink": lambda: "`%s` becomes [[%s]]" % (f.get("ref"), f.get("ref")),
-            "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread")}.get(f.get("op"))
+            "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread"),
+            "organisation": lambda: 'add organisation: "%s"' % f.get("link")}.get(f.get("op"))
     line = "%s: %s" % (item.path, item.said or (what() if what else item.message))
     return line + (" (held: %s)" % item.held if item.held and not item.said else "")
 
@@ -1390,9 +1452,10 @@ def hold_unsafe(ctx: Ctx, items: List[Item]) -> Dict[Path, List[Item]]:
 def apply(ctx: Ctx, items: List[Item]) -> dict:
     """Apply every fix of an applying kind among `items`, one commit per
     repository, of the files the fixes changed and nothing else. In a run
-    with nobody watching, only the kinds registered as unattended."""
+    with nobody watching, only the kinds registered as unattended, and of
+    those no op in ATTENDED_OPS."""
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
-              and (KINDS[i.kind].unattended or not ctx.headless)]
+              and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
     seen, unique = set(), []
     for i in wanted:
         key = (i.kind, i.path, json.dumps(i.fix, sort_keys=True))

@@ -44,7 +44,7 @@ own: a new kind of problem gets a check in `check.py` first.
 
 | Kind | Examples | What this skill does |
 |---|---|---|
-| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
+| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's; a person page in Meetings with no link to the entity page of its party, given `organisation:` | Lists them, and applies them all on one yes, one commit per repository. The organisation link never goes in overnight: it writes into a page written by hand |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
@@ -421,7 +421,9 @@ only on "keep". A page carrying `superseded:` never wakes, whatever links it.
 
 The jobs extra's nightly job, `gr-nightly`, applies the mechanical
 kind with nobody watching, and nothing else: attribution, wall and judgment
-findings, and corrections, never change headless. It commits only the files
+findings, and corrections, never change headless. Nor does a person page's
+`organisation:` link, though it is mechanical: it waits for the yes, and the
+digest counts it among the fixes held. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file
 another session has changes in, since another session may have uncommitted
 work in the same repository. Its line in the morning digest says what was fixed first, then

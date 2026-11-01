@@ -115,6 +115,8 @@ from garrick_lib import (  # noqa: E402
     work_folder,
     workspace_root,
 )
+from garrick_lib import MEETINGS_ENTITIES, organisation_link, party_entities, people_parties, tag_list  # noqa: E402
+
 
 ERROR = "error"
 WARNING = "warning"
@@ -2748,6 +2750,35 @@ def check_meetings(ws: Workspace) -> List[Finding]:
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "meetings", r, problem, "A meeting page has a date in the wrong form"))
     out += cited_across_walls(ws)
+    out += check_entities(ws)
+    return out
+
+
+def check_entities(ws: Workspace) -> List[Finding]:
+    """An entity page in Meetings may name the party it stands for, `party:`,
+    and a person page of that party links it. One entity page per party at
+    most: with two, a person page could link either, so it links neither.
+    A tag not in Parties is one no wall can see."""
+    out = []
+    folder = ws.root.joinpath(*MEETINGS_ENTITIES)
+    if not folder.is_dir():
+        return out
+    for page in sorted(folder.glob("*.md")):
+        fm = parse_frontmatter(page)
+        for tag in tag_list(fm.get("party")):
+            if tag != "none" and tag not in ws.context["parties"]:
+                out.append(Finding(WARNING, "meetings", rel(ws, page),
+                                   "party `%s` is not a tag in the Parties table, so no wall can see it and no "
+                                   "person page links it" % tag, "An entity page names an unknown party"))
+    for tag, stems in sorted(party_entities(ws.root).items()):
+        if len(stems) < 2:
+            continue
+        for stem in stems:
+            others = ", ".join("wiki/entities/%s" % s for s in stems if s != stem)
+            out.append(Finding(WARNING, "meetings", rel(ws, folder / (stem + ".md")),
+                               "names party %s, and so does %s; one entity page per party, and until there is one "
+                               "no person page links either" % (tag, others),
+                               "Two entity pages stand for one party"))
     return out
 
 
@@ -2797,7 +2828,7 @@ def check_people(ws: Workspace) -> List[Finding]:
     folder = ws.root.joinpath(*PEOPLE)
     if not folder.is_dir():
         return out
-    common = None
+    common = entities = None
     for page in sorted(folder.rglob("*.md")):
         r = rel(ws, page)
         text = read_text(page) or ""
@@ -2819,6 +2850,9 @@ def check_people(ws: Workspace) -> List[Finding]:
                                "The page for %s is not marked as a person" % name))
         for problem in bad_dates(fm):
             out.append(Finding(ERROR, "people", r, problem, "The page for %s has a date in the wrong form" % name))
+        if entities is None:
+            entities = party_entities(ws.root)
+        out += organisation_findings(ws, page, fm, name, entities)
         if ws.quick:
             continue
         if common is None:
@@ -2834,6 +2868,50 @@ def check_people(ws: Workspace) -> List[Finding]:
                                "The page for %s repeats a Meetings question" % name if asked
                                else "The page for %s repeats what was said in a meeting" % name))
     return out
+
+
+NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
+
+
+def organisation_findings(ws: Workspace, page: Path, fm: dict, name: str,
+                          entities: Dict[str, List[str]]) -> List[Finding]:
+    """A person page links the entity page of its own party as
+    `organisation:`, where garrick_lib's organisation_link() gives one, and no
+    other. The link is identity alone, read on every side of a wall, so a link
+    that joins two parties a wall keeps apart, through the page, the entity
+    page or the People table's rows for the name, is a wall finding."""
+    r, names = rel(ws, page), (name, page.stem)
+    ours = tag_list(fm.get("party"))
+    if "organisation" not in fm:
+        want = organisation_link(ws.root, ws.context, names, fm.get("party"), entities)
+        return [Finding(WARNING, "people", r, "%s, %s" % (NO_ORGANISATION, want),
+                        "The page for %s does not link its party's entity page" % name)] if want else []
+    values = as_list(fm.get("organisation"))
+    links = [m.group(1) for v in values for m in WIKILINK_RE.finditer(v)]
+    if len(values) != 1 or len(links) != 1:
+        return [Finding(WARNING, "people", r, "`organisation:` is one link, to the entity page of its party: "
+                        "\"[[wiki/entities/<name>]]\"", "The page for %s links its party's entity page wrongly" % name)]
+    target = links[0].split("|")[0].split("#")[0].strip()
+    target = target[:-3] if target.endswith(".md") else target
+    parts = target.split("/")
+    entity = ws.root.joinpath(*MEETINGS_ENTITIES) / (parts[-1] + ".md")
+    if (len(parts) > 1 and parts[-2] != "entities") or not entity.is_file():
+        return [Finding(WARNING, "people", r, "`organisation:` [[%s]] leads to no entity page in wiki/entities/" % target,
+                        "The page for %s links an entity page that is not there" % name)]
+    theirs = tag_list(parse_frontmatter(entity).get("party"))
+    rows = people_parties(ws.context, names)
+    every = sorted(set(ours) | set(theirs) | rows)
+    hit = next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
+    if hit:
+        return [Finding(WARNING, "people", r, "`organisation:` joins this person to parties a wall keeps apart, and "
+                        "a person page carries identity alone; take the link out: a wall stands between %s and %s" % hit,
+                        "The page for %s links an entity page across a wall" % name)]
+    if theirs != ours:
+        return [Finding(WARNING, "people", r, "`organisation:` links the entity page of %s, and the page names %s; it "
+                        "links its own party's entity page or none" % (", ".join(theirs) or "no party",
+                                                                      ", ".join(ours) or "no party"),
+                        "The page for %s links another party's entity page" % name)]
+    return []
 
 
 # ---------------------------------------------------------------------------

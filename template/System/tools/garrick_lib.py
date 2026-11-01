@@ -111,6 +111,12 @@ __all__ = [
     "memory_entries",
     "knowledge_schema",
     "walled",
+    "MEETINGS_ENTITIES",
+    "tag_list",
+    "party_entities",
+    "person_name_key",
+    "people_parties",
+    "organisation_link",
     "workspace_root",
     "SKIP_DIRS",
     "NOT_LIVE_DIR_RE",
@@ -1016,6 +1022,84 @@ def walled(context: dict, tag_a: str, tag_b: str) -> bool:
     if a == b:
         return False
     return frozenset((a, b)) in context.get("walls", set())
+
+
+# ---------------------------------------------------------------------------
+# Meetings: the entity page a person page links
+# ---------------------------------------------------------------------------
+#
+# A Meetings entity page may name the one party it stands for, `party: acme`,
+# and a person page of that party links it as `organisation:`. Both pages are
+# read on every side of a wall, so the link carries identity alone, and it is
+# written only where it cannot say more than the person page's own `party:`
+# says already. ingest.py writes it on a new page, check.py warns where it is
+# missing or wrong, and nurture.py offers it for a page written before.
+
+MEETINGS_ENTITIES = ("Wikis", "Meetings", "wiki", "entities")
+
+
+def tag_list(value) -> List[str]:
+    """A frontmatter `party:` as its tags: one, a list, or none."""
+    values = value if isinstance(value, list) else [value] if value else []
+    return [t for t in (strip_tag(str(v)) for v in values) if t]
+
+
+def party_entities(root: PathLike) -> Dict[str, List[str]]:
+    """{tag: [the stem of each entity page that names it]}, from the Meetings
+    wiki's `wiki/entities/`. Only a page naming one party counts: one naming
+    several, `none` or nothing stands for no party here. A symbolic link is
+    passed over, since it may lead out of the wiki."""
+    out: Dict[str, List[str]] = {}
+    folder = Path(root).joinpath(*MEETINGS_ENTITIES)
+    if not folder.is_dir() or folder.is_symlink():
+        return out
+    for page in sorted(folder.glob("*.md")):
+        if page.is_symlink() or not page.is_file():
+            continue
+        fm = parse_frontmatter(page)
+        if str(fm.get("type") or "entity").strip().lower() != "entity":
+            continue
+        tags = tag_list(fm.get("party"))
+        if len(tags) == 1 and tags[0] != "none":
+            out.setdefault(tags[0], []).append(page.stem)
+    return out
+
+
+def person_name_key(name) -> str:
+    """A person's name as a person page and the People table are matched: in
+    the form of the page's file name, so case, spacing and punctuation never
+    keep two spellings of one name apart."""
+    return re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-")
+
+
+def people_parties(context: dict, names) -> set:
+    """The tags the People table gives any of `names`: a page's title and its
+    file name, say. Matching loosely errs toward finding a second hat."""
+    keys = {person_name_key(n) for n in ([names] if isinstance(names, str) else names)} - {""}
+    found = {strip_tag(p.get("party") or "") for p in context.get("people", []) if person_name_key(p.get("name")) in keys}
+    return found - {""}
+
+
+def organisation_link(root: PathLike, context: dict, names, party,
+                      entities: Optional[Dict[str, List[str]]] = None) -> str:
+    """The `organisation:` a person page carries, `[[wiki/entities/<stem>]]`,
+    or "" when it carries none. `names` is the person's name, or the names a
+    page goes by (its title and its file name). Fail closed, at every step:
+
+    - the page names exactly one party, a tag in the Parties table, not `none`;
+    - where the People table has rows for the name, one of them is that
+      party, and no two of them are walled from each other: one page that a
+      name shares between two hats links neither hat's entity page;
+    - exactly one entity page names that party alone.
+    """
+    tags = tag_list(party)
+    if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
+        return ""
+    tag, rows = tags[0], people_parties(context, names)
+    if rows and (tag not in rows or any(walled(context, a, b) for a in rows for b in rows)):
+        return ""
+    pages = (party_entities(root) if entities is None else entities).get(tag, [])
+    return "[[wiki/entities/%s]]" % pages[0] if len(pages) == 1 else ""
 
 
 # ---------------------------------------------------------------------------

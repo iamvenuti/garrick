@@ -11,6 +11,7 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
       wiki/
         sources/        one page per meeting, and one per mail
         people/         one page per person met
+        entities/       one page per organisation, at most one per party
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
@@ -75,12 +76,32 @@ A mail with a Message-ID also carries it as `source-id:`; a mail or a recording 
 title: <their name>
 type: person
 party: <tag>                 # from the Parties table; `none` for someone who belongs to no party
+organisation: "[[wiki/entities/<slug>]]"   # the entity page of that party, when there is one
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
 ```
 
 Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
+
+`organisation:` links the entity page that names the person's party, and nothing else: it carries identity, as the page does. `ingest.py person` writes it on a new page when exactly one entity page names that party, and the `nurture` skill offers it, on a yes, for a page written before. A page that names no party or several, or a name the People table has under two parties a wall keeps apart, gets none.
+
+## An entity page
+
+`wiki/entities/<slug>.md`, one per organisation:
+
+```yaml
+---
+title: <its name>
+type: entity
+party: <tag>                 # the party it stands for, from the Parties table; leave it out if it stands for none
+sources: ["[[wiki/sources/<YYMMDD-slug>]]"]
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+---
+```
+
+At most one entity page names a party. With two, a person page could link either, so it links neither, and `check.py` warns about both. An organisation known in two roles, on either side of a wall, has a page per role, each naming its own party, and cites no meeting of the other.
 
 ## A question
 

@@ -419,7 +419,7 @@ def status_of(note: Path) -> str:
     head = note.read_text(encoding="utf-8", errors="replace")[:3000]
     m = re.match(r"---\n(.*?)\n---", head, re.S)
     s = re.search(r"(?m)^status:\s*(\S+)", m.group(1)) if m else None
-    return s.group(1).strip("\"'").lower() if s else "active"
+    return inert(s.group(1).strip("\"'").lower()) if s else "active"     # it goes into <workspace>
 
 
 def scan(ws: Path) -> Dict[str, Dict[str, dict]]:

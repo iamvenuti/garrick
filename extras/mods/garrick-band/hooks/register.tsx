@@ -535,9 +535,10 @@ export function waitOrder(l: Launchers): string[] {
 
 // Opens the pick elsewhere, the way Settings › Opening a thread says: its
 // thread's own cmux tab where the desk is installed (an Inbox opens a tab at
-// the root on "process the inbox"), its note in Obsidian when it sits in a
-// vault, or Finder; the default first, then the first of the others switched
-// on that can open it here.
+// the root on "process the inbox"), its note by its file in the app the Mac
+// opens a .md file in, or Finder; the default first, then the first of the
+// others switched on that can open it here. Never Obsidian by its own link:
+// only the band's Obsidian button opens that, when pressed (#318).
 async function waitOpen($: any): Promise<string> {
   const pick = shownPick(await read($, wait))
   const n = await noteOf($)
@@ -562,7 +563,7 @@ async function waitOpen($: any): Promise<string> {
         if (reply.ok) return reply.say || 'Opened a tab on "process the inbox".'
       }
     } else if (way === 'note') {
-      if (abs.endsWith('.md') && (await openers($, chainOf(abs, root), parent(abs))).obsidian) return run(['/usr/bin/open', obsidianUrl(abs)], `Opened ${name} in Obsidian.`)
+      if (abs.endsWith('.md') && (await $.fs.exists('/usr/bin/open'))) return run(['/usr/bin/open', abs], `Opened ${name}.`)
     } else if (way === 'finder') {
       // A folder, such as an Inbox, opens in Finder; a file is shown in its folder.
       const file = /\.[A-Za-z0-9]{1,5}$/.test(basename(abs))
@@ -573,14 +574,6 @@ async function waitOpen($: any): Promise<string> {
   }
 
   return 'Nothing switched on in Settings › Opening a thread can open it here.'
-}
-
-// The folders from a file's own up to the root, as findNote walks them.
-function chainOf(abs: string, root: string): string[] {
-  const out: string[] = []
-  for (let dir = parent(abs); dir.length >= root.length && dir !== '/'; dir = parent(dir)) out.push(dir)
-
-  return out
 }
 
 async function tick($: any, pick: WaitPick, root: string): Promise<string> {

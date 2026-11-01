@@ -598,6 +598,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askExpanded = false           // grown for an answer, a question back or a wall reset; compact again on New conversation
 	var askPreparing = false          // the session starting when the window opened: a request sent now waits for it once
 	var askNewAfterStop = false       // Stop and start new: the new conversation starts once the request has stopped
+	var askResetting = false          // a new conversation asked for and not yet started: nothing is sent until it is
+	var askNextAfresh = false         // the next request starts under a divider: a new conversation began after a reply kept on screen
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -2010,15 +2012,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Either way the exchange is kept. One request at a time: Return while one runs does nothing.
 	@objc func askSubmit(_ sender: Any? = nil) {
 		let text = askField.string.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !text.isEmpty, askRunning == nil else { return }
+		guard !text.isEmpty, askRunning == nil, !askResetting else { return }
 		askField.string = ""
-		askTurns.append(AskTurn(request: text))
+		var asked = AskTurn(request: text)
+		asked.afresh = askNextAfresh
+		askNextAfresh = false
+		askTurns.append(asked)
 		let at = askTurns.count - 1
 		askRunning = askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in
 			guard let self else { return }
 			self.askRunning = nil
-			if self.askNewAfterStop {       // Stop and start new: what the request said goes with the exchange
-				self.askNewAfterStop = false
+			let startNew = self.askNewAfterStop
+			self.askNewAfterStop = false
+			if startNew && out["stopped"] as? Bool == true {    // Stop and start new, stopped: nothing was done to keep
 				return self.askNew(nil)
 			}
 			guard at < self.askTurns.count else { return self.askRender() }
@@ -2028,7 +2034,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.kind = out["kind"] as? String ?? "command"
 			turn.stopped = out["stopped"] as? Bool == true
 			turn.failed = out["failed"] as? Bool == true
-			turn.afresh = out["reset"] as? String == "wall"
+			turn.afresh = turn.afresh || out["reset"] as? String == "wall"
 			turn.refreshed = out["refreshed"] as? Bool == true
 			if turn.kind == "answer" {
 				turn.claims = out["claims"] as? [[String: Any]] ?? []
@@ -2036,9 +2042,15 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				turn.sources = out["sources"] as? [[String: Any]] ?? []
 			}
 			self.askTurns[at] = turn
-			if turn.kind != "command" || turn.afresh { self.askExpanded = true }
+			if turn.kind != "command" || turn.afresh || startNew { self.askExpanded = true }
 			// Stopped: nothing was done, so the question goes back in the field, to be sent again or changed.
 			if turn.stopped && self.askField.string.isEmpty { self.askField.string = text }
+			// Stop and start new, but the request had finished, or was past where Stop is heard: what it
+			// did stays on screen, and the new conversation starts under it.
+			if startNew {
+				self.askNextAfresh = true
+				self.askReset()
+			}
 			self.askRender()
 			if ranAway { self.askPanel?.orderOut(nil) }
 		}
@@ -2069,10 +2081,21 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		askTurns.removeAll()
 		askExpanded = false
+		askNextAfresh = false
 		askField.string = ""
-		askCall(["reset"]) { _ in }
-		askRender()
+		askReset()
 		askPanel?.makeFirstResponder(askField)
+	}
+
+	// The session's context goes (`reset`). askCall() returns at once, so nothing is sent until
+	// ask.py says the reset is done: a request typed straight after would reach the server first.
+	func askReset() {
+		askResetting = true
+		askCall(["reset"]) { [weak self] _ in
+			self?.askResetting = false
+			self?.askRender()
+		}
+		askRender()
 	}
 
 	// Each state the window can be in, from the exchange and the request on its way: Ready,
@@ -2086,7 +2109,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askLog.textStorage?.setAttributedString(askTranscript())
 			askLog.scrollToEndOfDocument(nil)
 		}
-		let preparing = askPreparing && !running
+		let preparing = (askPreparing || askResetting) && !running
+		askField.isEditable = !askResetting
 		askWorking.isHidden = !running && !preparing
 		askStopButton.isHidden = !running
 		askStopButton.isEnabled = askRunning?.stopped != true
@@ -2112,7 +2136,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askField.placeholder = askExpanded ? askHint : last?.request ?? askHint
 		askFoot.isHidden = askTurns.isEmpty
 		askNewButton.title = running ? "Stop and start new" : "New conversation"
-		askNewButton.isEnabled = askRunning?.stopped != true
+		askNewButton.isEnabled = askRunning?.stopped != true && !askResetting
 		askFit()
 	}
 

@@ -1288,7 +1288,10 @@ class TestTheAppKeepsIt(unittest.TestCase):
 
     def test_the_app_never_resets_unasked_and_still_warms(self):
         self.assertEqual(1, self.swift.count('askCall(["reset"])'))
-        self.assertIn('askCall(["reset"])', self.body("askNew"))      # New conversation, and nothing else
+        self.assertIn('askCall(["reset"])', self.body("askReset"))
+        calls = self.swift.count("askReset()") - self.swift.count("func askReset()")
+        self.assertEqual(2, calls)                                          # New conversation, and Stop and start new
+        self.assertIn("askReset()", self.body("askNew"))
         self.assertIn("askWarm()", self.body("showAsk"))
         self.assertIn('askCall(["warm"])', self.body("askWarm"))
         self.assertIn('askCall(["warm"])', self.body("hotKeyPressed"))
@@ -1350,8 +1353,8 @@ class TestTheAskWindow(unittest.TestCase):
 
     def test_a_wall_reset_keeps_the_exchange_under_a_divider(self):
         submit = self.body("askSubmit")
-        self.assertIn('turn.afresh = out["reset"] as? String == "wall"', submit)
-        self.assertIn("if turn.kind != \"command\" || turn.afresh { self.askExpanded = true }", submit)
+        self.assertIn('turn.afresh = turn.afresh || out["reset"] as? String == "wall"', submit)
+        self.assertIn("if turn.kind != \"command\" || turn.afresh || startNew { self.askExpanded = true }", submit)
         shown = self.body("askTranscript")
         self.assertLess(shown.index("if turn.afresh && i > 0 {"), shown.index("askAfresh"))
         self.assertLess(shown.index("askAfresh"), shown.index("turn.request"))   # above the turn it came with
@@ -1367,7 +1370,7 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn("askRunning?.stop()", self.body("askStop"))
         self.assertIn("signal.SIGINT", (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8"))
         submit = self.body("askSubmit")
-        self.assertIn("guard !text.isEmpty, askRunning == nil else { return }", submit)   # one request at a time
+        self.assertIn("guard !text.isEmpty, askRunning == nil, !askResetting else { return }", submit)   # one at a time
         self.assertIn("progress: { [weak self] said in self?.askProgress(said) }", submit)
 
     def test_every_state_is_drawn_in_one_place(self):
@@ -1376,7 +1379,7 @@ class TestTheAskWindow(unittest.TestCase):
             self.assertIn(said, drawn)
         self.assertIn("askStopButton.isHidden = !running", drawn)
         self.assertIn('askNewButton.title = running ? "Stop and start new" : "New conversation"', drawn)
-        self.assertIn("askNewButton.isEnabled = askRunning?.stopped != true", drawn)   # until the stop is under way
+        self.assertIn("askNewButton.isEnabled = askRunning?.stopped != true && !askResetting", drawn)
 
     def test_new_conversation_during_a_request_stops_it_and_starts_new(self):
         """#261, slice E: idle, New conversation resets now; during a
@@ -1386,12 +1389,30 @@ class TestTheAskWindow(unittest.TestCase):
         running = new[new.index("if askRunning != nil {"):new.index("askTurns.removeAll()")]
         self.assertIn("askNewAfterStop = true", running)
         self.assertIn("return askStop(nil)", running)
-        self.assertNotIn("reset", running)                              # nothing reset while the request runs
-        self.assertIn('askCall(["reset"])', new)
+        self.assertNotIn("reset", running.lower())                      # nothing reset while the request runs
         submit = self.body("askSubmit")
         after = submit[submit.index("self.askRunning = nil"):]
-        self.assertLess(after.index("if self.askNewAfterStop {"), after.index("var turn = self.askTurns[at]"))
-        self.assertIn("return self.askNew(nil)", after[:after.index("var turn = self.askTurns[at]")])
+        turn = after.index("var turn = self.askTurns[at]")
+        self.assertIn('if startNew && out["stopped"] as? Bool == true {', after[:turn])
+        self.assertIn("return self.askNew(nil)", after[:turn])          # stopped: nothing done, so all of it goes
+
+    def test_a_reply_that_was_not_stopped_stays_and_the_new_conversation_starts_under_it(self):
+        submit = self.body("askSubmit")
+        after = submit[submit.index("self.askRunning = nil"):]
+        kept = after.index("self.askTurns[at] = turn")
+        self.assertLess(kept, after.index("if startNew {"))              # what it did is on screen first
+        tail = after[after.index("if startNew {"):]
+        self.assertIn("self.askNextAfresh = true", tail)
+        self.assertIn("self.askReset()", tail)
+        self.assertNotIn("removeAll", tail)
+        self.assertIn("asked.afresh = askNextAfresh", submit)           # under the divider, on screen only above it
+
+    def test_nothing_is_sent_until_the_reset_has_returned(self):
+        reset = self.body("askReset")
+        self.assertLess(reset.index("askResetting = true"), reset.index('askCall(["reset"])'))
+        self.assertIn("self?.askResetting = false", reset[reset.index('askCall(["reset"])'):])
+        self.assertIn("!askResetting else { return }", self.body("askSubmit"))
+        self.assertIn("askField.isEditable = !askResetting", self.body("askRender"))
 
     def test_a_renewal_is_said_under_its_turn(self):
         self.assertIn('let askRefreshed = "Conversation refreshed"', self.swift)

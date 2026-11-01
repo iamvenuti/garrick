@@ -184,6 +184,32 @@ class TestTheWallReset(AnswerCase):
             self.assertIn("<workspace>\n", self.msgs(pid)[0])                 # each told the whole list
         self.assertEqual({"birch"}, a.seen)
 
+    def test_last_results_go_with_the_command_process_they_were_said_to(self):
+        """From the 0.49.1 review: `heard` went with a command process that
+        died or was replaced, but what its last actions did stayed, and the
+        next process was sent "Added to Inbox: Call Dana" with a request for
+        Birch. The process is killed here, then stopped by a turn that took
+        too long."""
+        from unittest import mock
+        self.answers.write_text(json.dumps({"haiku": [["open slowly", 5]] + HAIKU}))
+        for ends in ("killed", "timed out"):
+            a = self.asker()
+            a.ask("add call Dana to Acme")
+            self.assertIn("Call Dana", a.results)
+            if ends == "killed":
+                os.kill(a.session.proc.pid, signal.SIGKILL)
+                a.session.proc.wait()
+            else:
+                with mock.patch.object(ask, "TURN_TIMEOUT", 0.5), self.assertRaisesRegex(ask.Bad, "too long"):
+                    a.ask("open slowly")
+            self.assertNotIn("reset", a.ask("open Birch Entry"))
+            (said,) = self.msgs(a.session.proc.pid)
+            self.assertNotIn("<last-results>", said, ends)
+            self.assertNotIn("Call Dana", said, ends)
+            self.assertEqual({}, a.asked)
+            a.stop()
+            Path(str(self.args) + ".msgs").unlink()
+
     def test_knowledge_crosses_no_wall(self):
         a = self.asker()
         for q in ("What did Dana say about the pallet quote?", "What does the supply chain report say about pallets?",
@@ -356,6 +382,58 @@ class TestAnswers(AnswerCase):
         self.assertEqual(1, len(ledger))            # the find and the stopped answer: one call
         self.assertEqual("stopped", ledger[0]["subtype"])
 
+    def served(self):
+        """The server in a thread, once it listens; stopped when the test ends."""
+        t = self.serve_in_thread()
+        self.addCleanup(lambda: (ask.call(self.root, "stop", start=False), t.join(10)))
+        for _ in range(200):                            # the socket refuses until the server listens
+            if ask.call(self.root, "status", start=False) is not None:
+                return
+            time.sleep(0.05)
+        self.fail("the server never listened")
+
+    def request(self, text, stop_on=None):
+        """One request on its own connection, its final line; with `stop_on`,
+        Stop is said once the answer session has been sent those words."""
+        import socket
+        msgs = Path(str(self.args) + ".msgs")
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.connect(str(ask.sock_path(self.root)))
+        c.sendall((json.dumps({"op": "ask", "text": text}) + "\n").encode("utf-8"))
+        if stop_on is not None:
+            until = time.time() + 10
+            while time.time() < until and not (msgs.exists() and any(
+                    m["model"] == "sonnet" and stop_on in m["content"]
+                    for m in map(json.loads, msgs.read_text().splitlines()))):
+                time.sleep(0.05)
+            c.sendall(ask.STOP)
+        with c:
+            return [json.loads(line) for line in c.makefile("rb")][-1]
+
+    def test_stop_while_the_answer_is_written_says_a_new_conversation(self):
+        """#294: Stop in the answer turn ends both sessions, so the box says
+        the next request starts a new conversation, and no wall is claimed."""
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet quote", 30]]}))
+        self.served()
+        final = self.request("What did Dana say about the pallet quote?", stop_on="pallet quote")
+        self.assertEqual((True, ask.STOPPED), (final.get("stopped"), final["say"]))
+        self.assertNotIn("reset", final)
+        self.assertFalse(ask.call(self.root, "status", start=False)["session"])    # the command session went too
+
+    def test_a_stop_or_a_cap_after_a_wall_reset_still_says_the_reset(self):
+        """#294: a request that had started afresh at a wall and was then
+        stopped carried no "reset", so the app drew no divider, and its words
+        did not say so. A request capped after the reset was the same."""
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet launch", 30]]}))
+        self.served()
+        self.assertEqual("answer", self.request("What did Dana say about the pallet quote?")["kind"])
+        final = self.request("What did Theo say about the pallet launch?", stop_on="pallet launch")
+        self.assertEqual((True, "wall", ask.STOPPED_AFRESH), (final.get("stopped"), final.get("reset"), final["say"]))
+        self.assertEqual("answer", self.request("What did Dana say about the pallet quote?").get("kind"))
+        os.environ["GARRICK_CAP_ASK_HOUR"] = "1"
+        final = self.request("What did Theo say about the pallet launch?")
+        self.assertEqual((True, "wall"), (final.get("capped"), final.get("reset")))
+
     def test_one_ledger_line_per_find_and_its_answer(self):
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
@@ -433,6 +511,108 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual("Which do you mean: Robin Vale of Acme Corp or Robin Vale of Birch & Co?",
                          parties("What did Robin say?"))
         self.assertEqual({"acme"}, parties("What did Robin say at Acme?"))          # another name settles it
+
+    def test_a_clarify_is_settled_by_the_zone_its_answer_names(self):
+        """#294: "The one in Work." settled nothing, so the box asked the same
+        question every time. An answer that names both zones, or neither,
+        is still asked again."""
+        from fixtures import project_hub
+        home = self.root / "Zones" / "Personal" / "Home"
+        write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Pricing"]))
+        write(home / "Threads" / "Pricing" / "Pricing.md", thread_note("Home", "Pricing", ""))
+        a = self.asker()
+        question = ("clarify", "Which do you mean: Acme Review, Pricing or Home, Pricing?")
+        out = a.ask("Where does Pricing stand?")
+        self.assertEqual(question, (out["kind"], out["say"]))
+        for neither in ("The other one.", "Work or Personal, I forget."):
+            out = a.ask(neither)
+            self.assertEqual(question, (out["kind"], out["say"]), neither)
+        self.assertEqual([], self.procs())                                     # no session heard any of it
+        out = a.ask("The one in Work.")
+        self.assertEqual("answer", out["kind"])
+        (said,) = [m for m in self.msgs() if "<records>" in m]
+        self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", said)
+        self.assertNotIn("Zones/Personal", said)
+
+    def test_a_zone_settles_only_said_plainly_and_only_the_name_asked_about(self):
+        """#294, from the wall review: "Not the one in Work." settled to Work,
+        and so did "The one I work on."; and a zone named in the answer
+        settled every other name the request left open."""
+        from fixtures import project_hub
+        home = self.root / "Zones" / "Personal" / "Home"
+        write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Pricing", "Budget"]))
+        for t in ("Pricing", "Budget"):
+            write(home / "Threads" / t / (t + ".md"), thread_note("Home", t, ""))
+        write(self.work / "Birch Entry" / "Threads" / "Budget" / "Budget.md", thread_note("Birch Entry", "Budget", "birch"))
+        lib = ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+
+        def settled(asked, answer):
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.places
+        asked = "Where does Pricing stand?"
+        question = "Which do you mean: Acme Review, Pricing or Home, Pricing?"
+        for answer in ("The one in Work.", "In Work", "Work", "the Work one", "from work", "WORK."):
+            self.assertEqual([("Work", "Acme Review", "Pricing")], settled(asked, answer), answer)
+        self.assertEqual([("Personal", "Home", "Pricing")], settled(asked, "In Personal"))
+        for answer in ("Not the one in Work.", "Not Work, the other one.", "The one I work on.", "Anything but Personal",
+                       "Work isn't it", "Not the Acme one.", "Work, except not", "Personal rather than Work"):
+            self.assertEqual(question, settled(asked, answer), answer)
+        self.assertEqual("Which do you mean: Birch Entry, Budget or Home, Budget?",       # Pricing settled, Budget asked
+                         settled("Compare Pricing with Budget", "In Work"))
+
+    def test_a_zone_named_like_a_party_of_its_own_settles(self):
+        """#294, from the wall review: with a party tagged `personal` in the
+        Personal zone, or a party named like its zone, the zone's word was
+        taken for the party's name and "The one in Personal." asked again.
+        It settles when every party the name stands for lives in that zone."""
+        from fixtures import project_hub
+        for zone, project in (("Personal", "Home"), ("Fernwood", "Ledger")):
+            folder = self.root / "Zones" / zone / project
+            write(folder / (project + ".md"), project_hub(zone, project, party="", threads=["Pricing"]))
+            write(folder / "Threads" / "Pricing" / "Pricing.md", thread_note(project, "Pricing", ""))
+        lib = ask.scope_lib().lib(self.root)
+        names = ask.scan(self.root)
+        asked = "Where does Pricing stand?"
+
+        def settled(rows, answer):
+            write(self.root / "System" / "context.md", CONTEXT.replace("| Birch & Co |", rows + "\n| Birch & Co |"))
+            ctx = lib.load_context(self.root)
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.places
+        own = "| Jo Example | Own affairs | Personal | `personal` | |"
+        self.assertEqual([("Personal", "Home", "Pricing")], settled(own, "The one in Personal."))
+        firm = "| Fernwood | Own company | Fernwood | `fernwood` | |"
+        self.assertEqual([("Fernwood", "Ledger", "Pricing")], settled(firm, "In Fernwood"))
+        elsewhere = "| Personal | A shop | Work | `shop` | |"                  # named like the zone, of another one
+        self.assertTrue(str(settled(elsewhere, "The one in Personal.")).startswith("Which do you mean"))
+
+    def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
+        """#294: one company under two tags, one in each zone. "What did Dana
+        say?" could be settled only by typing the bare tag."""
+        write(self.root / "System" / "context.md", CONTEXT.replace(
+            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | |\n| Birch & Co |").replace(
+            "| Theo Marsh | `birch` | Managing partner |",
+            "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
+        lib = ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        asked = "What did Dana say?"
+        question = ("Which do you mean: Dana Whitlock of Acme Corp in Work or Dana Whitlock of Acme Corp in Personal?")
+
+        def settled(answer):
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.parties
+        self.assertEqual(question, settled(""))
+        for answer, parties in (("In Work", {"acme"}), ("in work", {"acme"}), ("The Personal one.", {"acme-adv"}),
+                                ("Dana Whitlock of Acme Corp in Personal", {"acme-adv"}),
+                                ("dana whitlock of acme corp in work.", {"acme"})):
+            self.assertEqual(parties, settled(answer), answer)
+        for answer in ("Acme Corp", "Work or Personal", "Dana Whitlock of Acme Corp in Work or in Personal",
+                       "Dana Whitlock of Acme Corp in Work, please", "Not Dana Whitlock of Acme Corp in Work",
+                       "The Birch one", "The other one"):
+            self.assertEqual(question, settled(answer), answer)               # both options, or neither: asked again
+        got = ask.scope_lib().mentions(self.root, "What did Dana say about work?", names, ctx, lib)
+        self.assertEqual(question, got.question)                              # a zone counts only in an answer
 
     def test_a_find_is_checked_against_the_list(self):
         lib = ask.scope_lib().lib(self.root)
@@ -586,19 +766,94 @@ class TestFailsClosed(AnswerCase):
             for mark in (ACME, BIRCH, KNOWN, SOURCE, "Drafting.", "<records>"):
                 self.assertNotIn(mark, m)
 
-    def test_an_earlier_request_does_not_survive_a_wall_reset(self):
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+    def budget(self):
+        """A thread called Budget in Birch Entry and in a Personal project of
+        no party, so an Acme name beside it settles neither."""
+        from fixtures import project_hub
+        write(self.work / "Birch Entry" / "Threads" / "Budget" / "Budget.md",
+              thread_note("Birch Entry", "Budget", "birch", "Birch budget. BIRCHBUDGET21"))
+        home = self.root / "Zones" / "Personal" / "Home"
+        write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Budget"]))
+        write(home / "Threads" / "Budget" / "Budget.md", thread_note("Home", "Budget", ""))
+        self.commit()
+
+    def new_since(self, before):
+        """What every process started since `before` was sent, by model."""
+        out = {}
+        for p in self.procs():
+            if p["pid"] not in before:
+                out.setdefault(p["model"], []).extend(self.msgs(p["pid"]))
+        return out
+
+    # The reviewer's ways past a far-side name test (#294): a capital İ, an
+    # accent written as two characters, a letter with no plain form written
+    # plain, a hyphen written as a space; none is a name the context knows.
+    EARLIER = "for İlker, Soren, Jean Luc and Da\u0301na? EARLY88"
+
+    def assert_carries_nothing(self, before, request):
+        new = self.new_since(before)
+        self.assertTrue(new.get("sonnet"))
+        for m in new.get("haiku", []) + new["sonnet"]:
+            for word in ("EARLY88", "İlker", "Soren", "Jean Luc", "Da\u0301na", "Dána", "<earlier-request>"):
+                self.assertNotIn(word, m)
+        self.assertIn("<request>\n%s\n</request>" % request, new["sonnet"][0])
+        return new
+
+    def test_a_wall_reset_after_a_question_back_carries_nothing_of_it(self):
+        """#294: the request the box asked about is the user's own words, and
+        no test can say they name nothing on the far side. A reset gives the
+        new sessions the answer alone, and the scope its names alone."""
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md",
+              thread_note("Birch Entry", "Pricing", "birch", "Birch pricing. BIRCHPRICE12"))
+        self.commit()
+        self.rules([["The Birch one", find("thread", [], project="Birch Entry", thread="Pricing")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
-        self.assertEqual("wall", a.ask("The Birch one.")["reset"])
-        new = [m for p in self.procs() if p["pid"] not in before for m in self.msgs(p["pid"])]
-        self.assertTrue(new)
-        for m in new:
-            self.assertNotIn("<earlier-request>", m)
-            self.assertNotIn("Where does Pricing stand?", m)
-            self.assertNotIn('"Pricing"', m)                               # nor a name heard in it
+        self.assertEqual("clarify", a.ask("Where does Pricing stand " + self.EARLIER)["kind"])
+        out = a.ask("The Birch one.")
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        self.assertNotIn("carried", out)
+        new = self.assert_carries_nothing(before, "The Birch one.")
+        (cmd,) = new["haiku"]
+        self.assertIn('<names>\n- "Birch": the party Birch & Co in Work\n</names>', cmd)   # the answer's names alone
+        self.assertNotIn("Where does Pricing stand", "\n".join(new["haiku"] + new["sonnet"]))
+        self.assertIn("BIRCHPRICE12", new["sonnet"][0])
+        self.assertEqual({"birch"}, a.seen)
+
+    def test_a_reset_before_reading_carries_nothing_of_a_question_back(self):
+        """The reset that runs when the find, not the request, crosses the
+        wall gave the fresh answer session the whole earlier request."""
+        self.budget()
+        self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        before = {p["pid"] for p in self.procs()}
+        self.assertEqual("clarify", a.ask("Where is the Budget plan " + self.EARLIER)["kind"])
+        out = a.ask("The one in Personal.")                                 # no wall named: the find crosses it
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        new = self.assert_carries_nothing(before, "The one in Personal.")
+        self.assertNotIn("Budget plan", new["sonnet"][0])
+        self.assertIn(BIRCH, new["sonnet"][0])
+
+    def test_a_wall_reset_carries_no_far_name_settled_before_it(self):
+        """#294: a far-side alias settled in the request asked about reaches
+        neither new session, nor the scope."""
+        self.budget()
+        self.rules([["The Birch one", find("thread", [], project="Birch Entry", thread="Budget")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        before = {p["pid"] for p in self.procs()}
+        self.assertEqual("clarify", a.ask("Did dana whitlaw ask about the Budget quote?")["kind"])
+        out = a.ask("The Birch one.")
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        new = self.new_since(before)
+        self.assertTrue(new.get("haiku") and new.get("sonnet"))
+        self.assertIn("BIRCHBUDGET21", "\n".join(new["sonnet"]))
+        for m in new["haiku"] + new["sonnet"]:
+            for word in ("dana", "whitlaw", "whitlock", "quote", "<earlier-request>", ACME.lower()):
+                self.assertNotIn(word, m.lower())
+        self.assertIn("<request>\nThe Birch one.\n</request>", new["sonnet"][0])
 
 
 class TestEitherProcess(AnswerCase):

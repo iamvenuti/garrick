@@ -2174,6 +2174,24 @@ class TestJobs(StatusCase):
         self.assertIn("The spending cap stopped brief 3 times in 24 hours<", block)
         self.assertIn("The spending cap stopped digest<", block)
 
+    def test_asks_own_cap_is_named_in_needs_attention(self):
+        """#294: Ask at its own cap said "The spending cap stopped ask", even
+        when the cap it reached was its requests an hour."""
+        hour = {"job": "ask", "refused": "61 calls in the last hour, the cap is 60"}
+        self.ledger(hour, hour, {"job": "ask", "refused": "$20.10 spent in the last 24 hours, the cap is $20"},
+                    {"job": "ask", "refused": "300 calls in the last 24 hours, the cap is 300"},
+                    {"job": "ask", "refused": "the cap GARRICK_CAP_ASK_HOUR is set below zero (-1); set it to 0 to remove it"},
+                    {"job": "ask", "refused": True}, {"job": "brief", "refused": True},
+                    {"job": "ask", "cost_usd": 0.2, "exit": 0})
+        with self.plists():
+            block = self.attention(self.page()).replace("&#x27;", "'")
+        self.assertNotIn("The spending cap stopped ask", block)
+        self.assertIn("Ask's limit on requests an hour stopped it 3 times in 24 hours<", block)
+        self.assertIn("Ask's limit on spending a day stopped it<", block)
+        self.assertIn("Ask's limit on requests a day stopped it<", block)
+        self.assertIn("One of Ask's limits stopped it<", block)                 # a line from before reasons were written
+        self.assertIn("The spending cap stopped brief<", block)                 # the jobs' line as it was
+
     def test_caps_come_from_the_plist_of_the_job_that_calls(self):
         self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
         args = ["/usr/bin/python3", "/w/System/jobs/job.py", "brief", "--agent", "--", "python3", "brief.py"]
@@ -2379,6 +2397,16 @@ class TestJobs(StatusCase):
         with self.plists(**{"gr-todo-sweep": sweep}):                            # a call under the old name since: not Garrick's
             L = status.ledger(status.load_agent(self.root), self.jobs, self.now + dt.timedelta(minutes=5))
         self.assertEqual({"todo-sweep": 1}, {k: v["calls"] for k, v in L["by"].items()})
+
+    def test_a_stopped_request_is_not_a_failed_call(self):
+        """#294: a request ended with Ask's Stop is billed with exit 1, and
+        the calls table counted it as failed."""
+        self.ledger({"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "stopped"},
+                    {"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "error_during_execution"},
+                    {"job": "ask", "cost_usd": 0.01, "exit": 0, "subtype": "success"})
+        with self.plists():
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual((3, 1), (L["by"]["ask"]["calls"], L["by"]["ask"]["failed"]))
 
     def test_the_evening_builds_row_goes_by_the_nightlys_first_run(self):
         """#276: the jobs folder decides, not the .retired file, which the

@@ -64,10 +64,11 @@ session is stopped too, and everything both were told is cleared, as at a
 wall: the next request starts a new conversation in fresh sessions, told
 the whole list. The final line then
 says `"stopped": true`, and nothing the session proposed has run, because
-it had proposed nothing yet. A client that leaves is not a Stop: the turn
-runs on, as before. `call()` sends STOP when it is interrupted (Ctrl-C, or
-the app's Stop, which sends SIGINT). With Codex the one call runs to its
-end, and Stop is heard too late to matter.
+it had proposed nothing yet. When the request had already started afresh
+at a wall, the final line says so, with `"reset": "wall"` (#294). A client
+that leaves is not a Stop: the turn runs on, as before. `call()` sends STOP when
+it is interrupted (Ctrl-C, or the app's Stop, which sends SIGINT). With
+Codex the one call runs to its end, and Stop is heard too late to matter.
 
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
@@ -149,7 +150,11 @@ party at all, for a question across every zone) stops both sessions and
 clears everything they were told: the results, the questions waiting for a
 yes, `seen`, `heard`, the records admitted, and which process was given
 the list. The new processes get the new request
-only, and the reply carries `"reset": "wall"`. A question across every zone
+only, and the reply carries `"reset": "wall"`. A request the box asked
+about is never carried across: no reliable test can say that the user's
+own words name nothing on the far side, so the new processes get the
+answer that settled it alone, and only the names heard in that answer
+reach the scope (#294). A question across every zone
 reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
@@ -217,6 +222,9 @@ GONE = ("done",)
 STOP = b'{"stop": true}\n'    # said on a request's own connection: stop that request
 KINDS = ("command", "clarify", "answer")    # what a final line's `kind` says it is
 STOPPED = "Stopped. Nothing was done, and the next request starts a new conversation."
+# Stop in a request that had already started afresh at a wall: said so, as
+# the reply's "reset" is, for the app's divider (#294).
+STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at a wall, and the next request starts a new conversation."
 APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
@@ -805,19 +813,17 @@ def session_for(ws: Path):
     return (ClaudeSession if h == "claude" else OnceSession)(ws, tier())
 
 
-def heard_names(named, ctx: dict, since: int = 0) -> str:
+def heard_names(named, ctx: dict) -> str:
     """The command session's `<names>` block: each name the request holds,
     as it was heard, and what ask_scope.mentions() settled it to, from the
     list and System/context.md's Parties, People and Aliases. The session
     is sealed and loads no context, so this is how a mangled name, an alias
     or a person reaches it. Names, kinds and zones only: never a role, a
-    domain or anything from a note. A name heard before `since` is left out:
-    the request a wall reset dropped."""
+    domain or anything from a note. After a wall reset `named` holds only
+    the names of the request sent (Mentions.since())."""
     parties = ctx.get("parties", {})
     lines = []
-    for start, _, words, means in getattr(named, "heard", None) or []:
-        if start < since:
-            continue
+    for _, _, words, means in getattr(named, "heard", None) or []:
         said = []
         for e in means:
             if e.kind == "party":
@@ -854,10 +860,12 @@ class Asker:
         self.heard_for = None       # the `started` of the process `heard` describes
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
+        self.afresh = False         # a wall reset ran during the request under way, whatever ends it
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
+        self.afresh = False
         if not flag_on(self.ws):
             return off()
         if self.session is None:
@@ -872,31 +880,37 @@ class Asker:
         # fits two entries is asked about, and nothing is read or sent.
         earlier = self.unclear
         heard = request if earlier is None else earlier + "\n" + request
-        named = sc.mentions(self.ws, heard, names, self.ctx, lib)
+        named = sc.mentions(self.ws, heard, names, self.ctx, lib, answer=None if earlier is None else len(earlier) + 1)
         if named.question:
             self.unclear = heard[-MAX_REQUEST:]
             return clarify(named.question)
         self.unclear = None
         reset = self.crosses(named.parties)
-        since = 0                                   # where in `heard` the names sent begin
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
-            since = 0 if earlier is None else len(earlier) + 1
-            earlier, heard = None, request      # the new processes get the new request alone
+            self.afresh = True
+            # The new processes get the new request alone, and the scope the
+            # names heard in it: nothing of the request the box asked about (#294).
+            if earlier is not None:
+                earlier, heard, named = None, request, named.since(len(earlier) + 1)
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
         # a warm that replaced an aged session, or a restart, the hash alone
         # would leave it with no names at all.
         whole = sent != self.sent or self.session.fresh() or self.session.started != self.told
+        if self.session.remembers and self.session.fresh():
+            # The turn starts a new process, which was told none of what the
+            # last actions did nor asked any question waiting for a yes.
+            self.results, self.asked = "", {}
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         if earlier is not None:                     # the request the box asked about, which this one answers
             parts.append("<earlier-request>\n%s\n</earlier-request>" % earlier[:MAX_REQUEST])
-        known = heard_names(named, self.ctx, since)
+        known = heard_names(named, self.ctx)
         if known:                                   # the names it heard, settled: the session loads no context
             parts.append(known)
         parts.append("<request>\n%s\n</request>" % request[:MAX_REQUEST])
@@ -911,7 +925,8 @@ class Asker:
                 self.sent, self.told = sent, self.session.started
                 find = wanted(text)
                 if find is not None:
-                    out, again = self.answer(heard, find, named, names, today, turns, usage)
+                    out, again = self.answer(heard, find, named, names, today, turns, usage,
+                                             asked=0 if earlier is None else len(earlier) + 1)
                     reset = reset or again
                 else:
                     bill(turns)
@@ -938,11 +953,13 @@ class Asker:
         return out
 
     def answer(self, request: str, find: dict, named, names, today: Optional[dt.date], turns: list,
-               usage: dict) -> Tuple[dict, bool]:
+               usage: dict, asked: int = 0) -> Tuple[dict, bool]:
         """A question, answered from the records inside its scope by the second
         session: (the reply, whether a wall reset ran). Its turn goes in
         `turns`, so the request is one line in the ledger. What it says is
-        said; it never carries out an action, whatever a record holds."""
+        said; it never carries out an action, whatever a record holds.
+        `asked` is where the request sent last begins in `request`, after a
+        request the box asked about."""
         sc = scope_lib()
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
@@ -960,6 +977,8 @@ class Asker:
         if reset:                                   # before anything is read
             self.progress("Starting a fresh session")
             self.reset()
+            self.afresh = True
+            request = request[asked:]               # the fresh session gets the new request alone, never the one asked about (#294)
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
@@ -1019,13 +1038,16 @@ class Asker:
         """The parties either process holds: those whose records the answer
         process was given, and those the command process was told of. Each
         set goes once its own process has ended or another has taken its
-        place, and only that one: the other process still holds its own."""
+        place, and only that one: the other process still holds its own.
+        What the last actions did, and the questions waiting for a yes, were
+        said to the command process, so they go with it too."""
         s = self.answers
         if s is None or not s.alive() or s.started != self.seen_for:
             self.seen, self.passages = set(), []
         c = self.session
         if c is None or not c.alive() or c.started != self.heard_for:
             self.heard = set()
+            self.results, self.asked = "", {}
         return self.seen | self.heard
 
     def hear(self, parties) -> None:
@@ -1363,7 +1385,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                     else:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
                 except Stopped:                         # Asker.ask() has stopped both sessions
-                    out = {"kind": "command", "say": STOPPED, "done": [], "launch": [], "ok": False, "stopped": True}
+                    out = {"kind": "command", "say": STOPPED_AFRESH if asker.afresh else STOPPED, "done": [], "launch": [],
+                           "ok": False, "stopped": True}
                 except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
                     out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}
                 except Bad as e:
@@ -1373,6 +1396,10 @@ def serve_locked(ws: Path, path: Path) -> None:
                            "failed": True}
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
+                if op == "ask" and asker.afresh:
+                    # A wall reset ran before the request stopped, was capped or failed:
+                    # the app draws its divider all the same (#294).
+                    out["reset"] = "wall"
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
                     log(log_line(str(msg.get("text", "")), out))

@@ -713,7 +713,9 @@ def summary(entries: List[dict]) -> str:
         by_job.setdefault(e.get("job", "?"), []).append(e)
     for job, rows in sorted(by_job.items()):
         spent = sum(float(e.get("cost_usd") or 0) for e in rows)
-        failed = sum(1 for e in rows if e.get("exit"))
+        # A request ended with Ask's Stop is billed with exit 1, but it did not
+        # fail: the Assistant calls card reads it the same way (#294).
+        failed = sum(1 for e in rows if e.get("exit") and e.get("subtype") != "stopped")
         denied = sorted({t for e in rows for t in e.get("denied") or []})
         line = "  %s: %d call%s, $%.2f" % (job, len(rows), "" if len(rows) == 1 else "s", spent)
         if failed:

@@ -3438,7 +3438,8 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             continue
         j["calls"] += 1
         j["cost"] += float(e.get("cost_usd") or 0)
-        j["failed"] += 1 if e.get("exit") else 0
+        # A request ended with Ask's Stop is billed with exit 1, but it did not fail (#294).
+        j["failed"] += 1 if e.get("exit") and e.get("subtype") != "stopped" else 0
         j["denied"] |= set(e.get("denied") or [])
         if isinstance(e.get("turns"), (int, float)):
             j["turns"].append(e["turns"])
@@ -3455,8 +3456,28 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             "per_day": [(d,) + tuple(per_day.get(d, (0, 0.0))) for d in days],
             "began": dt.datetime.fromtimestamp(entries[0]["ts"]) if entries else None,
             "over_budget": [e for e in calls if now.timestamp() - e["ts"] < 86400 and e.get("subtype") == "error_max_budget_usd"],
-            "budget": call_budget(agent, sched), "deny": deny_list(agent),
+            "budget": call_budget(agent, sched), "deny": deny_list(agent), "ask_job": ask,
             "ask": ask_calls(agent, calls, now) if ask and any(e.get("job") == ask for e in entries) else None}
+
+
+# Which of Ask's own caps refused a call, from the reason agent.py wrote for
+# it, in the words the box uses (ask.capped()): the first that the reason
+# holds. A cap set below zero is named by its variable.
+ASK_CAP_WORDS = (("in the last hour", "requests an hour"), ("_ASK_HOUR", "requests an hour"),
+                 ("spent in", "spending a day"), ("_ASK_COST_DAY", "spending a day"),
+                 ("in the last 24 hours", "requests a day"), ("_ASK_DAY", "requests a day"))
+
+
+def ask_cap(reason) -> str:
+    """Which of Ask's caps refused a call, said as the box says it, or ""."""
+    return next((said for key, said in ASK_CAP_WORDS if key in str(reason)), "")
+
+
+def ask_cap_stopped(cap: str, n: int) -> str:
+    """The Needs attention line for Ask's calls a cap of its own refused: which
+    cap, never "the spending cap" when it was the requests an hour (#294)."""
+    times = "" if n == 1 else " %d times in 24 hours" % n
+    return "Ask's limit on %s stopped it%s" % (cap, times) if cap else "One of Ask's limits stopped it%s" % times
 
 
 def ask_calls(agent, calls: List[dict], now: dt.datetime) -> dict:
@@ -7848,11 +7869,18 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             attn.append(("critical", "%s: %s" % (j["name"], j["status"]), "#jobs"))
     if L:
         stopped: Dict[str, int] = {}          # one line per job, however many calls it lost
+        capped_ask: Dict[str, int] = {}       # and one per cap of Ask's own, named (#294)
         for e in L["refused_today"]:
             job = str(e.get("job") or "a job")
+            if L.get("ask_job") and job == L["ask_job"]:
+                cap = ask_cap(e.get("refused"))
+                capped_ask[cap] = capped_ask.get(cap, 0) + 1
+                continue
             stopped[job] = stopped.get(job, 0) + 1
         for job, n in stopped.items():
             attn.append(("critical", "The spending cap stopped %s%s" % (job, "" if n == 1 else " %d times in 24 hours" % n), "#calls"))
+        for cap, n in capped_ask.items():
+            attn.append(("critical", ask_cap_stopped(cap, n), "#calls"))
         over: Dict[str, int] = {}
         for e in L["over_budget"]:
             over[str(e.get("job") or "a job")] = over.get(str(e.get("job") or "a job"), 0) + 1

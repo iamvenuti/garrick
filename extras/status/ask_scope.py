@@ -10,9 +10,12 @@ System/context.md, as garrick_lib.load_context() reads them), a project or
 a thread (ask.py's list of names). Each stands for a party, and a project
 or a thread for a place as well. A name that fits two entries whose parties
 or places differ, and that the other names in the request do not settle,
-is unclear: the box asks which, and nothing is read. scope() then takes the
-session's `find`, the route and the place it proposed, checked against the
-list as ask.py checks an action, and works out the parties it covers.
+is unclear: the box asks which, and nothing is read. The answer settles it
+by another name, by the zone it names, or by an option exactly as the
+question offered it; an answer that names two options is asked again
+(#294). scope() then takes the session's `find`, the route and the place it
+proposed, checked against the list as ask.py checks an action, and works
+out the parties it covers.
 
 **The records.** search() reads files inside the scope and nowhere else:
 
@@ -220,60 +223,159 @@ class Mentions:
                 seen.append((e.zone, e.project, e.thread))
         return seen
 
+    def since(self, start: int) -> "Mentions":
+        """The names heard from `start` on: what is left when the words
+        before it are dropped."""
+        keep = [i for i, h in enumerate(self.heard) if h[0] >= start]
+        return Mentions([self.entries[i] for i in keep], self.question, [self.heard[i] for i in keep])
 
-def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> Mentions:
+
+def _pattern(form: str) -> str:
+    """A name as a whole word or words, however the spaces between them fall."""
+    return r"(?<!\w)%s(?!\w)" % r"\s+".join(re.escape(w) for w in _norm(form).split())
+
+
+def _longest(spans: Iterable[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """The spans no longer one overlaps, the longest first, in order."""
+    kept: List[Tuple[int, int]] = []
+    for span in sorted(set(spans), key=lambda s: (s[0] - s[1], s[0])):
+        if not any(span[0] < k[1] and k[0] < span[1] for k in kept):
+            kept.append(span)
+    return sorted(kept)
+
+
+# An answer that rules something out, or reaches past the options, settles
+# nothing by a zone or an option: it is asked again (#294).
+RULED_OUT = re.compile(r"\b(?:not|no|but|except|other|others|another|else|or|rather|instead|never|without|neither|nor|"
+                       r"exclud\w*)\b|n't\b", re.I)
+
+
+def _zone_said(answer: str, names: Dict[str, Dict[str, dict]]) -> Optional[Tuple[str, int, int]]:
+    """The zone an answer names in one of the clear forms, and where: the
+    zone alone ("Work"), "in Work", "from Work", "the one in Work", "the
+    Work one", in any case, with a full stop or none. Anything else, "the one
+    I work on" or "not the one in Work", names no zone."""
+    body = answer.rstrip()
+    body = body.rstrip(".!") if body else body
+    lead = len(body) - len(body.lstrip())
+    for zone in names:
+        z = r"\s+".join(re.escape(w) for w in zone.split())
+        for form in (r"(%s)", r"(?:the\s+one\s+)?(?:in|from)\s+(%s)", r"the\s+(%s)\s+one"):
+            m = re.fullmatch(form % z, body.strip(), re.I)
+            if m:
+                return zone, lead + m.start(1), lead + m.end(1)
+    return None
+
+
+def mentions(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict, lib_,
+             answer: Optional[int] = None) -> Mentions:
     """The names in a request, each settled to one party or place, or the one
     question that settles the first that is not. A longer name holds the
     shorter ones inside it ("Acme Review" holds "Acme"); a name that fits
     two entries is narrowed by the other names in the request ("Pricing" in
-    two projects, with "Acme" beside it), and asked about when it is not."""
+    two projects, with "Acme" beside it), and asked about when it is not.
+
+    `answer` is where, in a request the box asked about, the answer to its
+    question begins (#294). The answer may also settle a name by one of the
+    options exactly as which() offered it, and the name the question asked
+    about by a zone, said in one of the clear forms _zone_said() takes. An
+    answer that rules anything out ("not the one in Work", "the other
+    one", "Work or Personal") settles nothing, by a name in it either, and
+    the question is asked again. Every way
+    the request narrows a name must agree: an answer that names both
+    options, or none, is asked again."""
     text = str(request).replace("’", "'")
     spans: Dict[Tuple[int, int], Set[Entry]] = {}
     for form, capital, e in entries(ws, names, ctx, lib_):
-        pattern = r"(?<!\w)%s(?!\w)" % r"\s+".join(re.escape(w) for w in _norm(form).split())
-        for m in re.finditer(pattern, text, re.I):
+        for m in re.finditer(_pattern(form), text, re.I):
             if capital and not text[m.start()].isupper():
                 continue
             spans.setdefault((m.start(), m.end()), set()).add(e)
-    kept: List[Tuple[int, int]] = []
-    for span in sorted(spans, key=lambda s: (s[0] - s[1], s[0])):     # the longest first
-        if not any(span[0] < k[1] and k[0] < span[1] for k in kept):
-            kept.append(span)
-    kept.sort()
-    settled: Dict[Tuple[int, int], Entry] = {}
-    means: Dict[Tuple[int, int], List[Entry]] = {}     # every entry a settled name stands for, all of one party and place
-    for _ in range(2):                          # a name settled in the first pass can settle another
-        parties = set().union(*(e.parties for e in settled.values())) if settled else set()
-        places = {(e.zone, e.project) for e in settled.values() if e.project}
-        for span in kept:
-            if span in settled:
-                continue
-            cands = sorted(spans[span], key=_order)
-            if not _unclear(cands):
-                settled[span], means[span] = cands[0], cands
-                continue
-            narrowed = ([e for e in cands if e.project and (e.zone, e.project) in places]
-                        or [e for e in cands if e.parties & parties])
-            if narrowed and not _unclear(narrowed):
-                settled[span], means[span] = narrowed[0], narrowed
+    kept = _longest(spans)
+    said = text[answer:] if answer is not None else ""
+    plain = answer is not None and not RULED_OUT.search(said)
+    zone = _zone_said(said, names) if plain else None
+    if zone is not None:
+        at = (answer + zone[1], answer + zone[2])
+        for k in kept:                          # a zone's word that is also a name: only when that name is all of the zone
+            if at[0] < k[1] and k[0] < at[1] and not _all_of(spans[k], zone[0], ctx):
+                zone = None
+                break
+
+    def settle(within, asked=None, answered=False):
+        settled: Dict[Tuple[int, int], Entry] = {}
+        means: Dict[Tuple[int, int], List[Entry]] = {}     # every entry a settled name stands for, all of one party and place
+        for _ in range(2):                      # a name settled in the first pass can settle another
+            parties = set().union(*(e.parties for e in settled.values())) if settled else set()
+            places = {(e.zone, e.project) for e in settled.values() if e.project}
+            for span in within:
+                if span in settled:
+                    continue
+                cands = sorted(spans[span], key=_order)
+                if not _unclear(cands):
+                    settled[span], means[span] = cands[0], cands
+                    continue
+                by_zone = [e for e in cands if e.zone == zone[0]] if span == asked else []
+                by_label = offered(cands, ctx, text, answer) if answered else []
+                narrowed = None
+                for way in ([e for e in cands if e.project and (e.zone, e.project) in places]
+                            or [e for e in cands if e.parties & parties], by_zone, by_label):
+                    if way:                     # each way that narrows at all, and all of them together
+                        narrowed = [e for e in (cands if narrowed is None else narrowed) if e in way]
+                if narrowed and not _unclear(narrowed):
+                    settled[span], means[span] = narrowed[0], narrowed
+        return settled, means
+
+    asked = None
+    if answer is not None:                      # the name the question asked about: the first the request before it left open
+        before = [k for k in kept if k[1] < answer]
+        first, _ = settle(before)
+        asked = next((k for k in before if k not in first), None)
+        if asked is not None and not plain:     # an answer that rules something out settles nothing: asked again
+            return Mentions([], which(sorted(spans[asked], key=_order), ctx))
+    settled, means = settle(kept, asked if zone is not None else None, plain)
     for span in kept:
         if span not in settled:
             return Mentions([], which(sorted(spans[span], key=_order), ctx))
     return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept])
 
 
-def which(cands: List[Entry], ctx: dict) -> str:
-    """One question for the ear, naming the candidates as they are said."""
+def _all_of(cands: Iterable[Entry], zone: str, ctx: dict) -> bool:
+    """Whether every entry a name stands for is of this zone, and so is every
+    party it stands for: a party tagged like its zone, or named like it."""
+    rows = ctx.get("parties", {})
+    return all(e.zone == zone and all(rows.get(p, {}).get("zone") == zone for p in e.parties) for e in cands)
+
+
+def offered(cands: List[Entry], ctx: dict, text: str, answer: int) -> List[Entry]:
+    """The candidates of the option, as which() says it, that the answer is
+    word for word, a full stop aside: "Dana Whitlock of Acme Corp in Work".
+    An answer that holds anything more names none."""
+    body = _norm(text[answer:].strip().rstrip(".!"))
+    return [e for label, e in _labels(cands, ctx) if _norm(label) == body]
+
+
+def _labels(cands: List[Entry], ctx: dict) -> List[Tuple[str, Entry]]:
+    """Each candidate as a question names it, with its zone where two would
+    otherwise be said alike."""
     def said(e: Entry) -> str:
         if e.kind == "person":
             of = ", ".join(sorted(ctx.get("parties", {}).get(p, {}).get("party") or p for p in e.parties))
             return "%s of %s" % (e.label, of) if of else e.label
         return e.label
-    labels: List[str] = []
+    out = []
     for e in cands:
         label = said(e)
         if sum(said(o) == label for o in cands) > 1 and e.zone:
             label += " in %s" % e.zone
+        out.append((label, e))
+    return out
+
+
+def which(cands: List[Entry], ctx: dict) -> str:
+    """One question for the ear, naming the candidates as they are said."""
+    labels: List[str] = []
+    for label, _ in _labels(cands, ctx):
         if label not in labels:
             labels.append(label)
     labels = labels[:MOST_NAMED]

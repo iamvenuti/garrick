@@ -267,7 +267,7 @@ ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart",
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
           "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
-          "do", "id", "answer", "suggested", "path", "version")       # never "token"
+          "do", "id", "answer", "suggested", "path", "version", "agent")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -1819,18 +1819,30 @@ def root_title(prompt: str) -> str:
     return (title[:1].upper() + title[1:]) if title else "Ask"
 
 
+def tab_agent(req: dict) -> list:
+    """The assistant an open asks its tab to start, for this open only (#307),
+    as desk's --agent: none, and the tab starts what desk-agent says."""
+    agent = req.get("agent")
+    if agent is None:
+        return []
+    if agent not in DESK_AGENTS:
+        raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), agent))
+    return ["--agent", agent]
+
+
 def cmux_act(ws: Path, req: dict) -> str:
     verb = req["verb"]
+    agent = tab_agent(req) if verb == "open" else []
     if verb == "open" and "folder" in req:
         req = dict(req)
         prompt = by_folder(ws, req)
         if prompt is not None:
             said = run_desk(ws, "open", str(ws.resolve()), "--prompt", prompt, "--title", root_title(prompt),
-                            "--front").splitlines()
+                            "--front", *agent).splitlines()
             return said[0][:1].upper() + said[0][1:] if said else "Opened the workspace root in cmux"
     if verb == "open":
         folder, name = cmux_folder(ws, req)
-        said = run_desk(ws, "open", str(folder), "--prompt", "open " + name, "--front").splitlines()
+        said = run_desk(ws, "open", str(folder), "--prompt", "open " + name, "--front", *agent).splitlines()
         return said[0][:1].upper() + said[0][1:] if said else "Opened %s in cmux" % name
     if verb == "close":
         folder, name = cmux_folder(ws, req)

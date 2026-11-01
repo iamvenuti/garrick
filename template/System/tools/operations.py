@@ -255,7 +255,8 @@ DECLARED: Dict[str, Op] = {
     # launchd starts the job; nothing in the workspace is touched here.
     "run": _op(("job",), ("job",), "machine"),
     # The cmux verbs: a tab in a folder, by name or by the folder itself.
-    "open": _op(("zone", "project", "thread", "folder", "prompt"), ("project", "thread", "folder"), "machine"),
+    # `agent`: the assistant the tab starts, for this open only (#307).
+    "open": _op(("zone", "project", "thread", "folder", "prompt", "agent"), ("project", "thread", "folder"), "machine"),
     "close": _op(("zone", "project", "thread"), ("project", "thread"), "machine"),
     "startup": _op((), (), "machine"),
     "shutdown": _op((), (), "machine"),

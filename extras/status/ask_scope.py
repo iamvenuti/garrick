@@ -430,6 +430,16 @@ class Scope:
         self.words, self.parties, self.every = words, parties, every
 
 
+def no_zone(zone, names: Dict[str, Dict[str, dict]]) -> str:
+    """Why a zone the session named is refused: a project's name, when it is
+    exactly one project's, said as such so the user can act on it (#308);
+    else that there is no such zone. Never guessed into a place."""
+    holds = [z for z, ps in names.items() if isinstance(zone, str) and zone in ps]
+    if len(holds) == 1:
+        return "%s is a project, not a zone" % zone
+    return "no zone %r" % (zone,)
+
+
 def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> Scope:
     """The session's find, checked against the list as an action is, with the
     names the request holds. Raises Refused, or Unclear with the question."""
@@ -440,7 +450,7 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         raise Refused("not somewhere an answer reads: %r" % (route,))
     zone, project, thread = find.get("zone"), find.get("project"), find.get("thread")
     if zone is not None and (not isinstance(zone, str) or zone not in names):
-        raise Refused("no zone %r" % (zone,))
+        raise Refused(no_zone(zone, names))
     if project is not None:
         if not isinstance(project, str):
             raise Refused("no project %r" % (project,))

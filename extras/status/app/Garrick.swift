@@ -26,16 +26,16 @@
 //     turned off, or while an assistant is working (agents_working.py). Settings › Menu bar switches it on,
 //     opens the app at login and sets a hotkey for the menu; the app keeps
 //     those three in its own defaults, as it keeps the menu between launches.
-//     A field at the top of the menu finds a project or thread, and asks;
+//     A field at the top of the menu finds a project or thread, and only finds;
 //   - instead of the icon, the same menu as a panel that slides out from the
 //     left or right edge of the screen, or down from under the notch, when the
 //     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
 //     its projects start folded, and it remembers the ones you unfold;
-//   - with the preview ask on, the fields of the menu and the panel, and the
-//     window the Ask hotkey opens from any app (⌘G until Settings sets another),
-//     answer a request in plain words through
-//     ask.py, beside status.py, and run what it proposes; off, a field opens
-//     the default assistant with the words. The window is one, kept: Escape
+//   - with the preview ask on, the window the Ask hotkey opens from any app
+//     (⌘G until Settings sets another) answers a request in plain words through
+//     ask.py, beside status.py, and runs what it proposes; it is the one place
+//     that asks, and the fields of the menu and the panel only find (#310).
+//     The window is one, kept: Escape
 //     hides it, and its exchange stays until New conversation or quit, with
 //     Stop while a request runs. Once the box has opened, it can
 //     start dictation (Settings › Then start dictation): macOS's own, or
@@ -160,6 +160,21 @@ func askOn() -> Bool {
 	return flags["ask"] as? Bool == true
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+// The Ask window's size and its text size (#309), kept in the app's own defaults,
+// never the workspace: the width, the height it has once grown for an answer, and
+// the exchange's text size in points. ⌘+ and ⌘− step through askTextSizes, ⌘0
+// goes back to askTextDefault; the field is askFieldExtra points larger, and
+// the sources under an answer, with their numbered links, one point smaller.
+let kAskWidth = "askWidth", kAskHeight = "askHeight", kAskTextSize = "askTextSize"
+let askTextSizes: [CGFloat] = [11, 12, 13, 15, 17, 19, 22, 25, 28]
+let askTextDefault: CGFloat = 15
+let askFieldExtra: CGFloat = 5
+let askWidthDefault: CGFloat = 620, askWidthLeast: CGFloat = 400
+let askLogDefault: CGFloat = 320    // the exchange's height the first time the window grows
+func askText() -> CGFloat {
+	let saved = CGFloat(defaults.double(forKey: kAskTextSize))
+	return askTextSizes.contains(saved) ? saved : askTextDefault
+}
 // Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
 // exchange stays on screen, and nothing of it reaches the new session.
 let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
@@ -288,8 +303,26 @@ struct AskTurn {
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
 // Spotlight does. Escape hides it and keeps the exchange; the hotkey brings the same one back.
 final class AskPanel: NSPanel {
+	// ⌘+ (or ⌘=), ⌘− and ⌘0: the text size one step up, one down, or back to the
+	// default (#309). The window takes them before any view or menu does, so they
+	// work with the cursor in the field or in the exchange. +1, -1 or 0.
+	var textSize: (Int) -> Void = { _ in }
+
 	override var canBecomeKey: Bool { true }
 	override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+
+	override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .numericPad, .function, .capsLock])
+		if event.type == .keyDown, mods == .command, let key = event.charactersIgnoringModifiers {
+			switch key {
+			case "+", "=": textSize(1); return true
+			case "-": textSize(-1); return true
+			case "0": textSize(0); return true
+			default: break
+			}
+		}
+		return super.performKeyEquivalent(with: event)
+	}
 }
 
 // The field the request is typed in: Return sends it, Shift-Return starts a new line, and
@@ -449,9 +482,10 @@ final class RowView: NSView {
 }
 
 // The field at the top of the icon's menu, as the panel has one: typing finds
-// a project or thread, and Return opens the first found or, with none, asks.
-// It is a search field in the menu's own window, which passes it the keys
-// while the menu is open.
+// a project or thread, and Return opens the first found; with none, nothing
+// happens. It only finds: asking is the Ask window's (#310). It is a search
+// field in the menu's own window, which passes it the keys while the menu is
+// open, once menuWillOpen has made the app active.
 final class MenuField: NSView, NSSearchFieldDelegate {
 	let field = NSSearchField()
 	var changed: (String) -> Void = { _ in }
@@ -574,6 +608,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var keySaid: [String: String] = [:]   // why a key was refused, said under its field
 	var hotKeyHandler: EventHandlerRef?
 	var menuField: MenuField?         // the icon's menu's field, made anew each time it opens
+	var menuGaveBack: NSRunningApplication?   // the app in front before the menu made Garrick active (#310)
+	var menuActed = false             // the menu opened something, so the app in front stays where it went
 	var hourly: Timer?
 	var awake: Awake = .off
 	var held: [String: IOPMAssertionID] = [:]   // the sleep assertions this app holds, by type
@@ -584,6 +620,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askKept = false               // whether this app has a background session kept, for quit to stop it
 	var askField: AskInput!
 	var askInputHeight: NSLayoutConstraint!
+	var askWidthHeld: NSLayoutConstraint!   // the width the window was left at, below what a drag asks (#309)
+	var askLogLeast: NSLayoutConstraint!    // the exchange's least height: one line at the text size (#309)
 	var askLog: NSTextView!           // the exchange, once the window has expanded
 	var askLogBox: NSScrollView!
 	var askWorking: NSStackView!      // what is happening now, with Stop
@@ -963,12 +1001,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// caller's row or Ask's answer does) goes through page_action.py instead:
 	// a tab in that folder that starts the assistant on the phrase, or on
 	// "open X" for a project or thread, as the page's buttons open it.
+	// `agent` (Ask's "in cmux with Codex", #307) is the assistant that tab
+	// starts, for this open only; the desk's own setting is left as it is.
 	@discardableResult
-	func launch(_ app: String, _ path: String, phrase: String, desk: Bool = false) -> Bool {
+	func launch(_ app: String, _ path: String, phrase: String, desk: Bool = false, agent: String = "") -> Bool {
+		menuActed = true
 		guard let folder = inWorkspace(path) else { return false }
 		if app == "cmux" && (desk || deskReady()) {
-			act(["verb": "open", "folder": folder.path, "prompt": phrase])
+			act(["verb": "open", "folder": folder.path, "prompt": phrase].merging(agent.isEmpty ? [:] : ["agent": agent]) { a, _ in a })
 			return true
+		}
+		if !agent.isEmpty {
+			toast("cmux starts an assistant only through the cmux extra's desk.")
+			return false
 		}
 		switch app {
 		case "claude":
@@ -1373,10 +1418,34 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The field takes the keys as the menu opens, so typing finds at once. Its
-	// window exists only once the menu is on screen, during its tracking.
+	// window exists only once the menu is on screen, during its tracking. A
+	// status item's menu opens without making its app active, and the keys of
+	// an app that is not active go to the app in front, so the field took none
+	// (#310): Garrick becomes active as the menu opens, its menu window key, and
+	// the app that was in front comes back when the menu closes having opened
+	// nothing.
 	func menuWillOpen(_ menu: NSMenu) {
 		guard menu === statusItem?.menu, let box = menuField else { return }
-		RunLoop.main.perform(inModes: [.eventTracking, .default]) { box.window?.makeFirstResponder(box.field) }
+		menuActed = false
+		if !NSApp.isActive && !checking {
+			menuGaveBack = NSWorkspace.shared.frontmostApplication
+			if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+		}
+		RunLoop.main.perform(inModes: [.eventTracking, .default]) {
+			box.window?.makeKey()
+			box.window?.makeFirstResponder(box.field)
+		}
+	}
+
+	// After what the menu's click runs, which goes on the main queue as the menu closes: when
+	// that opened nothing, the app that was in front before the menu is given back the keys.
+	func menuDidClose(_ menu: NSMenu) {
+		guard menu === statusItem?.menu, let back = menuGaveBack else { return }
+		menuGaveBack = nil
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+			guard let self, !self.menuActed, NSApp.isActive, back.processIdentifier != getpid() else { return }
+			back.activate()
+		}
 	}
 
 	// A view-backed row repaints only when told: the highlight moves here.
@@ -1458,7 +1527,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// its actions. Clicking a project or a thread itself runs its default.
 	func fill(_ menu: NSMenu) {
 		menu.removeAllItems()
-		let box = MenuField(canAsk() ? "Find a thread, or ask Garrick" : "Find a project or thread")
+		let box = MenuField("Find a project or thread")
 		box.changed = { [weak self, weak menu] text in if let self, let menu { self.fillRows(menu, text) } }
 		box.submit = { [weak self, weak menu] text in self?.enter(text, closing: menu) }
 		let field = NSMenuItem()
@@ -1469,14 +1538,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Everything under the field, again at each key typed in it. With words in
-	// it, Ask Garrick comes first and the inbox goes; a thread found lists under
-	// its project, as the panel lists it.
+	// it the inbox goes; a thread found lists under its project, as the panel
+	// lists it. Nothing here asks (#310).
 	func fillRows(_ menu: NSMenu, _ typed: String) {
 		while menu.items.count > 1 { menu.removeItem(at: menu.items.count - 1) }
 		let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-		if !text.isEmpty, let ask = askItem(text) {
-			menu.addItem(ask)
-		} else if text.isEmpty, let inbox = inboxItem() {
+		if text.isEmpty, let inbox = inboxItem() {
 			menu.addItem(inbox)
 		}
 		menu.addItem(.separator())
@@ -1542,60 +1609,19 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Return in the menu's field: the first thread found, or the first project,
-	// opens the default way, as the panel's Return does; with nothing found, it asks.
+	// opens the default way, as the panel's Return does. With nothing found,
+	// nothing happens, and the menu stays open: the field only finds (#310).
 	func enter(_ typed: String, closing menu: NSMenu?) {
 		let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !text.isEmpty else { return }
 		let q = text.lowercased()
 		let rows = shownZones().flatMap { found($0["p"] as? [[String: Any]] ?? [], text) }
 		let thread = rows.flatMap { $0["t"] as? [[String: Any]] ?? [] }.first { ($0["n"] as? String ?? "").lowercased().contains(q) }
-		let open = (thread ?? rows.first).flatMap { r in acts(r).first { $0["d"] as? Bool == true } }
-		let go = { [weak self] in
-			guard let self else { return }
-			if let open { self.run(open) } else { self.askFrom(text) }
-		}
-		if checking { return go() }
+		guard let open = (thread ?? rows.first).flatMap({ r in acts(r).first { $0["d"] as? Bool == true } }) else { return }
+		if checking { return heard.append("menu:enter") }
+		menuActed = true
 		menu?.cancelTracking()
-		DispatchQueue.main.async(execute: go)     // once the menu has gone, so what opens comes forward
-	}
-
-	// Whether a field can ask: Garrick itself with the preview ask on, else an assistant to open with the words.
-	func canAsk() -> Bool { askOn() || assistant() != nil }
-
-	// The Ask Garrick row, with the words typed: where they go, as the panel says it.
-	func askItem(_ text: String) -> NSMenuItem? {
-		let via: String
-		if askOn() { via = ": Garrick answers" }
-		else if let app = assistant() { via = " in " + label(["k": app]).replacingOccurrences(of: "Open in ", with: "") }
-		else { return nil }
-		let item = NSMenuItem(title: "Ask Garrick", action: #selector(askRow(_:)), keyEquivalent: "")
-		item.target = self
-		item.representedObject = text
-		let said = NSMutableAttributedString(string: "Ask Garrick", attributes: [.font: NSFont.menuFont(ofSize: 0)])
-		said.append(NSAttributedString(string: "  \u{201C}\(text)\u{201D}" + via,
-		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
-		item.attributedTitle = said
-		show(item, symbol("text.bubble"))
-		return item
-	}
-
-	@objc func askRow(_ sender: NSMenuItem) {
-		if let text = sender.representedObject as? String { askFrom(text) }
-	}
-
-	// A request from the menu's field. With the preview ask on, it goes to
-	// the Ask box, which sends it to ask.py as the panel's field does and shows
-	// the answer; off, the default assistant opens at the workspace root with
-	// it, as from the panel.
-	func askFrom(_ text: String) {
-		if checking { return heard.append("menu:ask") }
-		if askOn() {
-			showAsk()
-			askField.string = text
-			askSubmit(askField)
-		} else if let app = assistant() {
-			launch(app, workspace.path, phrase: text)
-		}
+		DispatchQueue.main.async { [weak self] in self?.run(open) }   // once the menu has gone, so what opens comes forward
 	}
 
 	func label(_ a: [String: Any]) -> String {
@@ -1628,21 +1654,66 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// simple home's Continue (#180): page_action.py primes a session that
 	// asks where the thread stands and opens the desktop app on its answer,
 	// and its reply, or its refusal, is the toast that follows.
-	func run(_ a: [String: Any]) {
+	@discardableResult
+	func run(_ a: [String: Any]) -> Bool {
 		let k = a["k"] as? String ?? ""
-		if checking { return heard.append("menu:" + k) }
+		menuActed = true                  // something opens: the menu gives nothing back (menuDidClose)
+		if checking {
+			heard.append("menu:" + k)
+			return false
+		}
 		if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {
 			let name = a["n"] as? String ?? "it"
 			toast("Opening \(name) in Claude…", alsoNotify: false)
 			act(["verb": "continue", "zone": oc[0], "file": oc[1]])
-			return
+			return true
 		}
 		if k == "note" {
-			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+			guard let u = a["u"] as? String, let url = URL(string: u) else { return false }
+			return NSWorkspace.shared.open(url)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
-			launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
+			return launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
 		}
+		return false
+	}
+
+	// The menu's own row for a folder, from every zone the page gave it, so an
+	// open Ask sends with no app does exactly what clicking that row does (#307).
+	func menuRow(_ folder: String) -> [String: Any]? {
+		func find(_ rows: [[String: Any]]) -> [String: Any]? {
+			for r in rows {
+				if r["f"] as? String == folder { return r }
+				if let t = r["t"] as? [[String: Any]], let hit = find(t) { return hit }
+			}
+			return nil
+		}
+		let zones = (menuState?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
+		return find(zones.flatMap { $0["p"] as? [[String: Any]] ?? [] })
+	}
+
+	// An open with no app (#307): the default Settings › Opening a thread picks
+	// for clicking a thread, whatever it is, Finder and the note included, or,
+	// where it is switched off, what the row falls back to: acts() decides, as
+	// it does for the row. A thread the menu does not list, a parked one, is
+	// given the row's fields from what ask.py sent: its name, folder and note.
+	@discardableResult
+	func openAsRow(_ item: [String: Any]) -> Bool {
+		guard let folder = item["folder"] as? String else { return false }
+		var place = menuRow(folder) ?? [:]
+		if place.isEmpty {
+			let name = item["name"] as? String ?? ""
+			place = ["n": name, "w": name, "f": folder]
+			if let oc = item["oc"] as? [String], oc.count == 2 { place["oc"] = oc }
+			if item["dk"] != nil { place["dk"] = 1 }
+		}
+		if place["u"] == nil, let note = item["note"] as? String { place["u"] = URL(fileURLWithPath: note).absoluteString }
+		let offered = acts(place)
+		guard let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first else {
+			toast("Switch on a way to open threads in Settings › Opening a thread.")
+			return false
+		}
+		return run(a)
 	}
 
 	// A row's icon, kept visible: macOS 27 hides menu item images unless the
@@ -1684,38 +1755,71 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return assistants.contains(picked) ? picked : assistants.first
 	}
 
-	func inbox() -> (title: String, waiting: Int, act: [String: String], where: String)? {
+	// The inbox row, the menu's and the panel's alike (#311): how many wait, where, and what a
+	// click runs. Empty, it is a status line, "Inbox empty", with nothing to run. Something
+	// waiting, it opens assistant()'s app at the workspace root with "process the inbox"; with
+	// no assistant switched on, `act` is nil and `why` says so, and the row does nothing.
+	struct InboxRow {
+		let title: String
+		let waiting: Int
+		let places: String
+		let act: [String: String]?
+		let why: String
+	}
+
+	func inbox() -> InboxRow? {
 		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
-		      let folder = row["f"] as? String, let phrase = row["w"] as? String, let app = assistant() else { return nil }
+		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
+		let n = row["c"] as? Int ?? 0
+		guard n > 0 else { return InboxRow(title: "Inbox empty", waiting: 0, places: "", act: nil, why: "") }
 		// Where they wait, as "Meetings 1 · Work 4": a page built before it says only how many.
 		let places = (row["b"] as? [[Any]] ?? []).compactMap { b -> String? in
 			guard b.count == 2, let name = b[0] as? String, let n = b[1] as? Int else { return nil }
 			return "\(name) \(n)"
 		}
-		return (row["n"] as? String ?? "Process the Inbox", row["c"] as? Int ?? 0, ["k": app, "f": folder, "w": phrase], places.joined(separator: " · "))
+		let title = (row["n"] as? String ?? "Process the Inbox") + " · \(n) waiting"
+		guard let app = assistant() else {
+			return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: nil,
+			                why: "Switch on Claude, Codex or cmux in Settings › Opening a thread to process it from here")
+		}
+		let said = app == "cmux" && deskReady()
+			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
+			: "Opens \(label(["k": app]).replacingOccurrences(of: "Open in ", with: "")) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: ["k": app, "f": folder, "w": phrase], why: said)
+	}
+
+	// The inbox's launch, from the menu or the panel: launch() says what went wrong in a toast,
+	// and anything it could not open without saying so is said here, so a click is never silent.
+	func openInbox(_ act: [String: String]) {
+		guard let k = act["k"], let f = act["f"] else { return toast("Nothing to open the inbox with.") }
+		if !launch(k, f, phrase: act["w"] ?? ""), !["claude", "codex", "cmux", "finder"].contains(k) {
+			toast("Garrick cannot open \(k) on the inbox.")
+		}
 	}
 
 	func inboxItem() -> NSMenuItem? {
-		guard let row = inbox(), let app = row.act["k"], let phrase = row.act["w"] else { return nil }
-		let title = row.title, n = row.waiting, act = row.act
-		let item = NSMenuItem(title: title, action: #selector(processInbox(_:)), keyEquivalent: "")
+		guard let row = inbox() else { return nil }
+		let item = NSMenuItem(title: row.title, action: row.act == nil ? nil : #selector(processInbox(_:)), keyEquivalent: "")
+		item.identifier = NSUserInterfaceItemIdentifier("inbox")
 		item.target = self
-		item.representedObject = act
-		let text = NSMutableAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-		text.append(NSAttributedString(string: "  " + (n == 0 ? "empty" : "\(n) waiting"),
-		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		item.representedObject = row.act
+		item.isEnabled = row.act != nil
+		let text = NSMutableAttributedString(string: row.title, attributes: [.font: NSFont.menuFont(ofSize: 0),
+			.foregroundColor: row.act == nil ? NSColor.secondaryLabelColor : NSColor.labelColor])
+		if row.act == nil && row.waiting > 0 {
+			text.append(NSAttributedString(string: "  switch on an assistant in Settings",
+			                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		}
 		item.attributedTitle = text
 		show(item, symbol("tray.and.arrow.down"))
-		item.toolTip = app == "cmux" && deskReady()
-			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
-			: "Opens \(label(["k": app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		item.toolTip = row.why.isEmpty ? nil : row.why
 		return item
 	}
 
 	@objc func processInbox(_ sender: NSMenuItem) {
-		guard let r = sender.representedObject as? [String: String], let k = r["k"], let f = r["f"] else { return }
+		guard let act = sender.representedObject as? [String: String] else { return }
 		if checking { return heard.append("menu:inbox") }
-		launch(k, f, phrase: r["w"] ?? "")
+		openInbox(act)
 	}
 
 	// MARK: catch up (#27)
@@ -1733,12 +1837,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
 		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
 		reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })
-		m.inbox = inbox().map { title, n, act, places in
-			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting", places: places) { [weak self] in
-				guard let self, let k = act["k"], let f = act["f"] else { return }
-				if checking { return self.heard.append("panel:inbox") }
-				self.launch(k, f, phrase: act["w"] ?? "")
-			}
+		m.inbox = inbox().map { row in
+			PanelInbox(title: row.title, places: row.places, why: row.why, run: row.act.map { act in
+				{ [weak self] in
+					guard let self else { return }
+					if checking { return self.heard.append("panel:inbox") }
+					self.openInbox(act)
+				}
+			})
 		}
 		m.awakeLabel = "Keep Awake" + awakeState()
 		m.awakeHeld = !held.isEmpty
@@ -1752,43 +1858,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.pickAwake = { [weak self] tag in self?.pickAwake(tag: tag) }
 		m.openApp = { [weak self] in self?.showWindow() }
 		m.openSettings = { [weak self] in self?.showSettings() }
-		// A question typed in the panel's field. With the preview ask on, ask.py
-		// answers it in the panel and acts on it. Off, the assistant opens at the
-		// workspace root with it, as Process the Inbox opens with its phrase.
-		if askOn() {
-			m.askVia = "Garrick"
-			m.answersHere = true
-			m.ask = { [weak self, weak m] text in
-				guard let self, let m else { return }
-				if checking { return self.heard.append("panel:ask") }
-				m.answering = true
-				m.answer = ""
-				self.askGarrick(text) { say, ranAway, _ in
-					m.answering = false
-					m.answer = say
-					if ranAway { m.after() }    // an app came forward with what was asked for
-				}
-			}
-		} else if let app = assistant() {
-			m.askVia = label(["k": app]).replacingOccurrences(of: "Open in ", with: "")
-			m.answersHere = false
-			m.ask = { [weak self] text in
-				guard let self else { return }
-				if checking { return self.heard.append("panel:ask") }
-				self.launch(app, workspace.path, phrase: text)
-			}
-		} else {
-			m.askVia = ""
-			m.answersHere = false
-			m.ask = nil
-		}
 	}
 
 	// MARK: ask (preview, ask)
 	// The request goes to ask.py, which keeps a warm assistant session, checks
 	// what it proposes and runs it through page_action.py. What comes back to
 	// open, a project or a thread, opens here, as its row's icons open it, in
-	// the app the request named or the default assistant. The reply is the
+	// the app the request named, or, with none named, as clicking its row
+	// opens it, through the default Settings picks (#307). The reply is the
 	// session's sentence and what was done; ranAway says an app came forward;
 	// and the reply itself, with its kind. Progress comes before it, line by line.
 	// An app the request named must be switched on in Settings, as on the page.
@@ -1803,17 +1880,20 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			var opened = false
 			for item in out["launch"] as? [[String: Any]] ?? [] {
 				guard let folder = item["folder"] as? String else { continue }
-				let named = item["app"] as? String ?? ""
-				guard let app = named.isEmpty ? self.assistant() : named else {
-					self.toast("Switch on Claude, Codex or cmux in Settings to open threads from here.")
+				let app = item["app"] as? String ?? ""
+				let agent = item["agent"] as? String ?? ""
+				// No app named: exactly what clicking its row does (#307).
+				if app.isEmpty {
+					if self.openAsRow(item) { opened = true }
 					continue
 				}
-				guard launcherOn(app) else {
-					lines.append("Refused: \(app == "cmux" ? app : app.capitalized) is switched off in Settings")
+				// Named: that app, and for cmux the assistant named with it, each switched on in Settings.
+				if let off = [app, agent].first(where: { !$0.isEmpty && !launcherOn($0) }) {
+					lines.append("Refused: \(off == "cmux" ? off : off.capitalized) is switched off in Settings")
 					ok = false
 					continue
 				}
-				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil) { opened = true }
+				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil, agent: agent) { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			// A line of what was done that says what the sentence says, case and a final full stop
@@ -1834,9 +1914,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	@objc func showAsk(_ sender: Any? = nil) {
 		guard askOn() else { return }
 		if askPanel == nil {
-			let p = AskPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 132),
-			                 styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+			let width = max(CGFloat(defaults.double(forKey: kAskWidth)), askWidthLeast)
+			let p = AskPanel(contentRect: NSRect(x: 0, y: 0, width: defaults.object(forKey: kAskWidth) == nil ? askWidthDefault : width, height: 132),
+			                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
 			                 backing: .buffered, defer: false)
+			p.textSize = { [weak self] step in self?.askTextStep(step) }
 			p.titleVisibility = .hidden
 			p.titlebarAppearsTransparent = true
 			p.isMovableByWindowBackground = true
@@ -1863,7 +1945,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 			askField = AskInput(frame: NSRect(x: 0, y: 0, width: 580, height: 28))
 			askField.placeholder = askHint
-			askField.font = .systemFont(ofSize: 20)
+			askField.font = .systemFont(ofSize: askText() + askFieldExtra)
 			askField.isRichText = false
 			askField.allowsUndo = true
 			askField.drawsBackground = false
@@ -1888,7 +1970,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askSpinner.controlSize = .small
 			askSaid = NSTextField(labelWithString: "")
 			askSaid.textColor = .secondaryLabelColor
-			askSaid.font = .systemFont(ofSize: 13)
+			askSaid.font = .systemFont(ofSize: askText())
 			askStopButton = NSButton(title: "Stop", target: self, action: #selector(askStop(_:)))
 			askStopButton.controlSize = .small
 			askStopButton.bezelStyle = .rounded
@@ -1898,7 +1980,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 			askReply = NSTextField(wrappingLabelWithString: "")
 			askReply.textColor = .secondaryLabelColor
-			askReply.font = .systemFont(ofSize: 13)
+			askReply.font = .systemFont(ofSize: askText())
 			askReply.isSelectable = true
 
 			askNewButton = NSButton(title: "New conversation", target: self, action: #selector(askNew(_:)))
@@ -1910,19 +1992,35 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let stack = NSStackView(views: [askLogBox, input, askWorking, askReply, askFoot])
 			stack.orientation = .vertical
 			stack.alignment = .leading
+			// The exchange takes whatever height the window has (#309); everything else keeps its own.
+			stack.distribution = .fill
+			askLogBox.setContentHuggingPriority(.init(1), for: .vertical)
+			askLogBox.setContentCompressionResistancePriority(.init(1), for: .vertical)
+			for v in [askWorking, askReply, askFoot] as [NSView] {
+				v.setContentHuggingPriority(.defaultHigh, for: .vertical)
+				v.setContentCompressionResistancePriority(.required, for: .vertical)
+			}
 			stack.spacing = 10
 			stack.edgeInsets = NSEdgeInsets(top: 30, left: 20, bottom: 16, right: 20)
 			stack.translatesAutoresizingMaskIntoConstraints = false
 			let content = NSView()
 			content.addSubview(stack)
 			p.contentView = content
+			// Below a drag's priority, so the window can be dragged to any width, and kept for the next fit.
+			askWidthHeld = content.widthAnchor.constraint(equalToConstant: p.contentRect(forFrameRect: p.frame).width)
+			askWidthHeld.priority = .init(400)
+			askLogLeast = askLogBox.heightAnchor.constraint(greaterThanOrEqualToConstant: askLogLine())
+			// A size dragged to is kept, here and in the app's defaults, across hiding and quitting (#309).
+			NotificationCenter.default.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: p, queue: .main) { [weak self] _ in
+				self?.askResized()
+			}
 			NSLayoutConstraint.activate([
 				stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
 				stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
 				stack.topAnchor.constraint(equalTo: content.topAnchor),
 				stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-				content.widthAnchor.constraint(equalToConstant: 620),
-				askLogBox.heightAnchor.constraint(equalToConstant: 320),
+				askWidthHeld,
+				askLogLeast,
 				askInputHeight,
 			])
 			for v in [askLogBox, input, askWorking, askReply, askFoot] as [NSView] {
@@ -2152,9 +2250,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// stop or a failure said as such; a wall reset as a divider above the turn it came with.
 	func askTranscript() -> NSAttributedString {
 		let out = NSMutableAttributedString()
-		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
-		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
-		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
+		// At the text size ⌘+ and ⌘− set (#309): every turn is drawn again from askTurns, so one already
+		// shown follows it, and so do the sources under an answer and their numbered links, which take `aside`.
+		let size = askText()
+		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: size), .foregroundColor: NSColor.labelColor]
+		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor]
+		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size - 1), .foregroundColor: NSColor.secondaryLabelColor]
 		for (i, turn) in askTurns.enumerated() {
 			if turn.afresh && i > 0 {
 				let centred = NSMutableParagraphStyle()
@@ -2257,24 +2358,72 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if var place = source["place"] as? [String: Any] {
 			place["u"] = file.absoluteString
 			let offered = acts(place)
-			if let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first { return run(a) }
+			if let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first {
+				run(a)
+				return
+			}
 		}
 		run(["k": "note", "u": file.absoluteString])
 	}
 
 	// The field grows with what is typed, up to five lines; the window keeps its top edge where it is.
+	// Compact, the window is as tall as what it shows, and only its width can be dragged. Grown for an
+	// answer, it takes the height it was last dragged to, or the exchange at askLogDefault the first
+	// time, and never less than the field and one line of the exchange need (#309).
 	func askFit() {
 		guard let p = askPanel, let content = p.contentView, let lm = askField.layoutManager, let tc = askField.textContainer else { return }
 		lm.ensureLayout(for: tc)
-		let line = lm.defaultLineHeight(for: askField.font ?? .systemFont(ofSize: 20))
+		let line = lm.defaultLineHeight(for: askField.font ?? .systemFont(ofSize: askText() + askFieldExtra))
 		let used = max(lm.usedRect(for: tc).height, line)
 		askInputHeight.constant = ceil(min(used, line * 5) + askField.textContainerInset.height * 2)
+		askLogLeast.constant = askLogLine()
 		content.layoutSubtreeIfNeeded()
-		let size = content.fittingSize
-		guard size.height > 0, size != content.frame.size else { return }
+		let fit = content.fittingSize
+		guard fit.height > 0 else { return }
+		var size = NSSize(width: askWidthHeld.constant, height: fit.height)
+		if askExpanded {
+			let saved = CGFloat(defaults.double(forKey: kAskHeight))
+			size.height = max(fit.height, saved > 0 ? saved : fit.height - askLogLeast.constant + askLogDefault)
+			p.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		} else {
+			p.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: fit.height)
+		}
+		p.contentMinSize = NSSize(width: askWidthLeast, height: fit.height)
+		guard size != content.frame.size else { return }
 		let top = p.frame.maxY
 		p.setContentSize(size)
 		p.setFrameTopLeftPoint(NSPoint(x: p.frame.minX, y: top))
+	}
+
+	// A drag that ended (#309): its width is kept for every later fit, and, grown for an answer, its
+	// height too, both in the app's own defaults, so hiding the window or quitting the app keeps them.
+	func askResized() {
+		guard let content = askPanel?.contentView else { return }
+		let size = content.frame.size
+		askWidthHeld.constant = size.width
+		defaults.set(Double(size.width), forKey: kAskWidth)
+		if askExpanded { defaults.set(Double(size.height), forKey: kAskHeight) }
+		askFit()                          // compact, its height follows the new width
+	}
+
+	// The exchange's least height: one line at the text size, with the text view's insets.
+	func askLogLine() -> CGFloat {
+		ceil(NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: askText()))) + 8
+	}
+
+	// ⌘+, ⌘− and ⌘0 (#309): the exchange, the reply, what is being done and the field together,
+	// one step of askTextSizes up or down, or back to askTextDefault; kept in the app's defaults.
+	func askTextStep(_ step: Int) {
+		let now = askText()
+		let at = askTextSizes.firstIndex(of: now) ?? askTextSizes.firstIndex(of: askTextDefault) ?? 0
+		let next = step == 0 ? askTextDefault : askTextSizes[min(max(at + step, 0), askTextSizes.count - 1)]
+		if next == now && step != 0 { return NSSound.beep() }
+		defaults.set(Double(next), forKey: kAskTextSize)
+		askField.font = .systemFont(ofSize: next + askFieldExtra)
+		askReply.font = .systemFont(ofSize: next)
+		askSaid.font = .systemFont(ofSize: next)
+		askField.needsDisplay = true      // its placeholder, drawn in its font
+		askRender()                       // every turn shown again at the new size, and the window fitted to it
 	}
 
 	// File › Ask Garrick… is there only with the preview on.
@@ -2612,8 +2761,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					let threads = m.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.view is RowView }.count
 					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)"
 					      + (m.items.first?.view is MenuField ? ", under its field" : ", no field"))
-					if let inbox = m.items.first(where: { $0.action == #selector(self.processInbox(_:)) }) {
-						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "?")")
+					if let inbox = m.items.first(where: { $0.identifier?.rawValue == "inbox" }) {
+						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "nothing")")
 					} else {
 						print("inbox: none")
 					}
@@ -2622,8 +2771,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 						.flatMap { $0["t"] as? [[String: Any]] ?? [] }.first?["n"] as? String
 					if let first {
 						self.fillRows(m, first)
-						print("menu, finding \(first.count) letters: \(m.items.filter { $0.view is RowView }.count) rows"
-						      + (m.items.contains { $0.action == #selector(self.askRow(_:)) } ? ", Ask Garrick first" : ""))
+						print("menu, finding \(first.count) letters: \(m.items.filter { $0.view is RowView }.count) rows")
 						self.enter(first, closing: nil)
 					}
 					self.enter("\u{2042} nothing has this name", closing: nil)
@@ -2634,7 +2782,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					      + "\(projects.filter { panel.unfolded.contains($0.id) }.count) unfolded")
 					rows.first?.click()
 					projects.first?.open?()
-					panel.ask?("what's open")
 				} else {
 					print("menu: none")
 				}
@@ -2785,11 +2932,65 @@ struct PanelZone: Identifiable {
 	let rows: [PanelRow]
 }
 
+// The inbox row (#311): a button only when something waits and an assistant can take it.
 struct PanelInbox {
 	let title: String
-	let note: String
 	let places: String
-	let run: () -> Void
+	let why: String              // the tooltip: what a click opens, or why it opens nothing
+	let run: (() -> Void)?
+}
+
+// Empty, a status line in secondary text. Something waiting, a button: highlighted under the
+// pointer, with the pointing hand, closing the panel and opening the assistant on a click. A
+// Button rather than a tap gesture, so the click reaches it in a panel that never activates the app.
+struct PanelInboxLine: View {
+	let inbox: PanelInbox
+	let perform: (@escaping () -> Void) -> Void
+	@State private var hover = false
+
+	var line: some View {
+		HStack(alignment: .firstTextBaseline, spacing: 6) {
+			Image(systemName: "tray.and.arrow.down").frame(width: 12)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(inbox.title)
+					.font(.system(size: 13, weight: inbox.run == nil ? .regular : .medium))
+					.foregroundColor(inbox.run == nil ? .secondary : .primary)
+				if !inbox.places.isEmpty {
+					Text(inbox.places).font(.system(size: 11)).foregroundColor(.secondary)
+				}
+				if inbox.run == nil && !inbox.why.isEmpty {
+					Text(inbox.why).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+				}
+			}
+			Spacer()
+		}
+		.padding(.horizontal, 8).padding(.vertical, 5)
+		.foregroundColor(inbox.run == nil ? .secondary : .primary)
+	}
+
+	var body: some View {
+		if let run = inbox.run {
+			Button {
+				pointing(false)
+				perform(run)
+			} label: {
+				line.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.background(RoundedRectangle(cornerRadius: 6).fill(hover ? Color.primary.opacity(0.09) : .clear))
+			.onHover { pointing($0) }
+			.help(inbox.why)
+		} else {
+			line
+		}
+	}
+
+	// The pointing hand while over the button, pushed and popped once each.
+	func pointing(_ on: Bool) {
+		guard on != hover else { return }
+		hover = on
+		if on { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+	}
 }
 
 final class PanelModel: ObservableObject {
@@ -2807,11 +3008,6 @@ final class PanelModel: ObservableObject {
 	var pickAwake: (Int) -> Void = { _ in }
 	var openApp: () -> Void = {}
 	var openSettings: () -> Void = {}
-	var ask: ((String) -> Void)?
-	@Published var askVia = ""               // the assistant a question opens in, by name
-	@Published var answersHere = false       // preview ask: the panel answers, and stays
-	@Published var answering = false
-	@Published var answer = ""
 	var after: () -> Void = {}
 	// Close first, then act, so the app that opens comes forward over a panel already leaving.
 	func perform(_ f: @escaping () -> Void) { after(); f() }
@@ -2903,29 +3099,13 @@ struct PanelView: View {
 	}
 
 	// Return opens the first thread that matches, or the first project; with
-	// nothing matching, it asks.
+	// nothing typed, or nothing matching, nothing happens: the field only finds (#310).
 	func first() -> (() -> Void)? {
+		guard !query.isEmpty else { return nil }
 		let rows = model.zones.flatMap { shown($0.rows) }
 		if !query.isEmpty, let t = rows.flatMap({ $0.threads }).first(where: { $0.name.lowercased().contains(query) }) { return t.open }
 		if let open = rows.first?.open { return open }
 		return nil
-	}
-
-	// Asking closes the panel when the assistant opens elsewhere; answered
-	// here (preview ask), it stays, with the field emptied for a follow-up.
-	func submitAsk(_ ask: @escaping () -> Void) {
-		if model.answersHere {
-			ask()
-			model.filter = ""
-		} else {
-			model.perform(ask)
-		}
-	}
-
-	func asking() -> (() -> Void)? {
-		let text = model.filter.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !text.isEmpty, let ask = model.ask else { return nil }
-		return { ask(text) }
 	}
 
 	func awake(_ title: String, _ tag: Int, _ on: Bool) -> some View {
@@ -2944,61 +3124,21 @@ struct PanelView: View {
 			}
 			HStack(spacing: 6) {
 				Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
-				TextField(model.ask == nil ? "Find a project or thread" : "Find a thread, or ask Garrick", text: $model.filter)
+				TextField("Find a project or thread", text: $model.filter)
 					.textFieldStyle(.plain)
 					.font(.system(size: 12))
 					.focused($typing)
 					.onSubmit {
-						if let open = first() { model.perform(open) } else if let ask = asking() { submitAsk(ask) }
+						if let open = first() { model.perform(open) }
 					}
 			}
 			.padding(.horizontal, 10)
 			.padding(.vertical, 6)
 			.background(Capsule().fill(Color.primary.opacity(0.08)))
-			if model.answering || !model.answer.isEmpty {
-				Text(model.answering ? "…" : model.answer)
-					.font(.system(size: 12))
-					.foregroundColor(.secondary)
-					.textSelection(.enabled)
-					.fixedSize(horizontal: false, vertical: true)
-					.padding(.horizontal, 8)
-			}
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
-					if let ask = asking() {
-						HStack(alignment: .firstTextBaseline, spacing: 6) {
-							Image(systemName: "text.bubble").frame(width: 12)
-							VStack(alignment: .leading, spacing: 2) {
-								Text("Ask Garrick").font(.system(size: 13, weight: .medium))
-								Text(model.answersHere ? "\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D}: Garrick answers here"
-								     : "\u{201C}\(model.filter.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D} in \(model.askVia)")
-									.font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
-							}
-							Spacer()
-						}
-						.padding(.horizontal, 8).padding(.vertical, 5)
-						.background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.12)))
-						.contentShape(Rectangle())
-						.onTapGesture { submitAsk(ask) }
-						Divider().padding(.vertical, 4)
-					}
 					if let inbox = model.inbox, query.isEmpty {
-						HStack(alignment: .firstTextBaseline, spacing: 6) {
-							Image(systemName: "tray.and.arrow.down").frame(width: 12)
-							VStack(alignment: .leading, spacing: 2) {
-								HStack(spacing: 6) {
-									Text(inbox.title).font(.system(size: 13, weight: .medium))
-									Text(inbox.note).font(.system(size: 12)).foregroundColor(.secondary)
-								}
-								if !inbox.places.isEmpty {
-									Text(inbox.places).font(.system(size: 11)).foregroundColor(.secondary)
-								}
-							}
-							Spacer()
-						}
-						.padding(.horizontal, 8).padding(.vertical, 5)
-						.contentShape(Rectangle())
-						.onTapGesture { model.perform(inbox.run) }
+						PanelInboxLine(inbox: inbox, perform: model.perform)
 						Divider().padding(.vertical, 4)
 					}
 					ForEach(model.zones) { zone in
@@ -3362,7 +3502,6 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		}
 		shown = false
 		model.filter = ""
-		model.answer = ""
 		NSAnimationContext.runAnimationGroup { c in
 			c.duration = 0.15
 			c.timingFunction = CAMediaTimingFunction(name: .easeIn)

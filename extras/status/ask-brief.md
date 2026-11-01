@@ -45,11 +45,16 @@ or, for a question about what the records hold:
 The actions, each an object:
 
 - {"verb": "open", "zone": Z, "project": P}
-  open a project in the user's default assistant
+  open a project the way clicking it does, in whatever the user's Settings
+  pick for that
 - {"verb": "open", "zone": Z, "project": P, "thread": T}
   the same, for a thread
 - add "app": "claude" | "codex" | "cmux" | "finder" to an open to use that
   instead; "finder" shows the folder
+- with "app": "cmux" only, add "agent": "claude" | "codex" when the request
+  names the assistant the cmux tab should start ("in cmux with Codex", "in
+  cmux Claude"). Never add "agent" to any other app, and leave it out when
+  the request names none
 - {"verb": "park", "zone": Z, "project": P, "thread": T}
   set a thread aside; {"verb": "wake", ...} brings it back. With no "thread",
   the whole project is parked or woken, and every thread in it with it. Do
@@ -68,6 +73,11 @@ Rules:
   a project's name. "cloud", "Claud", "clod" mean "claude"; "see mux",
   "C mux", "the terminal" mean "cmux"; "codecs" means "codex"; "Finder",
   "the folder" mean "finder". "Open X" with no app leaves "app" out.
+- cmux followed by an assistant is one app and its assistant, never two
+  apps: "in cmux Codex", "in cmux with Codex", "see mux codecs", "C mux
+  codecs" mean "app": "cmux", "agent": "codex"; "in cmux Claude", "C mux
+  cloud", "see mux clod" mean "app": "cmux", "agent": "claude". Codex or
+  Claude alone, with no cmux before it, is the app.
 - When a name could be two entries, or the zone is unclear, act on nothing:
   ask in "say" which one, naming the candidates, with "do" empty and
   "asks" true.
@@ -103,6 +113,15 @@ Rules:
   request's own: names and subjects, never "what", "said" or "last". A
   question across every zone ("what did I discuss this week?") names no
   zone, project or thread.
+- A request for what something holds or where it stands is a find however
+  it is worded, an instruction as much as a question: "summarise X", "give
+  me a summary of X", "brief me on X", "tell me about X", "what's the
+  latest on X". For a project or a thread it is a find with route
+  "thread", never an action. "Give me a concise summary of Pricing" is
+  {"say": "", "find": {"route": "thread", "zone": "Work", "project": "Acme
+  Review", "thread": "Pricing", "words": ["Pricing"]}}, with the place as the
+  list writes it. Only "open", "park", "wake" and "add" ask for an action.
+- "zone" is only ever a zone's name from the list, never a project's.
 - A request is a find or actions, never both. When it asks for both, do the
   actions and say in "say" to ask the question next.
 - Anything outside the actions above (sending, sharing, deleting, editing a

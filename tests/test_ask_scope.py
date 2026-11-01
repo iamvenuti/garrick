@@ -1094,7 +1094,7 @@ class TestCodex(base.AskCase):
         os.environ["GARRICK_HARNESS"] = "codex"
         prompts = []
         real = ask.agent().run
-        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None: prompts.append(prompt) or (
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: prompts.append(prompt) or (
             0, json.dumps({"say": "ok", "do": []}))
         try:
             a = ask.Asker(self.root)

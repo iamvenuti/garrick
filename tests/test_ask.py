@@ -151,8 +151,29 @@ class TestProposals(AskCase):
                                   self.names, self.root)
         self.assertEqual("launch", kind)
         self.assertEqual({"app": "claude", "folder": str(self.root / "Zones/Work/Acme Review/Threads/Pricing"),
-                          "phrase": "open Pricing", "name": "Pricing"}, item)
-        self.assertEqual("", ask.proposal({"verb": "open", "zone": "Work", "project": "Birch Entry"}, self.names, self.root)[1]["app"])
+                          "phrase": "open Pricing", "name": "Pricing",
+                          "note": str(self.root / "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"),
+                          "oc": ["Work", "Acme Review/Threads/Pricing/Pricing.md"]}, item)
+        hub = ask.proposal({"verb": "open", "zone": "Work", "project": "Birch Entry"}, self.names, self.root)[1]
+        self.assertEqual("", hub["app"])                                    # the app does what the row's click does (#307)
+        self.assertEqual(str(self.root / "Zones/Work/Birch Entry/Birch Entry.md"), hub["note"])   # the hub, for the note
+        self.assertNotIn("oc", hub)
+
+    def test_cmux_with_an_assistant(self):
+        """#307: "open Pricing in cmux with Codex" names the tab's assistant,
+        for cmux alone, and only Claude or Codex."""
+        a = {"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "app": "cmux"}
+        self.assertEqual("codex", ask.proposal(dict(a, agent="codex"), self.names, self.root)[1]["agent"])
+        self.assertNotIn("agent", ask.proposal(a, self.names, self.root)[1])        # none: desk-agent decides
+        for app in ("claude", "codex", "finder", ""):
+            with self.assertRaisesRegex(ask.Bad, "only cmux is told which assistant to start"):
+                ask.proposal(dict(a, app=app, agent="claude"), self.names, self.root)
+        with self.assertRaisesRegex(ask.Bad, "a cmux tab starts Claude or Codex, not 'opencode'"):
+            ask.proposal(dict(a, agent="opencode"), self.names, self.root)
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"launchers": {"codex": False}}))
+        with self.assertRaisesRegex(ask.Bad, "Codex is switched off in Settings"):
+            ask.proposal(dict(a, agent="codex"), self.names, self.root)
+        self.assertEqual("claude", ask.proposal(dict(a, agent="claude"), self.names, self.root)[1]["agent"])
 
     def test_park_and_add_become_page_actions(self):
         self.assertEqual(("act", {"verb": "park", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}),
@@ -231,11 +252,12 @@ class TestCarryOut(AskCase):
             {"verb": "run", "job": "whats-open"}]}))
         out = ask.Asker(self.root, session).ask("add call Dana to Acme, park Pricing, open Birch, run the job")
         self.assertEqual("Added it, and parked Pricing.", out["say"])
-        self.assertEqual(["Added to Inbox: Call Dana", "Acme Review, Pricing is parked", "Opening Birch Entry in Cmux",
+        self.assertEqual(["Added to Inbox: Call Dana", "Acme Review, Pricing is parked", "Opening Birch Entry in cmux",
                           "Refused: not something the box does: 'run'"], out["done"])
         self.assertFalse(out["ok"])
         self.assertEqual([{"app": "cmux", "folder": str(self.root / "Zones/Work/Birch Entry"), "phrase": "open Birch Entry",
-                           "name": "Birch Entry"}], out["launch"])
+                           "name": "Birch Entry", "note": str(self.root / "Zones/Work/Birch Entry/Birch Entry.md")}],
+                         out["launch"])
         self.assertIn("- [ ] [[Acme Review]]: Call Dana\n", (self.work / "Todo.md").read_text())
         self.assertIn("\nstatus: parked\n", self.thread.read_text())
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
@@ -1340,6 +1362,26 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn('done(([say] + shown.map { "  " + $0 })', reply)
         self.assertNotIn("lines.map { \"  \" + $0 }", reply)
 
+    def test_an_open_with_no_app_does_what_the_row_does(self):
+        """#307: with no app named, the open goes through acts(), the row's own
+        choice of the Settings default, Finder and the note included, never
+        through assistant(), which keeps only Claude, Codex and cmux."""
+        reply = self.between("func askGarrick(", "\n\t}\n")
+        self.assertIn("if app.isEmpty {", reply)
+        self.assertIn("self.openAsRow(item)", reply)
+        self.assertNotIn("assistant()", reply)
+        self.assertIn("[app, agent].first(where: { !$0.isEmpty && !launcherOn($0) })", reply)   # both checked
+        self.assertIn("agent: agent)", reply)
+        row = self.body("openAsRow")
+        self.assertIn("menuRow(folder)", row)                              # the row itself, where the menu lists it
+        self.assertIn('place["u"] = URL(fileURLWithPath: note).absoluteString', row)
+        self.assertIn("let offered = acts(place)", row)
+        self.assertIn('offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first', row)
+        self.assertIn("return run(a)", row)
+        launch = self.between("func launch(_ app: String", "\n\t}\n")
+        self.assertIn('["agent": agent]', launch)                          # to page_action.py, for this open only
+        self.assertNotIn("desk-agent", launch)                             # the setting is never written
+
     def between(self, start, end):
         return self.swift[self.swift.index(start):self.swift.index(end, self.swift.index(start))]
 
@@ -1486,6 +1528,18 @@ class TestDesk(AskCase):
         out = ask.Asker(self.root).carry_out("Opening.", do, self.names)
         self.assertEqual([1, 1], [item["dk"] for item in out["launch"]])
         self.assertEqual("open Pricing", out["launch"][0]["phrase"])
+
+    def test_cmux_with_an_assistant_needs_the_desk(self):
+        """#307: without the desk, cmux opens the folder and starts nothing, so
+        an assistant named for it is refused, in plain words."""
+        do = [{"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Pricing", "app": "cmux", "agent": "codex"}]
+        out = ask.Asker(self.root).carry_out("Opening.", do, self.names)
+        self.assertEqual(([], False), (out["launch"], out["ok"]))
+        self.assertEqual(["Refused: cmux starts an assistant only through the cmux extra's desk"], out["done"])
+        self.fake_cmux()
+        out = ask.Asker(self.root).carry_out("Opening.", do, self.names)
+        self.assertEqual(("codex", 1), (out["launch"][0]["agent"], out["launch"][0]["dk"]))
+        self.assertEqual(["Opening Pricing in cmux with Codex"], out["done"])
 
 
 class TestFlag(unittest.TestCase):

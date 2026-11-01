@@ -896,6 +896,22 @@ class TestDeskAgentSettings(ActionCase):
         self.assertFalse((self.root / "System" / "garrick-settings.json").exists())
         self.assertEqual([mock.call(self.root, "agent", "codex", timeout=20)], self.desk.call_args_list)   # no recolour
 
+    def test_an_open_can_name_its_tab_assistant_for_itself(self):
+        """#307: Ask's "open Pricing in cmux with Codex" asks desk for that
+        assistant with --agent, for this open only; the setting is not touched."""
+        self.desk.return_value = "opened Pricing: a new tab in Work"
+        folder = str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing")
+        pa.cmux_act(self.root, {"verb": "open", "folder": folder, "prompt": "open Pricing", "agent": "codex"})
+        args = self.desk.call_args.args
+        self.assertEqual("open", args[1])
+        self.assertEqual("codex", args[args.index("--agent") + 1])
+        self.assertNotIn("agent", [c.args[1] for c in self.desk.call_args_list])     # never the desk's agent verb
+        pa.cmux_act(self.root, {"verb": "open", "folder": folder, "prompt": "open Pricing"})
+        self.assertNotIn("--agent", self.desk.call_args.args)                          # none: desk-agent decides
+        with self.assertRaisesRegex(pa.Refused, "claude or codex, not 'opencode'"):
+            pa.cmux_act(self.root, {"verb": "open", "folder": folder, "prompt": "open Pricing", "agent": "opencode"})
+        self.assertIsNone(pa.ops_lib(self.root).validate("open", {"verb": "open", "folder": folder, "agent": "codex"}))
+
 
 class TestAudit(ActionCase):
     """page-actions.log: one line per request, with only the fields a verb reads."""

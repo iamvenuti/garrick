@@ -670,7 +670,10 @@ def cmd_open(desk: Desk, a) -> None:
                         % (r or "the workspace root"))
     agent = a.agent or desk.cfg["agent"]
 
-    existing = [s for s in live_sessions() if s.get("cwd") and Path(s["cwd"]).resolve() == folder]
+    # An assistant named for this open (--agent) takes only a tab running it: a
+    # prompt sent to a tab running the other would start the wrong one (#307).
+    existing = [s for s in live_sessions() if s.get("cwd") and Path(s["cwd"]).resolve() == folder
+                and (not a.agent or s.get("agent") == a.agent)]
     if existing and not a.new:
         if not a.prompt:
             s = existing[0]

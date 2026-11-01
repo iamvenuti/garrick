@@ -264,6 +264,7 @@ STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at
 # the question waits in the box, the reply's `refill`, for the user to send (#294).
 REFILLED = "Started afresh at a wall. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
+AGENTS = ("claude", "codex")      # what a cmux tab can start: cmuxlib's AGENTS (#307)
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
 EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
@@ -592,12 +593,44 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
     if app and app not in APPS:
         raise Bad("no app %r" % (app,))
     if app and not launcher_on(ws, app):
-        raise Bad("%s is switched off in Settings" % ("cmux" if app == "cmux" else app.capitalize()))
+        raise Bad("%s is switched off in Settings" % app_said(app))
+    # The assistant a cmux tab starts, for this open only (#307): the desk's
+    # own setting, desk-agent, is left as it is.
+    agent = a.get("agent") or ""
+    if agent and agent not in AGENTS:
+        raise Bad("a cmux tab starts Claude or Codex, not %r" % (agent,))
+    if agent and app != "cmux":
+        raise Bad("only cmux is told which assistant to start; %s is not" % (app_said(app) if app else "the default"))
+    if agent and not launcher_on(ws, agent):
+        raise Bad("%s is switched off in Settings" % app_said(agent))
     folder = ws / "Zones" / zone / project
     if thread is not None:
         folder = folder / "Threads" / thread
     name = spoken(names, zone, project, thread)
-    return "launch", {"app": app, "folder": str(folder), "phrase": "open " + name, "name": name}
+    # The note, so that an open with no app does what clicking the row does,
+    # whatever Settings picks for it: the thread's note, or the project's hub (#307).
+    item = {"app": app, "folder": str(folder), "phrase": "open " + name, "name": name,
+            "note": str(folder / (folder.name + ".md"))}
+    if thread is not None:      # what the row's Open in Claude continues (#180)
+        item["oc"] = [zone, "%s/Threads/%s/%s.md" % (project, thread, thread)]
+    if agent:
+        item["agent"] = agent
+    return "launch", item
+
+
+def app_said(app: str) -> str:
+    """An app's name as a line says it: cmux as it writes itself, the others capitalised."""
+    return app if app == "cmux" else app.capitalize()
+
+
+def opening(item: dict) -> str:
+    """What was done, for an open: "Opening Pricing in cmux with Codex"."""
+    said = "Opening " + item["name"]
+    if item.get("app"):
+        said += " in " + app_said(item["app"])
+    if item.get("agent"):
+        said += " with " + app_said(item["agent"])
+    return said
 
 
 # ---------------------------------------------------------------- the session
@@ -1342,8 +1375,12 @@ class Asker:
                 desk = desk_ready(self.ws) if desk is None else desk
                 if desk:
                     item["dk"] = 1           # the app opens cmux through the desk, the session started
+                elif item.get("agent"):      # without the desk, cmux opens the folder and starts nothing
+                    done.append("Refused: cmux starts an assistant only through the cmux extra's desk")
+                    ok = False
+                    continue
                 launch.append(item)
-                done.append("Opening %s%s" % (item["name"], " in " + item["app"].capitalize() if item["app"] else ""))
+                done.append(opening(item))
                 continue
             same = canon(item)
             if a.get("again") is True and same in self.asked:

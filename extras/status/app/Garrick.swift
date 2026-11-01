@@ -963,12 +963,18 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// caller's row or Ask's answer does) goes through page_action.py instead:
 	// a tab in that folder that starts the assistant on the phrase, or on
 	// "open X" for a project or thread, as the page's buttons open it.
+	// `agent` (Ask's "in cmux with Codex", #307) is the assistant that tab
+	// starts, for this open only; the desk's own setting is left as it is.
 	@discardableResult
-	func launch(_ app: String, _ path: String, phrase: String, desk: Bool = false) -> Bool {
+	func launch(_ app: String, _ path: String, phrase: String, desk: Bool = false, agent: String = "") -> Bool {
 		guard let folder = inWorkspace(path) else { return false }
 		if app == "cmux" && (desk || deskReady()) {
-			act(["verb": "open", "folder": folder.path, "prompt": phrase])
+			act(["verb": "open", "folder": folder.path, "prompt": phrase].merging(agent.isEmpty ? [:] : ["agent": agent]) { a, _ in a })
 			return true
+		}
+		if !agent.isEmpty {
+			toast("cmux starts an assistant only through the cmux extra's desk.")
+			return false
 		}
 		switch app {
 		case "claude":
@@ -1628,21 +1634,65 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// simple home's Continue (#180): page_action.py primes a session that
 	// asks where the thread stands and opens the desktop app on its answer,
 	// and its reply, or its refusal, is the toast that follows.
-	func run(_ a: [String: Any]) {
+	@discardableResult
+	func run(_ a: [String: Any]) -> Bool {
 		let k = a["k"] as? String ?? ""
-		if checking { return heard.append("menu:" + k) }
+		if checking {
+			heard.append("menu:" + k)
+			return false
+		}
 		if k == "claude", let oc = a["oc"] as? [String], oc.count == 2 {
 			let name = a["n"] as? String ?? "it"
 			toast("Opening \(name) in Claude…", alsoNotify: false)
 			act(["verb": "continue", "zone": oc[0], "file": oc[1]])
-			return
+			return true
 		}
 		if k == "note" {
-			if let u = a["u"] as? String, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+			guard let u = a["u"] as? String, let url = URL(string: u) else { return false }
+			return NSWorkspace.shared.open(url)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
-			launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
+			return launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
 		}
+		return false
+	}
+
+	// The menu's own row for a folder, from every zone the page gave it, so an
+	// open Ask sends with no app does exactly what clicking that row does (#307).
+	func menuRow(_ folder: String) -> [String: Any]? {
+		func find(_ rows: [[String: Any]]) -> [String: Any]? {
+			for r in rows {
+				if r["f"] as? String == folder { return r }
+				if let t = r["t"] as? [[String: Any]], let hit = find(t) { return hit }
+			}
+			return nil
+		}
+		let zones = (menuState?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
+		return find(zones.flatMap { $0["p"] as? [[String: Any]] ?? [] })
+	}
+
+	// An open with no app (#307): the default Settings › Opening a thread picks
+	// for clicking a thread, whatever it is, Finder and the note included, or,
+	// where it is switched off, what the row falls back to: acts() decides, as
+	// it does for the row. A thread the menu does not list, a parked one, is
+	// given the row's fields from what ask.py sent: its name, folder and note.
+	@discardableResult
+	func openAsRow(_ item: [String: Any]) -> Bool {
+		guard let folder = item["folder"] as? String else { return false }
+		var place = menuRow(folder) ?? [:]
+		if place.isEmpty {
+			let name = item["name"] as? String ?? ""
+			place = ["n": name, "w": name, "f": folder]
+			if let oc = item["oc"] as? [String], oc.count == 2 { place["oc"] = oc }
+			if item["dk"] != nil { place["dk"] = 1 }
+		}
+		if place["u"] == nil, let note = item["note"] as? String { place["u"] = URL(fileURLWithPath: note).absoluteString }
+		let offered = acts(place)
+		guard let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first else {
+			toast("Switch on a way to open threads in Settings › Opening a thread.")
+			return false
+		}
+		return run(a)
 	}
 
 	// A row's icon, kept visible: macOS 27 hides menu item images unless the
@@ -1788,7 +1838,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// The request goes to ask.py, which keeps a warm assistant session, checks
 	// what it proposes and runs it through page_action.py. What comes back to
 	// open, a project or a thread, opens here, as its row's icons open it, in
-	// the app the request named or the default assistant. The reply is the
+	// the app the request named, or, with none named, as clicking its row
+	// opens it, through the default Settings picks (#307). The reply is the
 	// session's sentence and what was done; ranAway says an app came forward;
 	// and the reply itself, with its kind. Progress comes before it, line by line.
 	// An app the request named must be switched on in Settings, as on the page.
@@ -1803,17 +1854,20 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			var opened = false
 			for item in out["launch"] as? [[String: Any]] ?? [] {
 				guard let folder = item["folder"] as? String else { continue }
-				let named = item["app"] as? String ?? ""
-				guard let app = named.isEmpty ? self.assistant() : named else {
-					self.toast("Switch on Claude, Codex or cmux in Settings to open threads from here.")
+				let app = item["app"] as? String ?? ""
+				let agent = item["agent"] as? String ?? ""
+				// No app named: exactly what clicking its row does (#307).
+				if app.isEmpty {
+					if self.openAsRow(item) { opened = true }
 					continue
 				}
-				guard launcherOn(app) else {
-					lines.append("Refused: \(app == "cmux" ? app : app.capitalized) is switched off in Settings")
+				// Named: that app, and for cmux the assistant named with it, each switched on in Settings.
+				if let off = [app, agent].first(where: { !$0.isEmpty && !launcherOn($0) }) {
+					lines.append("Refused: \(off == "cmux" ? off : off.capitalized) is switched off in Settings")
 					ok = false
 					continue
 				}
-				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil) { opened = true }
+				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil, agent: agent) { opened = true }
 			}
 			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			// A line of what was done that says what the sentence says, case and a final full stop
@@ -2257,7 +2311,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if var place = source["place"] as? [String: Any] {
 			place["u"] = file.absoluteString
 			let offered = acts(place)
-			if let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first { return run(a) }
+			if let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first {
+				run(a)
+				return
+			}
 		}
 		run(["k": "note", "u": file.absoluteString])
 	}

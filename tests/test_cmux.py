@@ -528,6 +528,21 @@ class DeskVerbTest(CmuxCase):
         self.assertIn("mid-turn", err)
         self.assertNotIn("send", self.verbs())
 
+    def test_an_assistant_named_for_the_open_takes_only_a_tab_running_it(self):
+        """#307: "open Pricing in cmux with Codex" with an idle Claude tab
+        there starts a Codex tab, and types nothing into the Claude one."""
+        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}],
+                    "sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, _, err = self.run_desk("open", "pricing", "--prompt", "open pricing", "--agent", "codex")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("send", self.verbs())
+        call = next(c["argv"] for c in self.calls() if c["argv"][0] == "new-surface")
+        self.assertEqual(shlex.split(call[call.index("--command") + 1])[0], "codex")
+        self.assertEqual(self.run_desk("agent")[1].strip(), "claude")              # the setting is left alone
+        self.log.unlink()
+        self.assertEqual(self.run_desk("open", "pricing", "--prompt", "open pricing", "--agent", "claude")[0], 0)
+        self.assertIn(["send", "--surface", "a-surface", "--", "open pricing"], [c["argv"] for c in self.calls()])
+
     def test_open_with_a_prompt_passes_over_a_tab_it_cannot_read(self):
         # A session cmux remembers in the folder, whose state cannot be read
         # (its transcript says nothing desk knows): a new tab starts on the

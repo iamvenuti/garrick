@@ -45,11 +45,16 @@ or, for a question about what the records hold:
 The actions, each an object:
 
 - {"verb": "open", "zone": Z, "project": P}
-  open a project in the user's default assistant
+  open a project the way clicking it does, in whatever the user's Settings
+  pick for that
 - {"verb": "open", "zone": Z, "project": P, "thread": T}
   the same, for a thread
 - add "app": "claude" | "codex" | "cmux" | "finder" to an open to use that
   instead; "finder" shows the folder
+- with "app": "cmux" only, add "agent": "claude" | "codex" when the request
+  names the assistant the cmux tab should start ("in cmux with Codex", "in
+  cmux Claude"). Never add "agent" to any other app, and leave it out when
+  the request names none
 - {"verb": "park", "zone": Z, "project": P, "thread": T}
   set a thread aside; {"verb": "wake", ...} brings it back. With no "thread",
   the whole project is parked or woken, and every thread in it with it. Do
@@ -68,6 +73,11 @@ Rules:
   a project's name. "cloud", "Claud", "clod" mean "claude"; "see mux",
   "C mux", "the terminal" mean "cmux"; "codecs" means "codex"; "Finder",
   "the folder" mean "finder". "Open X" with no app leaves "app" out.
+- cmux followed by an assistant is one app and its assistant, never two
+  apps: "in cmux Codex", "in cmux with Codex", "see mux codecs", "C mux
+  codecs" mean "app": "cmux", "agent": "codex"; "in cmux Claude", "C mux
+  cloud", "see mux clod" mean "app": "cmux", "agent": "claude". Codex or
+  Claude alone, with no cmux before it, is the app.
 - When a name could be two entries, or the zone is unclear, act on nothing:
   ask in "say" which one, naming the candidates, with "do" empty and
   "asks" true.

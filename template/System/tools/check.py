@@ -115,7 +115,9 @@ from garrick_lib import (  # noqa: E402
     work_folder,
     workspace_root,
 )
-from garrick_lib import MEETINGS_ENTITIES, organisation_link, party_entities, people_parties, tag_list  # noqa: E402
+from garrick_lib import (  # noqa: E402
+    MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, organisation_link, party_entities, people_parties, tag_list,
+)
 
 
 ERROR = "error"
@@ -2757,25 +2759,30 @@ def check_meetings(ws: Workspace) -> List[Finding]:
 def check_entities(ws: Workspace) -> List[Finding]:
     """An entity page in Meetings may name the party it stands for, `party:`,
     and a person page of that party links it. One entity page per party at
-    most: with two, a person page could link either, so it links neither.
-    A tag not in Parties is one no wall can see."""
+    most, subfolders included: with two, a person page could link either, so
+    it links neither. A tag not in Parties is one no wall can see, and a page
+    naming two parties a wall keeps apart stands for neither."""
     out = []
-    folder = ws.root.joinpath(*MEETINGS_ENTITIES)
-    if not folder.is_dir():
-        return out
-    for page in sorted(folder.glob("*.md")):
+    for rel_, page in entity_pages(ws.root):
         fm = parse_frontmatter(page)
-        for tag in tag_list(fm.get("party")):
+        tags = sorted(set(tag_list(fm.get("party"))))
+        for tag in tags:
             if tag != "none" and tag not in ws.context["parties"]:
                 out.append(Finding(WARNING, "meetings", rel(ws, page),
                                    "party `%s` is not a tag in the Parties table, so no wall can see it and no "
                                    "person page links it" % tag, "An entity page names an unknown party"))
-    for tag, stems in sorted(party_entities(ws.root).items()):
-        if len(stems) < 2:
+        hit = next(((a, b) for a in tags for b in tags if a < b and walled(ws.context, a, b)), None)
+        if hit:
+            out.append(Finding(WARNING, "meetings", rel(ws, page),
+                               "`party:` names both %s and %s, which a wall keeps apart; an organisation in two roles "
+                               "gets one entity page per role" % hit, "An entity page names two walled parties"))
+    folder = ws.root.joinpath(*MEETINGS_ENTITIES)
+    for tag, rels in sorted(party_entities(ws.root).items()):
+        if len(rels) < 2:
             continue
-        for stem in stems:
-            others = ", ".join("wiki/entities/%s" % s for s in stems if s != stem)
-            out.append(Finding(WARNING, "meetings", rel(ws, folder / (stem + ".md")),
+        for one in rels:
+            others = ", ".join("wiki/entities/%s" % o for o in rels if o != one)
+            out.append(Finding(WARNING, "meetings", rel(ws, folder / (one + ".md")),
                                "names party %s, and so does %s; one entity page per party, and until there is one "
                                "no person page links either" % (tag, others),
                                "Two entity pages stand for one party"))
@@ -2873,45 +2880,85 @@ def check_people(ws: Workspace) -> List[Finding]:
 NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
 
 
+def organisation_target(ws: Workspace, value) -> Tuple[str, Optional[Path]]:
+    """What an `organisation:` value says: "" and the entity page it leads to,
+    or a problem in words and None. It is exactly `[[wiki/entities/<slug>]]`:
+    no alias, no heading, no other path, and never a link reached through a
+    symbolic link, so it carries the entity page's identity and nothing else."""
+    values = as_list(value)
+    m = ENTITY_LINK_RE.match(values[0].strip()) if len(values) == 1 else None
+    if not m or any(p in (".", "..") for p in m.group(1).split("/")):
+        return ("`organisation:` is exactly \"[[wiki/entities/<slug>]]\": one link, with no alias, heading or other "
+                "path, since a person page carries identity alone"), None
+    page = entity_page(ws.root, m.group(1))
+    if page is None:
+        return "`organisation:` [[wiki/entities/%s]] leads to no entity page in wiki/entities/" % m.group(1), None
+    return "", page
+
+
+def organisation_wall(ws: Workspace, fm: dict, names, entity: Optional[Path]) -> Optional[Tuple[str, str]]:
+    """The two parties a wall keeps apart that a person page's `organisation:`
+    joins, through the page's own party, the entity page's (on disk and as
+    staged) or the People rows for any name the page goes by; None if none."""
+    theirs = set()
+    if entity is not None:
+        theirs = set(tag_list(parse_frontmatter(entity).get("party")))
+        if entity in ws.git_view:
+            theirs |= set(tag_list(parse_frontmatter_text(ws.git_view[entity]).get("party")))
+    every = sorted(set(tag_list(fm.get("party"))) | theirs | people_parties(ws.context, names))
+    return next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
+
+
 def organisation_findings(ws: Workspace, page: Path, fm: dict, name: str,
                           entities: Dict[str, List[str]]) -> List[Finding]:
     """A person page links the entity page of its own party as
     `organisation:`, where garrick_lib's organisation_link() gives one, and no
-    other. The link is identity alone, read on every side of a wall, so a link
-    that joins two parties a wall keeps apart, through the page, the entity
-    page or the People table's rows for the name, is a wall finding."""
+    other. A link that joins two parties a wall keeps apart is the walls
+    check's (organisation_walls), so it is not said here as well."""
     r, names = rel(ws, page), (name, page.stem)
-    ours = tag_list(fm.get("party"))
+    ours = sorted(set(tag_list(fm.get("party"))))
     if "organisation" not in fm:
         want = organisation_link(ws.root, ws.context, names, fm.get("party"), entities)
         return [Finding(WARNING, "people", r, "%s, %s" % (NO_ORGANISATION, want),
                         "The page for %s does not link its party's entity page" % name)] if want else []
-    values = as_list(fm.get("organisation"))
-    links = [m.group(1) for v in values for m in WIKILINK_RE.finditer(v)]
-    if len(values) != 1 or len(links) != 1:
-        return [Finding(WARNING, "people", r, "`organisation:` is one link, to the entity page of its party: "
-                        "\"[[wiki/entities/<name>]]\"", "The page for %s links its party's entity page wrongly" % name)]
-    target = links[0].split("|")[0].split("#")[0].strip()
-    target = target[:-3] if target.endswith(".md") else target
-    parts = target.split("/")
-    entity = ws.root.joinpath(*MEETINGS_ENTITIES) / (parts[-1] + ".md")
-    if (len(parts) > 1 and parts[-2] != "entities") or not entity.is_file():
-        return [Finding(WARNING, "people", r, "`organisation:` [[%s]] leads to no entity page in wiki/entities/" % target,
-                        "The page for %s links an entity page that is not there" % name)]
-    theirs = tag_list(parse_frontmatter(entity).get("party"))
-    rows = people_parties(ws.context, names)
-    every = sorted(set(ours) | set(theirs) | rows)
-    hit = next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
-    if hit:
-        return [Finding(WARNING, "people", r, "`organisation:` joins this person to parties a wall keeps apart, and "
-                        "a person page carries identity alone; take the link out: a wall stands between %s and %s" % hit,
-                        "The page for %s links an entity page across a wall" % name)]
+    problem, entity = organisation_target(ws, fm.get("organisation"))
+    if problem:
+        return [Finding(WARNING, "people", r, problem, "The page for %s links its party's entity page wrongly" % name)]
+    if organisation_wall(ws, fm, names, entity):
+        return []
+    theirs = sorted(set(tag_list(parse_frontmatter(entity).get("party"))))
     if theirs != ours:
         return [Finding(WARNING, "people", r, "`organisation:` links the entity page of %s, and the page names %s; it "
                         "links its own party's entity page or none" % (", ".join(theirs) or "no party",
                                                                       ", ".join(ours) or "no party"),
                         "The page for %s links another party's entity page" % name)]
     return []
+
+
+def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Finding]:
+    """A person page whose `organisation:` joins it to two parties a wall keeps
+    apart: an entity page of a party walled from the page's, or any entity
+    page on a page the People table has under two walled parties. A person
+    page is read on every side of a wall, so this is refused like any other
+    file that crosses one, by the full check and by the commit hook."""
+    out = []
+    for page, text in pages:
+        fm = parse_frontmatter_text(text)
+        if "organisation" not in fm:
+            continue
+        _, entity = organisation_target(ws, fm.get("organisation"))
+        hit = organisation_wall(ws, fm, (str(fm.get("title") or page.stem), page.stem), entity)
+        if hit:
+            out.append(Finding(ERROR, "walls", rel(ws, page),
+                               "`organisation:` joins this person to parties a wall keeps apart, and a person page "
+                               "carries identity alone; take the link out: a wall stands between %s and %s" % hit,
+                               "A person page links an entity page across a wall"))
+    return out
+
+
+def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
+    folder = ws.root.joinpath(*PEOPLE)
+    return [(p, read_text(p) or "") for p in sorted(folder.rglob("*.md"))] if folder.is_dir() else []
 
 
 # ---------------------------------------------------------------------------
@@ -4276,6 +4323,7 @@ def check_walls(ws: Workspace) -> List[Finding]:
             if text:
                 out.extend(walls_for_file(ws, project, ptags, path, text))
     out.extend(f for f in all_sources_findings(ws) if f.check == "walls")
+    out.extend(organisation_walls(ws, person_pages(ws)))
     return out
 
 
@@ -4447,7 +4495,11 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 project, pfm = owner
                 ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
                 out.extend(sources_for_file(ws, project, ptags, top_path / name, res.stdout))
-    files = [(path, text, project_of(ws, path)) for path, text in staged_files(repo) or []]
+    staged_texts = staged_files(repo) or []
+    people = ws.root.joinpath(*PEOPLE).resolve()
+    out.extend(organisation_walls(ws, [(path, text) for path, text in staged_texts
+                                       if path.suffix.lower() == ".md" and people in path.resolve().parents]))
+    files = [(path, text, project_of(ws, path)) for path, text in staged_texts]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
     # The wording check asks only after the runs of words these files hold:
     # the index is built for those alone, from the cache where it can be.

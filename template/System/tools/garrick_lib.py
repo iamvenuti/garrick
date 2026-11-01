@@ -114,7 +114,12 @@ __all__ = [
     "MEETINGS_ENTITIES",
     "tag_list",
     "party_entities",
-    "person_name_key",
+    "ENTITY_LINK_RE",
+    "entity_page",
+    "entity_pages",
+    "name_words",
+    "name_keys",
+    "person_forms",
     "people_parties",
     "organisation_link",
     "workspace_root",
@@ -1044,55 +1049,127 @@ def tag_list(value) -> List[str]:
     return [t for t in (strip_tag(str(v)) for v in values) if t]
 
 
-def party_entities(root: PathLike) -> Dict[str, List[str]]:
-    """{tag: [the stem of each entity page that names it]}, from the Meetings
-    wiki's `wiki/entities/`. Only a page naming one party counts: one naming
-    several, `none` or nothing stands for no party here. A symbolic link is
-    passed over, since it may lead out of the wiki."""
-    out: Dict[str, List[str]] = {}
+ENTITY_LINK_RE = re.compile(r"^\[\[wiki/entities/((?:[^\[\]|#^/\\\n]+/)*[^\[\]|#^/\\\n]+)\]\]$")
+
+
+def entity_page(root: PathLike, rel: str) -> Optional[Path]:
+    """The entity page `wiki/entities/<rel>.md` of the Meetings wiki, or None
+    when it is not there, is reached through a symbolic link at any step from
+    `entities/` down, or `rel` steps out of the folder (`.`, `..`)."""
+    parts = rel.split("/")
+    if not rel or any(p in ("", ".", "..") for p in parts):
+        return None
+    path = Path(root).joinpath(*MEETINGS_ENTITIES)
+    for part in [""] + parts[:-1] + [parts[-1] + ".md"]:
+        path = path / part if part else path
+        if path.is_symlink():
+            return None
+    return path if path.is_file() else None
+
+
+def entity_pages(root: PathLike) -> List[Tuple[str, Path]]:
+    """(rel, path) for every entity page under the Meetings wiki's
+    `wiki/entities/`, subfolders included, `rel` without `.md`. A symbolic
+    link, to a page or a folder, is passed over: it may lead out of the wiki."""
     folder = Path(root).joinpath(*MEETINGS_ENTITIES)
+    out: List[Tuple[str, Path]] = []
     if not folder.is_dir() or folder.is_symlink():
         return out
-    for page in sorted(folder.glob("*.md")):
-        if page.is_symlink() or not page.is_file():
-            continue
-        fm = parse_frontmatter(page)
-        if str(fm.get("type") or "entity").strip().lower() != "entity":
-            continue
-        tags = tag_list(fm.get("party"))
-        if len(tags) == 1 and tags[0] != "none":
-            out.setdefault(tags[0], []).append(page.stem)
+    for here, dirs, files in os.walk(str(folder)):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(here, d)))
+        for f in sorted(files):
+            path = Path(here) / f
+            if f.endswith(".md") and not f.startswith(".") and not path.is_symlink() and path.is_file():
+                out.append((path.relative_to(folder).with_suffix("").as_posix(), path))
     return out
 
 
-def person_name_key(name) -> str:
-    """A person's name as a person page and the People table are matched: in
-    the form of the page's file name, so case, spacing and punctuation never
-    keep two spellings of one name apart."""
-    return re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-")
+def party_entities(root: PathLike) -> Dict[str, List[str]]:
+    """{tag: [the rel of each entity page that stands for it]}, from the
+    Meetings wiki's `wiki/entities/`, subfolders included. Only a page of
+    `type: entity` that names one party in `party:` and carries no `parties:`
+    counts, as Ask reads a page's `party:` alone (ask_scope.PARTY_ALONE): one
+    naming several, `none` or nothing stands for no party here."""
+    out: Dict[str, List[str]] = {}
+    for rel, page in entity_pages(root):
+        fm = parse_frontmatter(page)
+        if str(fm.get("type") or "entity").strip().lower() != "entity" or fm.get("parties") is not None:
+            continue
+        tags = sorted(set(tag_list(fm.get("party"))))
+        if len(tags) == 1 and tags[0] != "none":
+            out.setdefault(tags[0], []).append(rel)
+    return out
+
+
+# Letters NFKD leaves whole, folded as a reader would spell them in ASCII.
+_NAME_FOLD = str.maketrans({"ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "đ": "d", "ð": "d", "þ": "th",
+                            "ł": "l", "ı": "i", "ħ": "h", "ŋ": "n", "ĸ": "k", "ſ": "s"})
+_QUOTED = re.compile(r"[\"“”„«»(]([^\"“”„«»()]+)[\"“”„«»)]")
+_SIGNS_AS = re.compile(r"\bsigns as ([^;,()\"“”]+)", re.I)
+
+
+def name_words(name) -> List[str]:
+    """A name's words, folded so that spellings of one name meet: NFKD, which
+    turns full-width letters plain and splits accents off, the accents
+    dropped, lower case, ø, æ, ß and their like spelled out, and anything
+    that is not a letter or a digit a break between words."""
+    text = unicodedata.normalize("NFKD", str(name or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower().translate(_NAME_FOLD)
+    return re.findall(r"[a-z0-9]+", text)
+
+
+def name_keys(name) -> set:
+    """The keys a name is matched by: all its words run together, and its
+    first and last words, so a middle name or initial does not keep two
+    spellings apart. Loose on purpose: it errs toward finding a second hat."""
+    w = name_words(name)
+    if not w:
+        return set()
+    return {"all:" + "".join(w)} | ({"ends:%s|%s" % (w[0], w[-1])} if len(w) > 1 else set())
+
+
+def person_forms(context: dict, row: dict) -> List[str]:
+    """Every name a People row goes by: the name as written, without its
+    quoted nickname, the nickname alone, a `signs as` name in the row, and
+    each heard form in the Aliases table that means one of those."""
+    name = str(row.get("name") or "")
+    forms = [name, _QUOTED.sub(" ", name)] + _QUOTED.findall(name)
+    for cell in (name, str(row.get("role") or "")):
+        forms += [m.strip() for m in _SIGNS_AS.findall(cell)]
+    keys = set().union(*(name_keys(f) for f in forms))
+    forms += [heard for heard, means in context.get("aliases", {}).items() if name_keys(means) & keys]
+    return [f for f in forms if name_words(f)]
 
 
 def people_parties(context: dict, names) -> set:
-    """The tags the People table gives any of `names`: a page's title and its
-    file name, say. Matching loosely errs toward finding a second hat."""
-    keys = {person_name_key(n) for n in ([names] if isinstance(names, str) else names)} - {""}
-    found = {strip_tag(p.get("party") or "") for p in context.get("people", []) if person_name_key(p.get("name")) in keys}
+    """The tags the People table gives any of `names`, a page's title and its
+    file name say, by every name each row goes by (person_forms). A row found
+    brings every row of the same name with it, so a nickname or a `signs as`
+    written on one hat's row alone still finds the other hat."""
+    keys = set().union(set(), *(name_keys(n) for n in ([names] if isinstance(names, str) else names)))
+    if not keys:
+        return set()
+    rows = [(p, set().union(set(), *(name_keys(f) for f in person_forms(context, p)))) for p in context.get("people", [])]
+    hit = [r for r in rows if keys & r[1]]
+    named = set().union(set(), *(name_keys(p.get("name")) for p, _ in hit))
+    found = {strip_tag(p.get("party") or "") for p, forms in rows if (p, forms) in hit or named & name_keys(p.get("name"))}
     return found - {""}
 
 
 def organisation_link(root: PathLike, context: dict, names, party,
                       entities: Optional[Dict[str, List[str]]] = None) -> str:
-    """The `organisation:` a person page carries, `[[wiki/entities/<stem>]]`,
+    """The `organisation:` a person page carries, `[[wiki/entities/<rel>]]`,
     or "" when it carries none. `names` is the person's name, or the names a
     page goes by (its title and its file name). Fail closed, at every step:
 
     - the page names exactly one party, a tag in the Parties table, not `none`;
-    - where the People table has rows for the name, one of them is that
-      party, and no two of them are walled from each other: one page that a
-      name shares between two hats links neither hat's entity page;
-    - exactly one entity page names that party alone.
+    - where the People table has rows for the name, under any name the row
+      goes by, one of them is that party, and no two of them are walled from
+      each other: one page a name shares between two hats links neither
+      hat's entity page;
+    - exactly one entity page stands for that party alone.
     """
-    tags = tag_list(party)
+    tags = sorted(set(tag_list(party)))
     if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
         return ""
     tag, rows = tags[0], people_parties(context, names)

@@ -62,8 +62,14 @@ CONTEXT = fixtures.CONTEXT.replace(
     "| Rowan Blake | `acme` | Adviser |\n"
     "| Rowan Blake | `birch` | Adviser |\n"
     "| Ines Varga | `acme` | Buyer |\n"
-    "| Ines Varga | `cedar` | Account lead |\n",
-)
+    "| Ines Varga | `cedar` | Account lead |\n"
+    "| Aurélien Moreau | `acme` | Counsel |\n"
+    "| Aurélien Moreau | `birch` | Counsel |\n"
+    "| Søren Kjær | `acme` | Engineer |\n"
+    "| Søren Kjær | `birch` | Engineer; signs as S. K. Lund |\n"
+    "| Kit \"Kestrel\" Avery | `acme` | Analyst |\n"
+    "| Kit \"Kestrel\" Avery | `birch` | Analyst |\n",
+).replace("| dana whitlaw | Dana Whitlock |", "| dana whitlaw | Dana Whitlock |\n| ro blake, rowie | Rowan Blake |")
 
 
 def entity(party: str, title: str = "Acme Corp", extra: str = "") -> str:
@@ -143,6 +149,16 @@ class LinkRuleTest(Workspace):
         self.assertEqual("", self.link("ROWAN-blake", "acme"))
         self.assertEqual("", self.link(("R. Blake", "rowan-blake"), "acme"))   # a title written otherwise, its file name
         self.assertEqual("[[wiki/entities/acme-corp]]", self.link(("R. Blake",), "acme"))
+
+    def test_spellings_of_a_two_hat_name_all_find_both_hats(self):
+        write(self.entities / "acme-corp.md", entity("acme"))
+        for name in ("Rowan Bláke", "Rowan-Blake", "\uff32owan Blake", "Rowan\u200bBlake", "Rowan\xa0Blake",
+                     "Rowan J. Blake", "Aurelien Moreau", "Aurélien Moreau", "AURÉLIEN MOREAU",
+                     "Soren Kjaer", "Søren Kjær", "Kit Avery", "Kestrel", 'Kit "Kestrel" Avery',
+                     "Ro Blake", "rowie", "S. K. Lund"):
+            self.assertEqual("", self.link(name, "acme"), name)
+        # Out of scope, and said so: a letter from another script that looks Latin, and a possessive.
+        self.assertEqual("[[wiki/entities/acme-corp]]", self.link("Row\u0430n Blake", "acme"))
 
     def test_a_name_with_two_parties_no_wall_divides_links_its_own(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -279,8 +295,10 @@ class CheckTest(Workspace):
     def test_a_link_across_a_wall_is_a_wall_finding(self):
         write(self.entities / "birch-co.md", entity("birch", "Birch & Co"))
         write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "[[wiki/entities/birch-co]]"))
-        found = self.findings("people")
-        self.assertEqual(1, len(found))
+        self.assertEqual([], self.findings("people"))                     # said once, by the walls check
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/dana-whitlock.md"], [f.path for f in found])
+        self.assertEqual("error", found[0].severity)
         self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
         item = nurture.sort_item(nurture.Ctx(self.root), nurture.check_items(vars(found[0]))[0])
         self.assertEqual("wall", item.kind)
@@ -289,10 +307,9 @@ class CheckTest(Workspace):
     def test_a_link_on_a_page_both_hats_share_is_a_wall_finding(self):
         write(self.entities / "acme-corp.md", entity("acme"))
         write(self.people / "rowan-blake.md", person("Rowan Blake", "acme", "[[wiki/entities/acme-corp]]"))
-        found = self.findings("people")
-        self.assertEqual(["Wikis/Meetings/wiki/people/rowan-blake.md"],
-                         [f.path for f in found if "rowan" in f.path])
-        rowan = next(f for f in found if "rowan" in f.path)
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/rowan-blake.md"], [f.path for f in found])
+        rowan = found[0]
         self.assertTrue(rowan.message.endswith("a wall stands between acme and birch"), rowan.message)
 
     def test_a_page_titled_otherwise_is_still_known_by_its_file_name(self):
@@ -300,9 +317,49 @@ class CheckTest(Workspace):
         write(self.people / "rowan-blake.md", person("R. Blake", "acme"))
         self.assertEqual([], [f for f in self.findings("people") if "rowan" in f.path])
         write(self.people / "rowan-blake.md", person("R. Blake", "acme", "[[wiki/entities/acme-corp]]"))
-        rowan = [f for f in self.findings("people") if "rowan" in f.path]
+        rowan = self.findings("walls")
         self.assertEqual(1, len(rowan))
         self.assertTrue(rowan[0].message.endswith("a wall stands between acme and birch"), rowan[0].message)
+
+    def test_an_alias_heading_or_other_path_is_warned(self):
+        write(self.entities / "acme-corp.md", entity("acme"))
+        for value in ("[[wiki/entities/acme-corp|met about the bid]]", "[[wiki/entities/acme-corp#Merger talks]]",
+                      "[[wiki/entities/../entities/acme-corp]]", "[[entities/acme-corp]]", "[[acme-corp]]",
+                      "wiki/entities/acme-corp", "[[wiki/entities/acme-corp]] and more"):
+            write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", value))
+            found = self.findings("people")
+            self.assertEqual(1, len(found), value)
+            self.assertIn("is exactly", found[0].message, value)
+
+    def test_a_link_to_an_entity_page_reached_through_a_symbolic_link_leads_nowhere(self):
+        outside = write(self.root / "Zones" / "Work" / "Acme Review" / "Notes.md", entity("acme"))
+        self.entities.mkdir(parents=True)
+        os.symlink(str(outside), str(self.entities / "acme-corp.md"))
+        write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "[[wiki/entities/acme-corp]]"))
+        found = self.findings("people")
+        self.assertEqual(1, len(found))
+        self.assertIn("leads to no entity page", found[0].message)
+
+    def test_entity_pages_in_subfolders_count_for_one_page_per_party(self):
+        write(self.entities / "acme-corp.md", entity("acme"))
+        write(self.entities / "clients" / "acme-holdings.md", entity("acme", "Acme Holdings"))
+        self.assertEqual({"acme": ["acme-corp", "clients/acme-holdings"]}, garrick_lib.party_entities(self.root))
+        found = [f for f in self.findings("meetings") if "entities" in f.path]
+        self.assertEqual(2, len(found))
+        self.assertEqual("", self.link("Dana Whitlock", "acme"))
+        (self.entities / "acme-corp.md").unlink()
+        self.assertEqual("[[wiki/entities/clients/acme-holdings]]", self.link("Dana Whitlock", "acme"))
+
+    def test_an_entity_page_carrying_parties_stands_for_no_party(self):
+        write(self.entities / "acme-corp.md", entity("acme", extra="parties: [acme]\nzone: Work\n"))
+        self.assertEqual({}, garrick_lib.party_entities(self.root))
+        self.assertEqual("", self.link("Dana Whitlock", "acme"))
+
+    def test_an_entity_page_naming_two_walled_parties_is_warned(self):
+        write(self.entities / "plain.md", entity("[acme, birch]", "Plain"))
+        found = [f for f in self.findings("meetings") if "entities" in f.path]
+        self.assertEqual(1, len(found))
+        self.assertIn("names both acme and birch, which a wall keeps apart", found[0].message)
 
     def test_more_than_one_link_is_warned(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -310,7 +367,7 @@ class CheckTest(Workspace):
               person("Dana Whitlock", "acme").replace("party: acme\n", "party: acme\norganisation: [\"[[wiki/entities/acme-corp]]\", \"[[wiki/entities/acme-corp]]\"]\n"))
         found = self.findings("people")
         self.assertEqual(1, len(found))
-        self.assertIn("is one link", found[0].message)
+        self.assertIn("is exactly", found[0].message)
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
@@ -328,6 +385,28 @@ class StagedWallCheckTest(Workspace):
         git(wikis, "add", "-A")
         findings = check.run_checks(self.root, walls_only=True, staged=wikis)
         self.assertEqual([], findings)
+
+    def test_the_hook_refuses_a_person_page_linked_across_a_wall(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.entities / "acme-corp.md", entity("acme"))
+        write(self.entities / "birch-co.md", entity("birch", "Birch & Co"))
+        write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "[[wiki/entities/birch-co]]"))
+        write(self.people / "rowan-blake.md", person("Rowan Blake", "acme", "[[wiki/entities/acme-corp]]"))
+        git(wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=wikis)
+        self.assertEqual({("error", "walls", "Wikis/Meetings/wiki/people/dana-whitlock.md"),
+                          ("error", "walls", "Wikis/Meetings/wiki/people/rowan-blake.md")},
+                         {(f.severity, f.check, f.path) for f in found})
+        r = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                            "--walls-only"], cwd=str(wikis), capture_output=True, text=True, env=GIT_ENV)
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+        # What is staged counts, not the disk: the link taken out but not staged is still refused.
+        write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme"))
+        write(self.people / "rowan-blake.md", person("Rowan Blake", "acme"))
+        self.assertEqual(2, len(check.run_checks(self.root, walls_only=True, staged=wikis)))
+        git(wikis, "add", "-A")
+        self.assertEqual([], check.run_checks(self.root, walls_only=True, staged=wikis))
 
     def test_the_hook_passes_on_a_project_note_linking_that_person(self):
         work = self.root / "Zones" / "Work"

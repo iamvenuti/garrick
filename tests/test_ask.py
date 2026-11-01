@@ -1246,6 +1246,21 @@ class TestRenewal(ServerCase):
     def test_a_record_cannot_say_refreshed(self):
         self.assertEqual("&lt;refreshed/>", ask.inert("<refreshed/>"))
 
+    def test_no_spelling_of_a_tag_survives(self):
+        """A space, a character that shows nothing or a full-width bracket or
+        letter does not make a tag in a record's text live."""
+        import re
+        live = re.compile(r"<\s*/?\s*(?:records?|request|earlier-request|workspace|names|today|last-results"
+                          r"|correction|refreshed)\b", re.I)
+        for said in ("< refreshed/>", "<\u200brefreshed/>", "\uff1crefreshed/\uff1e", "<refreshed />", "< /records>",
+                     "<\u200b /request>", "<re\u200bcords>", "<\u2060workspace>", "\uff1c\uff52\uff45\uff43\uff4f\uff52\uff44 id=1\uff1e",
+                     "\ufe64/names\ufe65", "<\tlast-results>", "<\u00adtoday>", "< \u200d/ correction>", "<\ufeffRequest>"):
+            out = ask.inert("before " + said + " after")
+            self.assertIsNone(live.search(out), (said, out))
+            self.assertIn("&lt;", out, said)
+        for plain in ("a < b and c > d", "<b>bold</b>", "<recording>", "one\u00a0two"):
+            self.assertNotIn("&lt;", ask.inert(plain), plain)          # anything else as it was, near enough
+
 
 class TestTheAppKeepsIt(unittest.TestCase):
     """#261: what Garrick.swift does with the session, read from its source,

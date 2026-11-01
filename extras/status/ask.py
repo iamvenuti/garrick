@@ -223,6 +223,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -1352,13 +1353,20 @@ def clarify(question: str) -> dict:
     return reply(question, "clarify")
 
 
-# The tags a message is built from: a record's own text never opens or closes one.
-_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|names|today|last-results|correction|refreshed)\b)",
-                   re.I)
+# The tags a message is built from: a record's own text never opens or closes one,
+# with a space after its "<" or before its "/" either.
+_TAGS = re.compile(r"<\s*(?=/?\s*(?:records?|request|earlier-request|workspace|names|today|last-results|correction"
+                   r"|refreshed)\b)", re.I)
+# Characters that show nothing: a tag with one inside it still reads as the tag.
+_UNSEEN = re.compile("[\u00ad\u034f\u180e\u200b-\u200f\u2060-\u2064\ufeff]")
 
 
 def inert(text: str) -> str:
-    return _TAGS.sub("&lt;", text)
+    """A record's text, unable to open or close a tag of the message: folded
+    first (NFKC, so a full-width "＜" or letter is the plain one), with the
+    characters that show nothing taken out, then every "<" that starts a
+    tag's name written as "&lt;"."""
+    return _TAGS.sub("&lt;", _UNSEEN.sub("", unicodedata.normalize("NFKC", text)))
 
 
 def attr(value: str) -> str:

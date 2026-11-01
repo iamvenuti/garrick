@@ -141,7 +141,12 @@ party walled from one in `seen` (any party at all, for a question across
 every zone) stops both sessions and clears everything they were told: the
 results, the questions waiting for a yes, `seen`, the records admitted, and
 which process was given the list. The new processes get the new request
-only, and the reply carries `"reset": "wall"`. A question across every zone
+only, and the reply carries `"reset": "wall"`. A request the box asked
+about goes on with the answer that settled it, unless it names the far
+side of the wall (ask_scope.far_side()): then it is dropped whole, names,
+subject and all (#294). When it goes on, the reply carries `"carried":
+true` as well, and the app's divider goes above the question asked about,
+not below it. A question across every zone
 reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
@@ -870,8 +875,14 @@ class Asker:
         if reset:
             self.progress("Starting a fresh session")
             self.reset()
-            since = 0 if earlier is None else len(earlier) + 1
-            earlier, heard = None, request      # the new processes get the new request alone
+            # The request the box asked about goes on with its answer, unless
+            # it names the far side of the wall: then the new processes get
+            # the new request alone, and the names heard in it (#294).
+            if earlier is not None and sc.far_side(self.ws, heard, named, names, self.ctx, lib,
+                                                   sc.far_parties(self.ctx, named.parties, lib), len(earlier)):
+                since = len(earlier) + 1
+                earlier, heard, named = None, request, named.since(since)
+        carried = reset and earlier is not None     # the request asked about went on past the reset
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -897,8 +908,10 @@ class Asker:
             self.sent, self.told = sent, self.session.started
             find = wanted(text)
             if find is not None:
-                out, again = self.answer(heard, find, named, names, today, turns, usage)
+                out, again = self.answer(heard, find, named, names, today, turns, usage,
+                                         asked=0 if earlier is None else len(earlier) + 1)
                 reset = reset or again
+                carried = carried or bool(out.pop("carried", False))
             else:
                 bill(turns)
                 turns = []
@@ -915,14 +928,18 @@ class Asker:
             bill(turns)
         if reset:
             out["reset"] = "wall"
+            if carried:                             # the app moves its divider above the question asked about
+                out["carried"] = True
         return out
 
     def answer(self, request: str, find: dict, named, names, today: Optional[dt.date], turns: list,
-               usage: dict) -> Tuple[dict, bool]:
+               usage: dict, asked: int = 0) -> Tuple[dict, bool]:
         """A question, answered from the records inside its scope by the second
         session: (the reply, whether a wall reset ran). Its turn goes in
         `turns`, so the request is one line in the ledger. What it says is
-        said; it never carries out an action, whatever a record holds."""
+        said; it never carries out an action, whatever a record holds.
+        `asked` is where the request sent last begins in `request`, after a
+        request the box asked about."""
         sc = scope_lib()
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
@@ -940,9 +957,13 @@ class Asker:
         if reset:                                   # before anything is read
             self.progress("Starting a fresh session")
             self.reset()
+            if asked and sc.far_side(self.ws, request, named, names, self.ctx, lib,
+                                     sc.far_parties(self.ctx, where.parties, lib, where.every), asked - 1):
+                request, asked = request[asked:], 0     # the earlier request names the far side: the new one alone
+        carried = {"carried": True} if reset and asked else {}
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
-            return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
+            return dict(reply(self.wall() if back else NOTHING_FOUND, "answer"), **carried), reset
         if self.answers is None:
             self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
@@ -966,7 +987,7 @@ class Asker:
         say = said(text)
         if back:
             say = (say + " " + self.wall()).strip()
-        out = reply(say, "answer")
+        out = dict(reply(say, "answer"), **carried)
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return out, reset

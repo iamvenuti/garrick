@@ -50,6 +50,7 @@ from __future__ import annotations
 import collections
 import importlib.util
 import re
+import unicodedata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -223,6 +224,12 @@ class Mentions:
                 seen.append((e.zone, e.project, e.thread))
         return seen
 
+    def since(self, start: int) -> "Mentions":
+        """The names heard from `start` on: what is left when the words
+        before it are dropped."""
+        keep = [i for i, h in enumerate(self.heard) if h[0] >= start]
+        return Mentions([self.entries[i] for i in keep], self.question, [self.heard[i] for i in keep])
+
 
 def _pattern(form: str) -> str:
     """A name as a whole word or words, however the spaces between them fall."""
@@ -335,6 +342,72 @@ def which(cands: List[Entry], ctx: dict) -> str:
             labels.append(label)
     labels = labels[:MOST_NAMED]
     return "Which do you mean: %s?" % (", ".join(labels[:-1]) + " or " + labels[-1] if len(labels) > 1 else labels[0])
+
+
+def far_parties(ctx: dict, toward: Iterable[str], lib_, every: bool = False) -> Set[str]:
+    """The parties on the far side of a wall from `toward`: each walled from
+    one of them. For a question across every zone, whose side is not known
+    until its records are picked, every party a wall names."""
+    known = set(ctx.get("parties", {}))
+    toward = known if every else set(toward)
+    return {p for p in known if any_wall(ctx, {p}, toward, lib_)}
+
+
+def _fold(text: str) -> str:
+    """Lower case, accents and full-width forms taken off, one character for
+    one, so a place found in the folded text is the same place in the text."""
+    out = []
+    for c in text:
+        base = unicodedata.normalize("NFKD", c)[:1].lower()[:1]
+        out.append(base if base else c)
+    return "".join(out).replace("’", "'")
+
+
+def far_side(ws: Path, text: str, named: Mentions, names: Dict[str, Dict[str, dict]], ctx: dict, lib_,
+             far: Set[str], upto: int) -> bool:
+    """Whether text[:upto], the user's own words from before a wall reset,
+    holds a name that stands for a party in `far` (#294). The new sessions
+    are given those words only when it holds none.
+
+    Wider than mentions(), since a word wrongly taken for a name only costs
+    the earlier words: a name settled to the far side; and anywhere, inside a
+    longer word or not, in any case and with or without accents, a far
+    party's name, tag or mail domain, a far person's name, or an alias of
+    either; and as a word of its own, any word of those names (a first name
+    written small, a surname alone) and a far project's or thread's name or
+    its spoken form. A far name inside a name settled to the near side is that name's:
+    "Pricing", settled to the near side's thread, is kept, though a far
+    project has a thread called Pricing too."""
+    if not far or upto <= 0:
+        return False
+    near = []
+    for start, end, _, means in named.heard:
+        if start >= upto:
+            continue
+        if any(e.parties & far for e in means):
+            return True                         # a name settled to the far side
+        near.append((start, end))
+    folded = _fold(text[:upto])
+    anywhere, whole = set(), set()
+    for form, _, e in entries(ws, names, ctx, lib_):
+        if not e.parties & far:
+            continue
+        if e.kind in ("project", "thread"):
+            whole.add(_fold(_norm(form)))
+        else:
+            anywhere.add(_fold(_norm(form)))
+            whole |= {_fold(w) for w in _norm(e.label).split() if len(w) >= SHORTEST}
+    for tag in far:
+        row = ctx.get("parties", {}).get(tag, {})
+        anywhere |= {_fold(_norm(f)) for f in [tag, row.get("party") or ""] + list(row.get("domains") or [])
+                     if len(_norm(f)) >= SHORTEST}
+    words = lambda f: r"\s+".join(re.escape(w) for w in f.split())  # noqa: E731
+    patterns = [words(f) for f in anywhere if f] + [r"(?<!\w)%s(?!\w)" % words(f) for f in whole if f]
+    for pattern in patterns:
+        for m in re.finditer(pattern, folded):
+            if not any(s <= m.start() and m.end() <= e for s, e in near):
+                return True
+    return False
 
 
 # ---------------------------------------------------------------- the scope

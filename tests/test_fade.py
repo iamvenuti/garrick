@@ -497,6 +497,31 @@ class ApplyTest(Base):
         self.assertIn("After [[dormant/wiki/sources/260401-acme-review|260401-acme-review]]", self.text(later))
         self.assertTrue(self.text(later).endswith(block))
 
+    def test_a_full_path_in_code_to_a_walled_page_is_reported_before_and_after_it_fades(self):
+        """Fade leaves a link in code as written (#256), and a Markdown link
+        too; the walls still find the page behind it once it has faded (#297)."""
+        pricing = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        said = ("\nTheir terms: `[[Meetings/wiki/sources/260312-birch-kickoff]]`.\n\n"
+                "```\nWikis/Meetings/wiki/sources/260312-birch-kickoff.md\n```\n\n"
+                "As [the call](../../../../../Wikis/Meetings/wiki/sources/260312-birch-kickoff.md) had it.\n")
+        pricing.write_text(self.text(pricing) + said)
+        self.commit_all()
+
+        def walled():
+            r = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--json"],
+                               capture_output=True, text=True)
+            return sorted(f["message"] for f in json.loads(r.stdout)["findings"]
+                          if f["check"] == "walls" and f["path"].endswith("Pricing/Pricing.md")
+                          and "a meeting with birch" in f["message"])
+
+        before = walled()
+        self.assertEqual(3, len(before), before)
+        self.propose()
+        self.apply()
+        self.assertTrue(self.page("dormant/wiki/sources/260312-birch-kickoff.md").is_file())
+        self.assertTrue(self.text(pricing).endswith(said))                    # left as written
+        self.assertEqual(before, walled())
+
     def test_the_lists_follow(self):
         self.propose()
         self.apply()

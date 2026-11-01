@@ -463,6 +463,21 @@ def is_faded(ws: Workspace, path: Path) -> bool:
     return len(parts) > 3 and parts[0] == "Wikis" and parts[2] in FADED
 
 
+def grade_places(ws: Workspace, path: Path) -> List[Path]:
+    """Where a wiki's page or record stands in the grades it is not in: one
+    that fades or wakes moves between `<wiki>/<path>`, `<wiki>/dormant/<path>`
+    and `<wiki>/archive/<path>`. Fade rewrites the wikilinks to it, but not a
+    link in code (#256), a Markdown link or an HTML anchor, which go on naming
+    the place it left; a link index finds it there too (#297)."""
+    parts = Path(rel(ws, path)).parts
+    if len(parts) < 4 or parts[0] != "Wikis":
+        return []
+    here = parts[2] if parts[2] in FADED else ""
+    sub = parts[3:] if here else parts[2:]
+    return [ws.root.joinpath(*parts[:2], *((grade,) if grade else ()), *sub)
+            for grade in ("",) + FADED if grade != here]
+
+
 GENERATED = ("System", "generated")
 
 
@@ -603,24 +618,36 @@ class PathIndex:
     """Files a link may point at, indexed once: by the last part of each path,
     for links matched the way Obsidian matches them, and by resolved path, for
     exact ones. A link then costs the few files that share its last part, not
-    a pass over every file: thousands of notes stay seconds, not minutes."""
+    a pass over every file: thousands of notes stay seconds, not minutes.
 
-    def __init__(self, ws: Workspace, candidates: Iterable[Path]):
+    `places`, when given, names more paths a file is found at besides its
+    own, such as where a wiki page stood before it faded (grade_places): a
+    link to one of them lands on the file as a link to its own path does."""
+
+    def __init__(self, ws: Workspace, candidates: Iterable[Path],
+                 places: Optional[Callable[[Path], List[Path]]] = None):
         self.items = list(candidates)
+        self.places = places
         self.by_last: Dict[str, List[Tuple[Tuple[str, ...], Path]]] = {}
         for c in self.items:
-            have = tuple(x.lower() for x in _strip_md(Path(rel(ws, c)).parts))
-            if have:
-                self.by_last.setdefault(have[-1], []).append((have, c))
+            for at in [c] + (places(c) if places else []):
+                have = tuple(x.lower() for x in _strip_md(Path(rel(ws, at)).parts))
+                if have:
+                    self.by_last.setdefault(have[-1], []).append((have, c))
         self._exact: Optional[Dict[Path, List[Tuple[int, Path]]]] = None
 
     def exact(self) -> Dict[Path, List[Tuple[int, Path]]]:
         """Resolved path -> (position, file); built on the first exact link."""
         if self._exact is None:
             self._exact = {}
+            folders: Dict[Path, Path] = {}  # a place's folder, resolved once for every file in it
             for i, c in enumerate(self.items):
                 try:
                     self._exact.setdefault(c.resolve(), []).append((i, c))
+                    for at in self.places(c) if self.places else []:
+                        if at.parent not in folders:
+                            folders[at.parent] = at.parent.resolve()
+                        self._exact.setdefault(folders[at.parent] / at.name, []).append((i, c))
                 except (OSError, RuntimeError):
                     continue
         return self._exact
@@ -650,8 +677,8 @@ def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
     tries.append(parts)
     for want in tries:
         want = tuple(x.lower() for x in want)
-        hits = [c for have, c in index.by_last.get(want[-1], [])
-                if len(have) >= len(want) and have[-len(want):] == want]
+        hits = list(dict.fromkeys(c for have, c in index.by_last.get(want[-1], [])
+                                  if len(have) >= len(want) and have[-len(want):] == want))
         if hits:
             return hits
     return _anchored_hits(ws, index, target)
@@ -815,6 +842,13 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         ws.meetings[question] = note_frontmatter(ws, question)
         ws.meeting_questions.add(question)
     return ws
+
+
+def meeting_index(ws: Workspace) -> "PathIndex":
+    """The meeting pages, indexed for links: each at its own place and at the
+    places it stands at in the other grades (grade_places), so that a link
+    written before it faded, or before it woke, still lands on it (#297)."""
+    return PathIndex(ws, ws.meetings, lambda page: grade_places(ws, page))
 
 
 def meeting_sources(root: Path) -> List[Path]:
@@ -2728,7 +2762,7 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
     wiki = ws.root / "Wikis" / "Meetings" / "wiki"
     sources = wiki / "sources"
     if ws.meeting_links is None:
-        ws.meeting_links = PathIndex(ws, ws.meetings)
+        ws.meeting_links = meeting_index(ws)
     for page in ws.wiki_files:
         question = page in ws.meeting_questions
         if not question and (wiki not in page.parents or sources in page.parents or page.parent == wiki):
@@ -3799,7 +3833,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
     if ws.meeting_links is None:
-        ws.meeting_links = PathIndex(ws, ws.meetings)
+        ws.meeting_links = meeting_index(ws)
     meetings = ws.meeting_links
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
@@ -4499,7 +4533,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
     if not kroot.is_dir():
         return out
     kfiles = PathIndex(ws, walk_files(kroot))
-    mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents))
+    mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents), lambda p: grade_places(ws, p))
     raws = [kroot / home for home in RAW_HOMES]
     beyond = None
     schema, problems = knowledge_schema(ws.root)

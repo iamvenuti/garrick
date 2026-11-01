@@ -1075,7 +1075,7 @@ class TestCodex(base.AskCase):
         real = ask.agent().run
         replies = [find("meetings", ["pallet"]), json.dumps({"say": "Parked.", "do": [
             {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"}]})]
-        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None: calls.append(tier) or (0, replies.pop(0))
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: calls.append(tier) or (0, replies.pop(0))
         try:
             a = ask.Asker(self.root)
             out = a.ask("What did Dana say about the pallet quote?")

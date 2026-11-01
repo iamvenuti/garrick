@@ -485,10 +485,14 @@ def call(cmd: List[str], cwd: Optional[Path], timeout: Optional[float], stdout=s
 
 
 def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] = None,
-        job: Optional[str] = None, timeout: Optional[float] = None) -> Tuple[int, str]:
+        job: Optional[str] = None, timeout: Optional[float] = None,
+        transcript: bool = True) -> Tuple[int, str]:
     """One headless turn. Returns the exit code and the assistant's final answer.
     With `timeout`, a call still going after that many seconds is stopped and
-    returns 124 with whatever answer it had."""
+    returns 124 with whatever answer it had. With `transcript` false, a Codex
+    run's output, prompt included, is thrown away instead of kept in the
+    job's transcript: ask.py's choice, since Ask keeps no request text unless
+    asked to."""
     allow = list(allow)
     h = harness()
     if h not in HARNESSES:
@@ -547,13 +551,15 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
         # sentinel lines the prompt also contains, so it gets the final message
         # alone and the transcript goes to a file beside the log. It holds what
         # the run read, zone material included, so it is rotated like the log.
-        transcript = Path(os.environ.get("GARRICK_TRANSCRIPT") or jobs_dir() / ("%s.transcript.log" % job))
-        transcript.parent.mkdir(parents=True, exist_ok=True)
-        rotate(transcript)
+        # Without `transcript`, nothing of the run is written anywhere.
+        log_path = Path(os.environ.get("GARRICK_TRANSCRIPT") or jobs_dir() / ("%s.transcript.log" % job))
+        if transcript:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            rotate(log_path)
         with tempfile.TemporaryDirectory() as tmp:
             last = Path(tmp) / "last.txt"
             try:
-                with transcript.open("a", encoding="utf-8") as log:
+                with (log_path.open("a", encoding="utf-8") if transcript else open(os.devnull, "w")) as log:
                     code, _, _ = call(codex_command(tier, prompt, last, allow), cwd, timeout, stdout=log)
             except FileNotFoundError:
                 print("agent: codex is not installed, or not on PATH", file=sys.stderr)

@@ -792,7 +792,9 @@ class OnceSession:
         prompt = BRIEF.read_text(encoding="utf-8") + "\n\n" + before + text
         home = sealed_folder(self.ws)
         try:
-            code, out = agent().run(self.tier, prompt, allow=(), cwd=home, job=JOB)
+            # Codex prints the prompt: no transcript of it unless LOG_TEXT is 1, as for ask.log (#293).
+            code, out = agent().run(self.tier, prompt, allow=(), cwd=home, job=JOB,
+                                    transcript=os.environ.get(LOG_TEXT) == "1")
         finally:
             shutil.rmtree(str(home), ignore_errors=True)
         if code == agent().EXIT_CAP:

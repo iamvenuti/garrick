@@ -263,6 +263,16 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(("calls_day", self.now - 80000 + 86400), (reached["cap"], reached["clears"]))
 
 
+    def test_the_summary_counts_a_stopped_call_as_a_call_not_a_failure(self):
+        """#294: `agent.py ledger` counted a request ended with Ask's Stop,
+        billed with exit 1, as failed, where the calls card did not."""
+        rows = [{"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "stopped"},
+                {"job": "ask", "cost_usd": 0.01, "exit": 1, "subtype": "error_during_execution"},
+                {"job": "ask", "cost_usd": 0.01, "exit": 0, "subtype": "success"}]
+        self.assertIn("  ask: 3 calls, $0.03, 1 failed", agent.summary(rows))
+        self.assertNotIn("failed", agent.summary(rows[:1]))
+
+
 class ProfileTest(unittest.TestCase):
     def test_profile_denies_sending_sharing_and_deleting(self):
         deny = set(json.loads((JOBS / "headless-settings.json").read_text())["permissions"]["deny"])

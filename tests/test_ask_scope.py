@@ -1772,3 +1772,149 @@ class TestTheNewestFirst(AnswerCase):
         rec = lambda *p: {"parties": list(p)}  # noqa: E731
         chosen, back, matched = sc.choose([rec("acme")] * 3 + [rec("birch")] * 5, set(), ctx, lib, most=2)
         self.assertEqual((2, True, 3), (len(chosen), back, matched))   # the five on the far side are not counted
+
+
+SIZING_TABLE = ("\n| | |\n|---|---|\n| Next action | Call Theo about the volumes |\n| Waiting on | Theo, for the volumes |\n"
+                "| Deadline | 2026-10-13 |\n")
+
+
+class TestActions(AnswerCase):
+    """#316: a question about what to do, what is due or what is owed is a
+    find with route `actions`, listed by Garrick itself from the Todo lists
+    and the threads' rows, and never told to a session."""
+
+    TODAY = __import__("datetime").date(2026, 10, 12)
+
+    def setUp(self):
+        super().setUp()
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace(
+            "## Done", "- [ ] [[Market Sizing]]: Send the sizing deck 📅 2026-10-13\n"
+                       "- [ ] [[Pricing]]: Draft the rate card 📅 2026-10-30\n\n"
+                       "## Waiting on\n\n- [ ] [[Pricing]]: Dana to confirm the volumes ⏳ 2026-10-11\n\n## Done"))
+        personal = self.root / "Zones" / "Personal" / "Todo.md"
+        write(personal, personal.read_text().replace("## Inbox\n", "## Inbox\n\n- [ ] Renew the passport 📅 2026-10-13\n"))
+        sizing = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        write(sizing, sizing.read_text().replace("Drafting.\n", "Drafting.\n" + SIZING_TABLE))
+        # An old meeting whose actions table holds an item that looks open: never read for this route.
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260801-acme-actions.md",
+              meeting_page("Work", "[acme]", "Acme actions") + "\n| Who | Action | State |\n|---|---|---|\n"
+              "| Dana | Send the signed contract MEETINGACTION | open |\n")
+        self.answers.write_text(json.dumps({"haiku": [
+            ["urgent", json.dumps({"say": "", "find": {"route": "actions", "until": "2026-10-13"}})],
+            ["owe Dana", json.dumps({"say": "", "find": {"route": "actions"}})],
+            ["waiting on", json.dumps({"say": "", "find": {"route": "actions", "waiting": True}})],
+        ] + HAIKU}))
+
+    def texts(self, out):
+        return [c["text"] for c in out["claims"]]
+
+    def test_most_urgent_tomorrow_is_the_late_line_and_tomorrows_never_a_meeting(self):
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        self.assertEqual("answer", out["kind"])
+        self.assertTrue(out["listed"])
+        self.assertEqual([
+            "3 days late: Send the revised terms (Pricing, in Work).",
+            "Due tomorrow: Renew the passport (in Personal).",
+            "Due tomorrow: Send the sizing deck (Market Sizing, in Work).",
+            "Chase yesterday: Dana to confirm the volumes (Pricing, in Work).",
+            "Next, deadline tomorrow: Call Theo about the volumes (Market Sizing, in Work).",
+        ], self.texts(out))
+        self.assertNotIn("MEETINGACTION", json.dumps(out))
+        self.assertNotIn("rate card", json.dumps(out))                    # past the period
+        self.assertNotIn("Invoice", json.dumps(out))                      # no date, and a period was named
+        self.assertEqual(["haiku"], [p["model"] for p in self.procs()])  # no answer session
+        self.assertFalse(any("<records " in m for m in self.msgs()))
+        src = out["sources"]
+        self.assertEqual(["a1", "a2", "a3", "a4", "a5"], [s["id"] for s in src])
+        self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", src[0]["path"])
+        self.assertEqual("Zones/Personal/Todo.md", src[1]["path"])
+        self.assertIn("place", src[0])                                   # a thread's note opens as its row
+
+    def test_what_do_i_owe_dana_is_her_partys_lines_only(self):
+        out = self.asker().ask("What do I owe Dana?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual([
+            "3 days late: Send the revised terms (Pricing, in Work).",
+            "Due on 30 October: Draft the rate card (Pricing, in Work).",
+            "Chase yesterday: Dana to confirm the volumes (Pricing, in Work).",
+            "Open: Acme Corp: Invoice for September (in Work).",
+        ], said)
+        for far in ("sizing", "Theo", "passport"):
+            self.assertNotIn(far, json.dumps(out))
+
+    def test_what_am_i_waiting_on(self):
+        out = self.asker().ask("What am I waiting on?", today=self.TODAY)
+        self.assertEqual(["Chase yesterday: Dana to confirm the volumes (Pricing, in Work).",
+                          "Waiting on: Theo, for the volumes (Market Sizing, in Work)."], self.texts(out))
+
+    def test_both_sides_of_a_wall_and_no_session_holds_more(self):
+        """Acme's records are held; a list that holds Birch's line too resets
+        nothing, and neither session's `seen` or `heard`, nor what either was
+        sent, changes for it."""
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?", today=self.TODAY)
+        seen, heard, passages = set(a.seen), set(a.heard), list(a.passages)
+        pids = {p["pid"]: p["model"] for p in self.procs()}
+        (sonnet,) = [pid for pid, m in pids.items() if m == "sonnet"]
+        told = len(self.msgs(sonnet))
+        out = a.ask("What's most urgent tomorrow?", today=self.TODAY)
+        self.assertNotIn("reset", out)
+        said = json.dumps(out)
+        self.assertIn("revised terms", said)                             # Acme's
+        self.assertIn("sizing deck", said)                               # and Birch's, on the far side of the wall
+        self.assertEqual((seen, heard, passages), (a.seen, a.heard, a.passages))
+        self.assertEqual(pids, {p["pid"]: p["model"] for p in self.procs()})   # no process started or replaced
+        self.assertEqual(told, len(self.msgs(sonnet)))                   # the answer session was told nothing
+        for m in self.msgs():
+            for item in ("revised terms", "sizing deck", "passport", "Call Theo"):
+                self.assertNotIn(item, m)                                # no session was told an item
+        self.assertEqual("", a.results)
+        nxt = a.ask("What did Dana say about the pallet quote?", today=self.TODAY)
+        self.assertNotIn("reset", nxt)
+        self.assertNotIn("sizing deck", self.msgs()[-1])
+
+    def test_nothing_open_says_so(self):
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n## Done\n")
+        write(self.root / "Zones" / "Personal" / "Todo.md", "# Personal\n\n## Inbox\n\n## Done\n")
+        sizing = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        write(sizing, sizing.read_text().replace(SIZING_TABLE, ""))
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        self.assertEqual(([], ask.NOTHING_OPEN), (out["claims"], out["say"]))
+
+    def test_more_than_five_says_how_many_more(self):
+        todo = self.work / "Todo.md"
+        write(todo, todo.read_text().replace("## Waiting on", "".join(
+            "- [ ] Task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 4)) + "\n## Waiting on"))
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        self.assertEqual(5, len(out["claims"]))
+        self.assertEqual(["And 3 more."], out["after"])
+
+    def test_a_find_for_actions_is_checked(self):
+        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        for bad in ({"route": "actions", "until": "tomorrow"}, {"route": "actions", "waiting": "yes"},
+                    {"route": "actions", "zone": "Elsewhere"}):
+            with self.assertRaises(sc.Refused, msg=bad):
+                sc.scope(self.root, bad, sc.Mentions([]), names, ctx, lib)
+        where = sc.scope(self.root, {"route": "actions", "until": "2026-10-13"}, sc.Mentions([]), names, ctx, lib)
+        self.assertEqual(("actions", None, "2026-10-13", True), (where.route, where.zone, where.until, where.every))
+
+    def test_with_codex_too(self):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        real = ask.agent().run
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: (
+            0, json.dumps({"say": "", "find": {"route": "actions", "until": "2026-10-13"}}))
+        try:
+            out = ask.Asker(self.root).ask("What's most urgent tomorrow?", today=self.TODAY)
+        finally:
+            ask.agent().run = real
+        self.assertEqual("3 days late: Send the revised terms (Pricing, in Work).", out["claims"][0]["text"])
+
+    def test_the_answer_says_you(self):
+        self.assertEqual("Jo Example", ask.scope_lib().user_name(self.root))
+        self.asker().ask("What did Dana say about the pallet quote?")
+        (sent,) = [m for m in self.msgs() if "<records " in m]
+        self.assertIn("<you>Jo Example</you>", sent)
+        self.assertIn('"you"', ask.ANSWER_BRIEF.read_text())
+        self.assertEqual("&lt;you>", ask.inert("<you>"))

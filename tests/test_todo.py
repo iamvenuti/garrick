@@ -67,6 +67,21 @@ class TodoTest(unittest.TestCase):
     def text(self):
         return (self.zone / "Todo.md").read_text()
 
+    def test_classify_holds_every_open_line_for_a_list_of_them(self):
+        """#316: the Ask box lists what is owed from this one reading, so the
+        lines a digest only counts are here too, each once."""
+        lines = ["## Inbox", "- [ ] late 📅 2026-10-01", "- [ ] today 📅 2026-10-12", "- [ ] soon 📅 2026-10-20",
+                 "- [ ] undated", "- [ ] <action>", "## Waiting on", "- [ ] chased ⏳ 2026-10-11",
+                 "- [ ] later chase ⏳ 2026-10-15", "- [ ] no chase", "- [x] done ✅ 2026-10-11"]
+        got = todo.classify(lines, dt.date(2026, 10, 12))
+        self.assertEqual([(11, "- [ ] late 📅 2026-10-01")], got["overdue"])
+        self.assertEqual(["- [ ] today 📅 2026-10-12"], got["due"])
+        self.assertEqual([("2026-10-20", "- [ ] soon 📅 2026-10-20")], got["later"])
+        self.assertEqual(["- [ ] undated"], got["open"])
+        self.assertEqual(["- [ ] chased ⏳ 2026-10-11"], got["chase"])
+        self.assertEqual([("2026-10-15", "- [ ] later chase ⏳ 2026-10-15"), ("", "- [ ] no chase")], got["waiting"])
+        self.assertEqual((1, 1), (got["undated"], got["no_chase"]))
+
     def test_expire_waits_its_days_then_moves_the_untriaged_lines_out_unchanged(self):
         day = dt.date(2026, 10, 1)
         self.assertEqual(0, todo.expire(self.root, self.zone, day))

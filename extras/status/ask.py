@@ -174,6 +174,18 @@ reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
 
+**What you owe is listed by Garrick, never told to a session (#316).** A
+question about what to do, what is due or overdue, what you owe someone or
+what you wait on comes back from the command session as a find with route
+`actions`. Garrick reads the zones' Todo lists through the todo skill's own
+reader, and each live thread's Next action, Waiting on and Deadline rows,
+keeps what falls inside the find's place, the parties the request names and
+its period, orders them as the digest does, and says up to five itself
+(Asker.listed()). No session is told the items, so nothing either holds
+changes and a list may cover every zone and both sides of a wall, each item
+labelled with its zone. Meeting pages are never read for it. Codex answers
+it too: no model writes it.
+
 **An answer cites its records (#261, slice D).** The answer session replies
 with claims, each naming the ids of the records it rests on, and an
 `incomplete` field for records that hold only part of the answer (cited()).
@@ -277,6 +289,7 @@ GAVE_UP = ("The ask server did not answer in %s. The change may still be on its 
 NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does commands: open, park, wake, "
                "and add a line to a Todo list.")
 NOTHING_FOUND = "Nothing in the records answers that."
+NOTHING_OPEN = "Nothing is open there."           # an actions list with nothing in it (#316)
 INCOMPLETE = "The records hold only part of the answer."     # said for the answer's `incomplete` field
 # Said in place of an answer that looks like the claims format but is not one object that parses:
 # its raw text may hold an id, a path or a title the citations would have refused.
@@ -1144,6 +1157,8 @@ class Asker:
         sc = scope_lib()
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
+        if isinstance(find, dict) and find.get("route") == "actions":
+            return self.listed(request, find, named, names, today, asked), False
         if not self.session.remembers:
             return reply(NEED_CLAUDE), False
         self.progress("Finding the records")
@@ -1183,6 +1198,9 @@ class Asker:
         before = len(self.passages)                 # the ids admitted from here on are this turn's
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
+        you = sc.user_name(self.ws)
+        if you:                                     # the user's own name, so a record that names them is "you" (#316)
+            parts.append("<you>%s</you>" % inert(you))
         if "answer" in self.refreshed:              # renewed by size: the records it held are gone
             parts.append("<refreshed/>")
         parts += ["<request>\n%s\n</request>" % request[-MAX_REQUEST:],
@@ -1217,6 +1235,50 @@ class Asker:
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return out, reset
+
+    def listed(self, request: str, find: dict, named, names, today: Optional[dt.date], asked: int = 0) -> dict:
+        """What the user owes, or waits on, said by Garrick itself (#316):
+        the open Todo lines and the live threads' Next action, Waiting on and
+        Deadline rows, inside the find's place, the parties the request
+        names and its period, in the digest's order (ask_scope.actions()),
+        MOST_ACTIONS at most. No session is told any of it, and nothing it
+        holds changes: not `seen`, not `heard`, not the records admitted, not
+        `<last-results>`. So a list may hold both sides of a wall, each item
+        labelled with its zone, and no wall resets for it. Meeting pages are
+        never read for it. Each item cites the note it came from, opened as
+        an answer's records are."""
+        sc = scope_lib()
+        lib = sc.lib(self.ws)
+        day = today or dt.date.today()
+        try:
+            where = sc.scope(self.ws, find, named, names, self.ctx, lib)
+        except sc.Unclear as e:
+            self.unclear = request[-MAX_REQUEST:]
+            if not asked:
+                self.question = self.unclear
+            return clarify(str(e))
+        except sc.Refused as e:
+            raise Bad(str(e))
+        self.progress("Reading the Todo lists")
+        found = sc.actions(self.ws, where, names, self.ctx, lib, day)
+        shown = found[:sc.MOST_ACTIONS]
+        claims, cited_ = [], []
+        for n, it in enumerate(shown, 1):
+            aid = "a%d" % n
+            claims.append({"text": sc.action_said(it, names, day), "ids": [aid]})
+            title = it["thread"] or it["project"] or "%s Todo list" % it["zone"]
+            cited_.append({"id": aid, "path": it["note"], "title": title, "date": it["date"], "imported": ""})
+        after = []
+        if not shown:
+            after.append(NOTHING_OPEN)
+        elif len(found) > len(shown):
+            more = len(found) - len(shown)
+            after.append("And %d more." % more)
+        say = " ".join([c["text"] for c in claims] + after)
+        out = reply(say, "answer")
+        out.update(claims=claims, after=after, incomplete=False, listed=True, sources=self.sources(cited_, names))
+        self.asking = False
+        return out
 
     def refilled(self, earlier: str, said: str, named, names) -> dict:
         """The reply when the answer to a question back crossed a wall (#294),
@@ -1253,7 +1315,8 @@ class Asker:
         in the workspace, its title, when it happened (`date`) and when it
         was filed (`imported`). A thread's note opens as its row opens it
         (`place`, what the app's run() takes); anything else opens in the
-        default app. Built from records admitted this turn only."""
+        default app. Built from records admitted this turn only, or from
+        the items of an actions list Garrick made itself (#316)."""
         out, desk = [], None
         for p in cited_:
             src = {k: p[k] for k in ("id", "path", "title", "date", "imported")}
@@ -1483,7 +1546,7 @@ def clarify(question: str) -> dict:
 # The tags a message is built from: a record's own text never opens or closes one,
 # with a space after its "<" or before its "/" either.
 _TAGS = re.compile(r"<\s*(?=/?\s*(?:records?|request|earlier-request|workspace|names|today|last-results|correction"
-                   r"|refreshed)\b)", re.I)
+                   r"|refreshed|you|zone)\b)", re.I)
 # Characters that show nothing: a tag with one inside it still reads as the tag.
 _UNSEEN = re.compile("[\u00ad\u034f\u180e\u200b-\u200f\u2060-\u2064\ufeff]")
 

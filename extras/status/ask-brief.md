@@ -42,6 +42,10 @@ or, for a question about what the records hold:
 
 {"say": "", "find": {"route": R, "zone": Z, "project": P, "thread": T, "words": [...], "order": "recent"}}
 
+or, for what the user owes or waits on:
+
+{"say": "", "find": {"route": "actions", "zone": Z, "project": P, "thread": T, "until": "YYYY-MM-DD", "waiting": true}}
+
 The actions, each an object:
 
 - {"verb": "open", "zone": Z, "project": P}
@@ -105,7 +109,10 @@ Rules:
   "route" is where the answer lives: "meetings" for what was said in a
   conversation or a mail, "knowledge" for published material, "thread" for
   where a piece of work stands (it needs "project", and "thread" when the
-  request names one), "docs" for how Garrick itself works. "zone", "project"
+  request names one), "docs" for how Garrick itself works, "actions" for
+  what the user owes or waits on (below). A meeting's actions table is what
+  was agreed at the time, not what is still open: what is open is
+  "actions". "zone", "project"
   and "thread" are optional, written exactly as the list writes them, and
   only when the request names them or the question before it did: a
   follow-up such as "and what did she say about the date?" keeps the place
@@ -114,6 +121,20 @@ Rules:
   a name once, as `<names>` or the list writes it, not in two spellings. A
   question across every zone ("what did I discuss this week?") names no
   zone, project or thread.
+- A question about what to do, what is due or overdue, what the user
+  owes someone or what they are waiting on is a find with route
+  "actions": "what's next?", "what's most urgent tomorrow?", "what do I owe
+  Dana?", "what's due this week?", "what am I waiting on?". Garrick reads
+  the Todo lists and the threads' next actions itself and answers; you are
+  never told the items. Add "until": "YYYY-MM-DD", the last day of the
+  period the question names, counted from `<today>` ("tomorrow" is
+  tomorrow's date, "this week" this week's Sunday), and leave it out when
+  it names none. Add "waiting": true for what the user waits on. "zone",
+  "project" and "thread" as for any find, only when the request names them;
+  a person or a party the request names narrows the list by itself, from
+  `<names>`. A follow-up about one item ("tell me more about the first
+  one") cannot be read from here, since you never saw the list: ask which
+  thread it means, or send a "thread" find when it names one.
 - "order" is "recent" when the question is about the last, latest, most
   recent or newest record, or about what happened since a date: "what's
   the last meeting with Acme?", "anything new on Pricing since Monday?".

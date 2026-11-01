@@ -11,13 +11,16 @@ permissions:
 
 jobs:
   test:
-    name: macOS, Python ${{ matrix.python }}
+    name: macOS, Python ${{ matrix.python }}, shard ${{ matrix.shard }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
         # "system" is /usr/bin/python3 from the Command Line Tools: 3.9, what most users have.
         python: ["system", "3.13"]
+        # tests/shard.py deals the test modules into four shards by their times in
+        # tests/shard-times.json. Change the count here and in the run step together.
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -34,16 +37,31 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@2.1.295
       - name: Type-check the Mac app
         # Garrick.swift as make-app.sh compiles it: one file, the SDK's own frameworks, no flags.
-        # Once per run, since the Python matrix does not change it; skipped with no Swift compiler.
-        if: matrix.python == 'system'
+        # Once per run, since neither the Python nor the shard changes it; skipped with no Swift compiler.
+        if: matrix.python == 'system' && matrix.shard == 1
         run: |
           if xcrun --find swiftc >/dev/null 2>&1; then
             xcrun swiftc -typecheck extras/status/app/Garrick.swift
           else
             echo "No Swift compiler on this runner: Garrick.swift is not type-checked."
           fi
-      - name: Run the suite
+      - name: Run the shard
         env:
           # Comma-separated real names that must never appear. Empty on forks: the test skips.
           GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
-        run: $PY -m unittest discover -s tests
+        run: $PY tests/shard.py ${{ matrix.shard }}/4
+
+  tests:
+    # The one result to wait for, and the one for branch protection to name: it fails if any shard did.
+    name: Tests
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        run: |
+          if [ "${{ needs.test.result }}" != success ]; then
+            echo "A shard did not pass: ${{ needs.test.result }}."
+            exit 1
+          fi
+          echo "Every shard passed."

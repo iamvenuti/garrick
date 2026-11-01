@@ -21,7 +21,14 @@ Garrick is early and run by one person, so the fastest route in is an idea befor
 python3 -m unittest discover -s tests
 ```
 
-The suite takes three to four minutes on the system Python. CI runs it on macOS with the system Python and a current one.
+The suite takes three to four minutes on the system Python. CI runs it on macOS with the system Python and a current one, each split into four shards that run side by side, and a job named *Tests* passes only when all eight do. To run one shard as CI does, or see what is in it:
+
+```sh
+python3 tests/shard.py 2/4
+python3 tests/shard.py --list 2/4
+```
+
+`tests/shard.py` deals the modules out by the times in `tests/shard-times.json`; a new module with no time yet still runs, in the lightest shard. A test that passes in the full run and fails in its shard, or the other way round, depends on what ran before it: fix the test. When the shards drift apart in length, refresh the times from a run's log: `gh run view <run> --log > run.log`, then `python3 tests/shard.py --merge-times run.log`.
 
 Keep commits small, with a subject line that says what changed.
 

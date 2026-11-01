@@ -351,7 +351,7 @@ class TestAnswers(AnswerCase):
             a.ask("What did Dana say about the pallet quote?")
         self.assertLess(time.time() - t0, 10)
         self.assertFalse(a.answers.alive())         # ended, never left to finish
-        self.assertTrue(a.session.alive())          # the command session was not the one asked
+        self.assertFalse(a.session.alive())         # and the command session with it: a new conversation
         ledger = [json.loads(line) for line in (self.jobs / "ledger.jsonl").read_text().splitlines()]
         self.assertEqual(1, len(ledger))            # the find and the stopped answer: one call
         self.assertEqual("stopped", ledger[0]["subtype"])
@@ -601,6 +601,135 @@ class TestFailsClosed(AnswerCase):
             self.assertNotIn('"Pricing"', m)                               # nor a name heard in it
 
 
+class TestEitherProcess(AnswerCase):
+    """The wall reset counts what each process was told, the command
+    process's requests and names as well as the answer process's records,
+    and keeps each for as long as its own process lives, whatever becomes
+    of the other one."""
+
+    def both(self):
+        """The processes that were sent something of each side of the wall."""
+        out = []
+        for p in self.procs():
+            said = "\n".join(self.msgs(p["pid"]))
+            if ("Dana" in said or ACME in said) and ("Theo" in said or BIRCH in said):
+                out.append(p["pid"])
+        return out
+
+    def clear(self):
+        for f in (Path(str(self.args) + ".procs"), Path(str(self.args) + ".msgs")):
+            if f.exists():
+                f.unlink()
+
+    def test_the_answer_process_ending_leaves_the_command_process_holding(self):
+        for how in ("killed", "stopped"):           # stopped: what a turn's error or timeout does to it
+            with self.subTest(how=how):
+                self.clear()
+                a = self.asker()
+                a.ask("What did Dana say about the pallet quote?")
+                heard = a.session.proc.pid
+                if how == "killed":
+                    os.kill(a.answers.proc.pid, signal.SIGKILL)
+                    a.answers.proc.wait()
+                else:
+                    a.answers.stop()
+                out = a.ask("What did Theo say about the pallet launch?")
+                self.assertEqual("wall", out.get("reset"))
+                self.assertTrue(self.gone(heard))
+                self.assertEqual([], self.both())
+                self.assertEqual({"birch"}, a.holding())
+                a.stop()
+
+    def test_stop_ends_both_sessions_and_what_they_were_told(self):
+        import socket
+        import threading
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet quote", 30]]}))
+        a = self.asker()
+        here, there = socket.socketpair()
+        self.addCleanup(here.close)
+        self.addCleanup(there.close)
+        a.session.watch = here
+        msgs = Path(str(self.args) + ".msgs")
+
+        def stop_once_answering():
+            until = time.time() + 10
+            while time.time() < until:
+                if msgs.exists() and '"model": "sonnet"' in msgs.read_text():
+                    there.sendall(ask.STOP)
+                    return
+                time.sleep(0.05)
+        threading.Thread(target=stop_once_answering, daemon=True).start()
+        with self.assertRaises(ask.Stopped):
+            a.ask("What did Dana say about the pallet quote?")
+        a.session.watch = None
+        heard = [p["pid"] for p in self.procs()]
+        self.assertTrue(all(self.gone(pid) for pid in heard))           # both, as STOPPED says
+        self.assertEqual((set(), "", {}), (a.holding(), a.results, a.asked))
+        self.answers.write_text(json.dumps({"haiku": HAIKU}))
+        a.ask("What did Theo say about the pallet launch?")
+        self.assertEqual([], self.both())
+        new = [m for p in self.procs() if p["pid"] not in heard for m in self.msgs(p["pid"])]
+        self.assertTrue(new)
+        for m in new:
+            self.assertNotIn("Dana", m)
+
+    def test_the_answer_process_replaced_alone_after_the_command_process_restarted(self):
+        a = self.asker()
+        a.ask("What does the supply chain report say about pallets?")        # both up, no party held
+        os.kill(a.session.proc.pid, signal.SIGKILL)                          # the command process dies
+        a.session.proc.wait()
+        a.ask("What did Dana say about the pallet quote?")                  # its successor hears Dana
+        heard = a.session.proc.pid
+        a.answers.started -= ask.CLEAR_AFTER + 1                             # the answer process ages alone
+        a.seen_for = a.answer_told = a.answers.started
+        out = a.ask("What does the supply chain report say about pallets?")  # and is replaced alone
+        self.assertNotIn("reset", out)
+        self.assertEqual(heard, a.session.proc.pid)
+        self.assertEqual({"acme"}, a.holding())                              # what the command process heard
+        out = a.ask("What did Theo say about the pallet launch?")
+        self.assertEqual("wall", out.get("reset"))
+        self.assertTrue(self.gone(heard))
+        self.assertEqual([], self.both())
+
+    def test_a_command_counts_as_much_as_a_question(self):
+        for second in ("What did Theo say about the pallet launch?", "open Birch Entry"):
+            with self.subTest(second=second):
+                self.clear()
+                a = self.asker()
+                a.ask("add call Dana to Acme")
+                self.assertEqual({"acme"}, a.holding())
+                heard = a.session.proc.pid
+                out = a.ask(second)
+                self.assertEqual("wall", out.get("reset"))
+                self.assertTrue(self.gone(heard))
+                self.assertEqual([], self.both())
+                a.stop()
+
+    def test_the_place_an_action_named_counts_too(self):
+        self.answers.write_text(json.dumps({"haiku": [["park the one", json.dumps({"say": "Parked.", "do": [
+            {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"}]})]] + HAIKU}))
+        a = self.asker()
+        a.ask("park the one we discussed")                                    # names nothing; the action names Acme's
+        self.assertEqual({"acme"}, a.holding())
+        heard = a.session.proc.pid
+        self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?").get("reset"))
+        self.assertTrue(self.gone(heard))
+        for m in self.msgs(a.session.proc.pid):
+            self.assertNotIn("Acme Review, Pricing is parked", m)
+
+    def test_the_answer_process_holds_the_names_its_request_held(self):
+        self.answers.write_text(json.dumps({"haiku": [["report say about Dana", find("knowledge", ["pallet"])]] + HAIKU}))
+        a = self.asker()
+        a.ask("What does the supply chain report say about Dana?")          # no record of Acme's, but its name
+        answers = a.answers.proc.pid
+        os.kill(a.session.proc.pid, signal.SIGKILL)                         # the command process goes
+        a.session.proc.wait()
+        self.assertEqual({"acme"}, a.holding())
+        self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?").get("reset"))
+        self.assertTrue(self.gone(answers))
+        self.assertEqual([], self.both())
+
+
 def assert_sealed(case, proc, root):
     """A session process, as the stand-in wrote it down: no settings but the
     deny profile, no tools, no MCP servers, no transcript, no memory, marked,
@@ -686,9 +815,13 @@ class TestSealed(AnswerCase):
         self.assertEqual(str(self.root / "Zones" / "Work" / "Birch Entry"), out["launch"][0]["folder"])
         out = a.ask("add call dana whitlaw to the list")
         self.assertEqual(["Added to Inbox: Call Dana Whitlock"], out["done"])
-        (cmd,) = [p for p in self.procs() if p["model"] == "haiku"]
-        assert_sealed(self, cmd, self.root)                               # so the prompt is all it knew
-        said = self.msgs(cmd["pid"])
+        self.assertEqual("wall", out["reset"])                            # Acme's person, after Birch: a new process
+        cmds = [p for p in self.procs() if p["model"] == "haiku"]
+        self.assertEqual(2, len(cmds))
+        for cmd in cmds:
+            assert_sealed(self, cmd, self.root)                           # so the prompt is all it knew
+        said = [m for cmd in cmds for m in self.msgs(cmd["pid"])]
+        self.assertEqual(2, len(said))
         self.assertIn('<names>\n- "birchen co": the party Birch & Co in Work\n</names>\n<request>', said[0])
         self.assertIn('- "dana whitlaw": the person Dana Whitlock, of Acme Corp\n', said[1])
         for m in said:                                                    # names only: no role, no domain
@@ -725,6 +858,24 @@ class TestCodex(base.AskCase):
             self.assertTrue(a.session.history)
             a.reset()
             self.assertEqual([], a.session.history)                              # the exchanges it resends, cleared
+        finally:
+            ask.agent().run = real
+
+    def test_a_wall_clears_the_exchanges_it_resends(self):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        prompts = []
+        real = ask.agent().run
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None: prompts.append(prompt) or (
+            0, json.dumps({"say": "ok", "do": []}))
+        try:
+            a = ask.Asker(self.root)
+            self.assertNotIn("reset", a.ask("add call Dana to Acme"))
+            out = a.ask("open Birch Entry")
+            self.assertEqual("wall", out.get("reset"))
+            self.assertIn("add call Dana", prompts[0])
+            self.assertNotIn("add call Dana", prompts[1])                        # nothing of Acme's resent
+            self.assertNotIn("<earlier-answer>", prompts[1])
+            self.assertEqual(["open Birch Entry"], [r for r, _ in a.session.history])
         finally:
             ask.agent().run = real
 

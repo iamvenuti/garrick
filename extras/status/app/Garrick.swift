@@ -14,8 +14,11 @@
 //     cmux was installed when it was built; the app checks again on the click;
 //   - it gives the page each app's icon, so a card's ways to open a note
 //     show as the icons its menu bar draws, where a browser shows words;
-//   - every link the page holds (a note in Obsidian, a file, the web) goes to
-//     the app macOS uses for it;
+//   - every link the page holds to a file of this workspace opens as a row
+//     does when it is a project's hub or a thread's note, and otherwise in the
+//     app macOS uses for it, a folder in Finder; a link that leads out of the
+//     workspace, or through a symlink, opens nothing (#318). The web goes to
+//     the browser;
 //   - Add your own work opens macOS's folder picker, which grants the app
 //     access to the folder picked, and hands it to page_action.py (#182);
 //   - Save a copy, on an earlier version of a work's file, opens macOS's
@@ -867,6 +870,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return setMenu(m as? [String: Any])
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
+		if let u = body["open"] as? String, let url = URL(string: u) { return openLink(url, place: body["place"] as? String) }
 		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
@@ -1221,11 +1225,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// Each installed app's icon as --icon-<key> on the page's root, with
 	// .appicons, which the page reads as "draw the ways to open a note as
-	// icons". The note's own is Obsidian's for an obsidian: link and the
-	// Markdown app's otherwise. Made once.
+	// icons". The note's own is the app macOS opens a .md file in (#318). Made once.
 	lazy var iconJSON: String = {
 		var urls: [String: String] = [:]
-		let bundles = ["obsidian": "md.obsidian", "finder": "com.apple.finder", "cmux": cmuxBundle, "codex": codexBundle, "claude": claudeBundle]
+		let bundles = ["finder": "com.apple.finder", "cmux": cmuxBundle, "codex": codexBundle, "claude": claudeBundle]
 		for (key, id) in bundles {
 			if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) { urls[key] = pngURL(NSWorkspace.shared.icon(forFile: app.path)) }
 		}
@@ -1626,7 +1629,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func label(_ a: [String: Any]) -> String {
 		switch a["k"] as? String ?? "" {
-		case "note": return (a["u"] as? String ?? "").hasPrefix("obsidian:") ? "Open in Obsidian" : "Open the note"
+		case "note": return "Open the note"
 		case "finder": return "Reveal in Finder"
 		case "cmux": return "Open in cmux"
 		case "codex": return "Open in Codex"
@@ -2342,19 +2345,43 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return true
 	}
 
-	// A cited record, opened as the app opens it anywhere else: a thread's note as its row
-	// opens it, through run() and the default Settings picks; any other record in the app
-	// macOS opens it in. Only a file inside this workspace that is still there, checked on
-	// the paths with every link resolved, and never a record that is itself a link.
-	func askOpenSource(_ source: [String: Any]) {
-		guard let rel = source["path"] as? String, !rel.isEmpty, !rel.hasPrefix("/") else { return }
-		let named = workspace.appendingPathComponent(rel).standardizedFileURL
+	// A file or folder of this workspace that is still there, as a cited record or a link on
+	// the page names it, or nil with `said` as the toast: checked on the paths with every link
+	// resolved, and never a path that is itself a link. The one check for both (#318).
+	func workspaceFile(_ named: URL, said: String) -> URL? {
+		let named = named.standardizedFileURL
 		let file = named.resolvingSymlinksInPath()
 		let root = workspace.standardizedFileURL.resolvingSymlinksInPath().path
 		let link = (try? FileManager.default.attributesOfItem(atPath: named.path)[.type] as? FileAttributeType) == .typeSymbolicLink
-		guard !link, file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
-			return toast("That record is not in this workspace any more.")
+		guard named.isFileURL, !link, file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
+			toast(said)
+			return nil
 		}
+		return file
+	}
+
+	// A link on the page to a file or a folder (#318), from decidePolicyFor or, for a project's
+	// hub or a thread's note, from the page with its place: the folder of that project or thread.
+	// Only what workspaceFile() lets through opens. A note with its place opens as the row of its
+	// project or thread does, through the default Settings picks (openAsRow); anything else in
+	// the app macOS opens it in, a folder in Finder.
+	func openLink(_ url: URL, place: String? = nil) {
+		guard let file = workspaceFile(url, said: "That link leads outside this workspace, so nothing was opened.") else { return }
+		let named = url.standardizedFileURL
+		if let place, !place.isEmpty, URL(fileURLWithPath: place).standardizedFileURL.path == named.deletingLastPathComponent().path {
+			openAsRow(["folder": named.deletingLastPathComponent().path, "name": named.deletingLastPathComponent().lastPathComponent,
+			           "note": file.path])
+			return
+		}
+		NSWorkspace.shared.open(file)
+	}
+
+	// A cited record, opened as the app opens it anywhere else: a thread's note as its row
+	// opens it, through run() and the default Settings picks; any other record in the app
+	// macOS opens it in. Only what workspaceFile() lets through.
+	func askOpenSource(_ source: [String: Any]) {
+		guard let rel = source["path"] as? String, !rel.isEmpty, !rel.hasPrefix("/") else { return }
+		guard let file = workspaceFile(workspace.appendingPathComponent(rel), said: "That record is not in this workspace any more.") else { return }
 		if var place = source["place"] as? [String: Any] {
 			place["u"] = file.absoluteString
 			let offered = acts(place)
@@ -2697,7 +2724,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		decisionHandler(.cancel)
 		if checking { return heard.append("link:" + (url.scheme ?? "")) }
-		if openJobLog(url) { return }
+		if openJobLog(url) { return }               // a job's log, the one file outside the workspace the page links
+		if url.isFileURL { return openLink(url) }   // inside the workspace only, as the row or as macOS opens it (#318)
 		NSWorkspace.shared.open(url)
 	}
 
@@ -2741,7 +2769,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			var row=document.querySelector('[data-card]');if(row&&window.Panel){var d=document.createElement('div');
 			d.innerHTML=Panel.acts(JSON.parse(row.dataset.card));document.body.appendChild(d);
 			[].forEach.call(d.querySelectorAll('button'),function(b){b.click()});d.remove()}
-			var a=document.createElement('a');a.href='obsidian://check';document.body.appendChild(a);a.click();a.remove();
+			var a=document.createElement('a');a.href='file:///garrick-check';document.body.appendChild(a);a.click();a.remove();
 			var rb=document.getElementById('rebuild');
 			return JSON.stringify({title:document.title,host:!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick),
 			rebuild:rb?rb.title:null,stored:p,

@@ -95,6 +95,7 @@ import datetime
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -160,6 +161,12 @@ REACH = ("working", "dormant")
 
 LINK = re.compile(r"(!?\[\[)([^\[\]|#\n]+)((?:#[^\[\]|\n]*)?)((?:\|[^\[\]\n]*)?)(\]\])")
 OBSIDIAN = re.compile(r"(obsidian://open\?(?:[^\s)&]*&)*?file=)([^&\s)#]+)")
+# A Markdown link to a note by its path relative to the note it is in, as a
+# Todo line's source is written since 0.51.0 (#318): `[title](../../Wikis/...md)`.
+# Not a web or obsidian:// address, not an anchor, not a path from the top.
+# Read in a zone's Todo lists only (todo_file()), where Garrick writes them;
+# anywhere else a Markdown link is left as written, as before.
+RELATIVE = re.compile(r"(\]\()(?![A-Za-z][\w+.-]*:|#|/)([^)\s#]+?\.md)((?:#[^)\s]*)?\))")
 OPEN_LINE = re.compile(r"^\s*[-*+] \[ \]")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"`[^`\n]*`")
@@ -529,9 +536,19 @@ def outside_code(line: str, fn: Callable[[str], str]) -> str:
     return "".join(fn(part) + code for part, code in zip(parts, codes))
 
 
-def links_in(text: str) -> Iterable[Tuple[int, str]]:
+def todo_file(rel: str) -> bool:
+    """Whether a note is a zone's Todo list, open or archived: `Todo.md`, or
+    a year's `archive/Todo-<YYYY>.md` (and its expired lines)."""
+    parts = rel.split("/")
+    return parts[0] == "Zones" and ((len(parts) == 3 and parts[2] == "Todo.md")
+                                    or (len(parts) == 4 and parts[2] == "archive" and parts[3].startswith("Todo")))
+
+
+def links_in(text: str, relative: bool = False) -> Iterable[Tuple[int, str]]:
     """(line number, target as written) for every wikilink and obsidian://
-    link. One in a code block, fenced or inline, is text and not a link."""
+    link, and with `relative`, every relative Markdown link to a note (a
+    Todo list's sources). One in a code block, fenced or inline, is text and
+    not a link."""
     lines = text.split("\n")
     for n, (line, code) in enumerate(zip(lines, fenced(lines))):
         if code:
@@ -543,6 +560,14 @@ def links_in(text: str) -> Iterable[Tuple[int, str]]:
             if "obsidian://" in part:
                 for m in OBSIDIAN.finditer(part):
                     yield n, urllib.parse.unquote(m.group(2))
+            if relative and "](" in part:
+                for m in RELATIVE.finditer(part):
+                    yield n, urllib.parse.unquote(m.group(2))
+
+
+def might_link(text: str, relative: bool = False) -> bool:
+    """Whether `text` may hold a link links_in() reads: a quick test first."""
+    return "[[" in text or "obsidian://" in text or (relative and "](" in text)
 
 
 def note_status(path: Path) -> str:
@@ -604,11 +629,12 @@ def scan_links(root: Path, links: Links, pages: Dict[str, Page], where: Where,
                 text = (root / src).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-        if "[[" not in text and "obsidian://" not in text:
+        relative = todo_file(src)
+        if not might_link(text, relative):
             continue
         kind = where.of(src)
         lines = text.split("\n") if kind == "todo" else None
-        for n, written in links_in(text):
+        for n, written in links_in(text, relative):
             hits = [h for h in links.resolve(written) if h in pages or h in raws]
             if not hits:
                 continue
@@ -1179,7 +1205,8 @@ def relink(text: str, moved: Dict[str, str], links: Links, here: str) -> str:
     afresh later can be told from it; waking, a link that still lands on the
     page is left as it is. A link in a code block, fenced or inline, is
     text and is left as it is too."""
-    if "[[" not in text and "obsidian://" not in text:
+    relative = todo_file(here)
+    if not might_link(text, relative):
         return text
     lines = text.split("\n")
     for n, (line, code) in enumerate(zip(lines, fenced(lines))):
@@ -1209,11 +1236,23 @@ def relink(text: str, moved: Dict[str, str], links: Links, here: str) -> str:
             target, _ = respell(written, hits[0], moved[hits[0]], "")
             return m.group(1) + urllib.parse.quote(target)
 
+        def relink_relative(m):              # written again from the Todo list to where the page went
+            written = urllib.parse.unquote(m.group(2))
+            hits = links.resolve(written)
+            if len(hits) != 1 or hits[0] not in moved:
+                return m.group(0)
+            if waking(moved[hits[0]]) and still_leads(written, moved[hits[0]]):
+                return m.group(0)
+            target = posixpath.relpath(moved[hits[0]], posixpath.dirname(here) or ".")
+            return m.group(1) + urllib.parse.quote(target) + m.group(3)
+
         def both(part):
             if "[[" in part:
                 part = LINK.sub(one, part)
             if "obsidian://" in part:
                 part = OBSIDIAN.sub(url, part)
+            if relative and "](" in part:
+                part = RELATIVE.sub(relink_relative, part)
             return part
 
         lines[n] = outside_code(line, both)

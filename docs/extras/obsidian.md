@@ -14,7 +14,7 @@ Open any folder in the workspace as its own vault, since Obsidian doesn't care a
 
 Wikilinks such as `[[wiki/people/dana-whitlock]]` resolve within whichever vault you opened, the same shortest-path rule Obsidian always uses. If you open the root as one vault, a link from a project note into `Wikis/Meetings/wiki/sources/` resolves normally, since it's all one vault as far as Obsidian is concerned. `check.py` resolves links the same way, to catch a project note that links to a meeting a wall should have kept out. It reports a link that leads nowhere only inside a thread's Resume here block, where a broken link is a broken resume point and many people never open Obsidian to see it; everywhere else, Obsidian shows those as unresolved.
 
-The [Garrick App](status-page.md) follows whichever you chose. Each time it is built it reads Obsidian's list of vaults, and its links open a note in the vault closest to it, or as a file when no vault holds it.
+The [Garrick App](status-page.md) never sends you to Obsidian unless you chose it: its links are links to the files, and the Mac app opens a note as *Settings › Opening a thread* says, or in the app macOS opens Markdown in. To have notes open in Obsidian there, make Obsidian your Mac's app for `.md` files. In the [plugin's tab](status-page.md#in-obsidian) a note opens in Obsidian, since you are already there.
 
 ## Making the graph readable
 

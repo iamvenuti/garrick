@@ -93,9 +93,24 @@ class TestTodoTab(StatusCase):
         todo = self.root / "Zones" / "Work" / "Todo.md"
         todo.write_text(todo.read_text().replace("- [ ] Book the room\n", "- [ ] [[Setup]]: Rotate the backup key\n"))
         _, tab = self.tab()
-        m = re.search(r'<a class="thr" href="([^"]*)">Setup</a>', tab)
+        m = re.search(r'<a class="thr" href="([^"]*)" data-place="([^"]*)">Setup</a>', tab)
         self.assertTrue(m, "the System thread's label is not a link")
-        self.assertIn("System/Workspace%20Setup/Threads/Setup/Setup", m.group(1))
+        self.assertIn("System/Workspace%20Setup/Threads/Setup/Setup.md", m.group(1))
+        self.assertEqual(str(setup / "Threads" / "Setup"), htmllib.unescape(m.group(2)))   # opens as its row (#318)
+
+    def test_a_source_reads_as_its_title_whatever_its_form(self):
+        """#318: the tab shows a line's meeting by its title, a new relative
+        link and an older obsidian: one alike, and quotes no obsidian: address."""
+        todo = self.root / "Zones" / "Work" / "Todo.md"
+        todo.write_text(todo.read_text().replace(
+            "- [ ] Book the room\n",
+            "- [ ] Book the room · [Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md)\n"
+            "- [ ] Chase the rates · [Birch kick-off](obsidian://open?vault=Wikis&file=Meetings%2Fwiki%2Fsources%2F260312-birch-kickoff)\n"))
+        html, tab = self.tab()
+        self.assertIn("Book the room · Acme kick-off", tab)
+        self.assertIn("Chase the rates · Birch kick-off", tab)
+        self.assertNotIn("obsidian:", tab)
+        self.assertNotIn("obsidian://", html)
 
     def test_done_today_can_be_reopened_in_the_app(self):
         _, tab = self.tab()
@@ -564,7 +579,7 @@ class TestReloadAndSettle(StatusCase):
     def test_main_with_settle(self):
         out = self.jobs / "page.html"
         with mock.patch.object(status, "settle", return_value=False) as s:
-            status.main(["--workspace", str(self.root), "--out", str(out), "--settle", "3", "--no-obsidian", "--no-graph"])
+            status.main(["--workspace", str(self.root), "--out", str(out), "--settle", "3", "--no-graph"])
         s.assert_called_once()
         self.assertFalse(out.exists())
 
@@ -590,7 +605,7 @@ class TestBuildsAtOnce(StatusCase):
         env = dict(os.environ, HOME=str(home), PATH="/usr/bin:/bin", PYTHONDONTWRITEBYTECODE="1")
         env.pop("GARRICK_WORKSPACE", None)
         cmd = [sys.executable, str(REPO / "extras" / "status" / "status.py"), "--workspace", str(self.root),
-               "--no-obsidian", "--no-cmux", "--no-graph"]
+               "--no-cmux", "--no-graph"]
         procs = [subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(n)]
         return [(p.wait(timeout=120), p.stderr.read()) for p in procs]
 
@@ -615,7 +630,7 @@ class TestBuildsAtOnce(StatusCase):
         with mock.patch.object(status.os, "replace", side_effect=OSError("disk full")), \
                 mock.patch.object(status, "build", return_value="<html></html>"), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(OSError):
-                status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian"])
+                status.main(["--workspace", str(self.root), "--out", str(out)])
         self.assertEqual([], sorted(p.name for p in self.jobs.iterdir() if p.name.startswith("page.html")))
 
     def test_the_last_to_finish_wins(self):
@@ -645,7 +660,7 @@ class TestReplacedWhileBuilding(StatusCase):
             env.pop(k, None)
         page = self.root / "System" / "generated" / "status.html"
         proc = subprocess.Popen([sys.executable, str(script), "--workspace", str(self.root), "--settle", "3",
-                                 "--no-obsidian", "--no-cmux", "--no-graph"],
+                                 "--no-cmux", "--no-graph"],
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         marker = page.with_name("status.html.settle")
         deadline = time.time() + 30
@@ -666,7 +681,7 @@ class TestReplacedWhileBuilding(StatusCase):
 
     def test_started_again_once_without_its_settle(self):
         out = self.jobs / "page.html"
-        argv = ["--workspace", str(self.root), "--out", str(out), "--settle", "3", "--no-obsidian", "--no-graph"]
+        argv = ["--workspace", str(self.root), "--out", str(out), "--settle", "3", "--no-graph"]
         with mock.patch.object(status, "STARTED", (0, 0, 0)), mock.patch.object(status, "settle", return_value=True), \
                 mock.patch.dict(os.environ), mock.patch.object(status.subprocess, "call", return_value=0) as call, \
                 mock.patch.object(status, "build", return_value="<html>old</html>"), contextlib.redirect_stderr(io.StringIO()):
@@ -674,7 +689,7 @@ class TestReplacedWhileBuilding(StatusCase):
             self.assertEqual(0, status.main(argv))
         cmd = call.call_args.args[0]
         self.assertEqual([sys.executable, str(status.SELF), "--workspace", str(self.root), "--out", str(out),
-                          "--no-obsidian", "--no-graph"], cmd)
+                          "--no-graph"], cmd)
         self.assertEqual("1", call.call_args.kwargs["env"][status.RERUN])
         self.assertFalse(out.exists())                               # the old code wrote nothing
 
@@ -684,7 +699,7 @@ class TestReplacedWhileBuilding(StatusCase):
         with mock.patch.object(status, "STARTED", (0, 0, 0)), mock.patch.dict(os.environ, {status.RERUN: "1"}), \
                 mock.patch.object(status.subprocess, "call") as call, mock.patch.object(status.os, "execvpe") as execs, \
                 mock.patch.object(status, "build", return_value="<html>old</html>"), contextlib.redirect_stderr(err):
-            self.assertEqual(75, status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian", "--no-graph"]))
+            self.assertEqual(75, status.main(["--workspace", str(self.root), "--out", str(out), "--no-graph"]))
         self.assertFalse(call.called or execs.called)
         self.assertFalse(out.exists())
         self.assertIn("the next build draws it", err.getvalue())
@@ -693,7 +708,7 @@ class TestReplacedWhileBuilding(StatusCase):
         out = self.jobs / "page.html"
         with mock.patch.object(status.subprocess, "call") as call, mock.patch.object(status, "build", return_value="<html>new</html>"), \
                 contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(0, status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian", "--no-graph"]))
+            self.assertEqual(0, status.main(["--workspace", str(self.root), "--out", str(out), "--no-graph"]))
         self.assertFalse(call.called)
         self.assertEqual("<html>new</html>", out.read_text(encoding="utf-8"))
 
@@ -714,7 +729,7 @@ class TestEffortFolders(StatusCase):
     def test_main_reads_the_flags(self):
         out = self.jobs / "page.html"
         with mock.patch.object(status, "build", return_value="<html></html>") as b, contextlib.redirect_stdout(io.StringIO()):
-            status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian", "--also", "/old",
+            status.main(["--workspace", str(self.root), "--out", str(out), "--also", "/old",
                          "--moved", "A=B", "--moved", "nonsense"])
         kw = b.call_args.kwargs
         self.assertEqual((("/old",), {"A": "B"}), (kw["also"], kw["moved"]))
@@ -724,16 +739,15 @@ class TestEffortFolders(StatusCase):
 class TestSameFlags(StatusCase):
     """#246: each build stores the flags that shape the page beside it, and a
     build with --same-flags, as scaffold.py and correct.py ask for, draws with
-    them. Obsidian's vaults and the launchers are this test's own."""
+    them. The launchers are this test's own."""
 
     def setUp(self):
         super().setUp()
         self.out = self.jobs / "status.html"
         self.stored = self.jobs / "status.flags.json"
-        for name, value in (("obsidian_vaults", []), ("launchers_installed", ())):
-            p = mock.patch.object(status, name, return_value=value)
-            p.start()
-            self.addCleanup(p.stop)
+        p = mock.patch.object(status, "launchers_installed", return_value=())
+        p.start()
+        self.addCleanup(p.stop)
 
     def main(self, *args, build=None):
         """status.main()'s exit code and the keywords build() was given, or None where it was not called."""
@@ -745,19 +759,19 @@ class TestSameFlags(StatusCase):
     def test_a_tool_build_draws_with_the_flags_the_last_build_stored(self):
         real = status.build
         draw = lambda *a, **kw: real(*a, now=self.now, folder=self.jobs, **kw)
-        _, first = self.main("--no-obsidian", "--no-graph", "--also", "/old/place", "--moved", "A=B", build=draw)
-        self.assertEqual({"args": ["--no-obsidian", "--no-graph", "--also", "/old/place", "--moved", "A=B"]},
+        _, first = self.main("--no-cmux", "--no-graph", "--also", "/old/place", "--moved", "A=B", build=draw)
+        self.assertEqual({"args": ["--no-cmux", "--no-graph", "--also", "/old/place", "--moved", "A=B"]},
                          json.loads(self.stored.read_text(encoding="utf-8")))
         kept = self.stored.read_text(encoding="utf-8")
         code, again = self.main("--same-flags", build=draw)
         self.assertEqual(0, code)
-        for k in ("also", "moved", "flags", "show_graph", "vaults"):
+        for k in ("also", "moved", "flags", "show_graph"):
             self.assertEqual(first[k], again[k], k)
         self.assertEqual(("/old/place",), again["also"])
         self.assertEqual({"A": "B"}, again["moved"])
         self.assertFalse(again["show_graph"])
         rebuild = htmllib.unescape(re.search(r'id="rebuild"[^>]*data-copy="([^"]*)"', self.out.read_text(encoding="utf-8")).group(1))
-        for words in ("--no-obsidian", "--also /old/place", "--moved A=B", "--no-graph"):
+        for words in ("--no-cmux", "--also /old/place", "--moved A=B", "--no-graph"):
             self.assertIn(words, rebuild)                         # the page's own rebuild command names them
         self.assertEqual(kept, self.stored.read_text(encoding="utf-8"))      # used, not stored again
 
@@ -770,10 +784,29 @@ class TestSameFlags(StatusCase):
         self.assertFalse(self.stored.exists())                    # and stores nothing
         self.stored.write_text("not json", encoding="utf-8")       # a file no build wrote counts as none
         self.assertEqual(alone, self.main("--same-flags")[1])
-        self.stored.write_text('{"args": ["--obsidian"]}', encoding="utf-8")
+        self.stored.write_text('{"args": ["--no-such-flag"]}', encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(alone, self.main("--same-flags")[1])
         self.assertIn("built without them", err.getvalue())
+
+    def test_the_obsidian_flags_an_older_build_stored_or_an_older_app_passes_are_ignored(self):
+        """#318: --obsidian and --no-obsidian went in 0.51.0. A page stored with
+        them, or an app or a plugin that still passes them, builds as without
+        them, and no build stores them again."""
+        _, alone = self.main("--no-graph")
+        self.stored.write_text('{"args": ["--obsidian", "My Vault", "--no-graph", "--no-obsidian"]}', encoding="utf-8")
+        code, same = self.main("--same-flags")
+        self.assertEqual(0, code)
+        self.assertEqual(alone, same)
+        code, given = self.main("--obsidian", "My Vault", "--no-obsidian", "--no-graph")
+        self.assertEqual((0, alone), (code, given))
+        self.assertEqual({"args": ["--no-graph"]}, json.loads(self.stored.read_text(encoding="utf-8")))
+        self.assertNotIn("vault", alone)
+        self.assertNotIn("--obsidian", status.rebuild_command(self.root, True, None, alone["flags"]))
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(SystemExit):
+                status.main(["--help"])
+        self.assertNotIn("obsidian", out.getvalue())                    # gone from the help
 
     def test_the_last_build_wins_and_a_build_by_hand_stores_its_own(self):
         self.main("--no-cmux", "--also", "/old")
@@ -784,7 +817,7 @@ class TestSameFlags(StatusCase):
         self.assertEqual(True, self.main("--same-flags")[1]["show_graph"])
 
     def test_it_is_refused_with_the_flags_it_would_replace(self):
-        for given in (["--no-graph"], ["--also", "/old"], ["--obsidian", "Vault"], ["--moved", "A=B"]):
+        for given in (["--no-graph"], ["--also", "/old"], ["--no-cmux"], ["--moved", "A=B"]):
             with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as stop:
                 self.main("--same-flags", *given)
             self.assertEqual(2, stop.exception.code)
@@ -917,7 +950,7 @@ class TestCheckReuse(StatusCase):
 
     def test_the_flag_reaches_the_build_and_without_a_page_nothing_is_kept(self):
         with mock.patch.object(status, "build", return_value="<html></html>") as b, \
-                mock.patch.object(status, "release_ask"), mock.patch.object(status, "obsidian_vaults", return_value=[]), \
+                mock.patch.object(status, "release_ask"), \
                 mock.patch.object(status, "launchers_installed", return_value=()), contextlib.redirect_stdout(io.StringIO()):
             status.main(["--workspace", str(self.root), "--out", str(self.out), "--same-flags", "--reuse-check", "600"])
         self.assertEqual((600, self.out), (b.call_args.kwargs["reuse_check"], b.call_args.kwargs["page_at"]))
@@ -2537,7 +2570,7 @@ class TestWhereTheChoicesLive(StatusCase):
     def build_main(self):
         out = self.jobs / "page.html"
         with contextlib.redirect_stdout(io.StringIO()):
-            status.main(["--workspace", str(self.root), "--out", str(out), "--no-obsidian"])
+            status.main(["--workspace", str(self.root), "--out", str(out)])
         return out.read_text(encoding="utf-8")
 
     def test_the_file_the_page_names_is_the_accessors(self):

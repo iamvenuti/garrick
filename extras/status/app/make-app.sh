@@ -9,8 +9,10 @@
 # --workspace  the workspace (default: GARRICK_WORKSPACE, or the one this
 #              script sits in, three folders up)
 # --dest       where the app goes (default: ~/Applications)
-# After --, flags for status.py, such as --no-graph or --obsidian VAULT; the
-# app rebuilds the page with them.
+# After --, flags for status.py, such as --no-graph or --no-cmux; the app
+# rebuilds the page with them. --obsidian VAULT and --no-obsidian, which
+# Garrick before 0.51.0 took, are dropped, so a rebuild with an app's old
+# flags stores the rest only (#318).
 #
 # The workspace, the python3 that runs this and the flags go into the app's
 # Info.plist, so run this again after moving the workspace or changing them.
@@ -53,7 +55,15 @@ xcrun swiftc -O -o "$BUNDLE/MacOS/Garrick" "$HERE/Garrick.swift"
 # can break it.
 "$PY" - "$STATUS" "$WORK" "$WS" "$PY" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
 import importlib.util, plistlib, sys
-status, work, ws, py, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+status, work, ws, py, given = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+args, i = [], 0
+while i < len(given):                  # the flags gone in 0.51.0 (#318), and --obsidian's vault with it
+    if given[i] == "--obsidian":
+        i += 2
+        continue
+    if given[i] != "--no-obsidian" and not given[i].startswith("--obsidian="):
+        args.append(given[i])
+    i += 1
 spec = importlib.util.spec_from_file_location("status", status)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)

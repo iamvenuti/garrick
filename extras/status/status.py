@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The status page for a Garrick workspace. An optional extra.
 
-    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
+    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--no-cmux] [--no-graph]
                       [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags] [--reuse-check SECONDS]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
@@ -42,11 +42,12 @@ action and Waiting on, the newest dated entry, a note's opening sentence,
 its Needs you questions and the names of the files in its folder. It still
 lives in System/generated/, never committed and outside the wall check.
 
-**It offers what this machine has**, and asks at every build. A note's link
-opens it in Obsidian when Obsidian has registered the workspace, or the zone or
-wiki the note is in, as a vault; otherwise it opens the file itself, in
-whatever app you use for Markdown. `--obsidian VAULT` names the workspace root
-as the vault instead, and `--no-obsidian` keeps every link a file link. In
+**It offers what this machine has**, and asks at every build. Every link to
+a note, a file or a folder is a file link (#318), and nothing opens Obsidian
+unless it was chosen: in Garrick.app a project's hub or a thread's note opens
+as its row does, through the default Settings › Opening a thread picks, and
+anything else in the app macOS opens it in, a folder in Finder; in Obsidian's
+tab the plugin opens a note there; in a browser the link is the browser's. In
 Garrick.app (see `app/`), projects and threads also offer Reveal in
 Finder and Open in Claude, Codex or cmux, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
@@ -806,8 +807,8 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
             else:
                 thread, note = None, None
             return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread,
-                        link=link(note) if note else "", zone=zone.name,
-                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), re.sub(r"[*_`]", "", t["text"]))).casefold())
+                        link=link.attrs(note) if note else "", zone=zone.name,
+                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
 
         rows = [row(t) for t in tl.tasks(str(zone)) if t["text"] and "<action>" not in t["text"]]
         if not rows and not todo_md.is_file():
@@ -850,7 +851,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
         chip = "%s %s" % ("Chase" if r["waiting"] else "Due", rel)
         cls = "late" if r["late"] else "today" if when == today else ""
     name = r["label"] or ("thread?" if r["unsure"] else "")
-    thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(name)) if r["link"] and name
+    thr = ('<a class="thr" %s>%s</a>' % (r["link"], E(name)) if r["link"] and name
            else '<span class="thr%s">%s</span>' % (" unsure" if r["unsure"] and not r["label"] else "", E(name)) if name else "")
     meta = []
     if r["priority"] in ("🔺", "⏫"):
@@ -862,7 +863,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
     if said_late and r["late"] and when is not None:
         meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
     tick = ('<button class="tick" type="button" title="%s" aria-label="%s: %s"></button>'
-            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(r["text"][:80])) if actions else "")
+            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(plain_text(r["text"])[:80])) if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
             else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
     return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
@@ -1186,8 +1187,8 @@ def check_groups(ws: Path, C: dict, link: "Links") -> str:
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
             rows.setdefault(kind, []).append(
-                '<li>%s<span class="cline"><a href="%s">%s</a>: %s</span>%s</li>'
-                % (ICON["critical" if f.get("severity") == "error" else "warning"], E(link(ws / line[0])), E(line[0]),
+                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
+                % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
                    E(line[1]), act))
             errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
     if not rows:
@@ -3519,44 +3520,6 @@ def mac_app(name: str, apps: Optional[List[Path]] = None) -> Optional[Path]:
     return None
 
 
-def obsidian_config() -> List[Path]:
-    """Where Obsidian keeps its list of vaults: macOS, Linux, Windows."""
-    home = Path.home()
-    found = [home / "Library" / "Application Support" / "obsidian" / "obsidian.json",
-             home / ".config" / "obsidian" / "obsidian.json"]
-    if os.environ.get("APPDATA"):
-        found.append(Path(os.environ["APPDATA"]) / "obsidian" / "obsidian.json")
-    return found
-
-
-def obsidian_vaults(ws: Path, config: Optional[Path] = None, apps: Optional[List[Path]] = None) -> List[Tuple[Path, str]]:
-    """The vaults Obsidian has registered that hold this workspace's notes:
-    the root, or a zone or wiki opened on its own, or a folder above the
-    workspace. Each comes with the name a link gives it: the folder's name,
-    or the vault's id when two registered vaults share a name. On a Mac,
-    Obsidian must still be installed. Deepest first, so a note opens in the
-    vault closest to it."""
-    if sys.platform == "darwin" and mac_app("Obsidian", apps) is None:
-        return []
-    data = None
-    for f in ([config] if config else obsidian_config()):
-        try:
-            data = json.loads(Path(f).read_text(encoding="utf-8"))
-            break
-        except (OSError, ValueError):
-            continue
-    vaults = data.get("vaults") if isinstance(data, dict) else None
-    known = [(str(vid), Path(v["path"])) for vid, v in (vaults or {}).items() if isinstance(v, dict) and v.get("path")]
-    names = [p.name for _, p in known]
-    root = ws.resolve()
-    out = []
-    for vid, folder in known:
-        where = folder.resolve()
-        if where.is_dir() and (where == root or root in where.parents or where in root.parents):
-            out.append((where, folder.name if names.count(folder.name) == 1 else vid))
-    return sorted(out, key=lambda v: len(v[0].parts), reverse=True)
-
-
 def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
     """cmux is a macOS app; the page offers it where it is installed."""
     return "cmux" in launchers_installed(apps)
@@ -3628,30 +3591,42 @@ def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
 
 
 class Links:
-    def __init__(self, ws: Path, vault: Optional[str] = None, vaults: Optional[List[Tuple[Path, str]]] = None):
-        """`vault` names the workspace root as a vault; `vaults` are the
-        vaults found on this machine, deepest first."""
+    """Every link the page makes to a file or a folder (#318): a file:// URL
+    to the path as it stands in the workspace, never resolved, so a link that
+    is itself a symlink stays one and Garrick.app refuses it, as it refuses a
+    cited record that is. Nothing here asks Obsidian, or any other app, where
+    a note should open: Garrick.app opens a hub or a thread's note as its row
+    does and anything else in the app macOS opens it in, the Obsidian plugin
+    opens a note of its vault in Obsidian, and a browser follows the link."""
+
+    def __init__(self, ws: Path):
         self.ws = ws
-        self.vaults = [(ws, vault)] if vault else list(vaults or [])
 
     def __call__(self, path: Path) -> str:
-        """A link to the file. In Obsidian a file is named by its path in the
-        vault, so a note that is a symlink to a file elsewhere keeps the path
-        of the link; a file in no vault, such as a job's log, is linked as a
-        file."""
-        for root, name in self.vaults:
-            for candidate in (Path(os.path.abspath(path)), path.resolve()):
-                rel = None
-                for base in (Path(os.path.abspath(root)), Path(root).resolve()):
-                    try:
-                        rel = candidate.relative_to(base).as_posix()
-                        break
-                    except ValueError:
-                        continue
-                if rel is not None:
-                    rel = rel[:-3] if rel.endswith(".md") else rel
-                    return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(name), urllib.parse.quote(rel))
-        return path.resolve().as_uri()
+        return Path(os.path.abspath(str(path))).as_uri()
+
+    def place(self, path: Path) -> Optional[str]:
+        """The folder of the project or thread whose note `path` is: a hub,
+        `Zones/<zone>/<project>/<project>.md` or `System/<project>/<project>.md`,
+        or a thread's note, `.../Threads/<thread>/<thread>.md`. None for any
+        other file, which opens as itself."""
+        p = Path(os.path.abspath(str(path)))
+        try:
+            parts = p.relative_to(Path(os.path.abspath(str(self.ws)))).parts
+        except ValueError:
+            return None
+        if p.suffix != ".md" or len(parts) < 3 or p.stem != p.parent.name:
+            return None
+        hub = (parts[0] == "Zones" and len(parts) == 4) or (parts[0] == "System" and len(parts) == 3)
+        thread = len(parts) >= 5 and parts[-3] == "Threads" and parts[0] in ("Zones", "System")
+        return str(p.parent) if hub or thread else None
+
+    def attrs(self, path: Path) -> str:
+        """An <a>'s href to `path`, and where it is a hub or a thread's note,
+        its place, `data-place`: the page hands such a link to the host, which
+        opens it as the row of that project or thread opens (#318)."""
+        place = self.place(path)
+        return 'href="%s"%s' % (E(self(path)), ' data-place="%s"' % E(place) if place else "")
 
 
 def day_cells(runs: List[Tuple[dt.datetime, int]], now: dt.datetime, quiet: Tuple[int, ...] = ()) -> List[Tuple[str, str]]:
@@ -3977,6 +3952,13 @@ REBUILD = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><
            'stroke-linecap="round" stroke-linejoin="round" d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.4h-3.4"/></svg>')
 
 
+def plain_text(s: str) -> str:
+    """A line of Markdown as a reader hears it, for a label or a sort key: a
+    link's text and never its address, so a Todo line's source, whatever its
+    form, is its title (#318)."""
+    return re.sub(r"[*_`]", "", guide_mod().plain(s))
+
+
 def md_inline(s: str) -> str:
     """A line of Markdown, through guide.py's renderer: a link keeps its text, since the page links only to Garrick."""
     return guide_mod().inline(s)
@@ -4044,9 +4026,10 @@ def desk_agent(ws: Path) -> str:
     return agent if agent in dict(DESK_AGENTS) else "claude"
 
 
-def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
-                     why: Optional[Dict[str, Optional[str]]] = None, agent: Optional[str] = None) -> str:
-    """Settings › Opening a thread: the note's own link, then each app Garrick
+def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optional[str]]] = None,
+                     agent: Optional[str] = None) -> str:
+    """Settings › Opening a thread: the note's own link, *Open the note* in
+    the app macOS opens a .md file in, whatever is installed (#318), then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
     (what clicking a thread's name does), each with its card icon. Explore's
     Preview has the box alone, after the note's link (#219). A launcher that
@@ -4058,8 +4041,7 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     adds which assistant a tab starts under Open in cmux (#279); the app
     saves that one in System/desk.json when Settings closes."""
     why = launcher_state() if why is None else why
-    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "",
-             LAUNCH_ICON % ("var(--icon-obsidian,var(--icon-note))" if obsidian else "var(--icon-note)"))]
+    rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
     rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
               LAUNCH_ICON % "var(--icon-%s)" % k)
              for k, _, _, _ in LAUNCHERS]
@@ -4164,7 +4146,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     most saying what they are for; how a feature works is behind its "?"
     and in docs/extras/status-page.md (#227)."""
     agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
-    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
+    filed = {"look": [home_settings(layout), launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings(),
                       wait_settings(ws)],
@@ -4492,13 +4474,11 @@ def script_json(data) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
-def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = True, out: Optional[Path] = None,
+def rebuild_command(ws: Path, show_graph: bool = True, out: Optional[Path] = None,
                     flags: Tuple[str, ...] = ()) -> str:
     """The command that builds this page again, with the flags it was built
     with, absolute and quoted so it runs from any folder."""
     words = ["python3", str(Path(__file__).resolve()), "--workspace", str(ws)]
-    if vault:
-        words += ["--obsidian", vault]
     words += list(flags)
     if not show_graph:
         words.append("--no-graph")
@@ -6305,7 +6285,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
-.act[data-k=note]{--ic:var(--icon-note)}.act[data-k=note][href^="obsidian:"]{--ic:var(--icon-obsidian,var(--icon-note))}
+.act[data-k=note]{--ic:var(--icon-note)}
 .act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}
 .appicons .gacts{align-items:center}
 .appicons .act[data-k]{width:34px;height:34px;padding:0;font-size:0;color:transparent;border-color:transparent;border-radius:8px;background:transparent var(--ic) center/26px no-repeat}
@@ -6576,6 +6556,11 @@ var toast=document.getElementById('toast');function say(s){toast.textContent=s;t
    the page copies and nothing else. */
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
+/* A link to a project's hub or a thread's note (data-place) goes to the host, which opens it as the row of that
+   project or thread opens (#318); any other link to a file the host opens as macOS does. Last to hear the click,
+   so a handler that took it first, such as a thread's name opening its default, keeps it. */
+document.addEventListener('click',function(e){if(!host||e.defaultPrevented||e.button!==0)return;
+var a=e.target.closest&&e.target.closest('a[data-place]');if(!a)return;e.preventDefault();host.postMessage({open:a.href,place:a.dataset.place})});
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
@@ -7821,14 +7806,14 @@ document.addEventListener('click',function(e){if(!on()||!(e.target&&e.target.clo
 """
 
 
-def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
-          show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
+def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
+          show_graph: bool = True, out: Optional[Path] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
           managed: Optional[List[Path]] = None, cli: Optional[bool] = None, page_at: Optional[Path] = None,
           reuse_check: Optional[float] = None) -> str:
-    """The page. `vaults` and `launchers` say what this machine has (main()
-    asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
+    """The page. `launchers` says what this machine has (main() asks
+    launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
     given. `also` and `moved` reach effort.py: folders the workspace used to
     live in, and folders renamed or moved since, old path to new. `managed`
@@ -7849,7 +7834,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
-    link = Links(ws, vault, vaults)
+    link = Links(ws)
     T, TD, IB, C, R, W = (threads(ws), todo(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
@@ -7963,7 +7948,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
-                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
 
     # ---- hero and tiles
     if attn:
@@ -8494,7 +8479,11 @@ def write_page(out: Path, text: str) -> None:
 # the page, and a build with --same-flags draws with them, as scaffold.py's and
 # correct.py's do: the page a tool rebuilds stays as the app or the plugin
 # last drew it, whatever flags they pass (#246).
-PAGE_FLAGS = ("obsidian", "no_obsidian", "no_cmux", "no_graph", "also", "moved")
+PAGE_FLAGS = ("no_cmux", "no_graph", "also", "moved")
+# Flags a Garrick before 0.51.0 took, which an app or a plugin built then may
+# still pass, or a page built then may have stored: read and ignored, so the
+# build that meets them still draws the page, and never stored again (#318).
+GONE_FLAGS = ("obsidian", "no_obsidian")
 
 
 def flags_file(out: Path) -> Path:
@@ -8504,9 +8493,7 @@ def flags_file(out: Path) -> Path:
 
 def page_words(args: argparse.Namespace, moved: Dict[str, str]) -> List[str]:
     """The command-line words that gave this build its page flags."""
-    words = ["--obsidian", args.obsidian] if args.obsidian else []
-    words += [f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux),
-                              ("--no-graph", args.no_graph)) if on]
+    words = [f for f, on in (("--no-cmux", args.no_cmux), ("--no-graph", args.no_graph)) if on]
     return (words + [w for a in args.also for w in ("--also", a)]
             + [w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n))])
 
@@ -8528,9 +8515,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "keeps go beside it, named after it: status.check.json, the check's last result, and status.effort.json, "
                     "every session's working folder and the paths it wrote, in every zone. Inside a zone, a commit can carry "
                     "them into its history")
-    ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault "
-                    "(by default the page uses the vaults Obsidian has registered)")
-    ap.add_argument("--no-obsidian", action="store_true", help="link to the files themselves, even where Obsidian has a vault")
+    ap.add_argument("--obsidian", metavar="VAULT", help=argparse.SUPPRESS)       # GONE_FLAGS: read and ignored
+    ap.add_argument("--no-obsidian", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-cmux", action="store_true", help="leave Open in cmux out, even where cmux is installed")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
     ap.add_argument("--no-graph", action="store_true", help="leave the graph out: the page then reads nothing but frontmatter")
@@ -8543,7 +8529,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--reuse-check", type=float, metavar="SECONDS", help="show the check's last result, kept beside the "
                     "page, while it is younger than this, instead of running the check again: a tool's rebuild")
     ap.add_argument("--same-flags", action="store_true", help="build with the page flags the last build stored, as a tool's "
-                    "rebuild does; not with --obsidian, --no-obsidian, --no-cmux, --no-graph, --also or --moved")
+                    "rebuild does; not with --no-cmux, --no-graph, --also or --moved")
     args = ap.parse_args(argv)
     given = ["--" + k.replace("_", "-") for k in PAGE_FLAGS if getattr(args, k)]
     if args.same_flags and given:
@@ -8580,8 +8566,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             setattr(args, k, getattr(kept, k))
     out.parent.mkdir(parents=True, exist_ok=True)
     prefs().migrate(ws)          # choices a Garrick before 0.25.0 left in System/generated/, kept where they belong
-    vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
-    flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
+    flags = ("--no-cmux",) if args.no_cmux else ()
     moved = {}
     for m in args.moved:
         if "=" not in m:
@@ -8590,8 +8575,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         old, new = m.split("=", 1)
         moved[old] = new
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
-    page = build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
-                 vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
+    page = build(ws, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
+                 flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                  launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")),
                  page_at=out, reuse_check=args.reuse_check)

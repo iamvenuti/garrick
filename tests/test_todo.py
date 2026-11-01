@@ -215,6 +215,28 @@ class TodoTest(unittest.TestCase):
         self.assertIn("- [ ] Theo: the signed letter #waiting", after)
 
 
+class SourceFormsTest(unittest.TestCase):
+    """#318: a Todo line's source is written as a relative link to the meeting
+    page's file now; the lines already written keep a wikilink or an
+    obsidian: link. The digest and the page's reader take all three."""
+
+    LINES = ("- [ ] [[Pricing]]: chase Dana · [Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md) 📅 2026-03-12",
+             "- [ ] [[Pricing]]: chase Dana · [Acme kick-off](obsidian://open?vault=Wikis&file=Meetings%2Fwiki%2Fsources%2F260310-acme-kickoff) 📅 2026-03-12",
+             "- [ ] [[Pricing]]: chase Dana · [[260310-acme-kickoff]] 📅 2026-03-12")
+
+    def test_the_digest_says_the_action_whatever_the_source(self):
+        for line in self.LINES[:2]:                                     # a Markdown link's source is left out
+            self.assertEqual("Pricing: chase Dana", todo.plain(line), line)
+        self.assertTrue(todo.plain(self.LINES[2]).startswith("Pricing: chase Dana"))   # a wikilink's, as before
+
+    def test_the_page_reads_the_line_whatever_the_source(self):
+        for line in self.LINES:
+            t = todo_lines.parse(line)
+            self.assertEqual(("Pricing", "2026-03-12"), (t["thread"], t["due"]), line)
+            self.assertTrue(t["text"].startswith("chase Dana · "), line)
+            self.assertEqual(todo_lines.same_action(self.LINES[0]).split(" · ")[0], todo_lines.same_action(line).split(" · ")[0])
+
+
 class SweepJobTest(unittest.TestCase):
     """extras/jobs/todo_sweep.py with the assistant faked: one call per zone,
     then the script, then one commit."""

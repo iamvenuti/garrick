@@ -1139,19 +1139,29 @@ class TestSelfContained(StatusCase):
         self.assertIn("file://", html)
         self.assertNotIn("obsidian://", html)
 
-    def test_obsidian_links_on_request(self):
-        html = self.page(vault="My Work")
-        self.assertIn("obsidian://open?vault=My%20Work&amp;file=Zones/Work/Acme%20Review/Threads/Pricing/Pricing", html)
-
-    def test_obsidian_links_a_symlinked_note_by_its_place_in_the_vault(self):
+    def test_a_symlinked_note_is_linked_by_its_place_never_its_target(self):
+        """#318: a link names the path in the workspace, so a note that is a
+        symlink to a file elsewhere stays one, and Garrick.app refuses it."""
         outside = Path(self._tmp.name).resolve() / "Elsewhere" / "Shared notes.md"
         write(outside, "# Shared notes\n")
         os.symlink(str(outside), str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Shared notes.md"))
         (self.jobs / "brief.heartbeat.json").write_text(json.dumps({"job": "brief", "finished": stamp(time.time()), "exit": 0}))
-        html = self.page(vault="My Work")
+        html = self.page()
         node = next(n for n in graph_data(html)["nodes"] if n["n"] == "Shared notes")
-        self.assertEqual("obsidian://open?vault=My%20Work&file=Zones/Work/Acme%20Review/Threads/Pricing/Shared%20notes", node["u"])
-        self.assertIn('href="%s"' % (self.jobs / "brief.log").as_uri(), html)   # a job's log is outside the vault: a file link
+        self.assertEqual((self.root / "Zones/Work/Acme Review/Threads/Pricing/Shared notes.md").as_uri(), node["u"])
+        self.assertNotIn(outside.as_uri(), html)
+        self.assertIn('href="%s"' % (self.jobs / "brief.log").as_uri(), html)   # a job's log, outside the workspace: its own file
+
+    def test_no_link_is_obsidians_whatever_obsidian_has(self):
+        """#318: with Obsidian installed and every folder a vault, the page
+        still links files, on every card, and reads none of Obsidian's lists."""
+        for vault in (self.root, self.root / "Zones" / "Work", self.root / "Wikis"):
+            (vault / ".obsidian").mkdir(parents=True, exist_ok=True)
+        self.assertFalse(hasattr(status, "obsidian_vaults"))
+        html = self.page()
+        self.assertNotIn("obsidian://", html)
+        self.assertNotIn("Open in Obsidian", html)
+        self.assertIn('<span>Open the note</span>', html)
 
     def test_builds_without_git(self):
         (self.root / ".git").mkdir()
@@ -1725,9 +1735,10 @@ class TestLaunchers(StatusCase):
         self.assertIn('data-launcher="finder"> %s<span>Reveal in Finder</span>' % icon("finder"), dialog)
 
     def test_each_row_carries_its_card_icon(self):
-        dialog = status.launcher_choices(("finder",), obsidian=True, why={})
-        self.assertIn('data-launcher="note"> <i class="lico" aria-hidden="true" style="--ic:var(--icon-obsidian,var(--icon-note))"></i>'
-                      '<span>Open in Obsidian</span>', dialog)
+        dialog = status.launcher_choices(("finder",), why={})
+        self.assertIn('data-launcher="note"> <i class="lico" aria-hidden="true" style="--ic:var(--icon-note)"></i>'
+                      '<span>Open the note</span>', dialog)                      # never Obsidian's, installed or not (#318)
+        self.assertNotIn("obsidian", dialog.lower())
         self.assertIn('data-launcher="preview"> <svg class="lico lglass"', dialog)        # Preview's magnifier, as on the card
         glass = re.search(r"var GLASS='(.*?)'\s*\+'(.*?)';", status.NOTE_JS, re.S)
         self.assertIn(glass.group(2), status.GLASS)
@@ -2711,18 +2722,19 @@ class TestRebuildAndWorkspace(StatusCase):
         ws = Path(self._tmp.name).resolve() / "My Workspace"
         build_workspace(ws)
         out = Path(self._tmp.name).resolve() / "pages here" / "status.html"
-        words = shlex.split(status.rebuild_command(ws, "My Work", False, out))
-        self.assertEqual(["python3", str(STATUS.resolve()), "--workspace", str(ws), "--obsidian", "My Work",
+        words = shlex.split(status.rebuild_command(ws, False, out))
+        self.assertEqual(["python3", str(STATUS.resolve()), "--workspace", str(ws),
                           "--no-graph", "--out", str(out), "--open"], words)
         self.assertEqual(["python3", str(STATUS.resolve()), "--workspace", str(ws), "--open"],
                          shlex.split(status.rebuild_command(ws)))
 
     def test_the_page_copies_the_command_it_was_built_with(self):
         out = Path(self._tmp.name).resolve() / "elsewhere" / "status.html"
-        self.run_main("--out", str(out), "--no-graph", "--obsidian", "My Work")
+        self.run_main("--out", str(out), "--no-graph", "--obsidian", "My Work")      # a flag gone in 0.51.0: ignored (#318)
         html = out.read_text(encoding="utf-8")
         raw = re.search(r'data-copy="([^"]*)" data-say="Copied. Run it in a terminal', html).group(1)
-        self.assertEqual(status.rebuild_command(self.root, "My Work", False, out), htmllib.unescape(raw))
+        self.assertEqual(status.rebuild_command(self.root, False, out), htmllib.unescape(raw))
+        self.assertNotIn("obsidian", htmllib.unescape(raw))
 
     def run_main(self, *extra):
         return TestSelfContained.run_main(self, *extra)
@@ -2776,8 +2788,6 @@ class TestOpenActions(StatusCase):
             self.assertNotIn("changed ", zone)
         url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
         self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
-        vault = self.page(vault="My Work")
-        self.assertIn("file=Zones/Work/Todo\" title=\"Open Work/Todo.md\">Open Todo.md</a>", vault)
 
     def test_no_todo_no_open_actions(self):
         self.assertIn('class="top" style="--tiles:4"', self.page())
@@ -2791,8 +2801,8 @@ class TestOpenActions(StatusCase):
 
 
 class TestWhatThisMachineHas(StatusCase):
-    """Obsidian and cmux are optional: the page asks at every build and offers
-    only what will work."""
+    """cmux and the other apps are optional: the page asks at every build and
+    offers only what will work. Obsidian it never asks about (#318)."""
 
     def setUp(self):
         super().setUp()
@@ -2801,44 +2811,6 @@ class TestWhatThisMachineHas(StatusCase):
 
     def install(self, name):
         (self.apps / (name + ".app")).mkdir()
-
-    def register(self, *folders):
-        config = Path(self._tmp.name).resolve() / "obsidian.json"
-        config.write_text(json.dumps({"vaults": {"id%d" % i: {"path": str(f), "ts": 1} for i, f in enumerate(folders)}}))
-        return config
-
-    def test_vaults_come_from_obsidians_own_list(self):
-        self.install("Obsidian")
-        elsewhere = Path(self._tmp.name).resolve() / "Elsewhere"
-        elsewhere.mkdir()
-        config = self.register(self.root, self.root / "Zones" / "Work", elsewhere)
-        found = status.obsidian_vaults(self.root, config=config, apps=[self.apps])
-        self.assertEqual([(self.root / "Zones" / "Work", "Work"), (self.root, "Workspace")], found)   # deepest first, none elsewhere
-
-    def test_a_shared_vault_name_is_given_by_id(self):
-        self.install("Obsidian")
-        other = Path(self._tmp.name).resolve() / "Old" / "Work"
-        other.mkdir(parents=True)
-        config = self.register(self.root / "Zones" / "Work", other)
-        self.assertEqual([(self.root / "Zones" / "Work", "id0")], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
-
-    @unittest.skipUnless(sys.platform == "darwin", "the app check is macOS's")
-    def test_no_obsidian_app_no_vaults(self):
-        config = self.register(self.root)
-        self.assertEqual([], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
-
-    def test_unreadable_list_no_vaults(self):
-        self.install("Obsidian")
-        config = Path(self._tmp.name).resolve() / "obsidian.json"
-        config.write_text("{not json")
-        self.assertEqual([], status.obsidian_vaults(self.root, config=config, apps=[self.apps]))
-
-    def test_a_note_opens_in_the_closest_vault(self):
-        html = self.page(vaults=[(self.root / "Zones" / "Work", "Work"), (self.root, "Workspace")])
-        pricing = cards(html)[("Acme Review", "Pricing")]
-        self.assertEqual("obsidian://open?vault=Work&file=Acme%20Review/Threads/Pricing/Pricing", pricing["u"])
-        self.assertIn("obsidian://open?vault=Workspace&amp;file=Zones/Personal/Todo", html)   # Personal is only in the root vault
-        self.assertNotIn((self.root / "Zones").as_uri(), html)
 
     @unittest.skipUnless(sys.platform == "darwin", "cmux is a macOS app")
     def test_cmux_is_found_by_its_app(self):
@@ -2908,17 +2880,18 @@ class TestWhatThisMachineHas(StatusCase):
         with mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": str(mine / "jobs-here"), "CLAUDE_CONFIG_DIR": str(mine / "claude-here")}), \
                 mock.patch.object(status, "launch_agents", lambda: mine / "agents-here"), \
                 mock.patch.object(status, "launchers_installed", return_value=("cmux",)), \
-                mock.patch.object(status, "obsidian_vaults", return_value=[(self.root, "Workspace")]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             status.main(["--workspace", str(self.root), "--out", str(out)])
             found = out.read_text()
+            # --no-obsidian, which an app built before 0.51.0 may still pass, is ignored: never stored or copied (#318)
             status.main(["--workspace", str(self.root), "--out", str(out), "--no-cmux", "--no-obsidian"])
             kept = out.read_text()
         self.assertIn('"f":', htmllib.unescape(found))
-        self.assertIn("obsidian://open?vault=Workspace", found)
         self.assertNotIn('"f":', htmllib.unescape(kept))
-        self.assertNotIn("obsidian://", kept)
-        self.assertIn("--no-obsidian --no-cmux", htmllib.unescape(kept))           # the rebuild command keeps them
+        self.assertNotIn("obsidian://", found + kept)
+        self.assertIn("--no-cmux", htmllib.unescape(kept))                         # the rebuild command keeps it
+        self.assertNotIn("--no-obsidian", htmllib.unescape(kept))
+        self.assertEqual({"args": ["--no-cmux"]}, json.loads(out.with_name("page.flags.json").read_text()))
 
 
 class TestApp(unittest.TestCase):
@@ -3147,6 +3120,24 @@ class TestApp(unittest.TestCase):
         self.assertIn('.help(model.trouble ? troubleSaid : "Garrick")', swift)        # the panel's mark says it on hover
         self.assertIn("statusItem?.button?.toolTip = said", swift)                    # and the menu bar's
 
+    def test_a_rebuild_drops_the_obsidian_flags_an_older_app_kept(self):
+        """#318: make-app.sh stores the flags the app rebuilds the page with,
+        less --obsidian VAULT and --no-obsidian, which went in 0.51.0, so an
+        update's rebuild with an app's old flags keeps the rest only."""
+        import plistlib
+        import subprocess
+        script = (self.APP / "make-app.sh").read_text(encoding="utf-8")
+        writer = script[script.index("<<'PY'\n") + len("<<'PY'\n"):script.index("\nPY\n")]
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "Garrick.app" / "Contents").mkdir(parents=True)
+            done = subprocess.run([sys.executable, "-", str(STATUS), str(work), "/ws", sys.executable,
+                                   "--no-graph", "--obsidian", "My Vault", "--no-obsidian", "--obsidian=Other", "--no-cmux"],
+                                  input=writer, capture_output=True, text=True, timeout=60)
+            self.assertEqual(0, done.returncode, done.stderr)
+            with (work / "Garrick.app" / "Contents" / "Info.plist").open("rb") as f:
+                self.assertEqual(["--no-graph", "--no-cmux"], plistlib.load(f)["GarrickStatusArgs"])
+
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
     def test_the_app_compiles(self):
         import subprocess
@@ -3154,6 +3145,132 @@ class TestApp(unittest.TestCase):
             self.skipTest("no swiftc")
         done = subprocess.run(["xcrun", "swiftc", "-typecheck", str(self.APP / "Garrick.swift")], capture_output=True, text=True)
         self.assertEqual(0, done.returncode, done.stderr)
+
+
+class TestLinksOpenAsChosen(StatusCase):
+    """#318: every link the page builds is a file link, and the app opens it
+    as the user chose: a hub or a thread's note as its row, anything else in
+    macOS's own app, a folder in Finder. A link out of the workspace, or
+    through a symlink, opens nothing, by the check Ask's cited records use."""
+
+    SWIFT = REPO / "extras" / "status" / "app" / "Garrick.swift"
+
+    def body(self, name):
+        swift = self.SWIFT.read_text(encoding="utf-8")
+        m = re.search(r"\n(\t)(?:@objc )?func %s\b[^\n]*\{\n(.*?)\n\1\}\n" % re.escape(name), swift, re.S)
+        self.assertIsNotNone(m, name)
+        return m.group(0)
+
+    def test_a_hub_or_a_threads_note_carries_its_place(self):
+        link = status.Links(self.root)
+        work = self.root / "Zones" / "Work"
+        self.assertEqual(str(work / "Acme Review"), link.place(work / "Acme Review" / "Acme Review.md"))
+        self.assertEqual(str(work / "Acme Review/Threads/Pricing"), link.place(work / "Acme Review/Threads/Pricing/Pricing.md"))
+        self.assertEqual(str(self.root / "System" / "Setup"), link.place(self.root / "System" / "Setup" / "Setup.md"))
+        for other in (work / "Todo.md", work / "Acme Review" / "Notes.md", work / "Acme Review/Threads/Pricing/Rates.md",
+                      work / "Inbox", self.root / "Wikis/Meetings/wiki/log.md", self.root / "System" / "rules.md",
+                      Path(self._tmp.name).resolve() / "Elsewhere" / "Elsewhere.md"):
+            self.assertIsNone(link.place(other), other)
+        self.assertEqual('href="%s" data-place="%s"' % (htmllib.escape((work / "Birch Entry/Birch Entry.md").as_uri()),
+                                                        htmllib.escape(str(work / "Birch Entry"))),
+                         link.attrs(work / "Birch Entry/Birch Entry.md"))
+        self.assertEqual('href="%s"' % htmllib.escape((work / "Todo.md").as_uri()), link.attrs(work / "Todo.md"))
+
+    def test_the_inboxes_and_the_wikis_link_their_files_and_folders(self):
+        write(self.root / "Zones" / "Work" / "Inbox" / "mail.eml", "From: a@acme.example\n")
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "log.md",
+              "# Log\n\n- 2026-03-10: [[wiki/sources/260310-acme-kickoff|Acme kick-off]] · Work · acme\n")
+        html = self.page()
+        inbox = html[html.index('id="inboxes"'):]
+        inbox = inbox[:inbox.index("</details>")]
+        self.assertIn('href="%s"' % (self.root / "Zones" / "Work" / "Inbox").as_uri(), inbox)    # the folder: Finder opens it
+        wikis = html[html.index('id="wikis"'):]
+        wikis = wikis[:wikis.index("</details>")]
+        self.assertIn('href="%s"' % (self.root / "Wikis/Meetings/wiki/log.md").as_uri(), wikis)
+        self.assertIn('href="%s">Acme kick-off</a>' % (self.root / "Wikis/Meetings/wiki/sources/260310-acme-kickoff.md").as_uri(), wikis)
+        self.assertNotIn("obsidian", (inbox + wikis).lower())
+        self.assertNotIn("data-place", inbox + wikis)
+
+    def test_the_page_hands_a_place_to_the_host_and_nothing_else(self):
+        js = status.JS
+        handler = js[js.index("/* A link to a project's hub or a thread's note (data-place)"):]
+        handler = handler[:handler.index("});") + 3]
+        self.assertIn("if(!host||e.defaultPrevented||e.button!==0)return;", handler)    # a browser follows the link; a handler before it keeps it
+        self.assertIn("closest('a[data-place]')", handler)
+        self.assertIn("host.postMessage({open:a.href,place:a.dataset.place})", handler)
+        self.assertNotIn(",true)", handler)                                             # last to hear the click, not first
+        plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
+        self.assertIn('if (typeof body.open === "string") return this.follow(body.open);', plugin)   # Obsidian's tab opens it there
+
+    def test_the_app_opens_a_link_as_chosen(self):
+        swift = self.SWIFT.read_text(encoding="utf-8")
+        decide = swift[swift.index("decidePolicyFor nav: WKNavigationAction"):swift.index("func openJobLog(")]
+        self.assertLess(decide.index("if openJobLog(url) { return }"), decide.index("if url.isFileURL { return openLink(url) }"))
+        self.assertNotIn("obsidian", decide.lower())
+        bridge = self.body("userContentController")
+        self.assertIn('if let u = body["open"] as? String, let url = URL(string: u) { return openLink(url, place: body["place"] as? String) }',
+                      bridge)
+        opened = self.body("openLink")
+        self.assertIn("guard let file = workspaceFile(url,", opened)                     # the one check, before anything opens
+        self.assertIn("openAsRow([", opened)                                             # a note with its place: as its row
+        self.assertIn("NSWorkspace.shared.open(file)", opened)                           # anything else: macOS's own app, Finder for a folder
+        self.assertLess(opened.index("workspaceFile("), opened.index("openAsRow(["))
+        self.assertIn('case "note": return "Open the note"', self.body("label"))
+        self.assertNotIn("obsidian", self.SWIFT.read_text(encoding="utf-8").split("lazy var iconJSON", 1)[1].split("}()", 1)[0])
+
+    def test_nothing_garrick_ships_writes_an_obsidian_link(self):
+        """#318's grep: in the page, the app, the plugin and what a workspace
+        gets, obsidian:// is left only where links are read (the wall check
+        and fading), never where one is made."""
+        found = set()
+        for top in (REPO / "extras" / "status", REPO / "template"):
+            for f in top.rglob("*"):
+                if f.is_file() and f.suffix in (".py", ".js", ".swift", ".md", ".sh", ".json", ".html"):
+                    if "obsidian://" in f.read_text(encoding="utf-8", errors="replace"):
+                        found.add(f.relative_to(REPO).as_posix())
+        self.assertEqual({"template/System/tools/check.py", "template/System/tools/fade.py"}, found)
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+    def test_a_link_out_of_the_workspace_or_through_a_symlink_opens_nothing(self):
+        """workspaceFile() itself, compiled on its own and run on real paths."""
+        import subprocess
+        if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
+            self.skipTest("no swiftc")
+        fn = self.body("workspaceFile").strip("\n").replace("\n\t", "\n")
+        harness = Path(self._tmp.name) / "harness"
+        harness.mkdir()
+        (harness / "main.swift").write_text(
+            "import Foundation\nlet workspace = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)\n"
+            "func toast(_ s: String) { print(\"toast: \" + s) }\n" + fn + "\n"
+            "for u in CommandLine.arguments.dropFirst(2) { print(workspaceFile(URL(string: u)!, said: \"refused\") == nil ? \"refused\" : \"opens\") }\n",
+            encoding="utf-8")
+        built = subprocess.run(["xcrun", "swiftc", "-o", str(harness / "check"), str(harness / "main.swift")],
+                               capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stderr)
+        base = Path(self._tmp.name).resolve()
+        outside = base / "Elsewhere"
+        write(outside / "secret.md", "# Not the workspace's\n")
+        pricing = self.root / "Zones/Work/Acme Review/Threads/Pricing"
+        os.symlink(str(outside / "secret.md"), str(pricing / "Linked.md"))         # a note that is a link out
+        os.symlink(str(outside), str(self.root / "Zones" / "Work" / ".shared"))      # a folder that is one
+        os.symlink(str(pricing / "Pricing.md"), str(pricing / "Alias.md"))          # a link to a note inside: still a link
+        cases = [
+            ((pricing / "Pricing.md").as_uri(), "opens"),
+            ((self.root / "Zones/Work/Inbox").as_uri(), "opens"),                    # a folder of the workspace
+            ((pricing / "Linked.md").as_uri(), "refused"),
+            ((pricing / "Alias.md").as_uri(), "refused"),
+            ((self.root / "Zones/Work/.shared/secret.md").as_uri(), "refused"),      # through a symlinked folder, out
+            ((outside / "secret.md").as_uri(), "refused"),
+            ((self.root / "Zones/Work/../../Elsewhere/secret.md").as_uri(), "refused"),
+            ((self.root / "Zones/Work/Gone.md").as_uri(), "refused"),                 # not there any more
+            (self.root.as_uri(), "refused"),                                          # the root itself is no file of it
+            ("https://example.com/x.md", "refused"),
+        ]
+        done = subprocess.run([str(harness / "check"), str(self.root)] + [u for u, _ in cases], capture_output=True, text=True)
+        self.assertEqual(0, done.returncode, done.stderr)
+        said = [l for l in done.stdout.splitlines() if not l.startswith("toast: ")]
+        self.assertEqual([want for _, want in cases], said, list(zip([u for u, _ in cases], said)))
+        self.assertEqual(said.count("refused"), done.stdout.count("toast: refused"))      # every refusal says so
 
 
 @unittest.skipUnless(fixtures.HAVE_GIT, "git is not installed")
@@ -3503,7 +3620,11 @@ class TestChecksCardActs(StatusCase):
         self.assertEqual([(" open", "Walls"), ("", "Mechanical"), ("", "Attribution"), (" open", "Judgment")],
                          self.groups(card))                              # an error opens its group, and so does the largest
         uri = (self.root / thread).as_uri()
-        self.assertIn('<a href="%s">%s</a>: status ongoing becomes active</span>' % (htmllib.escape(uri), thread), card)
+        place = self.root / "Zones/Work/Birch Entry/Threads/Market Sizing"     # a thread's note opens as its row (#318)
+        self.assertIn('<a href="%s" data-place="%s">%s</a>: status ongoing becomes active</span>'
+                      % (htmllib.escape(uri), htmllib.escape(str(place)), thread), card)
+        memo = (self.root / "Zones/Work/Acme Review/Memo.md").as_uri()
+        self.assertIn('<a href="%s">Zones/Work/Acme Review/Memo.md</a>' % htmllib.escape(memo), card)   # any other file as itself
         fix = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', card)
         self.assertEqual({"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
                          json.loads(htmllib.unescape(fix.group(1))))

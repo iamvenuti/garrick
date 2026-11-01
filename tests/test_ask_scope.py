@@ -324,7 +324,7 @@ class TestAnswers(AnswerCase):
         first = self.msgs(sonnet["pid"])[0]
         self.assertIn("<workspace>\nPersonal:\nWork:\n- Acme Review", first)
         self.assertIn("- Birch Entry", first)                                  # every zone's names, as question 12 says
-        self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10">', first)
+        self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10">', first)      # no `created`: no import date
         self.assertIn("<request>\nWhat did Dana say about the pallet quote?\n</request>", first)
         self.assertEqual(ask.ANSWER_BRIEF.read_text(), sonnet["argv"][sonnet["argv"].index("--system-prompt") + 1])
         self.assertEqual(["Finding the records", "Reading 1 record"], steps)
@@ -453,6 +453,8 @@ class TestAnswers(AnswerCase):
     def test_nothing_found_asks_no_model(self):
         out = self.asker().ask("What did I say about the orders?")
         self.assertEqual(("answer", ask.NOTHING_FOUND), (out["kind"], out["say"]))
+        self.assertEqual(([], [], [ask.NOTHING_FOUND], False),                  # the final line's fields, all there
+                         (out["claims"], out["sources"], out["after"], out["incomplete"]))
         self.assertEqual(["haiku"], [p["model"] for p in self.procs()])
 
     def test_the_log_holds_no_request_text(self):
@@ -1163,6 +1165,201 @@ class TestProtocol(unittest.TestCase):
         self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib))     # a page on both sides
         self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1))
         self.assertEqual(([rec("birch")], False), sc.pick([rec("[[acme]]"), rec("acme corp"), rec("birch")], set(), ctx, lib))
+
+
+def cites(*claims, incomplete=False):
+    """An answer session's reply: (text, ids) for each claim."""
+    return json.dumps({"claims": [{"text": t, "cite": list(ids)} for t, ids in claims], "incomplete": incomplete})
+
+
+class TestCitations(AnswerCase):
+    """Slice D: each claim names the records it rests on, only this turn's,
+    each with its path, title and both dates, and opens as the app opens it."""
+
+    KICKOFF = "Wikis/Meetings/wiki/sources/260310-acme-kickoff.md"
+
+    def sonnet(self, *rules):
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [list(r) for r in rules]}))
+
+    def test_each_claim_names_its_records_with_both_dates(self):
+        page = self.root / self.KICKOFF
+        write(page, page.read_text().replace("date: 2026-03-10\n", "date: 2026-03-10\ncreated: 2026-03-12\n", 1))
+        self.sonnet(["pallet quote", cites(("Dana said the quote holds at forty a unit.", ["r1"]))])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual("answer", out["kind"])
+        self.assertEqual([{"text": "Dana said the quote holds at forty a unit.", "ids": ["r1"]}], out["claims"])
+        self.assertEqual([{"id": "r1", "path": self.KICKOFF, "title": "Acme kick-off", "date": "2026-03-10",
+                           "imported": "2026-03-12"}], out["sources"])
+        self.assertEqual(("Dana said the quote holds at forty a unit.", [], False),
+                         (out["say"], out["after"], out["incomplete"]))
+        (sent,) = [m for m in self.msgs() if "<records>" in m]
+        self.assertIn('<record id="r1" path="%s" date="2026-03-10" imported="2026-03-12">' % self.KICKOFF, sent)
+
+    def test_a_citation_not_retrieved_this_turn_is_refused(self):
+        self.sonnet(["supply chain report", cites(("Supply stays tight.", ["r2", "r1", "r9", self.KICKOFF]),
+                                                  ("Dana gave a price earlier.", ["r1"]))],
+                    ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
+        a = self.asker()
+        self.assertEqual(["r1"], [s["id"] for s in a.ask("What did Dana say about the pallet quote?")["sources"]])
+        out = a.ask("What does the supply chain report say about pallets?")
+        self.assertEqual([{"text": "Supply stays tight.", "ids": ["r2"]}, {"text": "Dana gave a price earlier.", "ids": []}],
+                         out["claims"])                                # r1 was read, but for the turn before
+        self.assertEqual(["r2"], [s["id"] for s in out["sources"]])
+        self.assertEqual("Wikis/Knowledge/wiki/sources/supply-chain-report.md", out["sources"][0]["path"])
+        self.assertNotIn(self.KICKOFF, json.dumps(out))
+
+    def test_a_reply_that_is_not_one_object_never_shows_its_raw_text(self):
+        """The claims object with a second object after it: only the first is
+        read, so its refused citations are dropped as usual. A claims reply
+        that does not parse at all is never shown: a fixed sentence is said."""
+        bad = ('{"claims":[{"text":"…","cite":["r1","%s","Acme kick-off"]}],"incomplete":false}\n{"x":1}'
+               % self.KICKOFF)
+        self.sonnet(["supply chain report", bad], ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
+        a = self.asker()
+        self.assertEqual(self.KICKOFF, a.ask("What did Dana say about the pallet quote?")["sources"][0]["path"])
+        out = a.ask("What does the supply chain report say about pallets?")
+        self.assertEqual(("…", [{"text": "…", "ids": []}], []), (out["say"], out["claims"], out["sources"]))
+        said = json.dumps(out, ensure_ascii=False)
+        for mark in (self.KICKOFF, "acme-kickoff", "Acme kick-off", '"r1"'):
+            self.assertNotIn(mark, said)
+        for text in (bad.replace("}],", "}] oops,"),                                 # no object parses
+                     '{"claims": [{"text": "Dana', '```json\n{"claims": [], "cite": ["%s"]' % self.KICKOFF):
+            claims, say, incomplete = ask.cited(text, {})
+            self.assertEqual(([], ask.UNREADABLE, False), (claims, say, incomplete), text)
+        self.assertEqual(([{"text": "Supply stays tight.", "ids": []}], "", False),    # prose after it holding a }
+                         ask.cited(cites(("Supply stays tight.", ["r1"])) + " see {r1} and %s}" % self.KICKOFF, {}))
+        self.assertEqual(([], "Supply stays tight.", False), ask.cited("Supply stays tight.", {}))   # plain words
+
+    def test_a_forged_citation_to_a_far_side_record_never_reaches_the_window(self):
+        """Ask about Acme, then about Birch across the wall: the Birch answer
+        cites Acme's record by its old id, its path and its title. What the
+        app reads, ask.py's final line through the server, holds none of it."""
+        forged = ["r1", "r2", "r0", self.KICKOFF, "260310-acme-kickoff", "Acme kick-off", "acme", "../" + self.KICKOFF]
+        self.sonnet(["pallet launch", cites(("Theo moved the launch to May.", forged))],
+                    ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
+        import contextlib
+        lines = []
+        try:
+            for q in ("What did Dana say about the pallet quote?", "What did Theo say about the pallet launch?"):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    ask.main(["--workspace", str(self.root), "--json", "ask", q])
+                lines.append(json.loads(buf.getvalue().splitlines()[-1]))
+        finally:
+            with contextlib.redirect_stdout(io.StringIO()):
+                ask.main(["--workspace", str(self.root), "stop"])
+        first, out = lines
+        self.assertEqual(self.KICKOFF, first["sources"][0]["path"])
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        self.assertEqual([{"text": "Theo moved the launch to May.", "ids": ["r1"]}], out["claims"])
+        self.assertEqual([("r1", "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md")],
+                         [(s["id"], s["path"]) for s in out["sources"]])     # r1 of the new process: Birch's
+        said = json.dumps(out, ensure_ascii=False)
+        for mark in (ACME, "acme-kickoff", "Acme kick-off", "Dana", '"acme"'):
+            self.assertNotIn(mark, said)
+
+    def test_incomplete_is_a_field(self):
+        self.sonnet(["pallet price", cites(incomplete=True)],               # first: the record says "pallet quote"
+                    ["pallet quote", cites(("Dana gave a price.", ["r1"]), incomplete=True)])
+        a = self.asker()
+        out = a.ask("What did Dana say about the pallet quote?")
+        self.assertEqual((True, [ask.INCOMPLETE], "Dana gave a price. " + ask.INCOMPLETE),
+                         (out["incomplete"], out["after"], out["say"]))
+        out = a.ask("And Dana, about the pallet price?")
+        self.assertEqual((True, [], [], ask.NOTHING_FOUND), (out["incomplete"], out["claims"], out["sources"], out["say"]))
+
+    def test_three_claims_at_most(self):
+        self.sonnet(["pallet quote", cites(("One.", []), ("Two.", []), ("Three.", []), ("Four.", ["r1"]))])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual(("One. Two. Three.", ["One.", "Two.", "Three."], []),
+                         (out["say"], [c["text"] for c in out["claims"]], out["sources"]))
+
+    def test_an_answer_with_nothing_in_it_says_nothing_was_found(self):
+        a = self.asker()
+        for text in ('{"claims": [], "incomplete": false}', '{"claims": [{"text": 4, "cite": ["r1"]}, {"text": " "}]}',
+                     '{"say": ""}'):
+            self.sonnet(["pallet quote", text])
+            out = a.ask("What did Dana say about the pallet quote?")
+            self.assertEqual(([], [ask.NOTHING_FOUND], ask.NOTHING_FOUND, []),
+                             (out["claims"], out["after"], out["say"], out["sources"]), text)
+
+    def test_an_answer_with_no_claims_and_incomplete_says_what_it_has(self):
+        self.sonnet(["pallet quote", '{"say": "Dana gave a price.", "incomplete": true}'])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual(([ask.INCOMPLETE], "Dana gave a price. " + ask.INCOMPLETE), (out["after"], out["say"]))
+
+    def test_the_wall_sentence_follows_the_claims(self):
+        self.sonnet(["this week", cites(("Theo moved the launch.", ["r1"]))])
+        out = self.asker().ask("What did I discuss this week?")
+        wall = ask.page_action().wall_refusal(self.root)
+        self.assertEqual(([wall], "Theo moved the launch. " + wall), (out["after"], out["say"]))
+
+    def test_a_thread_note_opens_as_its_row(self):
+        from unittest import mock
+        self.sonnet(["Pricing stand", cites(("Pricing is drafting.", ["r1"]))])
+        with mock.patch.object(ask, "desk_ready", return_value=False):
+            out = self.asker().ask("Where does Pricing stand?")
+        (src,) = out["sources"]
+        self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", src["path"])
+        self.assertEqual({"n": "Pricing", "w": "Pricing", "f": str(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing"),
+                          "oc": ["Work", "Acme Review/Threads/Pricing/Pricing.md"]}, src["place"])
+        with mock.patch.object(ask, "desk_ready", return_value=True):
+            self.assertEqual(1, self.asker().ask("Where does Pricing stand?")["sources"][0]["place"]["dk"])
+        self.sonnet(["pallet quote", cites(("Dana gave a price.", ["r1"]))])
+        self.assertNotIn("place", self.asker().ask("What did Dana say about the pallet quote?")["sources"][0])
+
+    def test_the_dates_of_a_record(self):
+        sc = ask.scope_lib()
+        page = Path("260310-call.md")
+        self.assertEqual("2026-03-09", sc._date({"date": "2026-03-09"}, page))
+        self.assertEqual("2025-11", sc._date({"published": "2025-11"}, Path("report.md")))   # a month is all it gives
+        self.assertEqual("2026-03-10", sc._date({}, page))                                 # else the name's date
+        self.assertEqual("", sc._date({"published": "soon"}, Path("report.md")))
+        self.assertEqual("2026-03-12", sc._imported({"created": "2026-03-12"}, page))
+        doc = self.work / "Acme Review" / "Sources" / "260301 - Pallet terms.docx"
+        os.utime(doc, (1767225600, 1767225600))                                            # 1 January 2026, UTC
+        self.assertEqual("", sc._imported({}, doc))                    # a file's own date is not when it was filed
+        self.assertEqual("", sc._imported({"created": "soon"}, page))
+
+
+class TestTheWindowCites(unittest.TestCase):
+    """What Garrick.swift does with the citations, read from its source."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    body = base.TestTheAppKeepsIt.body
+
+    def test_an_answer_keeps_its_claims_and_sources_from_the_reply(self):
+        submit = self.body("askSubmit")
+        for field in ('out["claims"]', 'out["after"]', 'out["sources"]'):
+            self.assertIn(field, submit)
+        self.assertIn('if turn.kind == "answer" {', submit)
+        self.assertIn("askCited(turn, at: i", self.body("askTranscript"))
+
+    def test_a_link_names_a_turn_and_a_source_never_a_path(self):
+        cited = self.body("askCited")
+        self.assertIn('a[.link] = URL(string: askSourceLink + "\\(i)-\\(n)")', cited)
+        self.assertEqual(1, self.swift.count("[.link] ="))
+        clicked = self.body("textView")
+        self.assertIn("guard view === askLog else { return false }", clicked)
+        self.assertIn("askOpenSource(askTurns[n[0]].sources[n[1]])", clicked)
+        self.assertIn("askLog.delegate = self", self.body("showAsk"))
+
+    def test_a_source_opens_as_the_app_opens_anything_else(self):
+        opened = self.body("askOpenSource")
+        self.assertIn('file.path.hasPrefix(root + "/")', opened)          # inside this workspace, or nothing
+        self.assertIn("let file = named.resolvingSymlinksInPath()", opened)            # with every link resolved,
+        self.assertIn("workspace.standardizedFileURL.resolvingSymlinksInPath().path", opened)   # on both sides
+        self.assertIn("attributesOfItem(atPath: named.path)[.type]", opened)          # and never a link itself
+        self.assertIn("guard !link, file.path.hasPrefix", opened)
+        self.assertIn("FileManager.default.fileExists", opened)
+        self.assertIn("acts(place)", opened)                               # a thread as its row opens it
+        self.assertIn('run(["k": "note", "u": file.absoluteString])', opened)   # else the default app
+        self.assertNotIn("NSWorkspace", opened)                            # only through run()
+        for fn in ("askOpenSource", "askCited", "textView"):                # nothing waits on Obsidian
+            self.assertNotIn("obsidian", self.body(fn).lower())
 
 
 if __name__ == "__main__":

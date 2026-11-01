@@ -159,6 +159,23 @@ reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
 says nothing of what it held.
 
+**An answer cites its records (#261, slice D).** The answer session replies
+with claims, each naming the ids of the records it rests on, and an
+`incomplete` field for records that hold only part of the answer (cited()).
+Only the ids admitted this turn can be cited: any other, an earlier turn's,
+a replaced process's or one made up, is dropped before anything is looked
+up, so a citation never names a record outside the scope this turn read.
+Only the reply's first JSON object is read, and a reply that looks like one
+but does not parse is never shown: its raw text could hold what a refused
+citation named, so a fixed sentence is said in its place.
+The final line carries `claims`, `sources`, `incomplete` and `after`, the
+fixed sentences said after the claims; `say` is the claims and `after`, for
+the ear. Each source has its path, title, `date` (when it happened, which
+"last time" and "how long ago" are told from) and `imported` (when it was
+filed: its `created`, or empty, never guessed from the file's own date).
+The app opens a thread's note as its row opens it (`place`), and any other
+record in the default app.
+
 **A request sent again is asked about, not done twice.** The record
 recognises one that repeats an action it holds (operations.py): past a double
 click's window, the action comes back as a question, which goes into
@@ -238,6 +255,11 @@ GAVE_UP = ("The ask server did not answer in %s. The change may still be on its 
 NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does commands: open, park, wake, "
                "and add a line to a Todo list.")
 NOTHING_FOUND = "Nothing in the records answers that."
+INCOMPLETE = "The records hold only part of the answer."     # said for the answer's `incomplete` field
+# Said in place of an answer that looks like the claims format but is not one object that parses:
+# its raw text may hold an id, a path or a title the citations would have refused.
+UNREADABLE = "The answer came back in a form Garrick could not read, so none of it is shown."
+MOST_CLAIMS = 3                 # claims an answer says, as ask-answer-brief.md asks
 
 
 class Bad(Exception):
@@ -467,13 +489,42 @@ def wanted(text: str) -> Optional[dict]:
     return obj["find"] if isinstance(obj, dict) and "find" in obj else None
 
 
-def said(text: str) -> str:
-    """An answer's sentence: its JSON's `say`, or the text itself when the
-    session answered in plain words. Anything else it holds is dropped."""
+def first_object(text: str) -> Optional[dict]:
+    """The first complete JSON object in a reply, fence or no fence, and
+    nothing after it: None when the reply holds none that parses."""
+    start = (text or "").find("{")
+    if start < 0:
+        return None
     try:
-        return parse(text)[0]
-    except Bad:
-        return (text or "").strip()
+        obj, _ = json.JSONDecoder().raw_decode(text, start)
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
+    """An answer's claims, each with the ids of the records it rests on, what
+    an answer with no claims says, and whether the records hold only part of
+    the answer: (claims, say, incomplete). Only the reply's first JSON object
+    is read. An id not in `allowed`, the records retrieved this turn, is
+    dropped and never looked up; a claim keeps its words with no id left. A
+    reply that is not such an object is said as it stands when it is plain
+    words, and never when it looks like one: its raw text could hold what
+    a refused citation named, so UNREADABLE is said in its place."""
+    obj = first_object(text)
+    if obj is None:
+        plain = (text or "").strip()
+        return [], (UNREADABLE if "{" in plain or "claims" in plain else plain), False
+    claims = []
+    for c in obj.get("claims") if isinstance(obj.get("claims"), list) else []:
+        if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not c["text"].strip():
+            continue
+        cite = c.get("cite") if isinstance(c.get("cite"), list) else []
+        ids = [i for i in dict.fromkeys(x for x in cite if isinstance(x, str)) if i in allowed]
+        claims.append({"text": " ".join(c["text"].split()), "ids": ids})
+    claims = claims[:MOST_CLAIMS]               # the brief's three at most; the rest are neither said nor cited
+    say = obj.get("say") if isinstance(obj.get("say"), str) and not claims else ""
+    return claims, say.strip(), obj.get("incomplete") is True
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
@@ -981,7 +1032,9 @@ class Asker:
             request = request[asked:]               # the fresh session gets the new request alone, never the one asked about (#294)
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
-            return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
+            out = reply(self.wall() if back else NOTHING_FOUND, "answer")
+            out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
+            return out, reset
         if self.answers is None:
             self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
@@ -991,6 +1044,7 @@ class Asker:
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         whole = sent != self.answer_sent or self.answers.started != self.answer_told
+        before = len(self.passages)                 # the ids admitted from here on are this turn's
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>",
                  "<request>\n%s\n</request>" % request[-MAX_REQUEST:],
@@ -1003,13 +1057,48 @@ class Asker:
             self.answers.watch = None
             turns.append(self.answers.last)
         self.answer_sent, self.answer_told = sent, self.answers.started
-        say = said(text)
+        # Only this turn's records may be cited: an id from an earlier turn, a
+        # process since replaced or nowhere at all is refused, and leaves no
+        # trace in the reply (#261, slice D).
+        this_turn = {p["id"]: p for p in self.passages[before:]}
+        claims, rest, incomplete = cited(text, this_turn)
+        after = []
+        if not claims and not rest:                 # no answer at all, incomplete or not
+            after.append(NOTHING_FOUND)
+        elif incomplete:
+            after.append(INCOMPLETE)
         if back:
-            say = (say + " " + self.wall()).strip()
+            after.append(self.wall())
+        say = " ".join(s for s in [c["text"] for c in claims] + [rest] + after if s)
         out = reply(say, "answer")
+        ids = [i for c in claims for i in c["ids"]]
+        out.update(claims=claims, after=after, incomplete=incomplete,
+                   sources=self.sources([this_turn[i] for i in dict.fromkeys(ids)], names))
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return out, reset
+
+    def sources(self, cited_: List[dict], names) -> List[dict]:
+        """What the window shows and opens for each record cited: its path
+        in the workspace, its title, when it happened (`date`) and when it
+        was filed (`imported`). A thread's note opens as its row opens it
+        (`place`, what the app's run() takes); anything else opens in the
+        default app. Built from records admitted this turn only."""
+        out, desk = [], None
+        for p in cited_:
+            src = {k: p[k] for k in ("id", "path", "title", "date", "imported")}
+            parts = p["path"].split("/")
+            if (len(parts) == 6 and parts[0] == "Zones" and parts[3] == "Threads" and parts[5] == parts[4] + ".md"
+                    and parts[4] in names.get(parts[1], {}).get(parts[2], {}).get("threads", {})):
+                zone, project, thread = parts[1], parts[2], parts[4]
+                name = spoken(names, zone, project, thread)
+                src["place"] = {"n": name, "w": name, "f": str(self.ws / "Zones" / zone / project / "Threads" / thread),
+                                "oc": [zone, "/".join(parts[2:])]}
+                desk = desk_ready(self.ws) if desk is None else desk
+                if desk:
+                    src["place"]["dk"] = 1
+            out.append(src)
+        return out
 
     def admit(self, passages: List[dict], parties) -> str:
         """The only way a record reaches a prompt (#261, section 3): the
@@ -1027,9 +1116,11 @@ class Asker:
         rows = ["<records>"]
         for r in passages:
             rid = "r%d" % (len(self.passages) + 1)
-            self.passages.append({"id": rid, "path": r["path"]})
-            rows.append('<record id="%s" path="%s"%s>' % (rid, attr(r["path"]),
-                                                          ' date="%s"' % attr(r["date"]) if r.get("date") else ""))
+            self.passages.append({"id": rid, "path": r["path"], "title": r.get("title") or "",
+                                  "date": r.get("date") or "", "imported": r.get("imported") or ""})
+            rows.append('<record id="%s" path="%s"%s%s>' % (
+                rid, attr(r["path"]), ' date="%s"' % attr(r["date"]) if r.get("date") else "",
+                ' imported="%s"' % attr(r["imported"]) if r.get("imported") else ""))
             rows += [inert(r["text"]), "</record>"]
         rows.append("</records>")
         return "\n".join(rows)

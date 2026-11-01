@@ -1277,5 +1277,41 @@ class TestCitations(AnswerCase):
         self.assertIn(sc._imported({}, doc), ("2025-12-31", "2026-01-01"))                 # a file's own date
 
 
+class TestTheWindowCites(unittest.TestCase):
+    """What Garrick.swift does with the citations, read from its source."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    body = base.TestTheAppKeepsIt.body
+
+    def test_an_answer_keeps_its_claims_and_sources_from_the_reply(self):
+        submit = self.body("askSubmit")
+        for field in ('out["claims"]', 'out["after"]', 'out["sources"]'):
+            self.assertIn(field, submit)
+        self.assertIn('if turn.kind == "answer" {', submit)
+        self.assertIn("askCited(turn, at: i", self.body("askTranscript"))
+
+    def test_a_link_names_a_turn_and_a_source_never_a_path(self):
+        cited = self.body("askCited")
+        self.assertIn('a[.link] = URL(string: askSourceLink + "\\(i)-\\(n)")', cited)
+        self.assertEqual(1, self.swift.count("[.link] ="))
+        clicked = self.body("textView")
+        self.assertIn("guard view === askLog else { return false }", clicked)
+        self.assertIn("askOpenSource(askTurns[n[0]].sources[n[1]])", clicked)
+        self.assertIn("askLog.delegate = self", self.body("showAsk"))
+
+    def test_a_source_opens_as_the_app_opens_anything_else(self):
+        opened = self.body("askOpenSource")
+        self.assertIn('file.path.hasPrefix(root + "/")', opened)          # inside this workspace, or nothing
+        self.assertIn("FileManager.default.fileExists", opened)
+        self.assertIn("acts(place)", opened)                               # a thread as its row opens it
+        self.assertIn('run(["k": "note", "u": file.absoluteString])', opened)   # else the default app
+        self.assertNotIn("NSWorkspace", opened)                            # only through run()
+        for fn in ("askOpenSource", "askCited", "textView"):                # nothing waits on Obsidian
+            self.assertNotIn("obsidian", self.body(fn).lower())
+
+
 if __name__ == "__main__":
     unittest.main()

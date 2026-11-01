@@ -163,6 +163,8 @@ let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
 // Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
 // exchange stays on screen, and nothing of it reaches the new session.
 let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
+// The link a cited record carries in the exchange: the turn and the source, never a path (#261, slice D).
+let askSourceLink = "garrick-ask-source:"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
 let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
@@ -274,6 +276,9 @@ struct AskTurn {
 	var failed = false
 	var afresh = false        // a wall reset came before it: the assistant started again, and what is above is on screen only
 	var running = true
+	var claims: [[String: Any]] = []    // an answer's claims, each with the ids of the records it rests on
+	var after: [String] = []            // the sentences Garrick says after them: the records incomplete, a wall
+	var sources: [[String: Any]] = []   // each record cited this turn, as ask.py checked it: path, title, dates
 }
 
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
@@ -537,7 +542,7 @@ func pngURL(_ image: NSImage, side: Int = 64) -> String? {
 	return rep.representation(using: .png, properties: [:]).map { "url(data:image/png;base64,\($0.base64EncodedString()))" }
 }
 
-final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation, NSTextViewDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 	var window: NSWindow!
 	var web: WKWebView!
 	var watcher: DispatchSourceFileSystemObject?
@@ -1842,6 +1847,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askLog.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 			askLog.autoresizingMask = [.width]
 			askLog.textContainer?.widthTracksTextView = true
+			askLog.delegate = self          // a cited record's link opens it (askOpenSource)
 			askLogBox = NSScrollView()
 			askLogBox.documentView = askLog
 			askLogBox.hasVerticalScroller = true
@@ -2014,6 +2020,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.stopped = out["stopped"] as? Bool == true
 			turn.failed = out["failed"] as? Bool == true
 			turn.afresh = out["reset"] as? String == "wall"
+			if turn.kind == "answer" {
+				turn.claims = out["claims"] as? [[String: Any]] ?? []
+				turn.after = out["after"] as? [String] ?? []
+				turn.sources = out["sources"] as? [[String: Any]] ?? []
+			}
 			self.askTurns[at] = turn
 			if turn.kind != "command" || turn.afresh { self.askExpanded = true }
 			// Stopped: nothing was done, so the question goes back in the field, to be sent again or changed.
@@ -2112,9 +2123,92 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			}
 			var reply = said
 			if turn.stopped || turn.failed { reply[.foregroundColor] = NSColor.systemOrange }
-			out.append(NSAttributedString(string: turn.reply + "\n\n", attributes: reply))
+			if turn.claims.isEmpty {
+				out.append(NSAttributedString(string: turn.reply + "\n\n", attributes: reply))
+			} else {
+				out.append(askCited(turn, at: i, said: reply, aside: aside))
+			}
 		}
 		return out
+	}
+
+	// An answer with its claims: each claim, then the number of each record it rests on as a
+	// link; the sentences Garrick adds; then the records cited, each with when it happened and
+	// when it was filed. The links name the turn and the source, and only askOpenSource opens one.
+	func askCited(_ turn: AskTurn, at i: Int, said: [NSAttributedString.Key: Any], aside: [NSAttributedString.Key: Any]) -> NSAttributedString {
+		let out = NSMutableAttributedString()
+		let ids = turn.sources.map { $0["id"] as? String ?? "" }
+		func link(_ text: String, _ n: Int) -> NSAttributedString {
+			var a = aside
+			a[.link] = URL(string: askSourceLink + "\(i)-\(n)")
+			return NSAttributedString(string: text, attributes: a)
+		}
+		var first = true
+		for claim in turn.claims {
+			guard let text = claim["text"] as? String, !text.isEmpty else { continue }
+			out.append(NSAttributedString(string: (first ? "" : " ") + text, attributes: said))
+			first = false
+			for id in claim["ids"] as? [String] ?? [] {
+				guard let n = ids.firstIndex(of: id) else { continue }
+				out.append(NSAttributedString(string: " ", attributes: said))
+				out.append(link("[\(n + 1)]", n))
+			}
+		}
+		for sentence in turn.after {
+			out.append(NSAttributedString(string: (first ? "" : " ") + sentence, attributes: said))
+			first = false
+		}
+		out.append(NSAttributedString(string: "\n", attributes: said))
+		for (n, s) in turn.sources.enumerated() {
+			let path = s["path"] as? String ?? ""
+			let title = s["title"] as? String ?? ""
+			out.append(NSAttributedString(string: "[\(n + 1)] ", attributes: aside))
+			out.append(link(title.isEmpty ? (path as NSString).lastPathComponent : title, n))
+			var when: [String] = []
+			if let d = s["date"] as? String, !d.isEmpty { when.append(askDay(d)) }
+			if let d = s["imported"] as? String, !d.isEmpty { when.append("filed " + askDay(d)) }
+			out.append(NSAttributedString(string: (when.isEmpty ? "" : " · " + when.joined(separator: " · ")) + "\n", attributes: aside))
+		}
+		out.append(NSAttributedString(string: "\n", attributes: said))
+		return out
+	}
+
+	// A date as ask.py gives it, YYYY-MM-DD, said the way this Mac writes dates; a month or a year as it stands.
+	func askDay(_ iso: String) -> String {
+		let f = DateFormatter()
+		f.locale = Locale(identifier: "en_US_POSIX")
+		f.dateFormat = "yyyy-MM-dd"
+		guard iso.count == 10, let d = f.date(from: iso) else { return iso }
+		return DateFormatter.localizedString(from: d, dateStyle: .medium, timeStyle: .none)
+	}
+
+	// A link in the exchange: the source it names, looked up in the turn that holds it.
+	func textView(_ view: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+		guard view === askLog else { return false }
+		let said = (link as? URL)?.absoluteString ?? link as? String ?? ""
+		guard said.hasPrefix(askSourceLink) else { return false }
+		let n = said.dropFirst(askSourceLink.count).split(separator: "-").compactMap { Int($0) }
+		guard n.count == 2, n[0] < askTurns.count, n[1] < askTurns[n[0]].sources.count else { return true }
+		askOpenSource(askTurns[n[0]].sources[n[1]])
+		return true
+	}
+
+	// A cited record, opened as the app opens it anywhere else: a thread's note as its row
+	// opens it, through run() and the default Settings picks; any other record in the app
+	// macOS opens it in. Only a file inside this workspace that is still there.
+	func askOpenSource(_ source: [String: Any]) {
+		guard let rel = source["path"] as? String, !rel.isEmpty, !rel.hasPrefix("/") else { return }
+		let file = workspace.appendingPathComponent(rel).standardizedFileURL
+		let root = workspace.standardizedFileURL.path
+		guard file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
+			return toast("That record is not in this workspace any more.")
+		}
+		if var place = source["place"] as? [String: Any] {
+			place["u"] = file.absoluteString
+			let offered = acts(place)
+			if let a = offered.first(where: { $0["d"] as? Bool == true }) ?? offered.first { return run(a) }
+		}
+		run(["k": "note", "u": file.absoluteString])
 	}
 
 	// The field grows with what is typed, up to five lines; the window keeps its top edge where it is.

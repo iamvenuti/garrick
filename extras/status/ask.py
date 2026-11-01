@@ -59,8 +59,10 @@ the server points it at the connection for that request only.
 **Stop is said on the same connection**, as the line `{"stop": true}`. While a Claude
 turn waits on the session, the server listens to the connection too, and on
 STOP ends the session process: `claude -p` documents no way to interrupt a
-turn in stream-json mode, so the conversation goes with it, and the next
-request starts a fresh session, told the whole list. The final line then
+turn in stream-json mode, so the conversation goes with it. The other
+session is stopped too, and everything both were told is cleared, as at a
+wall: the next request starts a new conversation in fresh sessions, told
+the whole list. The final line then
 says `"stopped": true`, and nothing the session proposed has run, because
 it had proposed nothing yet. A client that leaves is not a Stop: the turn
 runs on, as before. `call()` sends STOP when it is interrupted (Ctrl-C, or
@@ -136,11 +138,17 @@ plain reply that answers need Claude.
 **The wall reset.** Asker.admit() is the only way a record reaches a
 prompt, and it adds the parties of what it admits to Asker.seen: a meeting
 its `parties:`, a project or a thread its hub's `party:`, Knowledge and the
-docs none. Before a request is sent, and again before anything is read, a
-party walled from one in `seen` (any party at all, for a question across
-every zone) stops both sessions and clears everything they were told: the
-results, the questions waiting for a yes, `seen`, the records admitted, and
-which process was given the list. The new processes get the new request
+docs none; the parties a request names are added too, since the answer
+session is sent the request. Asker.heard is the same for the command
+session, which is sent every request with its `<names>`: the parties each
+request names, and those of each place one of its actions named. Each
+set is kept for one process, and goes when that process ends or another
+takes its place, whichever session it is. Before a request is sent, and again
+before anything is read, a party walled from one in `seen` or `heard` (any
+party at all, for a question across every zone) stops both sessions and
+clears everything they were told: the results, the questions waiting for a
+yes, `seen`, `heard`, the records admitted, and which process was given
+the list. The new processes get the new request
 only, and the reply carries `"reset": "wall"`. A question across every zone
 reads within one group of parties no wall divides; when a wall held records
 back, the answer ends with the rules' sentence for it, word for word, and
@@ -840,8 +848,10 @@ class Asker:
         self.answers = None         # the second session, which answers from records: started on the first question
         self.answer_sent = None     # its `sent` and `told`, as above
         self.answer_told = None
-        self.seen = set()           # the parties whose records the answer process holds (admit())
+        self.seen = set()           # the parties the answer process holds: its records' (admit()), its requests'
         self.seen_for = None        # the `started` of the process `seen` describes
+        self.heard = set()          # the parties the command process has been told of: requests' names, actions' places
+        self.heard_for = None       # the `started` of the process `heard` describes
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
@@ -893,28 +903,36 @@ class Asker:
         turns = []
         try:
             try:
-                text, usage = self.session.turn("\n".join(parts), record=False)
-            finally:
-                turns.append(getattr(self.session, "last", None))
-            self.sent, self.told = sent, self.session.started
-            find = wanted(text)
-            if find is not None:
-                out, again = self.answer(heard, find, named, names, today, turns, usage)
-                reset = reset or again
-            else:
-                bill(turns)
-                turns = []
-                say, do = parse(text)
-                if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
-                    # It cannot know what is open; the brief says so, and this holds it to that once more.
-                    # Part of a request already counted: never refused by the cap mid-request (#282).
-                    text, usage = self.session.turn("<correction>You cannot know what is open. Send the open action "
-                                                    "for the request above; never answer \"already open\".</correction>",
-                                                    cap=False)
+                try:
+                    text, usage = self.session.turn("\n".join(parts), record=False)
+                finally:
+                    turns.append(getattr(self.session, "last", None))
+                    self.hear(named.parties)            # whatever became of the turn, the process was sent it
+                self.sent, self.told = sent, self.session.started
+                find = wanted(text)
+                if find is not None:
+                    out, again = self.answer(heard, find, named, names, today, turns, usage)
+                    reset = reset or again
+                else:
+                    bill(turns)
+                    turns = []
                     say, do = parse(text)
-                out = self.carry_out(say, do, names, usage)
-        finally:
-            bill(turns)
+                    if not do and re.search(r"\balready open", say, re.I) and self.session.remembers:
+                        # It cannot know what is open; the brief says so, and this holds it to that once more.
+                        # Part of a request already counted: never refused by the cap mid-request (#282).
+                        text, usage = self.session.turn("<correction>You cannot know what is open. Send the open "
+                                                        "action for the request above; never answer \"already "
+                                                        "open\".</correction>", cap=False)
+                        say, do = parse(text)
+                    out = self.carry_out(say, do, names, usage)
+            finally:
+                bill(turns)
+        except Stopped:
+            # Stop ends the process it was heard in; the other goes too, and
+            # everything both were told, so the next request starts a new
+            # conversation, as STOPPED says.
+            self.stop()
+            raise
         if reset:
             out["reset"] = "wall"
         return out
@@ -958,6 +976,7 @@ class Asker:
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>",
                  "<request>\n%s\n</request>" % request[-MAX_REQUEST:],
                  self.admit(records, {p for r in records for p in r["parties"]})]
+        self.seen |= named.parties                  # it is sent the request too, and so the names in it
         self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
         try:
             text, more = self.answers.turn("\n".join(parts), cap=False, record=False)
@@ -997,42 +1016,61 @@ class Asker:
         return "\n".join(rows)
 
     def holding(self) -> set:
-        """The parties whose records the answer process holds: none once that
-        process has ended or another has taken its place."""
+        """The parties either process holds: those whose records the answer
+        process was given, and those the command process was told of. Each
+        set goes once its own process has ended or another has taken its
+        place, and only that one: the other process still holds its own."""
         s = self.answers
         if s is None or not s.alive() or s.started != self.seen_for:
             self.seen, self.passages = set(), []
-        return self.seen
+        c = self.session
+        if c is None or not c.alive() or c.started != self.heard_for:
+            self.heard = set()
+        return self.seen | self.heard
+
+    def hear(self, parties) -> None:
+        """What the command process is told of: the parties a request named,
+        or those of a place one of its actions named, kept for the process
+        that holds them. A process other than the one `heard` describes
+        knows none of it, so the set starts again with it."""
+        s = self.session
+        if s is None:
+            return
+        if s.started != self.heard_for:
+            self.heard, self.heard_for = set(), s.started
+        self.heard |= set(parties)
 
     def crosses(self, parties, every: bool = False) -> bool:
-        """Whether reading for these parties needs a fresh process first: a
-        wall between one of them and a party the answer process holds, or,
-        for a question across every zone, any party held at all."""
+        """Whether reading for these parties needs fresh processes first: a
+        wall between one of them and a party either process holds, or, for
+        a question across every zone, any party held at all."""
         held = self.holding()
         if every:
             return bool(held)
         return scope_lib().any_wall(self.ctx, parties, held, scope_lib().lib(self.ws))
 
     def reset(self) -> None:
+        """New conversation, and the wall reset: both sessions stopped and
+        everything they were told cleared, as stop() does. The command
+        session starts again at once, as `reset` always did; the answer
+        session on the next question."""
+        self.stop()
+        if self.session is not None:
+            self.session.start()
+
+    def stop(self) -> None:
         """Both sessions stopped, and everything they were told cleared: what
-        the last actions did, the questions waiting for a yes, the parties and
-        records held, a request asked about, and which process was given the
-        list, so the next is given all of it. New conversation, and the wall
-        reset. The command session starts again at once, as `reset` always
-        did; the answer session on the next question."""
+        the last actions did, the questions waiting for a yes, the parties
+        either process held and the records admitted, a request asked about,
+        and which process was given the list, so the next is given all of
+        it. A Codex session's history is what it was told, and goes too."""
         for s in (self.answers, self.session):
             if s is not None:
                 s.stop()
         self.results, self.asked, self.unclear = "", {}, None
         self.seen, self.seen_for, self.passages = set(), None, []
+        self.heard, self.heard_for = set(), None
         self.sent = self.told = self.answer_sent = self.answer_told = None
-        if self.session is not None:
-            self.session.start()
-
-    def stop(self) -> None:
-        for s in (self.answers, self.session):
-            if s is not None:
-                s.stop()
 
     def wall(self) -> str:
         """System/rules.md's sentence for a wall that held something back, as
@@ -1065,6 +1103,9 @@ class Asker:
                 done.append("Refused: %s" % e)
                 ok = False
                 continue
+            if a.get("project") is not None:        # its place goes back to the session in <last-results>
+                self.hear(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
+                                                    scope_lib().lib(self.ws)))
             if kind == "launch":
                 desk = desk_ready(self.ws) if desk is None else desk
                 if desk:
@@ -1321,8 +1362,7 @@ def serve_locked(ws: Path, path: Path) -> None:
                         break
                     else:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
-                except Stopped:
-                    asker.results, asker.asked = "", {}     # said to a process that is gone
+                except Stopped:                         # Asker.ask() has stopped both sessions
                     out = {"kind": "command", "say": STOPPED, "done": [], "launch": [], "ok": False, "stopped": True}
                 except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
                     out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}

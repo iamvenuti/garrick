@@ -195,7 +195,16 @@ class FakeSession:
     def fresh(self):
         return not self.seen
 
+    def alive(self):
+        return True
+
     def ready(self):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
         pass
 
     def turn(self, text, **kw):

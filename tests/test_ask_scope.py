@@ -453,6 +453,8 @@ class TestAnswers(AnswerCase):
     def test_nothing_found_asks_no_model(self):
         out = self.asker().ask("What did I say about the orders?")
         self.assertEqual(("answer", ask.NOTHING_FOUND), (out["kind"], out["say"]))
+        self.assertEqual(([], [], [ask.NOTHING_FOUND], False),                  # the final line's fields, all there
+                         (out["claims"], out["sources"], out["after"], out["incomplete"]))
         self.assertEqual(["haiku"], [p["model"] for p in self.procs()])
 
     def test_the_log_holds_no_request_text(self):
@@ -1265,6 +1267,12 @@ class TestCitations(AnswerCase):
                          (out["incomplete"], out["after"], out["say"]))
         out = a.ask("And Dana, about the pallet price?")
         self.assertEqual((True, [], [], ask.NOTHING_FOUND), (out["incomplete"], out["claims"], out["sources"], out["say"]))
+
+    def test_three_claims_at_most(self):
+        self.sonnet(["pallet quote", cites(("One.", []), ("Two.", []), ("Three.", []), ("Four.", ["r1"]))])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual(("One. Two. Three.", ["One.", "Two.", "Three."], []),
+                         (out["say"], [c["text"] for c in out["claims"]], out["sources"]))
 
     def test_an_answer_with_nothing_in_it_says_nothing_was_found(self):
         a = self.asker()

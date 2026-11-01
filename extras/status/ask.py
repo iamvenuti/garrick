@@ -259,6 +259,7 @@ INCOMPLETE = "The records hold only part of the answer."     # said for the answ
 # Said in place of an answer that looks like the claims format but is not one object that parses:
 # its raw text may hold an id, a path or a title the citations would have refused.
 UNREADABLE = "The answer came back in a form Garrick could not read, so none of it is shown."
+MOST_CLAIMS = 3                 # claims an answer says, as ask-answer-brief.md asks
 
 
 class Bad(Exception):
@@ -521,6 +522,7 @@ def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
         cite = c.get("cite") if isinstance(c.get("cite"), list) else []
         ids = [i for i in dict.fromkeys(x for x in cite if isinstance(x, str)) if i in allowed]
         claims.append({"text": " ".join(c["text"].split()), "ids": ids})
+    claims = claims[:MOST_CLAIMS]               # the brief's three at most; the rest are neither said nor cited
     say = obj.get("say") if isinstance(obj.get("say"), str) and not claims else ""
     return claims, say.strip(), obj.get("incomplete") is True
 
@@ -1030,7 +1032,9 @@ class Asker:
             request = request[asked:]               # the fresh session gets the new request alone, never the one asked about (#294)
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
-            return reply(self.wall() if back else NOTHING_FOUND, "answer"), reset
+            out = reply(self.wall() if back else NOTHING_FOUND, "answer")
+            out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
+            return out, reset
         if self.answers is None:
             self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))

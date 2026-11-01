@@ -2992,6 +2992,39 @@ class TestApp(unittest.TestCase):
         self.assertIn("func takeAway()", swift)                                # neither icon nor panel: the window comes back
         self.assertIn("edgePanel == nil && statusItem == nil }", swift)
 
+    def test_the_inbox_row_is_a_status_line_empty_and_a_button_otherwise(self):
+        """#311: empty, "Inbox empty", with nothing to run, in the panel and the
+        menu; waiting, "Process the Inbox · N waiting", a button that closes the
+        panel and opens assistant()'s app; with no assistant on, it says so."""
+        swift = (self.APP / "Garrick.swift").read_text()
+        inbox = swift[swift.index("	func inbox() -> InboxRow? {"):]
+        inbox = inbox[:inbox.index("\n	}\n")]
+        self.assertIn('guard n > 0 else { return InboxRow(title: "Inbox empty", waiting: 0, places: "", act: nil, why: "") }', inbox)
+        self.assertIn('+ " · \\(n) waiting"', inbox)
+        self.assertIn("guard let app = assistant() else {", inbox)
+        self.assertIn("act: nil,", inbox[inbox.index("guard let app = assistant() else {"):])     # none on: no action
+        self.assertIn("Switch on Claude, Codex or cmux", inbox)
+        line = swift[swift.index("struct PanelInboxLine: View {"):]
+        line = line[:line.index("\n}\n")]
+        self.assertIn("if let run = inbox.run {", line)
+        self.assertIn("Button {", line)                                       # a button, not a tap gesture
+        self.assertNotIn("onTapGesture", line)
+        self.assertIn("perform(run)", line)                                   # model.perform: the panel closes, then it opens
+        self.assertIn("NSCursor.pointingHand.push()", line)
+        self.assertIn("hover ? Color.primary.opacity(0.09) : .clear", line)
+        self.assertIn("} else {\n\t\t\tline\n\t\t}", line)                   # empty: the line alone, no hover, no action
+        self.assertIn(".foregroundColor(inbox.run == nil ? .secondary : .primary)", line)
+        self.assertIn("PanelInboxLine(inbox: inbox, perform: model.perform)", swift)
+        item = swift[swift.index("	func inboxItem() -> NSMenuItem? {"):]
+        item = item[:item.index("\n	}\n")]
+        self.assertIn("action: row.act == nil ? nil : #selector(processInbox(_:))", item)   # the menu's row alike
+        self.assertIn("item.isEnabled = row.act != nil", item)
+        opened = swift[swift.index("	func openInbox(_ act: [String: String]) {"):]
+        opened = opened[:opened.index("\n	}\n")]
+        self.assertIn("toast(", opened)                                       # a click that cannot launch says so
+        self.assertIn("self.openInbox(act)", swift[swift.index("	func fillPanel("):])
+        self.assertIn("openInbox(act)", swift[swift.index("	@objc func processInbox(_ sender: NSMenuItem) {"):])
+
     def test_the_icon_menu_only_finds(self):
         """#310: the menu's field finds, takes the keys as the menu opens, and
         never asks; asking is the Ask window's alone."""

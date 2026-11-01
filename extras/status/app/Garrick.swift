@@ -1755,38 +1755,71 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return assistants.contains(picked) ? picked : assistants.first
 	}
 
-	func inbox() -> (title: String, waiting: Int, act: [String: String], where: String)? {
+	// The inbox row, the menu's and the panel's alike (#311): how many wait, where, and what a
+	// click runs. Empty, it is a status line, "Inbox empty", with nothing to run. Something
+	// waiting, it opens assistant()'s app at the workspace root with "process the inbox"; with
+	// no assistant switched on, `act` is nil and `why` says so, and the row does nothing.
+	struct InboxRow {
+		let title: String
+		let waiting: Int
+		let places: String
+		let act: [String: String]?
+		let why: String
+	}
+
+	func inbox() -> InboxRow? {
 		guard let row = (menuState?["data"] as? [String: Any])?["intake"] as? [String: Any],
-		      let folder = row["f"] as? String, let phrase = row["w"] as? String, let app = assistant() else { return nil }
+		      let folder = row["f"] as? String, let phrase = row["w"] as? String else { return nil }
+		let n = row["c"] as? Int ?? 0
+		guard n > 0 else { return InboxRow(title: "Inbox empty", waiting: 0, places: "", act: nil, why: "") }
 		// Where they wait, as "Meetings 1 · Work 4": a page built before it says only how many.
 		let places = (row["b"] as? [[Any]] ?? []).compactMap { b -> String? in
 			guard b.count == 2, let name = b[0] as? String, let n = b[1] as? Int else { return nil }
 			return "\(name) \(n)"
 		}
-		return (row["n"] as? String ?? "Process the Inbox", row["c"] as? Int ?? 0, ["k": app, "f": folder, "w": phrase], places.joined(separator: " · "))
+		let title = (row["n"] as? String ?? "Process the Inbox") + " · \(n) waiting"
+		guard let app = assistant() else {
+			return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: nil,
+			                why: "Switch on Claude, Codex or cmux in Settings › Opening a thread to process it from here")
+		}
+		let said = app == "cmux" && deskReady()
+			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
+			: "Opens \(label(["k": app]).replacingOccurrences(of: "Open in ", with: "")) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		return InboxRow(title: title, waiting: n, places: places.joined(separator: " · "), act: ["k": app, "f": folder, "w": phrase], why: said)
+	}
+
+	// The inbox's launch, from the menu or the panel: launch() says what went wrong in a toast,
+	// and anything it could not open without saying so is said here, so a click is never silent.
+	func openInbox(_ act: [String: String]) {
+		guard let k = act["k"], let f = act["f"] else { return toast("Nothing to open the inbox with.") }
+		if !launch(k, f, phrase: act["w"] ?? ""), !["claude", "codex", "cmux", "finder"].contains(k) {
+			toast("Garrick cannot open \(k) on the inbox.")
+		}
 	}
 
 	func inboxItem() -> NSMenuItem? {
-		guard let row = inbox(), let app = row.act["k"], let phrase = row.act["w"] else { return nil }
-		let title = row.title, n = row.waiting, act = row.act
-		let item = NSMenuItem(title: title, action: #selector(processInbox(_:)), keyEquivalent: "")
+		guard let row = inbox() else { return nil }
+		let item = NSMenuItem(title: row.title, action: row.act == nil ? nil : #selector(processInbox(_:)), keyEquivalent: "")
+		item.identifier = NSUserInterfaceItemIdentifier("inbox")
 		item.target = self
-		item.representedObject = act
-		let text = NSMutableAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-		text.append(NSAttributedString(string: "  " + (n == 0 ? "empty" : "\(n) waiting"),
-		                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		item.representedObject = row.act
+		item.isEnabled = row.act != nil
+		let text = NSMutableAttributedString(string: row.title, attributes: [.font: NSFont.menuFont(ofSize: 0),
+			.foregroundColor: row.act == nil ? NSColor.secondaryLabelColor : NSColor.labelColor])
+		if row.act == nil && row.waiting > 0 {
+			text.append(NSAttributedString(string: "  switch on an assistant in Settings",
+			                               attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.secondaryLabelColor]))
+		}
 		item.attributedTitle = text
 		show(item, symbol("tray.and.arrow.down"))
-		item.toolTip = app == "cmux" && deskReady()
-			? "Opens a cmux tab at the workspace root that starts on \u{201C}\(phrase)\u{201D}"
-			: "Opens \(label(["k": app])) at the workspace root with \u{201C}\(phrase)\u{201D}"
+		item.toolTip = row.why.isEmpty ? nil : row.why
 		return item
 	}
 
 	@objc func processInbox(_ sender: NSMenuItem) {
-		guard let r = sender.representedObject as? [String: String], let k = r["k"], let f = r["f"] else { return }
+		guard let act = sender.representedObject as? [String: String] else { return }
 		if checking { return heard.append("menu:inbox") }
-		launch(k, f, phrase: r["w"] ?? "")
+		openInbox(act)
 	}
 
 	// MARK: catch up (#27)
@@ -1804,12 +1837,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
 		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
 		reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })
-		m.inbox = inbox().map { title, n, act, places in
-			PanelInbox(title: title, note: n == 0 ? "empty" : "\(n) waiting", places: places) { [weak self] in
-				guard let self, let k = act["k"], let f = act["f"] else { return }
-				if checking { return self.heard.append("panel:inbox") }
-				self.launch(k, f, phrase: act["w"] ?? "")
-			}
+		m.inbox = inbox().map { row in
+			PanelInbox(title: row.title, places: row.places, why: row.why, run: row.act.map { act in
+				{ [weak self] in
+					guard let self else { return }
+					if checking { return self.heard.append("panel:inbox") }
+					self.openInbox(act)
+				}
+			})
 		}
 		m.awakeLabel = "Keep Awake" + awakeState()
 		m.awakeHeld = !held.isEmpty
@@ -2726,8 +2761,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					let threads = m.items.flatMap { $0.submenu?.items ?? [] }.filter { $0.view is RowView }.count
 					print("menu: \(rows.count) projects, \(threads) threads in \(self.shownZones().count) zone(s)"
 					      + (m.items.first?.view is MenuField ? ", under its field" : ", no field"))
-					if let inbox = m.items.first(where: { $0.action == #selector(self.processInbox(_:)) }) {
-						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "?")")
+					if let inbox = m.items.first(where: { $0.identifier?.rawValue == "inbox" }) {
+						print("inbox: \(inbox.attributedTitle?.string ?? inbox.title), via \((inbox.representedObject as? [String: String])?["k"] ?? "nothing")")
 					} else {
 						print("inbox: none")
 					}
@@ -2897,11 +2932,65 @@ struct PanelZone: Identifiable {
 	let rows: [PanelRow]
 }
 
+// The inbox row (#311): a button only when something waits and an assistant can take it.
 struct PanelInbox {
 	let title: String
-	let note: String
 	let places: String
-	let run: () -> Void
+	let why: String              // the tooltip: what a click opens, or why it opens nothing
+	let run: (() -> Void)?
+}
+
+// Empty, a status line in secondary text. Something waiting, a button: highlighted under the
+// pointer, with the pointing hand, closing the panel and opening the assistant on a click. A
+// Button rather than a tap gesture, so the click reaches it in a panel that never activates the app.
+struct PanelInboxLine: View {
+	let inbox: PanelInbox
+	let perform: (@escaping () -> Void) -> Void
+	@State private var hover = false
+
+	var line: some View {
+		HStack(alignment: .firstTextBaseline, spacing: 6) {
+			Image(systemName: "tray.and.arrow.down").frame(width: 12)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(inbox.title)
+					.font(.system(size: 13, weight: inbox.run == nil ? .regular : .medium))
+					.foregroundColor(inbox.run == nil ? .secondary : .primary)
+				if !inbox.places.isEmpty {
+					Text(inbox.places).font(.system(size: 11)).foregroundColor(.secondary)
+				}
+				if inbox.run == nil && !inbox.why.isEmpty {
+					Text(inbox.why).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+				}
+			}
+			Spacer()
+		}
+		.padding(.horizontal, 8).padding(.vertical, 5)
+		.foregroundColor(inbox.run == nil ? .secondary : .primary)
+	}
+
+	var body: some View {
+		if let run = inbox.run {
+			Button {
+				pointing(false)
+				perform(run)
+			} label: {
+				line.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.background(RoundedRectangle(cornerRadius: 6).fill(hover ? Color.primary.opacity(0.09) : .clear))
+			.onHover { pointing($0) }
+			.help(inbox.why)
+		} else {
+			line
+		}
+	}
+
+	// The pointing hand while over the button, pushed and popped once each.
+	func pointing(_ on: Bool) {
+		guard on != hover else { return }
+		hover = on
+		if on { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+	}
 }
 
 final class PanelModel: ObservableObject {
@@ -3049,22 +3138,7 @@ struct PanelView: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 1) {
 					if let inbox = model.inbox, query.isEmpty {
-						HStack(alignment: .firstTextBaseline, spacing: 6) {
-							Image(systemName: "tray.and.arrow.down").frame(width: 12)
-							VStack(alignment: .leading, spacing: 2) {
-								HStack(spacing: 6) {
-									Text(inbox.title).font(.system(size: 13, weight: .medium))
-									Text(inbox.note).font(.system(size: 12)).foregroundColor(.secondary)
-								}
-								if !inbox.places.isEmpty {
-									Text(inbox.places).font(.system(size: 11)).foregroundColor(.secondary)
-								}
-							}
-							Spacer()
-						}
-						.padding(.horizontal, 8).padding(.vertical, 5)
-						.contentShape(Rectangle())
-						.onTapGesture { model.perform(inbox.run) }
+						PanelInboxLine(inbox: inbox, perform: model.perform)
 						Divider().padding(.vertical, 4)
 					}
 					ForEach(model.zones) { zone in

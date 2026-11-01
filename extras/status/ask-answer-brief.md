@@ -33,6 +33,11 @@ Reply with one JSON object and nothing else, no code fence:
 {"claims": [{"text": "<one sentence>", "cite": ["r1", ...]}, ...],
  "incomplete": false}
 
+When you cannot answer without asking the user something, for example
+which of two meetings they mean, make the question the last claim, citing
+nothing, and add `"asks": true`: Garrick then keeps this conversation until
+the answer comes.
+
 Each claim is one sentence of the answer, and "cite" names the ids of the
 records it rests on. Garrick shows each record cited, with its dates and a
 link to open it, so cite every record a claim draws on and no other.

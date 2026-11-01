@@ -514,6 +514,16 @@ def first_object(text: str) -> Optional[dict]:
     return obj if isinstance(obj, dict) else None
 
 
+def asks_back(text: str, said_: str, do: list) -> bool:
+    """Whether a reply is a question for the user, which a renewal waits on:
+    it says so (`"asks": true`, as both briefs ask), or, failing that, it
+    does nothing and what it says ends in a question mark."""
+    obj = first_object(text)
+    if obj is not None and obj.get("asks") is True:
+        return True
+    return not do and said_.rstrip().endswith("?")
+
+
 def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
     """An answer's claims, each with the ids of the records it rests on, what
     an answer with no claims says, and whether the records hold only part of
@@ -939,6 +949,7 @@ class Asker:
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
         self.afresh = False         # a wall reset ran during the request under way, whatever ends it
+        self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
         self.progress = lambda text: None
@@ -947,6 +958,7 @@ class Asker:
         self.afresh = False
         if not flag_on(self.ws):
             return off()
+        self.asking = False                         # this request answers it, or asks something else
         if self.session is None:
             self.session = session_for(self.ws)
         sc = scope_lib()
@@ -1021,6 +1033,7 @@ class Asker:
                                                         "action for the request above; never answer \"already "
                                                         "open\".</correction>", cap=False)
                         say, do = parse(text)
+                    self.asking = asks_back(text, say, do)
                     out = self.carry_out(say, do, names, usage)
             finally:
                 bill(turns)
@@ -1096,6 +1109,7 @@ class Asker:
         # trace in the reply (#261, slice D).
         this_turn = {p["id"]: p for p in self.passages[before:]}
         claims, rest, incomplete = cited(text, this_turn)
+        self.asking = asks_back(text, " ".join([c["text"] for c in claims] + [rest]), [])
         after = []
         if not claims and not rest:                 # no answer at all, incomplete or not
             after.append(NOTHING_FOUND)
@@ -1214,7 +1228,7 @@ class Asker:
         for s in (self.answers, self.session):
             if s is not None:
                 s.stop()
-        self.results, self.asked, self.unclear = "", {}, None
+        self.results, self.asked, self.unclear, self.asking = "", {}, None, False
         self.seen, self.seen_for, self.passages = set(), None, []
         self.heard, self.heard_for = set(), None
         self.sent = self.told = self.answer_sent = self.answer_told = None
@@ -1223,9 +1237,10 @@ class Asker:
     def due(self) -> bool:
         """Whether a session is full enough to renew (#261, slice E): a warm
         one that measured RENEW_AT of its tier's input at its last turn. Never
-        while a question waits for its answer, a name asked about or an
-        action asked to be done again: the renewal waits for the answer."""
-        if self.unclear is not None or self.asked:
+        while a question waits for its answer, a name asked about, an action
+        asked to be done again, or a session's own question back (asks_back()):
+        the renewal waits for the answer."""
+        if self.unclear is not None or self.asked or self.asking:
             return False
         return any(getattr(s, "remembers", False) and getattr(s, "full", lambda: False)()
                    for s in (self.session, self.answers) if s is not None)

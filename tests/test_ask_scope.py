@@ -1151,6 +1151,30 @@ class TestRenewal(AnswerCase):
             a.asked = {"an action": "asked to be done again"}
             self.assertFalse(a.due())
 
+    def test_a_session_asking_back_holds_the_renewal(self):
+        """A question back from either session, said with `"asks": true` or,
+        failing that, a reply that does nothing and ends in a question mark:
+        the answer goes to the process that asked."""
+        asks = lambda **o: json.dumps(o)                                    # noqa: E731
+        self.answers.write_text(json.dumps({
+            "haiku": [["the launch one", asks(say="Which do you mean, Acme Review or Birch Entry?", do=[])],
+                      ["the market one", asks(say="Say which project you mean.", do=[], asks=True)],
+                      ["Which Dana meeting", find("meetings", ["pallet"])],
+                      ["Dana, the pallet meeting", find("meetings", ["pallet"])]] + HAIKU,
+            "sonnet": [["Which Dana meeting", asks(claims=[{"text": "Do you mean the kick-off or a later call?",
+                                                            "cite": []}])],
+                       ["Dana, the pallet meeting", asks(claims=[{"text": "Dana spoke at more than one meeting.",
+                                                                  "cite": []}], asks=True)]]}))
+        a = self.asker()
+        with self.small():
+            for question, kind in (("open the launch one", "command"), ("open the market one", "command"),
+                                   ("Which Dana meeting was the pallet quote in?", "answer"),
+                                   ("Dana, the pallet meeting?", "answer")):
+                self.assertEqual(kind, a.ask(question)["kind"], question)
+                self.assertFalse(a.due(), question)                         # full, and asked back
+                a.ask("what's open")
+                self.assertTrue(a.due(), question)                          # answered: due again
+
 
 class TestCodex(base.AskCase):
     """Question 13: with Codex, commands as before, and a question gets a plain reply."""

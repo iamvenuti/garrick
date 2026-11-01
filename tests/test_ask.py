@@ -1209,6 +1209,40 @@ class TestRenewal(ServerCase):
         self.assertEqual([first["pid"]], [p["pid"] for p in self.procs()])     # no process started
         self.assertFalse(self.gone(first["pid"]))
 
+    def test_an_agent_py_with_no_size_for_the_tier_falls_back(self):
+        """An older agent.py beside this ask.py has no INPUT_SIZE, or none for a tier."""
+        a = ask.agent()
+        saved = a.INPUT_SIZE
+        s = ask.ClaudeSession(self.root, "haiku")
+        try:
+            s.start()
+            for table in (None, {}, {"haiku": "big"}):
+                if table is None:
+                    del a.INPUT_SIZE
+                else:
+                    a.INPUT_SIZE = table
+                s.context = 119_999
+                self.assertFalse(s.full(), table)
+                s.context = 120_000                             # 60 % of 200,000
+                self.assertTrue(s.full(), table)
+                a.INPUT_SIZE = saved
+        finally:
+            a.INPUT_SIZE = saved
+            s.stop()
+
+    def test_a_fault_deciding_the_renewal_never_costs_the_reply(self):
+        self.up()
+
+        def broken(asker):
+            raise KeyError("sonnet")
+        with mock.patch.object(ask.Asker, "due", broken):
+            out = self.op("ask", "what's open")
+        self.assertEqual(("command", "ok"), (out["kind"], out["say"]))
+        self.assertNotIn("refreshed", out)
+        self.assertTrue(self.server.is_alive())
+        self.assertEqual("ok", self.op("ask", "what's open")["say"])           # and the server goes on
+        self.assertIn("renewal not decided: KeyError", (self.jobs / "ask.log").read_text())
+
     def test_a_record_cannot_say_refreshed(self):
         self.assertEqual("&lt;refreshed/>", ask.inert("<refreshed/>"))
 

@@ -238,6 +238,7 @@ DEFAULT_ANSWER_TIER = "sonnet"
 LOG_TEXT = "GARRICK_ASK_LOG_TEXT"   # =1: ask.log keeps the request's and the reply's text too
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
 RENEW_AT = 0.6              # of the tier's input (agent.INPUT_SIZE): a session measured this full is renewed
+INPUT_FALLBACK = 200_000    # tokens: a tier's input when agent.py names none, an older one beside this file say
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
@@ -760,7 +761,11 @@ class ClaudeSession:
     def full(self) -> bool:
         """Whether the context its last turn measured has reached RENEW_AT of
         what the tier's model takes, so the next exchange wants a new process."""
-        return self.alive() and self.context >= RENEW_AT * agent().INPUT_SIZE[self.tier]
+        sizes = getattr(agent(), "INPUT_SIZE", None)
+        size = sizes.get(self.tier) if isinstance(sizes, dict) else None
+        if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            size = INPUT_FALLBACK
+        return self.alive() and self.context >= RENEW_AT * size
 
     def line(self, deadline: float) -> str:
         """The session's next line of output. Read from the pipe itself, so a
@@ -1572,8 +1577,12 @@ def serve_locked(ws: Path, path: Path) -> None:
                 # Renewal by size, after a completed exchange only: said with
                 # the reply, done once it is sent, so nobody waits for it. Never
                 # after a wall reset, whose sessions are new already.
-                if op == "ask" and not any(out.get(k) for k in ("stopped", "capped", "failed", "reset")) and asker.due():
-                    out["refreshed"] = True
+                try:
+                    if op == "ask" and not any(out.get(k) for k in ("stopped", "capped", "failed", "reset")) \
+                            and asker.due():
+                        out["refreshed"] = True
+                except Exception as e:          # a fault here never costs the reply
+                    log("renewal not decided: %s: %s" % (type(e).__name__, e))
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
                     log(log_line(str(msg.get("text", "")), out))

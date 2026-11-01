@@ -403,6 +403,14 @@ class RunTest(FakeAssistants):
         self.assertIsNone(line["turns"])
         self.assertIsNone(line["cost_usd"])
 
+    def test_a_codex_call_without_a_transcript_writes_none(self):
+        """#293: Ask's calls keep no transcript unless asked; a job's default is unchanged."""
+        os.environ["GARRICK_HARNESS"] = "codex"
+        code, text = agent.run("haiku", "Asked.", job=agent.ASK, transcript=False)
+        self.assertEqual((0, "Codex answer\nSWEEP_COMPLETE\n"), (code, text))
+        self.assertEqual(["ledger.jsonl"], sorted(p.name for p in self.jobs.iterdir()))
+        self.assertEqual("ask", self.ledger()[-1]["job"])
+
     def test_no_deny_profile_no_call(self):
         broken = self.tmp / "headless-settings.json"
         broken.write_text('{"permissions": {"deny": ["WebFetch",]}}')     # a trailing comma

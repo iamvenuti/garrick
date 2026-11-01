@@ -1328,7 +1328,32 @@ class TestTheAskWindow(unittest.TestCase):
         for said in ('"Preparing the assistant…"', '"Waiting for the assistant to start…"', '"Working…"', '"Stopping…"'):
             self.assertIn(said, drawn)
         self.assertIn("askStopButton.isHidden = !running", drawn)
-        self.assertIn("askNewButton.isEnabled = !running", drawn)
+        self.assertIn('askNewButton.title = running ? "Stop and start new" : "New conversation"', drawn)
+        self.assertIn("askNewButton.isEnabled = askRunning?.stopped != true", drawn)   # until the stop is under way
+
+    def test_new_conversation_during_a_request_stops_it_and_starts_new(self):
+        """#261, slice E: idle, New conversation resets now; during a
+        request it is Stop and start new, and the reset follows the stop."""
+        new = self.body("askNew")
+        self.assertLess(new.index("if askRunning != nil {"), new.index("askTurns.removeAll()"))
+        running = new[new.index("if askRunning != nil {"):new.index("askTurns.removeAll()")]
+        self.assertIn("askNewAfterStop = true", running)
+        self.assertIn("return askStop(nil)", running)
+        self.assertNotIn("reset", running)                              # nothing reset while the request runs
+        self.assertIn('askCall(["reset"])', new)
+        submit = self.body("askSubmit")
+        after = submit[submit.index("self.askRunning = nil"):]
+        self.assertLess(after.index("if self.askNewAfterStop {"), after.index("var turn = self.askTurns[at]"))
+        self.assertIn("return self.askNew(nil)", after[:after.index("var turn = self.askTurns[at]")])
+
+    def test_a_renewal_is_said_under_its_turn(self):
+        self.assertIn('let askRefreshed = "Conversation refreshed"', self.swift)
+        self.assertIn('turn.refreshed = out["refreshed"] as? Bool == true', self.body("askSubmit"))
+        shown = self.body("askTranscript")
+        self.assertIn("if turn.refreshed {", shown)
+        self.assertLess(shown.index("askCited("), shown.index("askRefreshed"))     # after the reply it came with
+        self.assertIn("askRefreshed", self.body("askRender"))                    # and in the compact window too
+        self.assertNotIn("askTurns", self.between("let askRefreshed", "\n"))
 
 
 class TestDesk(AskCase):

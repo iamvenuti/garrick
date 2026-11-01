@@ -163,6 +163,9 @@ let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
 // Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
 // exchange stays on screen, and nothing of it reaches the new session.
 let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
+// Under the turn after which ask.py renewed the session by its size (#261, slice E, "refreshed": true):
+// the answer stays on screen, and the assistant no longer holds what came before.
+let askRefreshed = "Conversation refreshed"
 // The link a cited record carries in the exchange: the turn and the source, never a path (#261, slice D).
 let askSourceLink = "garrick-ask-source:"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
@@ -275,6 +278,7 @@ struct AskTurn {
 	var stopped = false
 	var failed = false
 	var afresh = false        // a wall reset came before it: the assistant started again, and what is above is on screen only
+	var refreshed = false     // the session was renewed by its size after it: the assistant holds nothing before it
 	var running = true
 	var claims: [[String: Any]] = []    // an answer's claims, each with the ids of the records it rests on
 	var after: [String] = []            // the sentences Garrick says after them: the records incomplete, a wall
@@ -593,6 +597,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askRunning: AskRequest?       // the request on its way, which Stop interrupts
 	var askExpanded = false           // grown for an answer, a question back or a wall reset; compact again on New conversation
 	var askPreparing = false          // the session starting when the window opened: a request sent now waits for it once
+	var askNewAfterStop = false       // Stop and start new: the new conversation starts once the request has stopped
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -2012,6 +2017,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askRunning = askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in
 			guard let self else { return }
 			self.askRunning = nil
+			if self.askNewAfterStop {       // Stop and start new: what the request said goes with the exchange
+				self.askNewAfterStop = false
+				return self.askNew(nil)
+			}
 			guard at < self.askTurns.count else { return self.askRender() }
 			var turn = self.askTurns[at]
 			turn.running = false
@@ -2020,6 +2029,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.stopped = out["stopped"] as? Bool == true
 			turn.failed = out["failed"] as? Bool == true
 			turn.afresh = out["reset"] as? String == "wall"
+			turn.refreshed = out["refreshed"] as? Bool == true
 			if turn.kind == "answer" {
 				turn.claims = out["claims"] as? [[String: Any]] ?? []
 				turn.after = out["after"] as? [String] ?? []
@@ -2050,9 +2060,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// New conversation: the exchange goes, and so does the session's context (`reset`). The only
-	// place, with quit, that clears it. Not while a request runs: Stop it first.
+	// place, with quit, that clears it. While a request runs the button is Stop and start new: the
+	// request is stopped, and the new conversation starts once it has (#261, slice E).
 	@objc func askNew(_ sender: Any?) {
-		guard askRunning == nil else { return }
+		if askRunning != nil {
+			askNewAfterStop = true
+			return askStop(nil)
+		}
 		askTurns.removeAll()
 		askExpanded = false
 		askField.string = ""
@@ -2091,13 +2105,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askSpinner.stopAnimation(nil)
 		}
 		// Compact: the last request stands in the empty field, and its reply under it.
-		let reply = !askExpanded && !running ? last?.reply ?? "" : ""
+		let reply = !askExpanded && !running ? (last?.reply ?? "") + (last?.refreshed == true ? "\n" + askRefreshed : "") : ""
 		askReply.stringValue = reply
 		askReply.isHidden = reply.isEmpty
 		askReply.textColor = last?.failed == true || last?.stopped == true ? .systemOrange : .secondaryLabelColor
 		askField.placeholder = askExpanded ? askHint : last?.request ?? askHint
 		askFoot.isHidden = askTurns.isEmpty
-		askNewButton.isEnabled = !running
+		askNewButton.title = running ? "Stop and start new" : "New conversation"
+		askNewButton.isEnabled = askRunning?.stopped != true
 		askFit()
 	}
 
@@ -2128,6 +2143,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			} else {
 				out.append(askCited(turn, at: i, said: reply, aside: aside))
 			}
+			if turn.refreshed { out.append(NSAttributedString(string: askRefreshed + "\n\n", attributes: aside)) }
 		}
 		return out
 	}

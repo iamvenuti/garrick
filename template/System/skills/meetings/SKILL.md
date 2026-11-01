@@ -36,6 +36,8 @@ All paths are relative to the workspace root.
 | Raw record, once landed | `Wikis/Meetings/raw/<YYMMDD-slug>.<ext>` |
 | Meeting or mail page | `Wikis/Meetings/wiki/sources/<YYMMDD-slug>.md` |
 | Person page | `Wikis/Meetings/wiki/people/<slug>.md` |
+| Entity page, one per party at most | `Wikis/Meetings/wiki/entities/<slug>.md` |
+| A person page's link to the entity page of its party | `organisation: "[[wiki/entities/<slug>]]"` in its frontmatter |
 | A question only the user can answer | `Wikis/Meetings/questions/<YYMMDD> - <slug>.md` |
 | Index | `Wikis/Meetings/wiki/index.md` |
 | Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Meetings/dormant/wiki/`, `Wikis/Meetings/archive/wiki/` |
@@ -102,6 +104,17 @@ One meeting at a time, even when several files are waiting.
    angle-bracket line with who they are and which party, in one sentence.
    Nothing learned in a meeting goes on a person page: it is read on both
    sides of every wall.
+   **The link to their organisation.** When one entity page in
+   `wiki/entities/` names the person's party (`party: acme`), the new page
+   links it in its frontmatter, `organisation: "[[wiki/entities/<slug>]]"`,
+   so the graph and a search for links to the entity page show who works
+   there. The command writes it; never write it by hand. It is identity
+   alone, like the page: the entity page's link and nothing else. It writes
+   none when no entity page names the party, when two do (`check.py` warns
+   about those two), when the page names no party or more than one, and when
+   the People table has the name under two parties a wall keeps apart: one
+   page that two hats share links neither hat's entity page. A page written
+   before the link existed gets it from the `nurture` skill, on a yes.
 5. **Land the raw file.** This is the only step that touches `raw/`, and the
    only time this file is ever touched again:
    ```sh

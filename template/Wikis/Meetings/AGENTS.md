@@ -11,6 +11,7 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
       wiki/
         sources/        one page per meeting, and one per mail
         people/         one page per person met
+        entities/       one page per organisation, at most one per party
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
@@ -75,12 +76,19 @@ A mail with a Message-ID also carries it as `source-id:`; a mail or a recording 
 title: <their name>
 type: person
 party: <tag>                 # from the Parties table; `none` for someone who belongs to no party
+organisation: "[[wiki/entities/<slug>]]"   # the entity page of that party, when there is one
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
 ```
 
 Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
+
+`organisation:` links the entity page of that party and carries nothing else; `ingest.py person` writes it, and the `meetings` skill's *Ingest a transcript*, step 4, says when there is none.
+
+## An entity page
+
+`wiki/entities/<slug>.md`, one per organisation, with `type: entity` and, when it stands for a party, `party: <tag>`. At most one entity page names a party; `check.py` warns about two.
 
 ## A question
 

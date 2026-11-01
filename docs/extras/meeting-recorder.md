@@ -24,7 +24,7 @@ To file one by hand instead, from the workspace root:
    python3 System/skills/meetings/ingest.py person --name "Theo Marsh" --party birch
    ```
 
-   It creates `Wikis/Meetings/wiki/people/theo-marsh.md` if there isn't one, and leaves an existing page alone. On a new page, replace the line in angle brackets with who they are, in a sentence. Nothing learned in the meeting goes on a person page.
+   It creates `Wikis/Meetings/wiki/people/theo-marsh.md` if there isn't one, and leaves an existing page alone. On a new page, replace the line in angle brackets with who they are, in a sentence. Nothing learned in the meeting goes on a person page. When an entity page in `Wikis/Meetings/wiki/entities/` names their party, the new page links it as `organisation:`, and nothing else.
 
 3. **Write the meeting page** as `Wikis/Meetings/wiki/sources/<slug>.md`, following the schema in `Wikis/Meetings/AGENTS.md`: title, date, zone, parties, the people pages, a link back to the raw file, then what was decided and who said what where the wording matters.
 

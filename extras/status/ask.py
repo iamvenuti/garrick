@@ -569,28 +569,41 @@ LOOKS_JSON = re.compile(r"""\{\s*["']|["'](?:claims|cite|say|incomplete|asks)["'
 
 
 # A sentence that says something did not happen, or is not in the records:
-# "there was no meeting with Acme after 3 March", "no other calls are
-# recorded", "nothing since then", "Acme didn't meet again", "the records
-# hold nothing later". Said from part of the matches, it is a fact about the
-# records given, not the records (#315). What someone said they would not
-# do ("Theo would not sign until after the board") is not one.
+# "there was no meeting with Acme after 3 March", "Acme has not been in touch
+# since April", "Dana never followed up", "that was the last time you spoke",
+# "the records end on 20 April". Said from part of the matches, it is a fact
+# about the records given, not the records (#315). What someone would not do,
+# wanted, asked or refused ("Theo would not sign until after the board") is
+# not one. No list of words is ever complete, so an answer from part of the
+# matches always says that it holds only part of the answer as well.
 _EVENTS = (r"(?:meetings?|records?|mentions?|calls?|conversations?|interactions?|contacts?|entries|entry|pages?|"
            r"notes?|updates?|news|discussions?|mails?|emails?|messages?|sessions?|visits?)")
-ABSENCE = re.compile(
-    r"\b(?:no|not\s+any|none\s+of\s+the)\s+(?:other\s+|further\s+|later\s+|newer\s+|more\s+recent\s+|new\s+|"
-    r"subsequent\s+|recorded\s+)?" + _EVENTS + r"\b"
-    r"|\bnothing\b(?:(?![.;!?]).)*?\b(?:since|after|later|newer|more\s+recent|new|further)\b"
-    r"|(?:\b(?:did\s+not|has\s+not|have\s+not|had\s+not|never)|n't)\s+(?:meet|met|spoke|speak|spoken|talk|talked|call|"
-    r"called|happen|happened|take\s+place|taken\s+place|come\s+up|came\s+up|mention|mentioned|write|wrote|written)\b"
-    r"(?:(?![.;!?]).)*?\b(?:again|since|after|later|more\s+recently|any\s+more|anymore)\b"
-    r"|\b(?:records?|pages?|notes?)\s+(?:hold|holds|show|shows|contain|contains|have|has|mention|mentions)\s+"
-    r"(?:no|nothing|none)\b", re.I)
+_NO_EVENT = re.compile(r"\b(?:no|not\s+any|none\s+of\s+the)\s+(?:other\s+|further\s+|later\s+|newer\s+|more\s+recent\s+|"
+                       r"new\s+|subsequent\s+|recorded\s+)?" + _EVENTS + r"\b", re.I)
+_NEGATION = re.compile(r"\b(?:not|never|no|nobody|nothing|none|neither|nor)\b|n't\b", re.I)
+_LATER = re.compile(r"\b(?:since|after|afterwards?|again|later|newer|any\s*more|follow(?:ed|s)?\s+up|c[ao]me\s+back|"
+                    r"in\s+touch|in\s+contact|heard\s+from|hear\s+from)\b", re.I)
+_FINAL = re.compile(r"\bthe\s+(?:last|final)\s+time\b|\b(?:records?|pages?|notes?)\s+(?:end|ends|stop|stops)\b", re.I)
+_LAST = re.compile(r"\b(?:last|latest|final|most\s+recent)\b", re.I)
+_WILL = re.compile(r"\b(?:would|wouldn't|will|won't|want|wants|wanted|ask|asks|asked|refuse|refuses|refused|agree|agrees|"
+                   r"agreed|said\s+no|says\s+no|plan|plans|planned|intend|intends|intended|prefer|prefers|preferred|wish|"
+                   r"wishes|wished|until)\b", re.I)
+_CLAUSE = re.compile(r"[.;!?]+|,\s*(?:and|but|then|so)\b|\s+(?:and|but)\s+then\b", re.I)
 
 
 def absent(text: str) -> bool:
     """Whether a claim says that something did not happen, or that nothing
-    more is recorded, which a part of the matches cannot show (#315)."""
-    return bool(ABSENCE.search(text or ""))
+    more is recorded, which a part of the matches cannot show (#315): a "no"
+    before an event ("no later meeting"), the last time or the records'
+    end, or, in one clause, a negation or "last" beside a word of time going
+    on ("since", "again", "followed up", "in touch"), unless that clause is
+    about what someone would, wanted, asked or refused to do."""
+    for clause in _CLAUSE.split(text or ""):
+        if _NO_EVENT.search(clause) or _FINAL.search(clause):
+            return True
+        if (_NEGATION.search(clause) or _LAST.search(clause)) and _LATER.search(clause) and not _WILL.search(clause):
+            return True
+    return False
 
 
 def cited(text: str, allowed: Dict[str, dict], partial: bool = False) -> Tuple[List[dict], str, bool]:
@@ -1292,8 +1305,9 @@ class Asker:
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
         if isinstance(find, dict) and isinstance(find.get("zone"), str) and find["zone"] in names \
-                and not re.search(r"(?<!\w)%s(?!\w)" % r"\s+".join(map(re.escape, find["zone"].split())), request, re.I):
-            # A zone the request never says is the session's, copied from <zone>: Garrick chooses the zone (#317).
+                and not sc.zone_named(request, find["zone"]):
+            # A zone the request never names as a zone is the session's, copied from <zone>, or a
+            # common word read as one ("the work on the pallet"): Garrick chooses the zone (#317).
             find = {k: v for k, v in find.items() if k != "zone"}
         if isinstance(find, dict) and find.get("route") == "actions":
             out = self.listed(request, find, named, names, today, asked)
@@ -1376,11 +1390,14 @@ class Asker:
         claims, rest, incomplete = cited(text, this_turn, partial=matched > len(records))
         self.asking = asks_back(text, " ".join([c["text"] for c in claims] + [rest]), [])
         after = []
-        if not claims and not rest:                 # no answer at all, incomplete or not
-            # From part of the matches, "nothing answers that" is an absence too (#315).
-            after.append(INCOMPLETE if matched > len(records) else NOTHING_FOUND)
-        elif incomplete:
+        partial = matched > len(records)
+        if not claims and not rest and not partial:  # no answer at all
+            after.append(NOTHING_FOUND)
+        elif incomplete or partial:
+            # From part of the matches every answer says so, whatever is left of it: no
+            # list of words catches every way of saying nothing happened after (#315).
             after.append(INCOMPLETE)
+            incomplete = True
         if back:
             after.append(self.wall())
         say = " ".join(s for s in [c["text"] for c in claims] + [rest] + after if s)

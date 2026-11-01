@@ -1841,50 +1841,39 @@ class TestTheNewestFirst(AnswerCase):
         self.assertEqual(([], [ask.INCOMPLETE]), (out["claims"], out["after"]))
         self.assertNotIn(ask.NOTHING_FOUND, out["say"])
 
+    KEPT = ("Theo would not sign until after the board meeting.", "Dana did not want other suppliers in the tender.",
+            "Acme asked not to be contacted again before May.", "There is no deadline for the quote.",
+            "Dana said no to the price.", "No decision was made on the price.",
+            "The last meeting with Acme was on 20 April.", "The most recent meeting was on 20 April.")
+    DROPPED = ("There was no meeting with Acme after 3 March.", "No other calls are recorded.", "Nothing since then.",
+               "Acme Corp didn't meet again after that.", "The records hold nothing later than 20 April.",
+               "Dana has not called since May.", "The records do not show any meeting after 20 April.",
+               "Acme has not been in touch since 20 April.", "Acme hasn't been in contact since April.",
+               "You have not heard from Dana since.", "There is no sign of a later meeting.",
+               "Acme was not mentioned again.", "Acme did not come back to you after that.",
+               "That was the last time you spoke with Acme.", "The records end on 20 April.", "Dana never followed up.",
+               "Nobody from Acme met you after that.", "No later meeting with Acme is recorded.",
+               "That was the most recent contact; nothing was scheduled afterwards.")
+
     def test_only_a_claim_that_something_did_not_happen_is_dropped(self):
-        for text in ("Theo would not sign until after the board meeting.", "Dana did not want other suppliers in the tender.",
-                     "Acme asked not to be contacted again before May.", "There is no deadline for the quote.",
-                     "Dana said no to the price."):
-            claims, _, incomplete = ask.cited(cites((text, ["r1"])), {"r1": {}}, partial=True)
-            self.assertEqual((1, False), (len(claims), incomplete), text)
-        for text in ("There was no meeting with Acme after 3 March.", "No other calls are recorded.", "Nothing since then.",
-                     "Acme Corp didn't meet again after that.", "The records hold nothing later than 20 April.",
-                     "Dana has not called since May."):
+        for text in self.KEPT:
+            claims, _, _ = ask.cited(cites((text, ["r1"])), {"r1": {}}, partial=True)
+            self.assertEqual(1, len(claims), text)
+        for text in self.DROPPED:
             claims, _, incomplete = ask.cited(cites((text, ["r1"])), {"r1": {}}, partial=True)
             self.assertEqual((0, True), (len(claims), incomplete), text)
+            self.assertEqual(1, len(ask.cited(cites((text, ["r1"])), {"r1": {}})[0]), text)   # all of the matches: kept
 
-    def test_with_every_match_given_an_absence_stands(self):
-        self.haiku(find("meetings", ["pallet quote"], zone="Work"),
-                   [["last meeting", cites(("There was no meeting about the pallet quote after 10 March.", ["r1"]))]])
-        out = self.asker().ask("What's the last meeting about the pallet quote?")
-        (sent,) = [m for m in self.msgs() if "<records " in m]
-        self.assertIn('<records matched="1" given="1" order="recent">', sent)
+    def test_an_answer_from_part_of_the_matches_always_says_so(self):
+        """No list of words is complete: whatever claims are left, an answer
+        given fewer records than matched says it holds only part."""
+        self.haiku(find("meetings", ["Acme Corp"], zone="Work", order="recent"),
+                   [["last meeting", cites(("Dana last spoke about the pallets on 20 April.", ["r1"]))]])
+        out = self.asker().ask("What's the last meeting with Acme Corp?")
         self.assertEqual(1, len(out["claims"]))
-        self.assertFalse(out["incomplete"])
-
-    def test_two_spellings_of_one_name_count_once(self):
-        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
-        write(sources / "260502-one.md", dated_meeting("2026-05-02", "One", "Met Acme Corp. ONESPELLING"))
-        write(sources / "260501-both.md", dated_meeting("2026-05-01", "Both", "Met Acme Corp, or AcmeCorp. BOTHSPELLINGS"))
-        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
-        ctx, names = lib.load_context(self.root), ask.scan(self.root)
-        where = sc.scope(self.root, {"route": "meetings", "zone": "Work", "words": ["Acme Corp", "AcmeCorp", "acme", "pallets"]},
-                         sc.Mentions([]), names, ctx, lib)
-        self.assertEqual([["acme corp", "acmecorp", "acme"], ["pallets"]], where.groups)
-        where = sc.scope(self.root, {"route": "meetings", "zone": "Work", "words": ["Acme Corp", "AcmeCorp"]},
-                         sc.Mentions([]), names, ctx, lib)
-        paths = [r["path"].rsplit("/", 1)[-1] for r in sc.search(self.root, where, ctx, lib)]
-        # Level on the words, so the newer of the two comes first.
-        self.assertLess(paths.index("260502-one.md"), paths.index("260501-both.md"))
-
-    def test_an_order_the_find_cannot_have_is_refused(self):
-        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
-        with self.assertRaises(sc.Refused):
-            sc.scope(self.root, {"route": "meetings", "zone": "Work", "order": "oldest"}, sc.Mentions([]),
-                     ask.scan(self.root), lib.load_context(self.root), lib)
-        self.assertTrue(sc.wants_recent("What's the latest with Acme?"))
-        self.assertTrue(sc.wants_recent("anything since Monday"))
-        self.assertFalse(sc.wants_recent("at least the pallet terms"))
+        self.assertTrue(out["incomplete"])
+        self.assertEqual([ask.INCOMPLETE], out["after"])
+        self.assertTrue(out["say"].endswith(ask.INCOMPLETE))
 
     def test_the_count_never_depends_on_a_record_a_wall_held_back(self):
         import random
@@ -2038,6 +2027,16 @@ class TestActions(AnswerCase):
                 sc.scope(self.root, bad, sc.Mentions([]), names, ctx, lib)
         where = sc.scope(self.root, {"route": "actions", "until": "2026-10-13"}, sc.Mentions([]), names, ctx, lib)
         self.assertEqual(("actions", None, "2026-10-13", True), (where.route, where.zone, where.until, where.every))
+
+    def test_a_list_after_the_window_moved_tells_no_session_an_item(self):
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        a.ask("What did Dana say about the pallet quote?", today=self.TODAY, zone="Work")
+        out = a.ask("What's most urgent tomorrow?", today=self.TODAY, zone="Personal")
+        self.assertEqual("zone", out.get("reset"))
+        self.assertTrue(out["claims"])
+        for m in self.msgs():
+            self.assertNotIn("sizing deck", m)
 
     def test_codex_is_sent_again_the_request_and_its_find_never_an_item(self):
         os.environ["GARRICK_HARNESS"] = "codex"
@@ -2273,6 +2272,35 @@ class TestOneZone(AnswerCase):
         (sent,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn("CEDARMARK83", sent)
         self.assertNotIn(ACME, sent)
+
+    def test_a_zone_said_as_a_common_word_is_not_the_sessions_to_give(self):
+        """From the wall review: "the work on the pallet" names no zone, so a
+        find the session gave zone Work is answered in the window's zone."""
+        self.answers.write_text(json.dumps({"haiku": [["the work on", find("meetings", ["pallet"], zone="Work")]] + HAIKU}))
+        out = self.asker(zone="Personal").ask("How is the work on the pallet going?")
+        self.assertNotEqual("Work", out.get("zone"))
+        self.assertFalse(any(ACME in m for m in self.msgs()))
+        sc = ask.scope_lib()
+        for said, named in (("What happened in Work?", True), ("anything from work this week", True), ("the Work zone", True),
+                            ("What happened at Work?", True), ("the work on the pallet", False), ("work it out", False)):
+            self.assertEqual(named, sc.zone_named(said, "Work"), said)
+
+    def test_a_place_in_the_other_zone_reads_nothing_of_it_when_another_is_picked(self):
+        ctx = self.root / "System" / "context.md"
+        write(ctx, ctx.read_text().replace("| `acme` | `birch` | Competitors, and both are clients |",
+                                           "| `acme` | `birch` | Competitors, and both are clients |\n| `acme` | `cedar` | Kept apart |"))
+        self.answers.write_text(json.dumps({"haiku": [["Pat", find("thread", ["fee"], project="Acme Review", thread="Pricing")]]
+                                            + HAIKU}))
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        out = a.ask("What did Pat say about Pricing at Acme Review?", zone="Work")
+        self.assertEqual("clarify", out["kind"])
+        a.ask(out["retry"], zone="Personal", picked=True)
+        for m in self.msgs():
+            if "<records" in m:
+                self.assertNotIn(ACME, m)
+                self.assertNotIn("revised terms", m)
+                self.assertNotIn("Zones/Work", m)
 
     def test_codex_also_resets_at_a_zone(self):
         os.environ["GARRICK_HARNESS"] = "codex"

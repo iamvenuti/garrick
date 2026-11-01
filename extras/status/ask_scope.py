@@ -489,6 +489,17 @@ def zone_answer(text: str, names: Dict[str, Dict[str, dict]]) -> Optional[str]:
     return said[0] if said else None
 
 
+def zone_named(text: str, zone: str) -> bool:
+    """Whether a request names a zone as a zone (#317): its name written as
+    the zone writes it, capitals and all ("Work"), or said as one, "in work",
+    "from work", "the work zone". "The work on the pallet" names none."""
+    words = r"\s+".join(re.escape(w) for w in zone.split())
+    text = str(text or "")
+    if re.search(r"(?<!\w)%s(?!\w)" % words, text) and zone[:1].isupper():
+        return True
+    return bool(re.search(r"\b(?:in|from)\s+(?:the\s+)?%s(?!\w)|(?<!\w)%s\s+zone\b" % (words, words), text, re.I))
+
+
 def which_zone(zones: Iterable[str], named: bool) -> str:
     """The question back for a zone (#317), one line for the ear: "Which do
     you mean: Work or Personal?" for a question whose names live in two

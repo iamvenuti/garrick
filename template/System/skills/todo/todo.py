@@ -238,8 +238,7 @@ def archive(zone: Path, today: datetime.date) -> int:
     for i, line in enumerate(lines):
         if not line.startswith("- [x] "):
             continue
-        m = DONE.search(line)
-        when = datetime.date.fromisoformat(m.group(1)) if m else None
+        when = done_on(line)          # none, or a day no calendar has: archived as undated
         if when is None or when < today:
             gone.append(i)
     if not gone:
@@ -338,6 +337,10 @@ def oldest(zone: Path, today: datetime.date, count: int = 3) -> List[str]:
 
 DUE = re.compile(r"(?:📅|📆|🗓)️? *(\d{4}-\d{2}-\d{2})")
 CHASE_ON = re.compile(r"(?:⏳|⌛)️? *(\d{4}-\d{2}-\d{2})")
+# The `(also in …)` a sweep folds onto a line, Markdown links inside it, and
+# the `·` before it: the pattern garrick_lib.TODO_ALSO_RE holds, copied here
+# because this file stands alone.
+ALSO = re.compile(r"\s*·?\s*\(also in ((?:[^()]|\([^()]*\))*)\)")
 CAP = 6
 
 
@@ -351,7 +354,7 @@ def plain(line: str) -> str:
         link = m.group(1)
         label = (link.split("|", 1)[1] if "|" in link else link.split("#", 1)[0].rsplit("/", 1)[-1]).strip()
         text = text[m.end():]
-    text = re.sub(r"\s*·?\s*\(also in [^)]*\)", "", text)
+    text = ALSO.sub("", text)
     text = re.sub(r"\s*·\s*\[[^\]]*\]\([^)]*\)", "", text)
     text = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", text)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
@@ -359,6 +362,15 @@ def plain(line: str) -> str:
     text = re.sub(r"(?:^|\s)#[\w/-]+", "", text)
     text = re.sub(r"\s+", " ", text.replace("**", "")).split(" — ", 1)[0].strip(" ·")      # the action, not its aside
     return "%s: %s" % (label, text) if label else text
+
+
+def day_of(m) -> Optional[datetime.date]:
+    """The date a DUE or CHASE_ON match holds, or None: no match, or a date
+    no calendar has, as 2026-02-30."""
+    try:
+        return datetime.date.fromisoformat(m.group(1)) if m else None
+    except ValueError:
+        return None
 
 
 def classify(lines: List[str], today: datetime.date) -> dict:
@@ -370,7 +382,10 @@ def classify(lines: List[str], today: datetime.date) -> dict:
     actions (#316), the rest are here too: "later", (date, line) pairs due
     after today; "open", the lines with no date of either kind; and
     "waiting", (chase date or "", line) pairs waiting with no chase come due.
-    A line that has only a chase date and is not waiting counts as none."""
+    A line that has only a chase date and is not waiting counts as none.
+    A date that is no day of the calendar, 2026-04-31, counts as no date:
+    the line is read as undated, or as waiting with no chase date, and the
+    rest of the list is read as before."""
     where = sections(lines)
     waiting = set(range(*where.get("Waiting on", (0, 0))))
     out = {"overdue": [], "due": [], "chase": [], "undated": 0, "no_chase": 0, "later": [], "open": [], "waiting": []}
@@ -378,20 +393,20 @@ def classify(lines: List[str], today: datetime.date) -> dict:
         if not line.startswith("- [ ] ") or "<action>" in line:
             continue
         theirs = i in waiting or "#waiting" in line
-        d, c = DUE.search(line), CHASE_ON.search(line)
+        d, c = day_of(DUE.search(line)), day_of(CHASE_ON.search(line))
         if theirs:
-            if c and c.group(1) <= today.isoformat():
+            if c and c <= today:
                 out["chase"].append(line)
             else:
-                out["waiting"].append((c.group(1) if c else "", line))
+                out["waiting"].append((c.isoformat() if c else "", line))
                 if not c:
                     out["no_chase"] += 1
-        elif d and d.group(1) < today.isoformat():
-            out["overdue"].append(((today - datetime.date.fromisoformat(d.group(1))).days, line))
-        elif d and d.group(1) == today.isoformat():
+        elif d and d < today:
+            out["overdue"].append(((today - d).days, line))
+        elif d and d == today:
             out["due"].append(line)
         elif d:
-            out["later"].append((d.group(1), line))
+            out["later"].append((d.isoformat(), line))
         elif not c:
             out["undated"] += 1
             out["open"].append(line)

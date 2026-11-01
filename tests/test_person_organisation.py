@@ -147,8 +147,8 @@ class LinkRuleTest(Workspace):
     def test_both_hats_are_found_by_any_name_the_page_goes_by(self):
         write(self.entities / "acme-corp.md", entity("acme"))
         self.assertEqual("", self.link("ROWAN-blake", "acme"))
-        self.assertEqual("", self.link(("R. Blake", "rowan-blake"), "acme"))   # a title written otherwise, its file name
-        self.assertEqual("[[wiki/entities/acme-corp]]", self.link(("R. Blake",), "acme"))
+        self.assertEqual("", self.link(("R. B.", "rowan-blake"), "acme"))     # a title written otherwise, its file name
+        self.assertEqual("[[wiki/entities/acme-corp]]", self.link(("R. B.",), "acme"))
 
     def test_spellings_of_a_two_hat_name_all_find_both_hats(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -159,6 +159,27 @@ class LinkRuleTest(Workspace):
             self.assertEqual("", self.link(name, "acme"), name)
         # Out of scope, and said so: a letter from another script that looks Latin, and a possessive.
         self.assertEqual("[[wiki/entities/acme-corp]]", self.link("Row\u0430n Blake", "acme"))
+
+    def test_a_short_form_of_a_two_hat_name_finds_both_hats(self):
+        """Fail closed on a name written short: a People row of one word
+        meets a page name opening with it, `Surname, First` meets `First
+        Surname`, and an initial with a surname, or a first name with an
+        initial, meets the full name. Two full names never meet."""
+        write(self.root / "System" / "context.md", CONTEXT.replace(
+            "| Theo Marsh | `birch` | Managing partner |",
+            "| Theo Marsh | `birch` | Managing partner |\n| Eli | `acme` | |\n| Eli | `birch` | |\n"
+            "| Dana Whitlock | `birch` | Board observer |"))
+        self.context = garrick_lib.load_context(self.root)
+        write(self.entities / "acme-corp.md", entity("acme"))
+        for names in (("Eli Cohen", "eli-cohen"), ("Eli", "eli"), ("Dana Whitlock", "dana-whitlock"),
+                      ("Whitlock, Dana", "whitlock-dana"), ("D. Whitlock", "d-whitlock"), ("Dana W.", "dana-w"),
+                      ("ELI COHEN",), ("Whitlock, Dana",), ("D. Whitlock",), ("Dana W.",), ("Rowan B.",), ("R. Blake",),
+                      ("Blake, Rowan",)):
+            self.assertEqual("", self.link(names, "acme"), names)
+        for names in (("Elias Moor",), ("David Whitlock",), ("Dana Whitmore",), ("Theo Cohen",)):
+            self.assertEqual("[[wiki/entities/acme-corp]]", self.link(names, "acme"), names)
+        self.assertEqual({"acme", "birch"}, garrick_lib.people_parties(self.context, "Eli Cohen"))
+        self.assertEqual(set(), garrick_lib.people_parties(self.context, "David Whitlock"))
 
     def test_a_name_with_two_parties_no_wall_divides_links_its_own(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -312,6 +333,19 @@ class CheckTest(Workspace):
         rowan = found[0]
         self.assertTrue(rowan.message.endswith("a wall stands between acme and birch"), rowan.message)
 
+    def test_a_link_on_a_page_a_short_name_puts_on_both_sides_is_a_wall_finding(self):
+        write(self.root / "System" / "context.md", CONTEXT.replace(
+            "| Theo Marsh | `birch` | Managing partner |",
+            "| Theo Marsh | `birch` | Managing partner |\n| Eli | `acme` | |\n| Eli | `birch` | |"))
+        write(self.entities / "acme-corp.md", entity("acme"))
+        write(self.people / "eli-cohen.md", person("Eli Cohen", "acme", "[[wiki/entities/acme-corp]]"))
+        write(self.people / "blake-rowan.md", person("Blake, Rowan", "acme", "[[wiki/entities/acme-corp]]"))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/blake-rowan.md", "Wikis/Meetings/wiki/people/eli-cohen.md"],
+                         sorted(f.path for f in found))
+        for f in found:
+            self.assertTrue(f.message.endswith("a wall stands between acme and birch"), f.message)
+
     def test_a_page_titled_otherwise_is_still_known_by_its_file_name(self):
         write(self.entities / "acme-corp.md", entity("acme"))
         write(self.people / "rowan-blake.md", person("R. Blake", "acme"))
@@ -405,6 +439,28 @@ class StagedWallCheckTest(Workspace):
         write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme"))
         write(self.people / "rowan-blake.md", person("Rowan Blake", "acme"))
         self.assertEqual(2, len(check.run_checks(self.root, walls_only=True, staged=wikis)))
+        git(wikis, "add", "-A")
+        self.assertEqual([], check.run_checks(self.root, walls_only=True, staged=wikis))
+
+    def test_the_hook_reads_the_person_pages_of_an_entity_page_it_commits(self):
+        """An entity page whose party changes can put a link across a wall
+        that no person page staged: the commit reads the pages that link it."""
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.entities / "acme-corp.md", entity("acme"))
+        write(self.people / "mira-holt.md", person("Mira Holt", "acme", "[[wiki/entities/acme-corp]]"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch"))
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        write(self.entities / "acme-corp.md", entity("birch"))
+        git(wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=wikis)
+        self.assertEqual([("error", "walls", "Wikis/Meetings/wiki/people/mira-holt.md")],
+                         [(f.severity, f.check, f.path) for f in found])
+        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        # Unstaged edits do not count: git's copy of the person page is what is read.
+        write(self.people / "mira-holt.md", person("Mira Holt", "acme"))
+        self.assertEqual(1, len(check.run_checks(self.root, walls_only=True, staged=wikis)))
         git(wikis, "add", "-A")
         self.assertEqual([], check.run_checks(self.root, walls_only=True, staged=wikis))
 

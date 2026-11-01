@@ -1020,33 +1020,36 @@ def actions(ws: Path, sc: Scope, names: Dict[str, Dict[str, dict]], ctx: dict, l
             if inside(zone, project, thread, parties):
                 item(rank, zone, project, thread, words, date, kind, parties)
 
+        def iso(when):
+            try:
+                return _dt.date.fromisoformat(when) if when else None
+            except ValueError:          # a day no calendar has, as 2026-04-31: no date
+                return None
+
         def on(line, rx):
             m = getattr(todo, rx).search(line)
-            try:
-                return _dt.date.fromisoformat(m.group(1)) if m else None
-            except ValueError:
-                return None
+            return iso(m.group(1)) if m else None
         if sc.waiting:
             for line in found["chase"]:
                 d = on(line, "CHASE_ON")
                 add((0, d.isoformat() if d else ""), line, d, "chase")
             for when, line in found.get("waiting", []):
-                d = _dt.date.fromisoformat(when) if when else None
-                add((1, when or "9999"), line, d, "waiting")
+                d = iso(when)
+                add((1, d.isoformat() if d else "9999"), line, d, "waiting")
             continue
         for late, line in found["overdue"]:
             add((0, -late), line, on(line, "DUE"), "overdue")
         for line in found["due"]:
             add((1, today.isoformat()), line, today, "due")
         for when, line in found.get("later", []):
-            d = _dt.date.fromisoformat(when)
-            if in_period(d):
+            d = iso(when)
+            if d is not None and in_period(d):
                 add((1, when), line, d, "due")
         for line in found["chase"]:
             d = on(line, "CHASE_ON")
             add((2, d.isoformat() if d else ""), line, d, "chase")
         for when, line in found.get("waiting", []):
-            d = _dt.date.fromisoformat(when) if when else None
+            d = iso(when)
             if d is not None and until is not None and d <= until:
                 add((2, when), line, d, "chase")
         if until is None:

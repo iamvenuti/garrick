@@ -117,6 +117,7 @@ from garrick_lib import (  # noqa: E402
 )
 from garrick_lib import (  # noqa: E402
     MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, organisation_link, party_entities, people_parties, tag_list,
+    TODO_ALSO_RE,
 )
 
 
@@ -2265,7 +2266,6 @@ TODO_LONG = 200  # characters of a line as Obsidian shows it, past which it is a
 # A Tasks field wherever it stands on a line, a source the sweep folded onto
 # it, and a link as Obsidian shows it: its alias, or its target.
 TODO_FIELD_ANY_RE = re.compile(r"\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2})")
-TODO_ALSO_RE = re.compile(r"\s*·?\s*\(also in [^)]*\)")
 TODO_WIKILINK_RE = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]")
 TODO_MDLINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
@@ -2959,6 +2959,31 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
 def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
     folder = ws.root.joinpath(*PEOPLE)
     return [(p, read_text(p) or "") for p in sorted(folder.rglob("*.md"))] if folder.is_dir() else []
+
+
+def staged_people(ws: Workspace, staged: List[Tuple[Path, str]]) -> List[Tuple[Path, str]]:
+    """The person pages a commit's wall check reads: each staged one, and,
+    where an entity page is staged, every person page that links it, as git
+    holds it, since a party changed on the entity page can put the link
+    across a wall without the person page changing."""
+    def under(path: Path, parts) -> bool:
+        return path.suffix.lower() == ".md" and ws.root.joinpath(*parts).resolve() in path.resolve().parents
+    out = [(path, text) for path, text in staged if under(path, PEOPLE)]
+    entities = {path.resolve() for path, _ in staged if under(path, MEETINGS_ENTITIES)}
+    if not entities:
+        return out
+    have = {path.resolve() for path, _ in out}
+    for page, text in person_pages(ws):
+        if page.resolve() in have:
+            continue
+        text = ws.git_view.get(page, text)
+        fm = parse_frontmatter_text(text)
+        if "organisation" not in fm:
+            continue
+        _, entity = organisation_target(ws, fm.get("organisation"))
+        if entity is not None and entity.resolve() in entities:
+            out.append((page, text))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -4496,9 +4521,7 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
                 out.extend(sources_for_file(ws, project, ptags, top_path / name, res.stdout))
     staged_texts = staged_files(repo) or []
-    people = ws.root.joinpath(*PEOPLE).resolve()
-    out.extend(organisation_walls(ws, [(path, text) for path, text in staged_texts
-                                       if path.suffix.lower() == ".md" and people in path.resolve().parents]))
+    out.extend(organisation_walls(ws, staged_people(ws, staged_texts)))
     files = [(path, text, project_of(ws, path)) for path, text in staged_texts]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
     # The wording check asks only after the runs of words these files hold:

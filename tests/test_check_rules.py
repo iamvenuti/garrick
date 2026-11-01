@@ -601,6 +601,21 @@ class TestTodo(CheckCase):
         self.todo("- [ ] [[Pricing]]: " + "x" * 195, long)
         self.assertFinds("todo", "warning", "2 lines are longer than 200 characters")
 
+    def test_a_source_folded_onto_a_line_as_a_relative_link_is_left_out_whole(self):
+        """#318: the `(also in …)` a sweep folds onto a line now holds a
+        relative link, whose own parentheses leave nothing behind; the one
+        pattern is garrick_lib's, and the todo skill's script holds the same."""
+        line = ("- [ ] [[Pricing]]: book the call · (also in [Acme kick-off](../../Wikis/Meetings/wiki/sources/"
+                "260310-acme-kickoff.md), [Acme 2](../../Wikis/Meetings/wiki/sources/260311-acme-2.md)) 📅 2026-03-25")
+        self.assertEqual("[[pricing]]: book the call", check.todo_action(line))
+        self.assertEqual("Pricing: book the call", check.todo_shown(line))
+        import garrick_lib
+        self.assertIs(garrick_lib.TODO_ALSO_RE, check.TODO_ALSO_RE)
+        long = "- [ ] [[Pricing]]: " + "x" * 190 + " (also in [Acme kick-off](../../Wikis/Meetings/wiki/sources/" \
+               "260310-acme-kickoff.md)) (also in [Acme 2](../../Wikis/Meetings/wiki/sources/260311-acme-2.md))"
+        self.todo(long)
+        self.assertClean("todo")
+
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_a_tick_keeps_the_line_as_it_was_written(self):
         """Ticking changes the box and adds the ✅ date. A line the history held

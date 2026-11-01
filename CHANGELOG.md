@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs the suite in four shards per Python, side by side** ([#314](https://github.com/iamvenuti/garrick/issues/314)). Each Python ran every test module in one job, one after another, so a pull request waited about 25 minutes for its result. Each Python's job is now four, and `tests/shard.py` deals the modules out by their run times in `tests/shard-times.json`, slowest first, each to the shard with the least time so far. A module with no time yet still runs, in the lightest shard, so a new one needs no list to edit; a test checks that the shards together hold every module `unittest discover` finds, each once. A final job, *Tests*, passes only when every shard did, so there is one result to wait for. Each shard runs three modules at a time, each in a process of its own, since a runner has three cores and GitHub runs at most five macOS jobs at once. The Mac app is still type-checked once per run. `python3 -m unittest discover -s tests` still runs everything; `python3 tests/shard.py 2/4 --jobs 3` runs one shard as CI does, and `--merge-times` takes fresh times from a run's log.
+
 ## [0.50.0] - 2026-11-01
 
 Ask's answers cite the records they rest on, with when each happened and when it was filed, and open them with a click; Ask renews its sessions by size, and New conversation works during a request; a wall reset after Ask's question back puts your question back in the box; the Ask window can be resized and its text sized with ⌘+ and ⌘−; "open X" in Ask does what clicking X's row does; and the find fields of the panel and the menu only find.

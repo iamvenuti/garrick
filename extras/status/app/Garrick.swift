@@ -2979,6 +2979,7 @@ struct PanelInboxLine: View {
 			.buttonStyle(.plain)
 			.background(RoundedRectangle(cornerRadius: 6).fill(hover ? Color.primary.opacity(0.09) : .clear))
 			.onHover { pointing($0) }
+			.onDisappear { pointing(false) }	// typing in the field hides the row under the pointer
 			.help(inbox.why)
 		} else {
 			line

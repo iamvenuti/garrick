@@ -534,6 +534,12 @@ def asks_back(text: str, said_: str, do: list) -> bool:
     return not do and said_.rstrip().endswith("?")
 
 
+# What makes a reply that did not parse look like the answer's JSON: an
+# object's opening brace before a key, or one of the format's keys in quotes.
+# "The insurance claims rose" or "at {draft} stage" are plain words.
+LOOKS_JSON = re.compile(r"""\{\s*["']|["'](?:claims|cite|say|incomplete|asks)["']""")
+
+
 def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
     """An answer's claims, each with the ids of the records it rests on, what
     an answer with no claims says, and whether the records hold only part of
@@ -546,7 +552,7 @@ def cited(text: str, allowed: Dict[str, dict]) -> Tuple[List[dict], str, bool]:
     obj = first_object(text)
     if obj is None:
         plain = (text or "").strip()
-        return [], (UNREADABLE if "{" in plain or "claims" in plain else plain), False
+        return [], (UNREADABLE if LOOKS_JSON.search(plain) else plain), False
     claims = []
     for c in obj.get("claims") if isinstance(obj.get("claims"), list) else []:
         if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not c["text"].strip():
@@ -993,6 +999,7 @@ class Asker:
         self.heard_for = None       # the `started` of the process `heard` describes
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
+        self.question = None        # that request as first asked about, before any answer that settled nothing
         self.afresh = False         # a wall reset ran during the request under way, whatever ends it
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
@@ -1015,19 +1022,24 @@ class Asker:
         # The names first, before any session hears the request: one that
         # fits two entries is asked about, and nothing is read or sent.
         earlier = self.unclear
+        if earlier is None:
+            self.question = None
         heard = request if earlier is None else earlier + "\n" + request
         named = sc.mentions(self.ws, heard, names, self.ctx, lib, answer=None if earlier is None else len(earlier) + 1)
         if named.question:
             self.unclear = heard[-MAX_REQUEST:]
+            if earlier is None:
+                self.question = self.unclear
             return clarify(named.question)
         self.unclear = None
         reset = self.crosses(named.parties)
         if reset:
+            first = self.question or earlier
             self.progress("Starting a fresh session")
             self.reset()
             self.afresh = True
             if earlier is not None:                 # an answer: nothing of it, or of its question, is sent (#294)
-                out = self.refilled(earlier, request, named, names)
+                out = self.refilled(first, request, named, names)
                 out["reset"] = "wall"
                 return out
         listing = render(names)
@@ -1110,16 +1122,19 @@ class Asker:
             where = sc.scope(self.ws, find, named, names, self.ctx, lib)
         except sc.Unclear as e:
             self.unclear = request[-MAX_REQUEST:]
+            if not asked:
+                self.question = self.unclear
             return clarify(str(e)), False
         except sc.Refused as e:
             raise Bad(str(e))
         reset = self.crosses(where.parties, where.every)
         if reset:                                   # before anything is read
+            first = self.question or request[:asked - 1]
             self.progress("Starting a fresh session")
             self.reset()
             self.afresh = True
             if asked:                               # an answer: nothing is read, and nothing more sent (#294)
-                return self.refilled(request[:asked - 1], request[asked:], named, names), True
+                return self.refilled(first, request[asked:], named, names), True
         records, back = sc.pick(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
@@ -1305,6 +1320,7 @@ class Asker:
             if s is not None:
                 s.stop()
         self.results, self.asked, self.unclear, self.asking = "", {}, None, False
+        self.question = None
         self.seen, self.seen_for, self.passages = set(), None, []
         self.heard, self.heard_for = set(), None
         self.sent = self.told = self.answer_sent = self.answer_told = None

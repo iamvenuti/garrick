@@ -3011,6 +3011,7 @@ class TestApp(unittest.TestCase):
         self.assertNotIn("onTapGesture", line)
         self.assertIn("perform(run)", line)                                   # model.perform: the panel closes, then it opens
         self.assertIn("NSCursor.pointingHand.push()", line)
+        self.assertIn(".onDisappear { pointing(false) }", line)             # a row hidden under the pointer pops the hand
         self.assertIn("hover ? Color.primary.opacity(0.09) : .clear", line)
         self.assertIn("} else {\n\t\t\tline\n\t\t}", line)                   # empty: the line alone, no hover, no action
         self.assertIn(".foregroundColor(inbox.run == nil ? .secondary : .primary)", line)

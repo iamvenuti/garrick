@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-11-01
+
+A patch release. Ask resets both of its sessions at a wall, whichever one was told of the other side, keeps no Codex transcript of your requests, and takes a plain zone as the answer to its question back; the wall check finds a meeting page after it fades; and a kept check result says its age wherever its counts show.
+
 ### Changed
 
 - **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
@@ -1129,7 +1133,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.49.1...HEAD
+[0.49.1]: https://github.com/iamvenuti/garrick/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/iamvenuti/garrick/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/iamvenuti/garrick/compare/v0.47.2...v0.48.0
 [0.47.2]: https://github.com/iamvenuti/garrick/compare/v0.47.1...v0.47.2

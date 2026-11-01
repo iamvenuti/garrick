@@ -1239,9 +1239,9 @@ class Asker:
         one that measured RENEW_AT of its tier's input at its last turn. Never
         while a question waits for its answer, a name asked about, an action
         asked to be done again, or a session's own question back (asks_back()):
-        the renewal waits for the answer."""
-        if self.unclear is not None or self.asked or self.asking:
-            return False
+        the renewal waits for the answer. Never with Ask switched off."""
+        if self.unclear is not None or self.asked or self.asking or not flag_on(self.ws):
+            return False                            # switched off: nothing is started, renewed or not
         return any(getattr(s, "remembers", False) and getattr(s, "full", lambda: False)()
                    for s in (self.session, self.answers) if s is not None)
 

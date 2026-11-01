@@ -1196,6 +1196,19 @@ class TestRenewal(ServerCase):
         self.assertNotIn("<refreshed/>", [m for m in msgs if m["pid"] == second["pid"]][1]["content"])   # said once
         self.assertRegex((self.jobs / "ask.log").read_text(), r"  ask command refreshed \d+ ms ")
 
+    def test_nothing_is_renewed_with_ask_switched_off(self):
+        self.up()
+        self.op("ask", "what's open")
+        (first,) = self.procs()
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+        with self.small():                                      # full, but switched off
+            out = self.op("ask", "what's open")
+        self.assertIn("preview feature, and it is off", out["say"])
+        self.assertNotIn("refreshed", out)
+        __import__("time").sleep(0.5)
+        self.assertEqual([first["pid"]], [p["pid"] for p in self.procs()])     # no process started
+        self.assertFalse(self.gone(first["pid"]))
+
     def test_a_record_cannot_say_refreshed(self):
         self.assertEqual("&lt;refreshed/>", ask.inert("<refreshed/>"))
 

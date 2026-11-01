@@ -434,6 +434,54 @@ class TestScopeFirst(AnswerCase):
                          parties("What did Robin say?"))
         self.assertEqual({"acme"}, parties("What did Robin say at Acme?"))          # another name settles it
 
+    def test_a_clarify_is_settled_by_the_zone_its_answer_names(self):
+        """#294: "The one in Work." settled nothing, so the box asked the same
+        question every time. An answer that names both zones, or neither,
+        is still asked again."""
+        from fixtures import project_hub
+        home = self.root / "Zones" / "Personal" / "Home"
+        write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Pricing"]))
+        write(home / "Threads" / "Pricing" / "Pricing.md", thread_note("Home", "Pricing", ""))
+        a = self.asker()
+        question = ("clarify", "Which do you mean: Acme Review, Pricing or Home, Pricing?")
+        out = a.ask("Where does Pricing stand?")
+        self.assertEqual(question, (out["kind"], out["say"]))
+        for neither in ("The other one.", "Work or Personal, I forget."):
+            out = a.ask(neither)
+            self.assertEqual(question, (out["kind"], out["say"]), neither)
+        self.assertEqual([], self.procs())                                     # no session heard any of it
+        out = a.ask("The one in Work.")
+        self.assertEqual("answer", out["kind"])
+        (said,) = [m for m in self.msgs() if "<records>" in m]
+        self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", said)
+        self.assertNotIn("Zones/Personal", said)
+
+    def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
+        """#294: one company under two tags, one in each zone. "What did Dana
+        say?" could be settled only by typing the bare tag."""
+        write(self.root / "System" / "context.md", CONTEXT.replace(
+            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | |\n| Birch & Co |").replace(
+            "| Theo Marsh | `birch` | Managing partner |",
+            "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
+        lib = ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        asked = "What did Dana say?"
+        question = ("Which do you mean: Dana Whitlock of Acme Corp in Work or Dana Whitlock of Acme Corp in Personal?")
+
+        def settled(answer):
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.parties
+        self.assertEqual(question, settled(""))
+        for answer, parties in (("In Work", {"acme"}), ("in work", {"acme"}), ("The Personal one.", {"acme-adv"}),
+                                ("Dana Whitlock of Acme Corp in Personal", {"acme-adv"}),
+                                ("Dana Whitlock of Acme Corp in Work, please", {"acme"})):
+            self.assertEqual(parties, settled(answer), answer)
+        for answer in ("Acme Corp", "Work or Personal", "Dana Whitlock of Acme Corp in Work or in Personal",
+                       "The Birch one", "The other one"):
+            self.assertEqual(question, settled(answer), answer)               # both options, or neither: asked again
+        got = ask.scope_lib().mentions(self.root, "What did Dana say about work?", names, ctx, lib)
+        self.assertEqual(question, got.question)                              # a zone counts only in an answer
+
     def test_a_find_is_checked_against_the_list(self):
         lib = ask.scope_lib().lib(self.root)
         ctx, names, sc = lib.load_context(self.root), ask.scan(self.root), ask.scope_lib()

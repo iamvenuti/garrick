@@ -860,7 +860,7 @@ class Asker:
         # fits two entries is asked about, and nothing is read or sent.
         earlier = self.unclear
         heard = request if earlier is None else earlier + "\n" + request
-        named = sc.mentions(self.ws, heard, names, self.ctx, lib)
+        named = sc.mentions(self.ws, heard, names, self.ctx, lib, answer=None if earlier is None else len(earlier) + 1)
         if named.question:
             self.unclear = heard[-MAX_REQUEST:]
             return clarify(named.question)

@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
 
+### Fixed
+
+- **Ask's question about a name can be answered with a zone, or with the option as it was offered** ([#294](https://github.com/iamvenuti/garrick/issues/294)). A name that fits two entries gets one question back, but the answer could settle it only with another name: "Which do you mean: Pricing in Work or Pricing in Personal?" answered "The one in Work." asked the same question again, every time, and so did "In Work" or "Acme Corp" for a person listed under two tags of one company, which only the bare tag could settle. `ask_scope.mentions()` now also settles a name by the zone the answer names, and by one of the options exactly as the question said it, "Dana Whitlock of Acme Corp in Work", the longest where one option holds another. Every way the request narrows a name must agree. An answer that names two of the options, or none of them, gets the question again, and nothing is read or sent until one settles it; "Acme Corp" names both of those options, so it is asked again too. A zone counts only in the answer to the question, so "what did Dana say about work?" is still asked about.
+
 ## [0.49.0] - 2026-10-31
 
 Ask answers questions from your records, inside one scope and sealed from everything else; Garrick's scheduled jobs take `gr-` names and one nightly job does what four did; the Checks card acts on each finding; Settings chooses the graph's colours and the cmux tab's assistant; and the wall check reads links and paths into another project.

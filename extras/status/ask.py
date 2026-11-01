@@ -79,7 +79,9 @@ it had proposed nothing yet. When the request had already started afresh
 at a wall, the final line says so, with `"reset": "wall"` (#294). A client
 that leaves is not a Stop: the turn runs on, as before. `call()` sends STOP when
 it is interrupted (Ctrl-C, or the app's Stop, which sends SIGINT). With
-Codex the one call runs to its end, and Stop is heard too late to matter.
+Codex the call is ended too, through agent.run()'s `stop`, nothing it said
+is kept or carried out, and the exchanges it would send again are cleared,
+as at a wall (OnceSession, #261 slice F).
 
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
@@ -948,7 +950,15 @@ class OnceSession:
     """A harness with no warm session: one agent.py call per request,
     read-only, with the last few exchanges given again. Each call runs in an
     empty folder of its own outside the workspace, removed when it returns,
-    so Codex finds no AGENTS.md or project setting of the workspace's."""
+    so Codex finds no AGENTS.md or project setting of the workspace's.
+
+    What it holds is its history, the exchanges it sends again, so it takes
+    part in every reset the Claude sessions take part in (#261, slice F):
+    stop() clears them at a wall, at a zone, at New conversation and at Stop,
+    and `started` moves with each start(), so what Asker keeps of the
+    process (`heard`) goes with them. Stop is heard while the call runs:
+    agent.run() ends it (EXIT_STOPPED), nothing it said is kept or carried
+    out, and the request ends as a Claude one does, both sessions cleared."""
 
     remembers = False
     last = None                     # agent.run() writes its own ledger line
@@ -958,6 +968,24 @@ class OnceSession:
         self.history: List[Tuple[str, str]] = []
         self.started = 0.0
         self.turns = 0
+        self.watch = None           # the connection a call listens to for STOP, while one is asked on it
+
+    def stopped(self) -> bool:
+        """Whether STOP came in on the request's connection, looked at
+        without waiting; a client that left is not a Stop, and is no longer watched."""
+        if self.watch is None:
+            return False
+        try:
+            ready, _, _ = select.select([self.watch], [], [], 0)
+        except (OSError, ValueError):
+            self.watch = None
+            return False
+        if not ready:
+            return False
+        said = stop_said(self.watch)
+        if said is None:
+            self.watch = None
+        return bool(said)
 
     def alive(self) -> bool:
         return bool(self.history)
@@ -987,9 +1015,12 @@ class OnceSession:
         try:
             # Codex prints the prompt: no transcript of it unless LOG_TEXT is 1, as for ask.log (#293).
             code, out = agent().run(self.tier, prompt, allow=(), cwd=home, job=JOB,
-                                    transcript=os.environ.get(LOG_TEXT) == "1")
+                                    transcript=os.environ.get(LOG_TEXT) == "1", stop=self.stopped)
         finally:
             shutil.rmtree(str(home), ignore_errors=True)
+        if code == getattr(agent(), "EXIT_STOPPED", None):
+            self.stop()                     # nothing of the call is kept: the request ends here, as with Claude
+            raise Stopped("stopped")
         if code == agent().EXIT_CAP:
             check_caps(self.tier)           # reached since the check above: says when it clears
             raise Bad("the call passed its spending limit for one call and was stopped")
@@ -1244,8 +1275,14 @@ class Asker:
         sc = scope_lib()
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
+        if isinstance(find, dict) and isinstance(find.get("zone"), str) and find["zone"] in names \
+                and not re.search(r"(?<!\w)%s(?!\w)" % r"\s+".join(map(re.escape, find["zone"].split())), request, re.I):
+            # A zone the request never says is the session's, copied from <zone>: Garrick chooses the zone (#317).
+            find = {k: v for k, v in find.items() if k != "zone"}
         if isinstance(find, dict) and find.get("route") == "actions":
-            return self.listed(request, find, named, names, today, asked), None
+            out = self.listed(request, find, named, names, today, asked)
+            out["usage"] = {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
+            return out, None
         if not self.session.remembers:
             return reply(NEED_CLAUDE), None
         self.progress("Finding the records")

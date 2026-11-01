@@ -1440,6 +1440,85 @@ class TestCodex(base.AskCase):
             ask.agent().run = real
 
 
+class TestCodexParity(base.AskCase):
+    """#261, slice F: with Codex, the one session it has takes part in every
+    reset the Claude sessions take part in, and Stop is heard mid-call."""
+
+    def codex(self, reply_for):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        real = ask.agent().run
+        self.addCleanup(setattr, ask.agent(), "run", real)
+        self.prompts = []
+
+        def run(tier, prompt, allow=(), cwd=None, job=None, **kw):
+            self.prompts.append(prompt)
+            return reply_for(prompt, kw)
+        ask.agent().run = run
+
+    def test_agent_call_ends_a_call_its_caller_stops(self):
+        a = ask.agent()
+        asked = []
+        start = time.time()
+        code, _, _ = a.call([sys.executable, "-c", "import time; time.sleep(30)"], None, None,
+                            stop=lambda: asked.append(1) or len(asked) > 2)
+        self.assertEqual(a.EXIT_STOPPED, code)
+        self.assertLess(time.time() - start, 10)
+        code, out, _ = a.call([sys.executable, "-c", "print('done')"], None, None, stop=lambda: False)
+        self.assertEqual((0, "done\n"), (code, out))
+        code, _, _ = a.call([sys.executable, "-c", "import time; time.sleep(30)"], None, 0.5, stop=lambda: False)
+        self.assertEqual(a.EXIT_TIMEOUT, code)                            # the timeout still holds beside it
+
+    def test_stop_mid_call_ends_the_request_and_clears_both(self):
+        import socket as _socket
+        park = json.dumps({"say": "Parked.", "do": [{"verb": "park", "zone": "Work", "project": "Acme Review",
+                                                     "thread": "Pricing"}]})
+
+        def reply_for(prompt, kw):
+            if "park Pricing" not in prompt:
+                return 0, json.dumps({"say": "ok", "do": []})
+            client.sendall(ask.STOP)                                      # the app's Stop, while the call runs
+            for _ in range(40):
+                if kw["stop"]():
+                    return ask.agent().EXIT_STOPPED, ""
+                time.sleep(0.05)
+            return 0, park
+        self.codex(reply_for)
+        server, client = _socket.socketpair()
+        self.addCleanup(server.close)
+        self.addCleanup(client.close)
+        a = ask.Asker(self.root)
+        a.ask("add call Dana to Acme", zone="Work")
+        self.assertTrue(a.session.history)
+        self.assertTrue(a.heard)
+        a.session.watch = server
+        with self.assertRaises(ask.Stopped):
+            a.ask("park Pricing", zone="Work")
+        self.assertIn("\nstatus: active\n", self.thread.read_text())   # nothing it proposed has run
+        self.assertEqual(([], set(), "", {}), (a.session.history, a.heard, a.results, a.asked))
+        a.session.watch = None
+        a.ask("open Birch Entry", zone="Work")
+        self.assertNotIn("add call Dana", self.prompts[-1])               # nothing before the Stop is sent again
+        self.assertNotIn("<earlier-request>\n", self.prompts[-1])
+        self.assertNotIn("<last-results>\n", self.prompts[-1])
+
+    def test_every_reset_clears_what_codex_sends_again(self):
+        self.codex(lambda prompt, kw: (0, json.dumps({"say": "ok", "do": []})))
+        a = ask.Asker(self.root)
+        for how in ("reset", "stop", "renew"):
+            a.ask("add call Dana to Acme", zone="Work")
+            self.assertTrue(a.session.history, how)
+            getattr(a, how)()
+            self.assertEqual(([], set()), (a.session.history, a.heard), how)
+        a.ask("add call Dana to Acme", zone="Work")
+        self.assertFalse(a.due())                                         # never renewed by size: it keeps no session
+
+    def test_a_record_question_still_needs_claude(self):
+        self.codex(lambda prompt, kw: (0, find("meetings", ["pallet"])))
+        out = ask.Asker(self.root).ask("What did Dana say about the pallet quote?", zone="Work")
+        self.assertEqual(ask.NEED_CLAUDE, out["say"])
+        self.assertEqual(1, len(self.prompts))                            # no second call, no records
+
+
 class TestProtocol(unittest.TestCase):
     """What slice B's window relies on: a kind on every reply, and the progress hook."""
 
@@ -2057,6 +2136,21 @@ class TestOneZone(AnswerCase):
             if p["pid"] not in before:
                 self.assertNotIn(ACME, self.marks(p["pid"]))
         self.assertEqual({"cedar"}, self.askers[-1].seen)
+
+    def test_a_zone_the_request_never_says_is_not_the_sessions_to_give(self):
+        """The command session copies the window's <zone> into its find: for
+        a question about Pat, from a window in Work, Garrick still answers in
+        Personal, and a list of what is owed still covers every zone."""
+        self.answers.write_text(json.dumps({"haiku": [
+            ["meeting with Pat", find("meetings", ["regatta"], zone="Work")],
+            ["owe Pat", json.dumps({"say": "", "find": {"route": "actions", "zone": "Work"}})],
+        ] + HAIKU}))
+        write(self.root / "Zones" / "Personal" / "Todo.md", "# Personal\n\n## Inbox\n\n- [ ] Cedar Club: pay Pat the fee\n\n## Done\n")
+        a = self.asker(zone="Work")
+        out = a.ask("What's the last meeting with Pat?")
+        self.assertEqual(("answer", "Personal"), (out["kind"], out.get("zone")))
+        out = a.ask("What do I owe Pat?")
+        self.assertEqual(["Open: Cedar Club: pay Pat the fee (in Personal)."], [c["text"] for c in out["claims"]])
 
     def test_codex_also_resets_at_a_zone(self):
         os.environ["GARRICK_HARNESS"] = "codex"

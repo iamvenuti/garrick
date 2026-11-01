@@ -13,6 +13,7 @@ jobs:
   test:
     name: macOS, Python ${{ matrix.python }}, shard ${{ matrix.shard }}
     runs-on: macos-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +21,8 @@ jobs:
         python: ["system", "3.13"]
         # tests/shard.py deals the test modules into four shards by their times in
         # tests/shard-times.json. Change the count here and in the run step together.
+        # GitHub runs at most five macOS jobs at once, so each shard also runs three
+        # modules at a time (--jobs 3), one per core of the runner.
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
@@ -49,7 +52,7 @@ jobs:
         env:
           # Comma-separated real names that must never appear. Empty on forks: the test skips.
           GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
-        run: $PY tests/shard.py ${{ matrix.shard }}/4
+        run: $PY tests/shard.py ${{ matrix.shard }}/4 --jobs 3
 
   tests:
     # The one result to wait for, and the one for branch protection to name: it fails if any shard did.

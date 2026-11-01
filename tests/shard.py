@@ -9,6 +9,8 @@ it goes to the lightest shard once the timed ones are placed. So every module
 runs in exactly one shard, and a new one needs no list to edit.
 
     python3 tests/shard.py 2/4            run shard 2 of 4, then print each module's time
+    python3 tests/shard.py 2/4 --jobs 3   the same, three modules at a time, each in a process
+                                          of its own, as CI runs it
     python3 tests/shard.py --list 2/4     name the modules in shard 2 of 4
     python3 tests/shard.py --merge-times LOG...
                                           write the times a run printed into shard-times.json
@@ -20,10 +22,13 @@ import argparse
 import json
 import re
 import statistics
+import subprocess
 import sys
+import threading
 import time
 import traceback
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -107,13 +112,51 @@ def failed_import(name, text):
 
 
 def run(names):
+    """Run the modules one after another in this process, as discover does."""
     sys.path.insert(0, str(HERE))
     timed = Timed(names)
     result = unittest.TextTestRunner().run(timed)
-    print("\nModule times, slowest first (python3 tests/shard.py --merge-times reads these):")
-    for name, sec in sorted(timed.times.items(), key=lambda kv: -kv[1]):
-        print(f"shard-time {name} {sec:.1f}")
+    print_times(timed.times)
     return result.wasSuccessful()
+
+
+def run_parallel(names, jobs, times):
+    """Run the modules jobs at a time, each in a process of its own, slowest first.
+
+    Each module's output is printed whole when it ends, so two never interleave.
+    """
+    lock = threading.Lock()
+    took, failed, ran = {}, [], []
+
+    def one(name):
+        start = time.perf_counter()
+        proc = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--only", name],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, errors="replace")
+        took[name] = time.perf_counter() - start
+        with lock:
+            print(f"\n=== {name}: {'ok' if proc.returncode == 0 else 'FAILED'} in {took[name]:.1f}s", flush=True)
+            print(proc.stdout.rstrip(), flush=True)
+            ran.extend(int(n) for n in re.findall(r"^Ran (\d+) tests?", proc.stdout, re.MULTILINE))
+            if proc.returncode:
+                failed.append(name)
+
+    order = sorted(names, key=lambda n: (-times.get(n, 0.0), n))
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(one, order))
+    print_times(took)
+    print(f"\nRan {sum(ran)} tests in {len(names)} modules, {jobs} at a time.")
+    if failed:
+        print(f"FAILED: {', '.join(sorted(failed))}")
+    else:
+        print("OK")
+    return not failed
+
+
+def print_times(times):
+    print("\nModule times, slowest first (python3 tests/shard.py --merge-times reads these):")
+    for name, sec in sorted(times.items(), key=lambda kv: -kv[1]):
+        print(f"shard-time {name} {sec:.1f}")
 
 
 def merge_times(logs, path=TIMES, names=None):
@@ -135,6 +178,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("shard", nargs="?", help="K/N: run shard K of N")
     parser.add_argument("--list", action="store_true", help="name the shard's modules, run nothing")
+    parser.add_argument("--jobs", type=int, default=1, metavar="N",
+                        help="run N modules at a time, each in a process of its own")
+    parser.add_argument("--only", nargs="+", metavar="MODULE", help=argparse.SUPPRESS)
     parser.add_argument("--merge-times", nargs="+", metavar="LOG",
                         help="read the times a run printed into shard-times.json")
     args = parser.parse_args(argv)
@@ -142,6 +188,10 @@ def main(argv=None):
         seen = merge_times(args.merge_times)
         print(f"{len(seen)} module times read into {TIMES.name}.")
         return 0
+    if args.only:
+        sys.path.insert(0, str(HERE))
+        result = unittest.TextTestRunner().run(Timed(args.only))
+        return 0 if result.wasSuccessful() else 1
     if not args.shard:
         parser.error("name a shard, such as 2/4")
     try:
@@ -151,6 +201,8 @@ def main(argv=None):
     if args.list:
         print("\n".join(names))
         return 0
+    if args.jobs > 1:
+        return 0 if run_parallel(names, args.jobs, load_times()) else 1
     return 0 if run(names) else 1
 
 

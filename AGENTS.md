@@ -23,7 +23,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `extras/` | Optional tools outside core: the mail fetcher, scheduled jobs, and the status page with its Mac app. None is installed except the status page, which the installer puts in place for the simple home; `EXTRAS` in `install.py` says where each goes in a workspace |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |
-| `tests/` | `python3 -m unittest discover -s tests`. CI runs it in four shards per Python; `python3 tests/shard.py 2/4` runs one, by the times in `tests/shard-times.json` |
+| `tests/` | `python3 -m unittest discover -s tests`. CI runs it in four shards per Python; `python3 tests/shard.py 2/4 --jobs 3` runs one as CI does, by the times in `tests/shard-times.json` |
 
 ## Placeholders
 

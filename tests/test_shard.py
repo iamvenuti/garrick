@@ -3,6 +3,9 @@
     python3 -m unittest discover -s tests
 """
 
+import contextlib
+import io
+import os
 import re
 import shutil
 import tempfile
@@ -83,6 +86,44 @@ class EveryModuleOnce(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 with mock.patch("sys.stderr"):
                     shard.main([bad])
+
+
+class Parallel(unittest.TestCase):
+    """CI runs a shard with --jobs: a failure in any module must fail the shard."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        test = "import unittest\n\nclass T(unittest.TestCase):\n    def test_it(self):\n        {}\n"
+        (self.dir / "test_fake_pass.py").write_text(test.format("pass"))
+        (self.dir / "test_fake_fail.py").write_text(test.format("self.fail('meant to')"))
+        path = os.pathsep.join(filter(None, [str(self.dir), os.environ.get("PYTHONPATH")]))
+        patcher = mock.patch.dict(os.environ, {"PYTHONPATH": path})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_parallel(self, names):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = shard.run_parallel(names, 2, {})
+        return ok, out.getvalue()
+
+    def test_a_failing_module_fails_the_shard(self):
+        ok, out = self.run_parallel(["test_fake_pass", "test_fake_fail"])
+        self.assertFalse(ok)
+        self.assertIn("FAILED: test_fake_fail", out)
+        self.assertIn("meant to", out)
+        self.assertIn("Ran 2 tests in 2 modules", out)
+
+    def test_a_module_that_does_not_load_fails_the_shard(self):
+        ok, out = self.run_parallel(["test_fake_pass", "test_fake_missing"])
+        self.assertFalse(ok)
+        self.assertIn("FAILED: test_fake_missing", out)
+
+    def test_passing_modules_pass(self):
+        ok, out = self.run_parallel(["test_fake_pass"])
+        self.assertTrue(ok)
+        self.assertIn("shard-time test_fake_pass ", out)
 
 
 class MergeTimes(unittest.TestCase):

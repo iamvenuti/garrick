@@ -451,7 +451,7 @@ class TestVaultGraph(StatusCase):
         self.assertEqual("entity", kind[by["fictus-cloud"]["k"]])
         self.assertEqual("other notes", kind[by["odd"]["k"]])                      # a type the model does not know
         self.assertEqual("entity", kind[by["Stray"]["k"]])                         # a model kind, in any wiki (#250)
-        self.assertEqual(0, by["Stray"]["c"])                                     # but the hubs of Meetings are its people
+        self.assertEqual(1, by["Stray"]["c"])                                     # a hub of Meetings, with its people (#320)
         long = by["A very long report title about pallets, lanes, freight and the winter that came"]
         self.assertEqual("source", kind[long["k"]])
         self.assertTrue(long["n"].endswith("…") and len(long["n"]) <= 41, long["n"])
@@ -463,6 +463,36 @@ class TestVaultGraph(StatusCase):
         self.assertNotIn("cl", data)                                              # no view button to label (#250)
         self.assertEqual("all", data["modes"]["Knowledge"])
         self.assertIn("var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub", status.GRAPH_JS)
+
+    def test_in_meetings_a_person_and_an_entity_met_together_are_joined(self):
+        """#320: in Meetings, entities are hubs too. A person and an entity are
+        joined when one meeting page links both, weighed by how many do, and
+        two entities the same way; the people are joined as they were, an
+        entity's own page among what joins them, and the place still opens
+        on its people."""
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        write(m / "people" / "owen-park.md", "---\ntitle: Owen Park\ntype: person\n---\n# Owen Park\n")
+        write(m / "people" / "kim-lo.md", "---\ntitle: Kim Lo\ntype: person\n---\n# Kim Lo\n")
+        write(m / "entities" / "acme-corp.md", "---\ntitle: Acme Corp\ntype: entity\n---\n# Acme Corp\n\nContacts: [[owen-park]], [[kim-lo]].\n")
+        write(m / "entities" / "birch-co.md", "---\ntitle: Birch & Co\ntype: entity\n---\n# Birch & Co\n")
+        for day in ("260401", "260402"):
+            write(m / "sources" / (day + "-acme-call.md"), "---\ntitle: Acme call %s\ntype: meeting\n---\n\n"
+                  "With [[dana-whitlock]] of [[acme-corp]], and [[birch-co]] on the line.\n" % day)
+        data = graph_data(self.page())
+        kind = dict(data["kinds"])
+        by = {n.get("N", n["n"]): n for n in data["nodes"]}
+        i = {t: data["nodes"].index(by[t]) for t in ("Dana Whitlock", "Acme Corp", "Birch & Co", "Owen Park", "Kim Lo")}
+        pairs = {(a, b): w for a, b, w in data["ce"]}
+        pair = lambda a, b: pairs.get(tuple(sorted((i[a], i[b]))))
+        self.assertEqual(("entity", 1), (kind[by["Acme Corp"]["k"]], by["Acme Corp"]["c"]))
+        self.assertEqual(2, pair("Dana Whitlock", "Acme Corp"))           # a person and an entity, two meetings
+        self.assertEqual(2, pair("Acme Corp", "Birch & Co"))              # two entities
+        self.assertEqual(1, pair("Owen Park", "Kim Lo"))                  # two people, joined by the entity's page, as before
+        self.assertIsNone(pair("Dana Whitlock", "Owen Park"))
+        person = [k for k, said in data["kinds"] if said == "person"]
+        self.assertEqual({"Meetings": person}, data["op"])                 # Meetings opens on its people
+        self.assertIn("if(n.c&&(!op||op.indexOf(n.k)>=0))hub[n.k]=1", status.GRAPH_JS)
+        self.assertIn("var op=(G.op||{})[z];", status.GRAPH_JS)
 
     def test_any_note_in_a_project_opens_where_its_card_would(self):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Call notes.md", "# Call notes\n")
@@ -2268,7 +2298,8 @@ class TestEveryKindDrawnIsNamed(StatusCase):
         data = graph_data(html)
         on = {i for i, n in enumerate(data["nodes"]) if n["z"] == "Meetings" and n["n"] in self.entities + people}
         deg = {}
-        for a, b in data["edges"]:
+        # people and entities are both hubs of Meetings (#320), so with only them shown the joins are drawn too
+        for a, b in [e[:2] for e in data["edges"] + data["ce"]]:
             if a in on and b in on:
                 for i in (a, b):
                     deg[data["nodes"][i]["n"]] = deg.get(data["nodes"][i]["n"], 0) + 1

@@ -2597,11 +2597,14 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
 # page of `type: entity` is an entity. A type the model does not know, shared
 # by at least KIND_FROM_PAGES pages of one wiki, is a kind of its own, named
 # from the type (`domain`, Domains), coloured from PAGE_COLOURS (#250). Any
-# other page is drawn as other notes. A place opens on its hubs: a zone's
-# projects and threads, the people in Meetings, the concepts and entities in
-# any other wiki.
+# other page is drawn as other notes. A place's hubs are what its core view
+# joins: a zone's projects and threads, the people and entities in Meetings
+# (#320), the concepts and entities in any other wiki. A place opens on its
+# hubs, but Meetings on its people (OPENS): entities are in the legend there,
+# off until turned on.
 WIKI_KINDS = ("meeting", "mail", "person", "source", "concept", "entity")
-HUBS = {"": ("project", "thread"), "Meetings": ("person",), "*": ("concept", "entity")}
+HUBS = {"": ("project", "thread"), "Meetings": ("person", "entity"), "*": ("concept", "entity")}
+OPENS = {"Meetings": ("person",)}
 KIND_FROM_PAGES = 3
 # Colours for the kinds found from pages, after KINDS's: none near a shipped
 # kind's, amber, red or another of these, and each at least 2.9 to 1 against
@@ -2859,18 +2862,22 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                 edges.add((min(a, b), max(a, b)))
     used = sorted({n["k"] for n in nodes})        # each kind the legend offers as a filter (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
-    # people in the same meeting, two concepts cited by the same source. The
-    # third number is how many pages do.
+    # people in the same meeting, a person and the entity met in it (#320),
+    # two concepts cited by the same source. The third number is how many
+    # pages do. A page that joins is any not of the kinds the place opens on
+    # (OPENS), or not a hub where it names none: so in Meetings an entity's
+    # page still joins two people, as before entities were hubs.
     wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    opens = {place: {keys.index(k) for k in OPENS[place] if k in keys} for place in wikis if place in OPENS}
     neighbours: Dict[int, set] = {}
     for a, b in edges:
         neighbours.setdefault(a, set()).add(b)
         neighbours.setdefault(b, set()).add(a)
     co: Dict[Tuple[int, int], int] = {}
     for i, n in enumerate(nodes):
-        if n["z"] not in wikis or n["c"]:
+        if n["z"] not in wikis or (n["k"] in opens[n["z"]] if n["z"] in opens else n["c"]):
             continue
-        hubs = sorted(j for j in neighbours.get(i, ()) if nodes[j]["c"] and nodes[j]["z"] == n["z"])
+        hubs = sorted(j for j in neighbours.get(i, ()) if j != i and nodes[j]["c"] and nodes[j]["z"] == n["z"])
         for x in range(len(hubs)):
             for y in range(x + 1, len(hubs)):
                 co[(hubs[x], hubs[y])] = co.get((hubs[x], hubs[y]), 0) + 1
@@ -2882,7 +2889,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             "mode": "all" if len(nodes) <= 150 else "core",
             "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
             "pr": {place: root.relative_to(ws).as_posix() for place, root in places},
-            "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
+            "ce": [[a, b, w] for (a, b), w in sorted(co.items())],
+            "op": {place: sorted(ks) for place, ks in opens.items()}}
 
 
 def launch_agents() -> Path:
@@ -7529,7 +7537,8 @@ var held=false;function cardZone(z){return[].some.call(document.querySelectorAll
    was left, every kind for Everything and the hubs for the other; else the hubs, or every kind the model knows where
    the place is small (G.modes) or has no hub. A kind found from the pages starts hidden. */
 function kindsFor(z){var o={},s=st.get('garrick-graph-kinds-'+z),m=st.get('garrick-graph-mode-'+z),all={},hub={},model={},k;
-G.nodes.forEach(function(n){if(n.z!==z)return;all[n.k]=1;if(n.c)hub[n.k]=1;if(n.k<G.known)model[n.k]=1});
+var op=(G.op||{})[z];      /* Meetings opens on its people, though its entities are hubs too (#320) */
+G.nodes.forEach(function(n){if(n.z!==z)return;all[n.k]=1;if(n.c&&(!op||op.indexOf(n.k)>=0))hub[n.k]=1;if(n.k<G.known)model[n.k]=1});
 if(s)try{JSON.parse(s).forEach(function(x){var i=G.keys.indexOf(x);if(i>=0)o[i]=1});return o}catch(e){}
 var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub;for(k in pick)return pick;for(k in model)return model;return all}
 function keep(){st.set('garrick-graph-kinds-'+zsel,JSON.stringify(Object.keys(ks).map(function(k){return G.keys[k]})))}
@@ -7661,7 +7670,8 @@ ctx.globalAlpha=1}
    card, which frees the count for those still on it (#252). */
 var FONT='system-ui,-apple-system,sans-serif';
 function names(P,f,near,zs){var want=[],out=[],cells={},M=q?mt:null,few=M&&hits.length<=20;
-V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:4,n])});
+/* a hub of the kinds its place opens on is named before the rest: in Meetings its people, then its entities with the other notes (#320) */
+var op=(G.op||{})[zsel];V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c&&(!op||op.indexOf(n.k)>=0)?3:4,n])});
 want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
 function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
 function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}

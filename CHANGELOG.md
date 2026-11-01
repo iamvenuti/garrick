@@ -8,6 +8,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 - **The README and the deck say which commits the wall check covers.** Both said "a check runs before every commit", but the check runs in each zone, on the commits of your work, and the wikis' repository has none. They now say every commit of your work is checked against the walls.
 
+### Fixed
+
+- **The wall check still finds a meeting page after it fades** ([#297](https://github.com/iamvenuti/garrick/issues/297)). Fading rewrites the wikilinks to a page, but since 0.47.2 it leaves a link in code as it was written, and it never rewrote a Markdown link or an HTML anchor. A project note holding `` `[[Meetings/wiki/sources/<page>]]` ``, the page's path in a fenced block, or `[the call](../../Wikis/Meetings/wiki/sources/<page>.md)` lost the page once it moved to `dormant/` or `archive/`, and the full check stopped reporting the link, even across a wall. The check now finds each meeting page at its place in every grade, working, `dormant/` and `archive/`, so a link written before the page faded, or before it woke, still lands on it, and is refused across a wall. The Knowledge check, which refuses a link into Meetings, reads one the same way.
+
 ## [0.49.0] - 2026-10-31
 
 Ask answers questions from your records, inside one scope and sealed from everything else; Garrick's scheduled jobs take `gr-` names and one nightly job does what four did; the Checks card acts on each finding; Settings chooses the graph's colours and the cmux tab's assistant; and the wall check reads links and paths into another project.

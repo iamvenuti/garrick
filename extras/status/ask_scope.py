@@ -224,6 +224,12 @@ class Mentions:
         return set().union(*(e.parties for e in self.entries)) if self.entries else set()
 
     @property
+    def zones(self) -> Set[str]:
+        """The zones the names live in (#317): a place's, a party's as the
+        Parties table gives it, a person's party's. A name of no zone adds none."""
+        return {e.zone for e in self.entries if e.zone}
+
+    @property
     def places(self) -> List[Tuple[str, str, Optional[str]]]:
         seen = []
         for e in self.entries:
@@ -470,6 +476,28 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
     return out
 
 
+ZONED = ("meetings", "thread")       # the routes answered inside one zone (#317)
+
+
+def zone_answer(text: str, names: Dict[str, Dict[str, dict]]) -> Optional[str]:
+    """The zone a reply to "Which zone?" names, in one of the clear forms
+    _zone_said() takes ("Work", "in Work", "the Work one"), or None: an
+    answer that rules anything out names none."""
+    if RULED_OUT.search(str(text or "")):
+        return None
+    said = _zone_said(str(text or ""), names)
+    return said[0] if said else None
+
+
+def which_zone(zones: Iterable[str], named: bool) -> str:
+    """The question back for a zone (#317), one line for the ear: "Which do
+    you mean: Work or Personal?" for a question whose names live in two
+    zones, "Which zone: Work or Personal?" for one with nothing to go on."""
+    zones = list(zones)
+    listed = ", ".join(zones[:-1]) + " or " + zones[-1] if len(zones) > 1 else (zones[0] if zones else "")
+    return ("Which do you mean: %s?" if named else "Which zone: %s?") % listed
+
+
 def no_zone(zone, names: Dict[str, Dict[str, dict]]) -> str:
     """Why a zone the session named is refused: a project's name, when it is
     exactly one project's, said as such so the user can act on it (#308);
@@ -507,6 +535,10 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         zone, project, thread = said.places[0]          # the place the request named, when the find left it out
     if route == "thread" and project is None:
         raise Unclear("Which project or thread do you mean?")
+    if route in ZONED and zone is None:
+        # Every question about meetings or a thread is answered inside one
+        # zone (#317): ask.py settles it from the question or the window first.
+        raise Refused("a question about meetings or a thread is answered inside one zone, and it names none")
     order = find.get("order")
     if order is not None and order not in ORDERS:
         raise Refused("not an order: %r" % (order,))
@@ -539,8 +571,10 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if hub else "in its hub"))
         return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)), **kept)
-    if said.parties:
-        return Scope(route, zone, None, None, words, said.parties, **kept)
+    rows = ctx.get("parties", {})
+    inside = {p for p in said.parties if zone is None or (rows.get(p, {}).get("zone") or zone) == zone}
+    if inside:                                  # the parties named, those of the zone it answers in (#317)
+        return Scope(route, zone, None, None, words, inside, **kept)
     if zone is not None:                        # every party of one zone
         return Scope(route, zone, None, None, words,
                      {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone}, **kept)

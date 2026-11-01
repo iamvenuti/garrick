@@ -169,10 +169,21 @@ is sent to the new processes and nothing is read: the reply says so
 (REFILLED), and its `refill` holds the question with the option the
 answer settled it to, "Where does Pricing stand? (Pricing in Work)", for
 the app to put back in the box. Sent from there, it is a new request like
-any other, and settles without the question (#294). A question across every zone
-reads within one group of parties no wall divides; when a wall held records
-back, the answer ends with the rules' sentence for it, word for word, and
-says nothing of what it held.
+any other, and settles without the question (#294). A question with no
+names reads its zone within one group of parties no wall divides; when a
+wall held records back, the answer ends with the rules' sentence for it,
+word for word, and says nothing of what it held.
+
+**One zone at a time (#317).** A question about meetings or a thread is
+answered inside one zone: the one its names live in, else the window's
+(`--zone`, its selector, kept by the app), else the one last answered in.
+With names in two zones, or nothing to go on, the box asks which zone, with
+the zones as buttons (`zones`, each with its colour), and nothing is read;
+the zone picked (`--picked`) settles it. The sessions hold one zone's
+records: a window set to another zone, or a question whose names lead to
+another, stops both before anything is sent or read, as a wall does, and
+the reply says `"reset": "zone"`. The command session is told the window's
+zone as `<zone>`, a name only.
 
 **What you owe is listed by Garrick, never told to a session (#316).** A
 question about what to do, what is due or overdue, what you owe someone or
@@ -275,6 +286,8 @@ STOPPED_AFRESH = "Stopped. Nothing was done. The assistant had started afresh at
 # Said when the answer to a question back crossed a wall: nothing of it was sent, and
 # the question waits in the box, the reply's `refill`, for the user to send (#294).
 REFILLED = "Started afresh at a wall. Your question is back in the box: check it, then send it."
+# The same, when what the answer chose is in another zone than the sessions answered in (#317).
+REFILLED_ZONE = "Started afresh in another zone. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
 AGENTS = ("claude", "codex")      # what a cmux tab can start: cmuxlib's AGENTS (#307)
 VERBS = ("open", "park", "wake", "todo-add")
@@ -1042,14 +1055,23 @@ class Asker:
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
         self.question = None        # that request as first asked about, before any answer that settled nothing
-        self.afresh = False         # a wall reset ran during the request under way, whatever ends it
+        self.afresh = None          # "wall" or "zone": a reset ran during the request under way, whatever ends it
+        self.zone = None            # the zone whose records the sessions hold: the conversation's (#317)
+        self.last_zone = None       # the zone last answered in, kept across resets: a zone name, never material
+        self.zone_question = None   # a question asked about its zone, waiting for one
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
         self.progress = lambda text: None
 
-    def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
-        self.afresh = False
+    def ask(self, request: str, today: Optional[dt.date] = None, zone: Optional[str] = None,
+            picked: bool = False) -> dict:
+        """One request. `zone` is the zone the window answers in (#317), its
+        selector's: a question about meetings or a thread names its own, or
+        is answered in this one. `picked` says the user chose that zone for
+        this very question, with a zone's button after "Which zone?": it
+        then settles the question's zone, whatever zones its names live in."""
+        self.afresh = None
         if not flag_on(self.ws):
             return off()
         self.asking = False                         # this request answers it, or asks something else
@@ -1061,6 +1083,13 @@ class Asker:
             raise Bad("ask needs garrick_lib.py in System/tools/")
         self.ctx = lib.load_context(self.ws)
         names = scan(self.ws)
+        window = zone if isinstance(zone, str) and zone in names else None
+        picked = window if picked else None         # a zone the user chose for this question, which settles it
+        if self.zone_question is not None:          # "Which zone?", asked of the request before (#317)
+            waiting, self.zone_question = self.zone_question, None
+            chosen = sc.zone_answer(request, names)
+            if chosen is not None and picked is None:   # answered by a zone, typed: the question, asked in it
+                request, window, picked = waiting, chosen, chosen
         # The names first, before any session hears the request: one that
         # fits two entries is asked about, and nothing is read or sent.
         earlier = self.unclear
@@ -1074,15 +1103,18 @@ class Asker:
                 self.question = self.unclear
             return clarify(named.question)
         self.unclear = None
-        reset = self.crosses(named.parties)
+        # A wall between what the request names and what either session
+        # holds, or a window now set to another zone than the one the
+        # sessions answered in (#317): both start afresh before it is sent.
+        reset = "wall" if self.crosses(named.parties) else "zone" if self.moves(window) else None
         if reset:
             first = self.question or earlier
             self.progress("Starting a fresh session")
             self.reset()
-            self.afresh = True
+            self.afresh = reset
             if earlier is not None:                 # an answer: nothing of it, or of its question, is sent (#294)
-                out = self.refilled(first, request, named, names)
-                out["reset"] = "wall"
+                out = self.refilled(first, request, named, names, reset)
+                out["reset"] = reset
                 return out
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
@@ -1098,6 +1130,9 @@ class Asker:
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if "command" in self.refreshed:             # renewed by size: what it said before is gone
             parts.append("<refreshed/>")
+        here = window or self.zone or self.last_zone
+        if here:                                    # the zone the window answers in: a name, never material (#317)
+            parts.append("<zone>%s</zone>" % inert(here))
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         if earlier is not None:                     # the request the box asked about, which this one answers
@@ -1119,7 +1154,8 @@ class Asker:
                 find = wanted(text)
                 if find is not None:
                     out, again = self.answer(heard, find, named, names, today, turns, usage,
-                                             asked=0 if earlier is None else len(earlier) + 1)
+                                             asked=0 if earlier is None else len(earlier) + 1, window=window,
+                                             picked=picked)
                     reset = reset or again
                 else:
                     bill(turns)
@@ -1143,49 +1179,111 @@ class Asker:
             self.stop()
             raise
         if reset:
-            out["reset"] = "wall"
+            out["reset"] = reset
+        return out
+
+    def moves(self, zone: Optional[str]) -> bool:
+        """Whether answering in `zone` leaves the zone whose records the
+        sessions hold (#317): a new conversation, as at a wall."""
+        return zone is not None and self.zone is not None and zone != self.zone
+
+    def zone_for(self, find: dict, named, names, window: Optional[str]) -> Tuple[Optional[str], object]:
+        """The one zone a question about meetings or a thread is answered in
+        (#317), and where it came from: ("Work", "question") when every name
+        it holds, the zone it says ("in Work") and the project it names all
+        live in one zone; else the window's zone, or the one last answered
+        in ("window"); else the only zone there is ("only"). (None, "two")
+        when its names live in two zones, (None, "none") with nothing to go
+        on: the box asks which, and nothing is read. For two, the second
+        item is the zones, in order."""
+        zones = set(named.zones)
+        z = find.get("zone")
+        if isinstance(z, str) and z in names:
+            zones.add(z)
+        p = find.get("project")
+        if isinstance(p, str):
+            holds = [zz for zz, ps in names.items() if p in ps]
+            if len(holds) == 1:
+                zones.add(holds[0])
+        if len(zones) > 1:
+            return None, sorted(zones, key=str.casefold)
+        if zones:
+            return zones.pop(), "question"
+        for zz in (window, self.zone, self.last_zone):
+            if zz in names:
+                return zz, "window"
+        if len(names) == 1:
+            return next(iter(names)), "only"
+        return None, "none"
+
+    def which_zone(self, request: str, zones: List[str], named_two: bool) -> dict:
+        """The question back for a zone (#317): one line, and the zones as
+        buttons, each with its colour from Settings › Zones. Nothing has been
+        read; the question waits in `zone_question` for a zone, typed or
+        clicked, and `retry` is it, for the app to send again in the zone
+        picked."""
+        self.zone_question, self.unclear, self.question = request[-MAX_REQUEST:], None, None
+        out = clarify(scope_lib().which_zone(zones, named_two))
+        out["zones"] = [{"zone": z, "color": zone_colour(self.ws, z)} for z in zones]
+        out["retry"] = request[-MAX_REQUEST:]
         return out
 
     def answer(self, request: str, find: dict, named, names, today: Optional[dt.date], turns: list,
-               usage: dict, asked: int = 0) -> Tuple[dict, bool]:
+               usage: dict, asked: int = 0, window: Optional[str] = None,
+               picked: Optional[str] = None) -> Tuple[dict, Optional[str]]:
         """A question, answered from the records inside its scope by the second
-        session: (the reply, whether a wall reset ran). Its turn goes in
-        `turns`, so the request is one line in the ledger. What it says is
-        said; it never carries out an action, whatever a record holds.
-        `asked` is where the request sent last begins in `request`, after a
-        request the box asked about."""
+        session: (the reply, the reset that ran, "wall" or "zone", or None).
+        Its turn goes in `turns`, so the request is one line in the ledger.
+        What it says is said; it never carries out an action, whatever a
+        record holds. `asked` is where the request sent last begins in
+        `request`, after a request the box asked about; `picked`, the zone
+        the user chose when the box asked which. A question about
+        meetings or a thread is answered inside one zone (zone_for()), and
+        reading in another zone than the sessions hold starts them afresh
+        first, as a wall does."""
         sc = scope_lib()
         lib = sc.lib(self.ws)
         self.results, self.asked = "", {}
         if isinstance(find, dict) and find.get("route") == "actions":
-            return self.listed(request, find, named, names, today, asked), False
+            return self.listed(request, find, named, names, today, asked), None
         if not self.session.remembers:
-            return reply(NEED_CLAUDE), False
+            return reply(NEED_CLAUDE), None
         self.progress("Finding the records")
         if isinstance(find, dict) and find.get("order") is None and sc.wants_recent(request):
             find = dict(find, order="recent")       # a question about the last or since, however the find put it (#315)
+        zoned, why = None, None
+        if isinstance(find, dict) and find.get("route") in sc.ZONED and (find.get("zone") is None or find.get("zone") in names):
+            zoned, why = (picked, "window") if picked else self.zone_for(find, named, names, window)
+            if zoned is None:                       # two zones, or none to go on: asked, and nothing read (#317)
+                two = isinstance(why, list)
+                return self.which_zone(request, why if two else list(names), two), None
+            if why == "question" and zoned == window:
+                why = "window"                      # the window shows it already: nothing to say
+            find = dict(find, zone=zoned)
         try:
             where = sc.scope(self.ws, find, named, names, self.ctx, lib)
         except sc.Unclear as e:
             self.unclear = request[-MAX_REQUEST:]
             if not asked:
                 self.question = self.unclear
-            return clarify(str(e)), False
+            return clarify(str(e)), None
         except sc.Refused as e:
             raise Bad(str(e))
-        reset = self.crosses(where.parties, where.every)
+        reset = "wall" if self.crosses(where.parties, where.every) else "zone" if self.moves(zoned) else None
         if reset:                                   # before anything is read
             first = self.question or request[:asked - 1]
             self.progress("Starting a fresh session")
             self.reset()
-            self.afresh = True
+            self.afresh = reset
             if asked:                               # an answer: nothing is read, and nothing more sent (#294)
-                return self.refilled(first, request[asked:], named, names), True
+                return self.refilled(first, request[asked:], named, names, reset), reset
+        if zoned is not None:                       # the sessions now answer in this zone, and the window follows
+            self.zone = self.last_zone = zoned
         records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
             out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
-            return out, reset
+            return self.in_zone(out, zoned, why), reset
         if self.answers is None:
             self.answers = ClaudeSession(self.ws, answer_tier(), ANSWER_BRIEF)
         self.progress("Reading %d record%s" % (len(records), "" if len(records) == 1 else "s"))
@@ -1234,7 +1332,25 @@ class Asker:
                    sources=self.sources([this_turn[i] for i in dict.fromkeys(ids)], names))
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
-        return out, reset
+        return self.in_zone(out, zoned, why), reset
+
+    @staticmethod
+    def in_zone(out: dict, zone: Optional[str], why: Optional[str]) -> dict:
+        """An answer read inside one zone (#317): the reply carries `zone`,
+        for the window's selector to follow, and, when the question's own
+        names chose it over what the window shows, says so first: "In
+        Work: ..."."""
+        if zone is None:
+            return out
+        out["zone"] = zone
+        if why == "question":
+            lead = "In %s: " % zone
+            if out.get("claims"):
+                out["claims"][0] = dict(out["claims"][0], text=lead + out["claims"][0]["text"])
+            elif out.get("after"):
+                out["after"] = [lead + out["after"][0]] + out["after"][1:]
+            out["say"] = lead + out["say"]
+        return out
 
     def listed(self, request: str, find: dict, named, names, today: Optional[dt.date], asked: int = 0) -> dict:
         """What the user owes, or waits on, said by Garrick itself (#316):
@@ -1280,7 +1396,7 @@ class Asker:
         self.asking = False
         return out
 
-    def refilled(self, earlier: str, said: str, named, names) -> dict:
+    def refilled(self, earlier: str, said: str, named, names, why: str = "wall") -> dict:
         """The reply when the answer to a question back crossed a wall (#294),
         once both sessions are reset: nothing of the request or its question
         has been sent to them, and nothing is. Its `refill` is the question
@@ -1306,7 +1422,7 @@ class Asker:
             if not got.question and got.parties == named.parties:
                 refill = text
                 break
-        out = clarify(REFILLED)
+        out = clarify(REFILLED if why == "wall" else REFILLED_ZONE)
         out["refill"] = refill
         return out
 
@@ -1421,6 +1537,7 @@ class Asker:
                 s.stop()
         self.results, self.asked, self.unclear, self.asking = "", {}, None, False
         self.question = None
+        self.zone, self.zone_question = None, None      # last_zone stays: a zone's name, the window's default
         self.seen, self.seen_for, self.passages = set(), None, []
         self.heard, self.heard_for = set(), None
         self.sent = self.told = self.answer_sent = self.answer_told = None
@@ -1432,7 +1549,8 @@ class Asker:
         while a question waits for its answer, a name asked about, an action
         asked to be done again, or a session's own question back (asks_back()):
         the renewal waits for the answer. Never with Ask switched off."""
-        if self.unclear is not None or self.asked or self.asking or not flag_on(self.ws):
+        if self.unclear is not None or self.zone_question is not None or self.asked or self.asking \
+                or not flag_on(self.ws):
             return False                            # switched off: nothing is started, renewed or not
         return any(getattr(s, "remembers", False) and getattr(s, "full", lambda: False)()
                    for s in (self.session, self.answers) if s is not None)
@@ -1520,6 +1638,16 @@ class Asker:
             say = questions[0]                      # what the session said it did did not happen: the question did
         return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok,
                 "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
+
+
+def zone_colour(ws: Path, zone: str) -> str:
+    """A zone's colour from Settings › Zones, one of cmux's sixteen names as
+    page_action.py checks them, or "" for none: the zone's button takes it (#317)."""
+    zones = prefs().read(ws).get("zones")
+    given = zones.get(zone) if isinstance(zones, dict) else None
+    colour = given.get("color") if isinstance(given, dict) else None
+    named = {c.lower(): c for c in getattr(page_action(), "ZONE_COLOURS", ())}
+    return named.get(colour.lower(), "") if isinstance(colour, str) else ""
 
 
 def canon(item: dict) -> str:
@@ -1724,7 +1852,9 @@ def serve_locked(ws: Path, path: Path) -> None:
                             asker.session.watch = conn
                         asker.progress = lambda text, c=conn: send(c, {"progress": str(text)})
                         try:
-                            out = asker.ask(str(msg.get("text", "")))
+                            zone = msg.get("zone") if isinstance(msg.get("zone"), str) and msg.get("zone") else None
+                            out = asker.ask(str(msg.get("text", ""))) if zone is None else \
+                                asker.ask(str(msg.get("text", "")), zone=zone, picked=msg.get("picked") is True)
                         finally:
                             asker.progress = lambda text: None
                             if asker.session is not None:
@@ -1769,9 +1899,9 @@ def serve_locked(ws: Path, path: Path) -> None:
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
                 if op == "ask" and asker.afresh:
-                    # A wall reset ran before the request stopped, was capped or failed:
-                    # the app draws its divider all the same (#294).
-                    out["reset"] = "wall"
+                    # A reset ran before the request stopped, was capped or failed:
+                    # the app draws its divider all the same (#294), at a wall or a zone (#317).
+                    out["reset"] = asker.afresh
                 # Renewal by size, after a completed exchange only: said with
                 # the reply, done once it is sent, so nobody waits for it. Never
                 # after a wall reset, whose sessions are new already.
@@ -1830,9 +1960,11 @@ def stop_on_interrupt(conn):
         signal.signal(signal.SIGINT, old)
 
 
-def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None) -> Optional[dict]:
+def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None, zone: Optional[str] = None,
+         picked: bool = False) -> Optional[dict]:
     """One op to the workspace's server, starting it first if asked and needed:
-    its final line, each progress line before it handed to `progress`."""
+    its final line, each progress line before it handed to `progress`.
+    `zone` is the window's, sent with a request (#317)."""
     path = sock_path(ws)
     for attempt in range(100):
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1855,7 +1987,8 @@ def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None) -
         until = time.time() + ASK_WAIT         # the whole wait, however many lines come in it
         try:
             c.settimeout(ASK_WAIT)
-            c.sendall((json.dumps({"op": op, "text": text}) + "\n").encode("utf-8"))
+            said = dict({"op": op, "text": text}, **({"zone": zone, "picked": picked} if zone else {}))
+            c.sendall((json.dumps(said) + "\n").encode("utf-8"))
             lines = c.makefile("rb")
             while reply is None:
                 c.settimeout(max(0.05, until - time.time()))
@@ -1880,7 +2013,7 @@ def call(ws: Path, op: str, text: str = "", start: bool = True, progress=None) -
         return {"say": "The ask server stopped before it answered.", "ok": False, "failed": True}
     if reply is None and start and op != "stop":     # reached a server on its way out
         time.sleep(0.3)
-        return call(ws, op, text, start, progress)
+        return call(ws, op, text, start, progress, zone, picked)
     return reply or {}
 
 
@@ -1889,9 +2022,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--json", action="store_true", help="print the answer as JSON lines, each as it comes, for the app")
     ap.add_argument("--list", action="store_true", help="print the workspace list the session is given")
+    ap.add_argument("--zone", help="the zone the window answers in (#317): a question names its own, or is answered here")
+    ap.add_argument("--picked", action="store_true", help="the user chose --zone for this question, after \"Which zone?\"")
     ap.add_argument("op", nargs="?", choices=("ask", "warm", "keep", "reset", "stop", "status", "serve"))
     ap.add_argument("words", nargs="*")
-    args = ap.parse_args(argv)
+    args = ap.parse_intermixed_args(argv)       # `ask --zone Work -- the words`, as the app sends it (#317)
     ws = Path(args.workspace).expanduser().resolve()
     if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
         out = {"say": "Not a Garrick workspace.", "ok": False}
@@ -1914,7 +2049,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.op == "ask":
                 text = " ".join(args.words).strip()
                 said = (lambda line: print(json.dumps({"progress": line}, ensure_ascii=False), flush=True)) if args.json else None
-                out = call(ws, "ask", text, progress=said) if text else {"say": "Ask what?", "ok": False}
+                out = call(ws, "ask", text, progress=said, zone=args.zone, picked=args.picked) if text \
+                    else {"say": "Ask what?", "ok": False}
             elif args.op in ("warm", "keep", "reset", "status"):
                 out = call(ws, args.op, start=args.op in ("warm", "keep")) or {"say": "Not running."}
             elif args.op == "stop":

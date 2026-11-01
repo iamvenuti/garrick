@@ -11,6 +11,7 @@ it was given.
 from __future__ import annotations
 
 import ast
+import functools
 import io
 import json
 import os
@@ -132,8 +133,12 @@ class AnswerCase(base.StandInCase):
             a.stop()
         super().tearDown()
 
-    def asker(self, session=None):
+    def asker(self, session=None, zone="Work"):
+        """An Asker, its requests sent as the window sends them: with the zone
+        its selector shows (#317), Work unless a test says otherwise."""
         a = ask.Asker(self.root, session or ask.ClaudeSession(self.root, "haiku"))
+        if zone:
+            a.ask = functools.partial(a.ask, zone=zone)
         self.askers.append(a)
         return a
 
@@ -656,7 +661,13 @@ class TestScopeFirst(AnswerCase):
             sc.scope(self.root, {"route": "thread"}, nothing, names, ctx, lib)
         where = sc.scope(self.root, {"route": "meetings", "project": "Birch Entry"}, nothing, names, ctx, lib)
         self.assertEqual(("Work", {"birch"}, False), (where.zone, where.parties, where.every))
-        self.assertTrue(sc.scope(self.root, {"route": "meetings"}, nothing, names, ctx, lib).every)
+        for route in ("meetings", "thread"):                                  # #317: answered inside one zone
+            with self.assertRaisesRegex(sc.Refused, "inside one zone"):
+                sc.scope(self.root, {"route": route} if route == "meetings" else {"route": route, "project": None},
+                         nothing, names, ctx, lib) if route == "meetings" else sc.scope(
+                    self.root, {"route": "meetings", "zone": None}, nothing, names, ctx, lib)
+        where = sc.scope(self.root, {"route": "meetings", "zone": "Work"}, nothing, names, ctx, lib)
+        self.assertEqual(("Work", {"acme", "birch"}, False), (where.zone, where.parties, where.every))
         self.assertEqual(set(), sc.scope(self.root, {"route": "knowledge", "project": "Acme Review"}, nothing, names,
                                          ctx, lib).parties)
 
@@ -947,7 +958,12 @@ class TestFailsClosed(AnswerCase):
         and after the reset nothing more is sent, nothing is read, and the
         question comes back. The request is one line in the ledger."""
         self.budget()
-        self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
+        write(self.work / "Acme Review" / "Threads" / "Budget" / "Budget.md",
+              thread_note("Acme Review", "Budget", "acme", "Acme budget."))
+        self.commit()
+        # The answer settles Acme's Budget, in Work; the find the session
+        # proposes is Birch's, in the same zone, across the wall.
+        self.rules([["The Acme one", find("meetings", ["pallet"], project="Birch Entry")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
@@ -955,8 +971,8 @@ class TestFailsClosed(AnswerCase):
         sent = len(self.msgs())
         ledger = ask.agent().ledger_path()
         lines = len(ledger.read_text().splitlines()) if ledger.exists() else 0
-        out = a.ask("The one in Personal.")                                 # no wall named: the find crosses it
-        self.assert_refilled(out, "Where is the Budget plan %s (Home, Budget)" % self.EARLIER)
+        out = a.ask("The Acme one.")                                        # no wall named: the find crosses it
+        self.assert_refilled(out, "Where is the Budget plan %s (Acme Review, Budget)" % self.EARLIER)
         msgs = self.msgs()
         self.assertEqual(sent + 1, len(msgs))                               # the command turn, before the reset
         self.assertIn("<earlier-request>", msgs[-1])
@@ -971,7 +987,7 @@ class TestFailsClosed(AnswerCase):
         self.assertNotEqual("clarify", out["kind"])                         # settled: Home's Budget, no question
         self.assertNotIn("reset", out)
         (cmd,) = self.new_since(before)["haiku"]
-        self.assertIn('"Budget": the thread Budget of Home in Personal', cmd)
+        self.assertIn('"Budget": the thread Budget of Acme Review in Work', cmd)
 
     def test_a_wall_reset_after_a_question_back_sends_no_far_name_settled_before_it(self):
         """#294: a far-side alias settled in the request asked about reaches
@@ -1535,7 +1551,7 @@ class TestCitations(AnswerCase):
             for q in ("What did Dana say about the pallet quote?", "What did Theo say about the pallet launch?"):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    ask.main(["--workspace", str(self.root), "--json", "ask", q])
+                    ask.main(["--workspace", str(self.root), "--json", "ask", "--zone", "Work", "--", q])
                 lines.append(json.loads(buf.getvalue().splitlines()[-1]))
         finally:
             with contextlib.redirect_stdout(io.StringIO()):
@@ -1624,7 +1640,7 @@ class TestTheWindowCites(unittest.TestCase):
     body = base.TestTheAppKeepsIt.body
 
     def test_an_answer_keeps_its_claims_and_sources_from_the_reply(self):
-        submit = self.body("askSubmit")
+        submit = (self.body("askSubmit") + self.body("askSend"))
         for field in ('out["claims"]', 'out["after"]', 'out["sources"]'):
             self.assertIn(field, submit)
         self.assertIn('if turn.kind == "answer" {', submit)
@@ -1918,3 +1934,141 @@ class TestActions(AnswerCase):
         self.assertIn("<you>Jo Example</you>", sent)
         self.assertIn('"you"', ask.ANSWER_BRIEF.read_text())
         self.assertEqual("&lt;you>", ask.inert("<you>"))
+
+
+class TestOneZone(AnswerCase):
+    """#317: every question about meetings or a thread is answered inside one
+    zone, from its names or the window; two zones are asked about before
+    anything is read; another zone starts both sessions afresh."""
+
+    def setUp(self):
+        super().setUp()
+        ctx = self.root / "System" / "context.md"
+        text = ctx.read_text()
+        text = text.replace("| Birch & Co | Client.", "| Cedar Club | Rowing club | Personal | `cedar` | cedarclub.example |\n"
+                                                     "| Birch & Co | Client.")
+        text = text.replace("| Theo Marsh |", "| Pat Lowe | `cedar` | Club secretary |\n| Theo Marsh |")
+        write(ctx, text)
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260320-cedar-meeting.md",
+              dated_meeting("2026-03-20", "Club meeting", "Pat said the regatta fee is due. CEDARMARK83",
+                            parties="[cedar]", zone="Personal"))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"zones": {"Personal": {"color": "teal"},
+                                                                                     "Work": {"color": "Navy"}}}))
+        self.answers.write_text(json.dumps({"haiku": [
+            ["meeting with Pat", find("meetings", ["regatta"])],
+            ["Pat and Dana", find("meetings", ["fee"])],
+            ["what's open", json.dumps({"say": "Nothing much.", "do": []})],
+        ] + HAIKU}))
+
+    def marks(self, pid):
+        return "\n".join(self.msgs(pid))
+
+    def test_a_name_chooses_its_zone_and_the_reply_says_so(self):
+        a = self.asker(zone="Work")
+        out = a.ask("What's the last meeting with Pat?")
+        self.assertEqual(("answer", "Personal"), (out["kind"], out["zone"]))
+        self.assertTrue(out["say"].startswith("In Personal: "), out["say"])
+        self.assertIn("CEDARMARK83", "\n".join(self.msgs()))
+        self.assertNotIn(ACME, "\n".join(self.msgs()))
+        self.assertEqual("Personal", self.askers[-1].zone)
+        same = self.asker(zone="Personal").ask("What's the last meeting with Pat?")
+        self.assertFalse(same["say"].startswith("In Personal"))          # the window shows it already
+
+    def test_two_zones_are_asked_about_and_nothing_is_read(self):
+        a = self.asker(zone="Work")
+        out = a.ask("What did Pat and Dana say about the fee?")
+        self.assertEqual(("clarify", "Which do you mean: Personal or Work?"), (out["kind"], out["say"]))
+        self.assertEqual([{"zone": "Personal", "color": "Teal"}, {"zone": "Work", "color": "Navy"}], out["zones"])
+        self.assertEqual("What did Pat and Dana say about the fee?", out["retry"])
+        self.assertEqual(["haiku"], [p["model"] for p in self.procs()])  # no answer session
+        self.assertFalse(any("<records " in m for m in self.msgs()))
+        self.assertEqual((set(), []), (self.askers[-1].seen, self.askers[-1].passages))
+        out = a.ask("Work")                                              # typed, or the Work button
+        self.assertEqual(("answer", "Work"), (out["kind"], out["zone"]))
+        said = "\n".join(self.msgs())
+        self.assertNotIn("CEDARMARK83", said)
+        self.assertIsNone(self.askers[-1].zone_question)
+
+    def test_a_zone_button_sends_the_question_again_in_its_zone(self):
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        out = a.ask("What did Pat and Dana say about the fee?", zone="Work")
+        out = a.ask(out["retry"], zone="Personal", picked=True)          # the Personal button
+        self.assertEqual(("answer", "Personal"), (out["kind"], out["zone"]))
+        said = "\n".join(self.msgs())
+        self.assertIn("CEDARMARK83", said)
+        self.assertNotIn(ACME, said)
+        self.assertIn("cedar", a.seen)                                   # Personal's records; Dana's name alone
+
+    def test_nothing_to_go_on_asks_which_zone(self):
+        a = self.asker(zone=None)
+        out = a.ask("What did I discuss this week?")
+        self.assertEqual(("clarify", "Which zone: Personal or Work?"), (out["kind"], out["say"]))
+        self.assertEqual(["Personal", "Work"], [z["zone"] for z in out["zones"]])
+        self.assertFalse(any("<records " in m for m in self.msgs()))
+        out = a.ask("in Personal")
+        self.assertEqual(("answer", "Personal"), (out["kind"], out["zone"]))
+        said = "\n".join(self.msgs())
+        self.assertIn("CEDARMARK83", said)
+        self.assertNotIn(ACME, said)
+        self.assertNotIn(BIRCH, said)
+        again = a.ask("What did I discuss this week?")                    # the zone last used, kept
+        self.assertEqual("Personal", again.get("zone"))
+
+    def test_the_window_zone_reaches_the_command_session_and_what_is_open(self):
+        self.asker(zone="Personal").ask("what's open?")
+        self.assertIn("<zone>Personal</zone>", self.msgs()[-1])
+        self.assertIn('from the zone in `<zone>` alone', ask.BRIEF.read_text())
+
+    def test_switching_zones_starts_both_sessions_afresh_and_carries_nothing(self):
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        self.askers.append(a)
+        a.ask("What's the last meeting with Pat?", zone="Personal")
+        before = {p["pid"] for p in self.procs()}
+        self.assertEqual(["haiku", "sonnet"], sorted(p["model"] for p in self.procs()))
+        self.assertEqual(("Personal", {"cedar"}), (a.zone, a.seen))
+        out = a.ask("what's open?", zone="Work")                         # the selector moved to Work
+        self.assertEqual("zone", out.get("reset"))
+        for pid in before:
+            self.assertTrue(self.gone(pid), pid)                         # both sessions ended
+        self.assertEqual((set(), []), (a.seen, a.passages))
+        new = [p["pid"] for p in self.procs() if p["pid"] not in before]
+        self.assertEqual(1, len(new))
+        self.assertNotIn("CEDARMARK83", self.marks(new[0]))
+        self.assertNotIn("Pat", self.marks(new[0]))
+        out = a.ask("What did Dana say about the pallet quote?", zone="Work")
+        self.assertNotIn("reset", out)
+        for p in self.procs():
+            if p["pid"] not in before:
+                self.assertNotIn("CEDARMARK83", self.marks(p["pid"]))    # nothing of Personal's reaches Work
+
+    def test_a_question_whose_names_move_zones_resets_before_reading(self):
+        """The window says Work, and the sessions hold Work's records; a
+        question about Pat is answered in Personal by fresh sessions only."""
+        a = self.asker(zone="Work")
+        a.ask("What did Dana say about the pallet quote?")
+        before = {p["pid"] for p in self.procs()}
+        out = a.ask("What's the last meeting with Pat?")
+        self.assertEqual(("zone", "Personal"), (out.get("reset"), out.get("zone")))
+        for pid in before:
+            self.assertTrue(self.gone(pid))
+            self.assertNotIn("CEDARMARK83", self.marks(pid))
+        for p in self.procs():
+            if p["pid"] not in before:
+                self.assertNotIn(ACME, self.marks(p["pid"]))
+        self.assertEqual({"cedar"}, self.askers[-1].seen)
+
+    def test_codex_also_resets_at_a_zone(self):
+        os.environ["GARRICK_HARNESS"] = "codex"
+        real = ask.agent().run
+        ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: (0, json.dumps({"say": "ok", "do": []}))
+        try:
+            a = ask.Asker(self.root)
+            a.ask("add call Dana to Acme", zone="Work")
+            a.zone = "Work"                                              # as after an answer read in Work
+            self.assertTrue(a.session.history)
+            out = a.ask("open Acme Review", zone="Personal")
+            self.assertEqual("zone", out.get("reset"))
+            self.assertEqual(["open Acme Review"], [r for r, _ in a.session.history])
+        finally:
+            ask.agent().run = real

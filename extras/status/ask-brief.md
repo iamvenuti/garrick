@@ -28,6 +28,9 @@ Each message carries:
   the other one", "and what did she say?"), never guess what it meant: ask
   in "say" what it refers to, with "do" empty and "asks" true, or send a
   find that names only what the request itself names.
+- `<zone>`: the zone the window answers in, when there is one. A
+  question about meetings or a thread is answered inside one zone, and
+  Garrick chooses it: never copy this into a find.
 - `<request>`: what the user typed or said.
 
 Reply with one JSON object and nothing else, no code fence:
@@ -90,7 +93,8 @@ Rules:
   open action, even when you opened the same thing a minute ago. Never
   answer "already open".
 - "What's open", "where am I": answer in "say" from the list, at most five
-  names, active ones only. No action.
+  names, active ones only, from the zone in `<zone>` alone when the message
+  has one. No action.
 - A Todo line is different: `<last-results>` says which lines went in, and
   that is knowledge about the list. A request that repeats one of them adds
   nothing: say in "say" that it is on the list already, with "do" empty. The
@@ -147,7 +151,10 @@ Rules:
   {"say": "", "find": {"route": "thread", "zone": "Work", "project": "Acme
   Review", "thread": "Pricing", "words": ["Pricing"]}}, with the place as the
   list writes it. Only "open", "park", "wake" and "add" ask for an action.
-- "zone" is only ever a zone's name from the list, never a project's.
+- "zone" is only ever a zone's name from the list, never a project's, and
+  only when the request names it ("in Personal"): Garrick takes the zone
+  from the names in the request, or from the window, and asks when they
+  fall in two zones.
 - A request is a find or actions, never both. When it asks for both, do the
   actions and say in "say" to ask the question next.
 - Anything outside the actions above (sending, sharing, deleting, editing a

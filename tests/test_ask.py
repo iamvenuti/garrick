@@ -1348,7 +1348,9 @@ class TestTheAppKeepsIt(unittest.TestCase):
         self.assertEqual(1, self.swift.count('askCall(["reset"])'))
         self.assertIn('askCall(["reset"])', self.body("askReset"))
         calls = self.swift.count("askReset()") - self.swift.count("func askReset()")
-        self.assertEqual(2, calls)                                          # New conversation, and Stop and start new
+        self.assertEqual(4, calls)       # New conversation, Stop and start new, and a zone changed by hand (#317)
+        self.assertIn("askReset()", self.body("askPickZone"))
+        self.assertIn("askReset()", self.body("askChooseZone"))
         self.assertIn("askReset()", self.body("askNew"))
         self.assertIn("askWarm()", self.body("showAsk"))
         self.assertIn('askCall(["warm"])', self.body("askWarm"))
@@ -1467,8 +1469,8 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn("if which == 2 { return showAsk() }", self.body("hotKeyPressed"))
 
     def test_a_wall_reset_keeps_the_exchange_under_a_divider(self):
-        submit = self.body("askSubmit")
-        self.assertIn('turn.afresh = turn.afresh || out["reset"] as? String == "wall"', submit)
+        submit = (self.body("askSubmit") + self.body("askSend"))
+        self.assertIn('turn.afresh = turn.afresh || out["reset"] is String', submit)    # at a wall, or a zone (#317)
         self.assertIn("if turn.kind != \"command\" || turn.afresh || startNew { self.askExpanded = true }", submit)
         shown = self.body("askTranscript")
         self.assertLess(shown.index("if turn.afresh && i > 0 {"), shown.index("askAfresh"))
@@ -1478,7 +1480,7 @@ class TestTheAskWindow(unittest.TestCase):
     def test_a_refill_goes_in_the_field_and_is_never_sent(self):
         """#294: the question a wall reset gave back is put in an empty field,
         the cursor at its end, and the field focused; only the user sends it."""
-        submit = self.body("askSubmit")
+        submit = (self.body("askSubmit") + self.body("askSend"))
         block = submit[submit.index('if let refill = out["refill"] as? String'):]
         block = block[:block.index("\n\t\t\t}\n")]
         self.assertIn("self.askField.string.isEmpty", block)
@@ -1498,7 +1500,7 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn("process.interrupt()", self.between("final class AskRequest {", "\n}\n"))
         self.assertIn("askRunning?.stop()", self.body("askStop"))
         self.assertIn("signal.SIGINT", (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8"))
-        submit = self.body("askSubmit")
+        submit = (self.body("askSubmit") + self.body("askSend"))
         self.assertIn("guard !text.isEmpty, askRunning == nil, !askResetting else { return }", submit)   # one at a time
         self.assertIn("progress: { [weak self] said in self?.askProgress(said) }", submit)
 
@@ -1519,14 +1521,14 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn("askNewAfterStop = true", running)
         self.assertIn("return askStop(nil)", running)
         self.assertNotIn("reset", running.lower())                      # nothing reset while the request runs
-        submit = self.body("askSubmit")
+        submit = (self.body("askSubmit") + self.body("askSend"))
         after = submit[submit.index("self.askRunning = nil"):]
         turn = after.index("var turn = self.askTurns[at]")
         self.assertIn('if startNew && out["stopped"] as? Bool == true {', after[:turn])
         self.assertIn("return self.askNew(nil)", after[:turn])          # stopped: nothing done, so all of it goes
 
     def test_a_reply_that_was_not_stopped_stays_and_the_new_conversation_starts_under_it(self):
-        submit = self.body("askSubmit")
+        submit = (self.body("askSubmit") + self.body("askSend"))
         after = submit[submit.index("self.askRunning = nil"):]
         kept = after.index("self.askTurns[at] = turn")
         self.assertLess(kept, after.index("if startNew {"))              # what it did is on screen first
@@ -1539,13 +1541,13 @@ class TestTheAskWindow(unittest.TestCase):
     def test_nothing_is_sent_until_the_reset_has_returned(self):
         reset = self.body("askReset")
         self.assertLess(reset.index("askResetting = true"), reset.index('askCall(["reset"])'))
-        self.assertIn("self?.askResetting = false", reset[reset.index('askCall(["reset"])'):])
-        self.assertIn("!askResetting else { return }", self.body("askSubmit"))
+        self.assertIn("self.askResetting = false", reset[reset.index('askCall(["reset"])'):])
+        self.assertIn("!askResetting else { return }", (self.body("askSubmit") + self.body("askSend")))
         self.assertIn("askField.isEditable = !askResetting", self.body("askRender"))
 
     def test_a_renewal_is_said_under_its_turn(self):
         self.assertIn('let askRefreshed = "Conversation refreshed"', self.swift)
-        self.assertIn('turn.refreshed = out["refreshed"] as? Bool == true', self.body("askSubmit"))
+        self.assertIn('turn.refreshed = out["refreshed"] as? Bool == true', (self.body("askSubmit") + self.body("askSend")))
         shown = self.body("askTranscript")
         self.assertIn("if turn.refreshed {", shown)
         self.assertLess(shown.index("askCited("), shown.index("askRefreshed"))     # after the reply it came with
@@ -1606,3 +1608,61 @@ class TestFlag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheZoneSelector(unittest.TestCase):
+    """#317: the Ask window's zone, read from Garrick.swift's source."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    body = TestTheAppKeepsIt.body
+
+    def test_the_zone_is_kept_in_the_apps_defaults_never_the_workspace(self):
+        self.assertIn('let kAskZone = "askZone"', self.swift)
+        kept = self.body("askSetZone")
+        self.assertIn("defaults.set(zone, forKey: kAskZone)", kept)
+        for name in ("askSetZone", "askZone", "askPickZone", "askChooseZone", "askZoneShow"):
+            body = self.body(name)
+            self.assertNotIn(".write(", body, name)
+            self.assertNotIn("garrick-settings", body, name)
+        self.assertNotIn("kAskZone", self.body("askNew"))                   # New conversation keeps the zone
+
+    def test_every_request_carries_the_zone(self):
+        sent = self.swift[self.swift.index("func askGarrick("):]
+        sent = sent[:sent.index("return askStream(")]
+        self.assertIn('["ask", "--zone", zone] + (picked ? ["--picked"] : []) + ["--", text]', sent)
+
+    def test_changing_the_zone_starts_a_new_conversation_under_the_divider(self):
+        pick = self.body("askPickZone")
+        self.assertLess(pick.index("askSetZone(zone)"), pick.index("askReset()"))
+        self.assertIn("askNextAfresh = true", pick)
+        choose = self.body("askChooseZone")
+        self.assertLess(choose.index("askAfterReset ="), choose.index("askReset()"))   # sent once the reset is done
+        self.assertIn("askSend(retry, picked: true)", choose)
+        reset = self.body("askReset")
+        self.assertLess(reset.index("self.askResetting = false"), reset.index("next?()"))
+
+    def test_a_reply_moves_the_selector_without_a_reset(self):
+        send = self.body("askSend")
+        line = next(l for l in send.splitlines() if 'out["zone"]' in l)
+        self.assertIn("self.askSetZone(z)", line)
+        self.assertNotIn("askReset", line)
+
+    def test_one_zone_shows_no_selector(self):
+        self.assertIn("picker.isHidden = zones.count <= 1", self.body("askZoneShow"))
+        self.assertIn("if zones.count == 1 { return zones[0] }", self.body("askZone"))
+
+    def test_the_zone_buttons_take_the_zones_colours_as_the_page_inks_them(self):
+        import ast as _ast
+        import re
+        src = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        start = src.index("ZONE_COLOURS = {")
+        page = _ast.literal_eval(src[start + len("ZONE_COLOURS = "):src.index("}", start) + 1])
+        table = self.swift[self.swift.index("let askZoneInks"):]
+        table = table[:table.index("]\n")]
+        app = {k: (a, b) for k, a, b in re.findall(r'"(\w+)": \("(#[0-9A-F]{6})", "(#[0-9A-F]{6})"\)', table)}
+        self.assertEqual(page, app)
+        self.assertIn('askZoneColour(z["color"] as? String ?? "")', self.body("askChoicesShow"))
+        self.assertEqual(ask.page_action().ZONE_COLOURS, tuple(page))

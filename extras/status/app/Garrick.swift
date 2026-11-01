@@ -161,9 +161,7 @@ func askOn() -> Bool {
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
 // Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
-// exchange stays on screen, and nothing of it reaches the new session. When that turn answered a
-// question back and the request it settled went on with it ("carried": true, #294), the divider
-// goes above the questions back instead, so what is below it is what the new session was given.
+// exchange stays on screen, and nothing of it reaches the new session.
 let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
 let troubleSaid = "Something on the Status tab failed"
@@ -275,7 +273,6 @@ struct AskTurn {
 	var stopped = false
 	var failed = false
 	var afresh = false        // a wall reset came before it: the assistant started again, and what is above is on screen only
-	var carried = false       // and the request a question back asked about went on with it, past the reset (#294)
 	var running = true
 }
 
@@ -2017,7 +2014,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.stopped = out["stopped"] as? Bool == true
 			turn.failed = out["failed"] as? Bool == true
 			turn.afresh = out["reset"] as? String == "wall"
-			turn.carried = turn.afresh && out["carried"] as? Bool == true
 			self.askTurns[at] = turn
 			if turn.kind != "command" || turn.afresh { self.askExpanded = true }
 			// Stopped: nothing was done, so the question goes back in the field, to be sent again or changed.
@@ -2095,21 +2091,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The exchange as the expanded window shows it: each request, then what came back; a
-	// stop or a failure said as such; a wall reset as a divider above the turn it came with, or
-	// above the questions back that turn answered, when the request they asked about went on.
+	// stop or a failure said as such; a wall reset as a divider above the turn it came with.
 	func askTranscript() -> NSAttributedString {
 		let out = NSMutableAttributedString()
 		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
 		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
 		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
-		var dividers = Set<Int>()
-		for (i, turn) in askTurns.enumerated() where turn.afresh {
-			var at = i
-			if turn.carried { while at > 0 && askTurns[at - 1].kind == "clarify" { at -= 1 } }
-			dividers.insert(at)
-		}
 		for (i, turn) in askTurns.enumerated() {
-			if dividers.contains(i) && i > 0 {
+			if turn.afresh && i > 0 {
 				let centred = NSMutableParagraphStyle()
 				centred.alignment = .center
 				aside[.paragraphStyle] = centred

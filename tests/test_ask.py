@@ -1195,18 +1195,9 @@ class TestTheAskWindow(unittest.TestCase):
         self.assertIn('turn.afresh = out["reset"] as? String == "wall"', submit)
         self.assertIn("if turn.kind != \"command\" || turn.afresh { self.askExpanded = true }", submit)
         shown = self.body("askTranscript")
-        self.assertLess(shown.index("if dividers.contains(i) && i > 0 {"), shown.index("askAfresh"))
+        self.assertLess(shown.index("if turn.afresh && i > 0 {"), shown.index("askAfresh"))
         self.assertLess(shown.index("askAfresh"), shown.index("turn.request"))   # above the turn it came with
         self.assertNotIn("askTurns", self.between("let askAfresh", "\n"))
-
-    def test_a_carried_question_goes_below_the_divider(self):
-        """#294: when a wall reset carries the request a question back asked
-        about, the divider goes above those questions, so all that is below
-        it is what the new session was given."""
-        self.assertIn('turn.carried = turn.afresh && out["carried"] as? Bool == true', self.body("askSubmit"))
-        shown = self.body("askTranscript")
-        self.assertIn('if turn.carried { while at > 0 && askTurns[at - 1].kind == "clarify" { at -= 1 } }', shown)
-        self.assertLess(shown.index("dividers.insert(at)"), shown.index("if dividers.contains(i) && i > 0 {"))
 
     def test_lines_are_read_as_they_come_and_stop_interrupts(self):
         stream = self.between("func askStream(", "\n}\n")

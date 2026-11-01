@@ -166,7 +166,6 @@ class TestTheWallReset(AnswerCase):
         self.assertTrue(any(ACME in m for m in self.msgs()))
         out = a.ask("What did Theo say about the pallet launch?")
         self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        self.assertNotIn("carried", out)                                      # no question asked about
         after = {p["pid"]: p["model"] for p in self.procs() if p["pid"] not in before}
         self.assertEqual(["haiku", "sonnet"], sorted(after.values()))          # both sessions new
         for pid in before:
@@ -686,9 +685,24 @@ class TestFailsClosed(AnswerCase):
                 out.setdefault(p["model"], []).extend(self.msgs(p["pid"]))
         return out
 
-    def test_a_wall_reset_keeps_the_question_it_answered(self):
-        """#294: the request the box asked about was dropped at the reset, so
-        the new sessions got only "The Birch one."."""
+    # The reviewer's ways past a far-side name test (#294): a capital İ, an
+    # accent written as two characters, a letter with no plain form written
+    # plain, a hyphen written as a space; none is a name the context knows.
+    EARLIER = "for İlker, Soren, Jean Luc and Da\u0301na? EARLY88"
+
+    def assert_carries_nothing(self, before, request):
+        new = self.new_since(before)
+        self.assertTrue(new.get("sonnet"))
+        for m in new.get("haiku", []) + new["sonnet"]:
+            for word in ("EARLY88", "İlker", "Soren", "Jean Luc", "Da\u0301na", "Dána", "<earlier-request>"):
+                self.assertNotIn(word, m)
+        self.assertIn("<request>\n%s\n</request>" % request, new["sonnet"][0])
+        return new
+
+    def test_a_wall_reset_after_a_question_back_carries_nothing_of_it(self):
+        """#294: the request the box asked about is the user's own words, and
+        no test can say they name nothing on the far side. A reset gives the
+        new sessions the answer alone, and the scope its names alone."""
         write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md",
               thread_note("Birch Entry", "Pricing", "birch", "Birch pricing. BIRCHPRICE12"))
         self.commit()
@@ -696,25 +710,35 @@ class TestFailsClosed(AnswerCase):
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+        self.assertEqual("clarify", a.ask("Where does Pricing stand " + self.EARLIER)["kind"])
         out = a.ask("The Birch one.")
-        self.assertEqual(("answer", "wall", True), (out["kind"], out["reset"], out.get("carried")))
-        new = self.new_since(before)
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        self.assertNotIn("carried", out)
+        new = self.assert_carries_nothing(before, "The Birch one.")
         (cmd,) = new["haiku"]
-        self.assertIn("<earlier-request>\nWhere does Pricing stand?\n</earlier-request>", cmd)
-        self.assertIn('- "Pricing": the thread Pricing of Birch Entry in Work\n', cmd)
-        (said,) = new["sonnet"]
-        self.assertIn("<request>\nWhere does Pricing stand?\nThe Birch one.\n</request>", said)
-        self.assertIn("BIRCHPRICE12", said)                                # answered about Birch's Pricing
-        for m in new["haiku"] + new["sonnet"]:
-            self.assertNotIn(ACME, m)
-            self.assertNotIn("Dana", m)
+        self.assertIn('<names>\n- "Birch": the party Birch & Co in Work\n</names>', cmd)   # the answer's names alone
+        self.assertNotIn("Where does Pricing stand", "\n".join(new["haiku"] + new["sonnet"]))
+        self.assertIn("BIRCHPRICE12", new["sonnet"][0])
         self.assertEqual({"birch"}, a.seen)
 
-    def test_a_wall_reset_drops_an_earlier_request_that_names_the_far_side(self):
-        """#294: the earlier request is kept only when nothing in it settles
-        to the far side of the wall; one that does is dropped whole, its
-        subject with its names."""
+    def test_a_reset_before_reading_carries_nothing_of_a_question_back(self):
+        """The reset that runs when the find, not the request, crosses the
+        wall gave the fresh answer session the whole earlier request."""
+        self.budget()
+        self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        before = {p["pid"] for p in self.procs()}
+        self.assertEqual("clarify", a.ask("Where is the Budget plan " + self.EARLIER)["kind"])
+        out = a.ask("The one in Personal.")                                 # no wall named: the find crosses it
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
+        new = self.assert_carries_nothing(before, "The one in Personal.")
+        self.assertNotIn("Budget plan", new["sonnet"][0])
+        self.assertIn(BIRCH, new["sonnet"][0])
+
+    def test_a_wall_reset_carries_no_far_name_settled_before_it(self):
+        """#294: a far-side alias settled in the request asked about reaches
+        neither new session, nor the scope."""
         self.budget()
         self.rules([["The Birch one", find("thread", [], project="Birch Entry", thread="Budget")]])
         a = self.asker()
@@ -722,7 +746,7 @@ class TestFailsClosed(AnswerCase):
         before = {p["pid"] for p in self.procs()}
         self.assertEqual("clarify", a.ask("Did dana whitlaw ask about the Budget quote?")["kind"])
         out = a.ask("The Birch one.")
-        self.assertEqual(("answer", "wall", None), (out["kind"], out["reset"], out.get("carried")))
+        self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
         new = self.new_since(before)
         self.assertTrue(new.get("haiku") and new.get("sonnet"))
         self.assertIn("BIRCHBUDGET21", "\n".join(new["sonnet"]))
@@ -730,67 +754,6 @@ class TestFailsClosed(AnswerCase):
             for word in ("dana", "whitlaw", "whitlock", "quote", "<earlier-request>", ACME.lower()):
                 self.assertNotIn(word, m.lower())
         self.assertIn("<request>\nThe Birch one.\n</request>", new["sonnet"][0])
-
-    def test_a_reset_before_reading_drops_an_earlier_request_that_names_the_far_side(self):
-        """The reset that runs when the find, not the request, crosses the
-        wall: the answer session is given the earlier request on the same
-        terms."""
-        self.budget()
-        self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Did dana whitlaw ask about the Budget quote?")["kind"])
-        out = a.ask("The one in Personal.")                                 # no wall named: the find crosses it
-        self.assertEqual(("answer", "wall", None), (out["kind"], out["reset"], out.get("carried")))
-        (said,) = self.new_since(before)["sonnet"]
-        self.assertIn(BIRCH, said)
-        self.assertIn("<request>\nThe one in Personal.\n</request>", said)
-        for word in ("dana", "whitlaw", "quote"):
-            self.assertNotIn(word, said.lower())
-
-    def test_a_reset_before_reading_carries_a_question_of_the_near_side(self):
-        self.budget()
-        self.rules([["The one in Personal", find("meetings", ["pallet"], project="Birch Entry")]])
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Where is the Budget plan?")["kind"])
-        out = a.ask("The one in Personal.")
-        self.assertEqual(("answer", "wall", True), (out["kind"], out["reset"], out.get("carried")))
-        (said,) = self.new_since(before)["sonnet"]
-        self.assertIn("<request>\nWhere is the Budget plan?\nThe one in Personal.\n</request>", said)
-
-    def test_what_names_the_far_side(self):
-        """far_side() against the ways a far name can be written: as an
-        alias, a first name written small, a surname, in capitals, with
-        accents, inside a longer word or an address, a party's tag or name,
-        a project, a thread, a spoken form. A name settled to the near side
-        is kept, though the far side has one like it."""
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
-        hub = self.work / "Acme Review" / "Acme Review.md"
-        write(hub, hub.read_text().replace("status: active\n", "status: active\nspoken: supply review\n", 1))
-        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
-        ctx, names = lib.load_context(self.root), ask.scan(self.root)
-        far = sc.far_parties(ctx, {"birch"}, lib)
-        self.assertEqual({"acme"}, far)
-        self.assertEqual({"acme", "birch"}, sc.far_parties(ctx, set(), lib, every=True))
-
-        def dropped(earlier, answer="The Birch one."):
-            heard = earlier + "\n" + answer
-            named = sc.mentions(self.root, heard, names, ctx, lib, answer=len(earlier) + 1)
-            self.assertIsNone(named.question, earlier)
-            return sc.far_side(self.root, heard, named, names, ctx, lib, far, len(earlier))
-        for earlier in ("Did dana whitlaw call?", "Did Dana call?", "did dana call?", "Did Whitlock call?",
-                        "DID DANA WHITLOCK CALL?", "Did Dána call?", "Did Ｄａｎａ call?", "Dana's note?",
-                        "Mail from danawhitlock?", "Mail to x@acmecorp.example?", "The AcmeCorp file?",
-                        "What does acme want?", "What does Acme Corp want?", "Where is Acme Review?",
-                        "How is the supply review going?", "Is the Acme Review Pricing done?"):
-            self.assertTrue(dropped(earlier), earlier)
-        for earlier in ("Where does Pricing stand?", "What did Theo say?", "Where is Market Sizing?",
-                        "What does the supply chain report say?"):
-            self.assertFalse(dropped(earlier), earlier)
-        self.assertFalse(sc.far_side(self.root, "Did Dana call?", sc.Mentions([]), names, ctx, lib, set(), 14))
 
 
 def assert_sealed(case, proc, root):
